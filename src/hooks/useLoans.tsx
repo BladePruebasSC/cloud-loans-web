@@ -12,7 +12,7 @@ export interface Loan {
   monthly_payment: number;
   remaining_balance: number;
   next_payment_date: string;
-  status: 'pending' | 'active' | 'paid' | 'overdue' | 'defaulted' | 'cancelled';
+  status: string;
   start_date: string;
   loan_type: string;
   client?: {
