@@ -3,6 +3,7 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { useLoans } from '@/hooks/useLoans';
 import { 
   DollarSign, 
   TrendingUp, 
@@ -11,40 +12,27 @@ import {
   Plus,
   CreditCard,
   Clock,
-  CheckCircle
+  CheckCircle,
+  Loader2
 } from 'lucide-react';
 
 interface User {
-  id: string;
   name: string;
   email: string;
-  phone: string;
-  dni: string;
-}
-
-interface Loan {
-  id: string;
-  amount: number;
-  interestRate: number;
-  term: number;
-  monthlyPayment: number;
-  remainingBalance: number;
-  nextPaymentDate: string;
-  status: 'active' | 'paid' | 'overdue';
-  startDate: string;
 }
 
 interface DashboardProps {
   user: User;
-  loans: Loan[];
   onNewLoan: () => void;
   onViewLoan: (loanId: string) => void;
 }
 
-const Dashboard = ({ user, loans, onNewLoan, onViewLoan }: DashboardProps) => {
+const Dashboard = ({ user, onNewLoan, onViewLoan }: DashboardProps) => {
+  const { loans, loading } = useLoans();
+
   const activeLoans = loans.filter(loan => loan.status === 'active');
-  const totalBalance = activeLoans.reduce((sum, loan) => sum + loan.remainingBalance, 0);
-  const monthlyPayments = activeLoans.reduce((sum, loan) => sum + loan.monthlyPayment, 0);
+  const totalBalance = activeLoans.reduce((sum, loan) => sum + loan.remaining_balance, 0);
+  const monthlyPayments = activeLoans.reduce((sum, loan) => sum + loan.monthly_payment, 0);
   const overdueLoans = loans.filter(loan => loan.status === 'overdue');
 
   const formatCurrency = (amount: number) => {
@@ -62,10 +50,21 @@ const Dashboard = ({ user, loans, onNewLoan, onViewLoan }: DashboardProps) => {
         return <Badge className="bg-green-100 text-green-800">Pagado</Badge>;
       case 'overdue':
         return <Badge className="bg-red-100 text-red-800">Vencido</Badge>;
+      case 'pending':
+        return <Badge className="bg-yellow-100 text-yellow-800">Pendiente</Badge>;
       default:
         return <Badge>Desconocido</Badge>;
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <span className="ml-2">Cargando préstamos...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -194,15 +193,15 @@ const Dashboard = ({ user, loans, onNewLoan, onViewLoan }: DashboardProps) => {
                         </div>
                         <div>
                           <p className="text-gray-500">Saldo Pendiente</p>
-                          <p className="font-medium">{formatCurrency(loan.remainingBalance)}</p>
+                          <p className="font-medium">{formatCurrency(loan.remaining_balance)}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Pago Mensual</p>
-                          <p className="font-medium">{formatCurrency(loan.monthlyPayment)}</p>
+                          <p className="font-medium">{formatCurrency(loan.monthly_payment)}</p>
                         </div>
                         <div>
                           <p className="text-gray-500">Próximo Pago</p>
-                          <p className="font-medium">{loan.nextPaymentDate}</p>
+                          <p className="font-medium">{loan.next_payment_date}</p>
                         </div>
                       </div>
                     </div>

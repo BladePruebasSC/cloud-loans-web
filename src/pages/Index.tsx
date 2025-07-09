@@ -1,138 +1,48 @@
 
 import React, { useState } from 'react';
-import { toast } from 'sonner';
+import { useAuth } from '@/hooks/useAuth';
 import Navbar from '@/components/Navbar';
 import LoginForm from '@/components/LoginForm';
 import RegisterForm from '@/components/RegisterForm';
 import Dashboard from '@/components/Dashboard';
 import LoanCalculator from '@/components/LoanCalculator';
 
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  dni: string;
-}
-
-interface Loan {
-  id: string;
-  amount: number;
-  interestRate: number;
-  term: number;
-  monthlyPayment: number;
-  remainingBalance: number;
-  nextPaymentDate: string;
-  status: 'active' | 'paid' | 'overdue';
-  startDate: string;
-}
-
-interface RegisterData {
-  name: string;
-  email: string;
-  password: string;
-  phone: string;
-  dni: string;
-}
-
-interface LoanRequest {
-  amount: number;
-  interestRate: number;
-  term: number;
-  monthlyPayment: number;
-  totalInterest: number;
-  totalAmount: number;
-}
-
 const Index = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { user, profile, loading, signIn, signUp, signOut } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
-  const [loading, setLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
   const [error, setError] = useState('');
   const [currentView, setCurrentView] = useState<'dashboard' | 'calculator'>('dashboard');
 
-  // Mock data for demonstration
-  const [loans] = useState<Loan[]>([
-    {
-      id: '1',
-      amount: 15000,
-      interestRate: 12,
-      term: 24,
-      monthlyPayment: 705.46,
-      remainingBalance: 8456.78,
-      nextPaymentDate: '2024-08-15',
-      status: 'active',
-      startDate: '2023-08-15'
-    },
-    {
-      id: '2',
-      amount: 5000,
-      interestRate: 15,
-      term: 12,
-      monthlyPayment: 451.58,
-      remainingBalance: 0,
-      nextPaymentDate: '2024-02-15',
-      status: 'paid',
-      startDate: '2023-02-15'
-    }
-  ]);
-
   const handleLogin = async (email: string, password: string) => {
-    setLoading(true);
+    setAuthLoading(true);
     setError('');
     
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock successful login
-      const mockUser: User = {
-        id: '1',
-        name: 'Juan Pérez',
-        email: email,
-        phone: '+34 600 123 456',
-        dni: '12345678A'
-      };
-      
-      setCurrentUser(mockUser);
-      toast.success('¡Bienvenido! Has iniciado sesión correctamente');
-    } catch (err) {
-      setError('Credenciales inválidas. Intenta de nuevo.');
+      await signIn(email, password);
+    } catch (err: any) {
+      setError(err.message || 'Error al iniciar sesión');
     } finally {
-      setLoading(false);
+      setAuthLoading(false);
     }
   };
 
-  const handleRegister = async (data: RegisterData) => {
-    setLoading(true);
+  const handleRegister = async (data: any) => {
+    setAuthLoading(true);
     setError('');
     
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Mock successful registration
-      const newUser: User = {
-        id: '2',
-        name: data.name,
-        email: data.email,
-        phone: data.phone,
-        dni: data.dni
-      };
-      
-      setCurrentUser(newUser);
-      toast.success('¡Cuenta creada exitosamente! Bienvenido');
-    } catch (err) {
-      setError('Error al crear la cuenta. Intenta de nuevo.');
+      await signUp(data);
+    } catch (err: any) {
+      setError(err.message || 'Error al crear la cuenta');
     } finally {
-      setLoading(false);
+      setAuthLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
+  const handleLogout = async () => {
+    await signOut();
     setCurrentView('dashboard');
-    toast.info('Has cerrado sesión correctamente');
   };
 
   const handleNewLoan = () => {
@@ -140,29 +50,37 @@ const Index = () => {
   };
 
   const handleViewLoan = (loanId: string) => {
-    toast.info(`Visualizando préstamo #${loanId}`);
+    console.log(`Viewing loan ${loanId}`);
     // Here you would navigate to loan details
   };
 
-  const handleSubmitLoan = (loanData: LoanRequest) => {
-    toast.success('Solicitud de préstamo enviada correctamente');
+  const handleSubmitLoan = (loanData: any) => {
+    console.log('Loan submitted:', loanData);
     setCurrentView('dashboard');
-    // Here you would submit the loan application
+    // Here you would submit the loan application to Supabase
   };
 
   const handleBackToDashboard = () => {
     setCurrentView('dashboard');
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary-600"></div>
+      </div>
+    );
+  }
+
   // If user is not logged in, show auth forms
-  if (!currentUser) {
+  if (!user) {
     if (isLogin) {
       return (
         <LoginForm
           onLogin={handleLogin}
           onSwitchToRegister={() => setIsLogin(false)}
           error={error}
-          loading={loading}
+          loading={authLoading}
         />
       );
     } else {
@@ -171,21 +89,28 @@ const Index = () => {
           onRegister={handleRegister}
           onSwitchToLogin={() => setIsLogin(true)}
           error={error}
-          loading={loading}
+          loading={authLoading}
         />
       );
     }
   }
 
+  const userForNav = profile ? {
+    name: profile.full_name || user.email || 'Usuario',
+    email: user.email || '',
+  } : {
+    name: user.email || 'Usuario',
+    email: user.email || '',
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar user={currentUser} onLogout={handleLogout} />
+      <Navbar user={userForNav} onLogout={handleLogout} />
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {currentView === 'dashboard' && (
           <Dashboard
-            user={currentUser}
-            loans={loans}
+            user={userForNav}
             onNewLoan={handleNewLoan}
             onViewLoan={handleViewLoan}
           />

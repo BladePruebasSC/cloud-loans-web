@@ -14,7 +14,325 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      capital_funds: {
+        Row: {
+          amount: number
+          created_at: string | null
+          expected_return_rate: number | null
+          fund_type: string | null
+          id: string
+          investment_date: string
+          investor_id: string | null
+          maturity_date: string | null
+          notes: string | null
+          status: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          expected_return_rate?: number | null
+          fund_type?: string | null
+          id?: string
+          investment_date?: string
+          investor_id?: string | null
+          maturity_date?: string | null
+          notes?: string | null
+          status?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          expected_return_rate?: number | null
+          fund_type?: string | null
+          id?: string
+          investment_date?: string
+          investor_id?: string | null
+          maturity_date?: string | null
+          notes?: string | null
+          status?: string | null
+        }
+        Relationships: []
+      }
+      clients: {
+        Row: {
+          address: string | null
+          birth_date: string | null
+          city: string | null
+          created_at: string | null
+          credit_score: number | null
+          dni: string
+          email: string | null
+          full_name: string
+          id: string
+          monthly_income: number | null
+          occupation: string | null
+          phone: string
+          status: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          address?: string | null
+          birth_date?: string | null
+          city?: string | null
+          created_at?: string | null
+          credit_score?: number | null
+          dni: string
+          email?: string | null
+          full_name: string
+          id?: string
+          monthly_income?: number | null
+          occupation?: string | null
+          phone: string
+          status?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          address?: string | null
+          birth_date?: string | null
+          city?: string | null
+          created_at?: string | null
+          credit_score?: number | null
+          dni?: string
+          email?: string | null
+          full_name?: string
+          id?: string
+          monthly_income?: number | null
+          occupation?: string | null
+          phone?: string
+          status?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      expenses: {
+        Row: {
+          amount: number
+          category: string
+          created_at: string | null
+          created_by: string | null
+          description: string
+          expense_date: string
+          id: string
+          receipt_url: string | null
+          status: string | null
+        }
+        Insert: {
+          amount: number
+          category: string
+          created_at?: string | null
+          created_by?: string | null
+          description: string
+          expense_date?: string
+          id?: string
+          receipt_url?: string | null
+          status?: string | null
+        }
+        Update: {
+          amount?: number
+          category?: string
+          created_at?: string | null
+          created_by?: string | null
+          description?: string
+          expense_date?: string
+          id?: string
+          receipt_url?: string | null
+          status?: string | null
+        }
+        Relationships: []
+      }
+      loans: {
+        Row: {
+          amount: number
+          client_id: string
+          collateral: string | null
+          created_at: string | null
+          end_date: string
+          id: string
+          interest_rate: number
+          loan_officer_id: string | null
+          loan_type: string | null
+          monthly_payment: number
+          next_payment_date: string
+          purpose: string | null
+          remaining_balance: number
+          start_date: string
+          status: string | null
+          term_months: number
+          total_amount: number
+          updated_at: string | null
+        }
+        Insert: {
+          amount: number
+          client_id: string
+          collateral?: string | null
+          created_at?: string | null
+          end_date: string
+          id?: string
+          interest_rate: number
+          loan_officer_id?: string | null
+          loan_type?: string | null
+          monthly_payment: number
+          next_payment_date: string
+          purpose?: string | null
+          remaining_balance: number
+          start_date?: string
+          status?: string | null
+          term_months: number
+          total_amount: number
+          updated_at?: string | null
+        }
+        Update: {
+          amount?: number
+          client_id?: string
+          collateral?: string | null
+          created_at?: string | null
+          end_date?: string
+          id?: string
+          interest_rate?: number
+          loan_officer_id?: string | null
+          loan_type?: string | null
+          monthly_payment?: number
+          next_payment_date?: string
+          purpose?: string | null
+          remaining_balance?: number
+          start_date?: string
+          status?: string | null
+          term_months?: number
+          total_amount?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "loans_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payments: {
+        Row: {
+          amount: number
+          created_at: string | null
+          created_by: string | null
+          due_date: string
+          id: string
+          interest_amount: number
+          late_fee: number | null
+          loan_id: string
+          notes: string | null
+          payment_date: string
+          payment_method: string | null
+          principal_amount: number
+          reference_number: string | null
+          status: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          created_by?: string | null
+          due_date: string
+          id?: string
+          interest_amount: number
+          late_fee?: number | null
+          loan_id: string
+          notes?: string | null
+          payment_date?: string
+          payment_method?: string | null
+          principal_amount: number
+          reference_number?: string | null
+          status?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          created_by?: string | null
+          due_date?: string
+          id?: string
+          interest_amount?: number
+          late_fee?: number | null
+          loan_id?: string
+          notes?: string | null
+          payment_date?: string
+          payment_method?: string | null
+          principal_amount?: number
+          reference_number?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_loan_id_fkey"
+            columns: ["loan_id"]
+            isOneToOne: false
+            referencedRelation: "loans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          address: string | null
+          city: string | null
+          created_at: string | null
+          dni: string | null
+          full_name: string
+          id: string
+          phone: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          created_at?: string | null
+          dni?: string | null
+          full_name: string
+          id: string
+          phone?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          created_at?: string | null
+          dni?: string | null
+          full_name?: string
+          id?: string
+          phone?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      system_settings: {
+        Row: {
+          description: string | null
+          id: string
+          setting_key: string
+          setting_value: string
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          setting_key: string
+          setting_value: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          setting_key?: string
+          setting_value?: string
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
