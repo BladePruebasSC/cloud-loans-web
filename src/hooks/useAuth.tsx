@@ -1,11 +1,12 @@
 
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { User } from '@supabase/supabase-js';
+import { User, Session } from '@supabase/supabase-js';
 import { toast } from 'sonner';
 
 interface AuthContextType {
   user: User | null;
+  session: Session | null;
   profile: any | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -25,37 +26,77 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      }
-      setLoading(false);
-    });
+    let mounted = true;
 
-    // Listen for auth changes
+    // Configurar el listener de cambios de autenticación PRIMERO
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log('Auth state changed:', event, session?.user?.id);
+        
+        if (!mounted) return;
+
+        setSession(session);
         setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchProfile(session.user.id);
+        
+        if (session?.user && mounted) {
+          // Diferir la carga del perfil para evitar bucles
+          setTimeout(() => {
+            if (mounted) {
+              fetchProfile(session.user.id);
+            }
+          }, 0);
         } else {
           setProfile(null);
         }
+        
         setLoading(false);
       }
     );
 
-    return () => subscription.unsubscribe();
+    // LUEGO obtener la sesión inicial
+    const getInitialSession = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error('Error getting session:', error);
+          setLoading(false);
+          return;
+        }
+        
+        if (mounted) {
+          setSession(session);
+          setUser(session?.user ?? null);
+          
+          if (session?.user) {
+            fetchProfile(session.user.id);
+          } else {
+            setLoading(false);
+          }
+        }
+      } catch (error) {
+        console.error('Error in getInitialSession:', error);
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    getInitialSession();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
+      console.log('Fetching profile for user:', userId);
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -67,43 +108,59 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
+      console.log('Profile fetched:', data);
       setProfile(data);
     } catch (error) {
       console.error('Error in fetchProfile:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
   const signIn = async (email: string, password: string) => {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      setLoading(false);
       throw error;
     }
-    setLoading(false);
   };
 
   const signUp = async (data: RegisterData) => {
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email: data.email,
-      password: data.password,
-      options: {
-        data: {
-          full_name: data.name,
-          phone: data.phone,
-          dni: data.dni,
+    try {
+      const redirectUrl = `${window.location.origin}/`;
+      
+      const { error } = await supabase.auth.signUp({
+        email: data.email,
+        password: data.password,
+        options: {
+          emailRedirectTo: redirectUrl,
+          data: {
+            full_name: data.name,
+            phone: data.phone,
+            dni: data.dni,
+          }
         }
-      }
-    });
+      });
 
-    if (error) {
+      if (error) {
+        throw error;
+      }
+      
+      toast.success('Cuenta creada exitosamente. Revisa tu email para confirmar.');
+    } catch (error) {
+      setLoading(false);
       throw error;
     }
-    setLoading(false);
   };
 
   const signOut = async () => {
@@ -115,6 +172,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const value = {
     user,
+    session,
     profile,
     loading,
     signIn,

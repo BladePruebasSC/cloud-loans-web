@@ -1,18 +1,34 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import Navbar from '@/components/Navbar';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginForm from '@/components/LoginForm';
 import RegisterForm from '@/components/RegisterForm';
-import Dashboard from '@/components/Dashboard';
-import LoanCalculator from '@/components/LoanCalculator';
+import Sidebar from '@/components/Sidebar';
+import Header from '@/components/Header';
+import Dashboard from '@/pages/Dashboard';
+
+// Placeholder components para las rutas
+const Prestamos = () => <div className="p-6"><h1 className="text-2xl font-bold">Préstamos</h1></div>;
+const Inventario = () => <div className="p-6"><h1 className="text-2xl font-bold">Inventario</h1></div>;
+const Solicitudes = () => <div className="p-6"><h1 className="text-2xl font-bold">Solicitudes</h1></div>;
+const Bancos = () => <div className="p-6"><h1 className="text-2xl font-bold">Bancos</h1></div>;
+const Utilidades = () => <div className="p-6"><h1 className="text-2xl font-bold">Utilidades</h1></div>;
+const Turnos = () => <div className="p-6"><h1 className="text-2xl font-bold">Turnos</h1></div>;
+const Carteras = () => <div className="p-6"><h1 className="text-2xl font-bold">Carteras</h1></div>;
+const Documentos = () => <div className="p-6"><h1 className="text-2xl font-bold">Documentos</h1></div>;
+const Mapa = () => <div className="p-6"><h1 className="text-2xl font-bold">Mapa en vivo</h1></div>;
+const Acuerdos = () => <div className="p-6"><h1 className="text-2xl font-bold">Acuerdo de pagos</h1></div>;
+const Reportes = () => <div className="p-6"><h1 className="text-2xl font-bold">Reportes</h1></div>;
+const Empresa = () => <div className="p-6"><h1 className="text-2xl font-bold">Mi empresa</h1></div>;
+const Ayuda = () => <div className="p-6"><h1 className="text-2xl font-bold">Ayuda</h1></div>;
 
 const Index = () => {
   const { user, profile, loading, signIn, signUp, signOut } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
   const [error, setError] = useState('');
-  const [currentView, setCurrentView] = useState<'dashboard' | 'calculator'>('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleLogin = async (email: string, password: string) => {
     setAuthLoading(true);
@@ -42,26 +58,6 @@ const Index = () => {
 
   const handleLogout = async () => {
     await signOut();
-    setCurrentView('dashboard');
-  };
-
-  const handleNewLoan = () => {
-    setCurrentView('calculator');
-  };
-
-  const handleViewLoan = (loanId: string) => {
-    console.log(`Viewing loan ${loanId}`);
-    // Here you would navigate to loan details
-  };
-
-  const handleSubmitLoan = (loanData: any) => {
-    console.log('Loan submitted:', loanData);
-    setCurrentView('dashboard');
-    // Here you would submit the loan application to Supabase
-  };
-
-  const handleBackToDashboard = () => {
-    setCurrentView('dashboard');
   };
 
   if (loading) {
@@ -72,7 +68,7 @@ const Index = () => {
     );
   }
 
-  // If user is not logged in, show auth forms
+  // Si el usuario no está logueado, mostrar formularios de autenticación
   if (!user) {
     if (isLogin) {
       return (
@@ -104,26 +100,42 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <Navbar user={userForNav} onLogout={handleLogout} />
-      
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {currentView === 'dashboard' && (
-          <Dashboard
-            user={userForNav}
-            onNewLoan={handleNewLoan}
-            onViewLoan={handleViewLoan}
-          />
-        )}
+    <Router>
+      <div className="min-h-screen bg-gray-50 flex">
+        <Sidebar 
+          isOpen={sidebarOpen} 
+          onToggle={() => setSidebarOpen(!sidebarOpen)} 
+        />
         
-        {currentView === 'calculator' && (
-          <LoanCalculator
-            onSubmitLoan={handleSubmitLoan}
-            onBack={handleBackToDashboard}
+        <div className="flex-1 lg:ml-64">
+          <Header 
+            user={userForNav} 
+            onLogout={handleLogout}
+            onMenuToggle={() => setSidebarOpen(!sidebarOpen)}
           />
-        )}
-      </main>
-    </div>
+          
+          <main className="flex-1">
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/prestamos" element={<Prestamos />} />
+              <Route path="/inventario" element={<Inventario />} />
+              <Route path="/solicitudes" element={<Solicitudes />} />
+              <Route path="/bancos" element={<Bancos />} />
+              <Route path="/utilidades" element={<Utilidades />} />
+              <Route path="/turnos" element={<Turnos />} />
+              <Route path="/carteras" element={<Carteras />} />
+              <Route path="/documentos" element={<Documentos />} />
+              <Route path="/mapa" element={<Mapa />} />
+              <Route path="/acuerdos" element={<Acuerdos />} />
+              <Route path="/reportes" element={<Reportes />} />
+              <Route path="/empresa" element={<Empresa />} />
+              <Route path="/ayuda" element={<Ayuda />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
+        </div>
+      </div>
+    </Router>
   );
 };
 
