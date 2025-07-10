@@ -1,5 +1,5 @@
 
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import LoginForm from '@/components/LoginForm'
 import RegisterForm from '@/components/RegisterForm'
@@ -7,7 +7,8 @@ import Index from '@/pages/Index'
 import NotFound from '@/pages/NotFound'
 
 function App() {
-  const { user, loading } = useAuth()
+  const { user, loading, signIn, signUp } = useAuth()
+  const navigate = useNavigate()
 
   if (loading) {
     return (
@@ -23,9 +24,24 @@ function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/" element={<LoginForm />} />
-        <Route path="/register" element={<RegisterForm />} />
-        <Route path="*" element={<LoginForm />} />
+        <Route path="/" element={
+          <LoginForm 
+            onLogin={signIn}
+            onSwitchToRegister={() => navigate('/register')}
+          />
+        } />
+        <Route path="/register" element={
+          <RegisterForm 
+            onRegister={signUp}
+            onSwitchToLogin={() => navigate('/')}
+          />
+        } />
+        <Route path="*" element={
+          <LoginForm 
+            onLogin={signIn}
+            onSwitchToRegister={() => navigate('/register')}
+          />
+        } />
       </Routes>
     )
   }
