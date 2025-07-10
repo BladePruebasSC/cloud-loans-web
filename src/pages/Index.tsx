@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -12,17 +11,64 @@ import ClientForm from '@/components/clients/ClientForm';
 import LoansModule from '@/components/loans/LoansModule';
 import InventoryModule from '@/components/inventory/InventoryModule';
 import RequestsModule from '@/components/requests/RequestsModule';
+import BanksModule from '@/components/banks/BanksModule';
+import UtilitiesModule from '@/components/utilities/UtilitiesModule';
+import ShiftsModule from '@/components/shifts/ShiftsModule';
 
-// Placeholder components para las rutas
-const Bancos = () => <div className="p-6"><h1 className="text-2xl font-bold">Bancos</h1></div>;
-const Utilidades = () => <div className="p-6"><h1 className="text-2xl font-bold">Utilidades</h1></div>;
-const Turnos = () => <div className="p-6"><h1 className="text-2xl font-bold">Turnos</h1></div>;
-const Carteras = () => <div className="p-6"><h1 className="text-2xl font-bold">Carteras</h1></div>;
-const Documentos = () => <div className="p-6"><h1 className="text-2xl font-bold">Documentos</h1></div>;
-const Mapa = () => <div className="p-6"><h1 className="text-2xl font-bold">Mapa en vivo</h1></div>;
-const Acuerdos = () => <div className="p-6"><h1 className="text-2xl font-bold">Acuerdo de pagos</h1></div>;
-const Reportes = () => <div className="p-6"><h1 className="text-2xl font-bold">Reportes</h1></div>;
-const Ayuda = () => <div className="p-6"><h1 className="text-2xl font-bold">Ayuda</h1></div>;
+// Placeholder components para las rutas restantes
+const Carteras = () => (
+  <div className="p-6">
+    <h1 className="text-3xl font-bold text-gray-900 mb-6">Gestión de Carteras</h1>
+    <div className="bg-white rounded-lg shadow p-6">
+      <p className="text-gray-600">Módulo de carteras en desarrollo...</p>
+    </div>
+  </div>
+);
+
+const Documentos = () => (
+  <div className="p-6">
+    <h1 className="text-3xl font-bold text-gray-900 mb-6">Gestión de Documentos</h1>
+    <div className="bg-white rounded-lg shadow p-6">
+      <p className="text-gray-600">Módulo de documentos en desarrollo...</p>
+    </div>
+  </div>
+);
+
+const Mapa = () => (
+  <div className="p-6">
+    <h1 className="text-3xl font-bold text-gray-900 mb-6">Mapa en Vivo</h1>
+    <div className="bg-white rounded-lg shadow p-6">
+      <p className="text-gray-600">Mapa en vivo en desarrollo...</p>
+    </div>
+  </div>
+);
+
+const Acuerdos = () => (
+  <div className="p-6">
+    <h1 className="text-3xl font-bold text-gray-900 mb-6">Acuerdos de Pagos</h1>
+    <div className="bg-white rounded-lg shadow p-6">
+      <p className="text-gray-600">Módulo de acuerdos en desarrollo...</p>
+    </div>
+  </div>
+);
+
+const Reportes = () => (
+  <div className="p-6">
+    <h1 className="text-3xl font-bold text-gray-900 mb-6">Reportes</h1>
+    <div className="bg-white rounded-lg shadow p-6">
+      <p className="text-gray-600">Módulo de reportes en desarrollo...</p>
+    </div>
+  </div>
+);
+
+const Ayuda = () => (
+  <div className="p-6">
+    <h1 className="text-3xl font-bold text-gray-900 mb-6">Centro de Ayuda</h1>
+    <div className="bg-white rounded-lg shadow p-6">
+      <p className="text-gray-600">Centro de ayuda en desarrollo...</p>
+    </div>
+  </div>
+);
 
 const Index = () => {
   const { user, profile, loading, signIn, signUp, signOut } = useAuth();
@@ -108,7 +154,7 @@ const Index = () => {
           onToggle={() => setSidebarOpen(!sidebarOpen)} 
         />
         
-        <div className="flex-1 lg:ml-64">
+        <div className="flex-1 lg:ml-16">
           <Header 
             user={userForNav} 
             onLogout={handleLogout}
@@ -121,9 +167,9 @@ const Index = () => {
               <Route path="/prestamos" element={<LoansModule />} />
               <Route path="/inventario" element={<InventoryModule />} />
               <Route path="/solicitudes" element={<RequestsModule />} />
-              <Route path="/bancos" element={<Bancos />} />
-              <Route path="/utilidades" element={<Utilidades />} />
-              <Route path="/turnos" element={<Turnos />} />
+              <Route path="/bancos" element={<BanksModule />} />
+              <Route path="/utilidades" element={<UtilitiesModule />} />
+              <Route path="/turnos" element={<ShiftsModule />} />
               <Route path="/carteras" element={<Carteras />} />
               <Route path="/documentos" element={<Documentos />} />
               <Route path="/mapa" element={<Mapa />} />
