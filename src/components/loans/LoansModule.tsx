@@ -3,6 +3,9 @@ import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { LoanForm } from './LoanForm';
+import { PaymentForm } from './PaymentForm';
+import { useLoans } from '@/hooks/useLoans';
 import { 
   CreditCard, 
   Plus, 
@@ -13,20 +16,44 @@ import {
   Users,
   AlertCircle,
   CheckCircle,
-  Filter
+  Filter,
+  Receipt
 } from 'lucide-react';
 
-const LoansModule = () => {
+export const LoansModule = () => {
   const [activeTab, setActiveTab] = useState('mis-prestamos');
+  const [showLoanForm, setShowLoanForm] = useState(false);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const { loans, loading } = useLoans();
+
+  // Calcular estadísticas
+  const activeLoans = loans.filter(loan => loan.status === 'active');
+  const overdueLoans = loans.filter(loan => loan.status === 'overdue');
+  const totalAmount = loans.reduce((sum, loan) => sum + loan.amount, 0);
+  const totalBalance = loans.reduce((sum, loan) => sum + loan.remaining_balance, 0);
+
+  if (showLoanForm) {
+    return <LoanForm onBack={() => setShowLoanForm(false)} />;
+  }
+
+  if (showPaymentForm) {
+    return <PaymentForm onBack={() => setShowPaymentForm(false)} />;
+  }
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Gestión de Préstamos</h1>
-        <Button>
-          <Plus className="h-4 w-4 mr-2" />
-          Nuevo Préstamo
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setShowPaymentForm(true)}>
+            <Receipt className="h-4 w-4 mr-2" />
+            Registrar Pago
+          </Button>
+          <Button onClick={() => setShowLoanForm(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Nuevo Préstamo
+          </Button>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -47,8 +74,8 @@ const LoansModule = () => {
                 <CreditCard className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">156</div>
-                <p className="text-xs text-muted-foreground">+12% desde el mes pasado</p>
+                <div className="text-2xl font-bold">{loans.length}</div>
+                <p className="text-xs text-muted-foreground">+{activeLoans.length} activos</p>
               </CardContent>
             </Card>
 
@@ -58,7 +85,7 @@ const LoansModule = () => {
                 <CheckCircle className="h-4 w-4 text-green-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">89</div>
+                <div className="text-2xl font-bold text-green-600">{activeLoans.length}</div>
                 <p className="text-xs text-muted-foreground">Al día con pagos</p>
               </CardContent>
             </Card>
@@ -69,7 +96,7 @@ const LoansModule = () => {
                 <AlertCircle className="h-4 w-4 text-red-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-red-600">12</div>
+                <div className="text-2xl font-bold text-red-600">{overdueLoans.length}</div>
                 <p className="text-xs text-muted-foreground">Requieren atención</p>
               </CardContent>
             </Card>
@@ -80,8 +107,8 @@ const LoansModule = () => {
                 <DollarSign className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">$2,456,789</div>
-                <p className="text-xs text-muted-foreground">Total en circulación</p>
+                <div className="text-2xl font-bold">${totalBalance.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground">Balance pendiente</p>
               </CardContent>
             </Card>
           </div>
@@ -111,17 +138,83 @@ const LoansModule = () => {
               <CardTitle>Lista de Préstamos</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {/* Aquí iría la tabla de préstamos */}
+              {loading ? (
+                <div className="text-center py-8 text-gray-500">Cargando préstamos...</div>
+              ) : loans.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>No hay préstamos registrados</p>
-                  <Button className="mt-4">
+                  <Button className="mt-4" onClick={() => setShowLoanForm(true)}>
                     <Plus className="h-4 w-4 mr-2" />
                     Crear Primer Préstamo
                   </Button>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-4">
+                  {loans.map((loan) => (
+                    <div key={loan.id} className="border rounded-lg p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h3 className="font-semibold text-lg">
+                              {loan.client?.full_name} - {loan.client?.dni}
+                            </h3>
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              loan.status === 'active' ? 'bg-green-100 text-green-800' :
+                              loan.status === 'overdue' ? 'bg-red-100 text-red-800' :
+                              loan.status === 'paid' ? 'bg-blue-100 text-blue-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {loan.status === 'active' ? 'Activo' :
+                               loan.status === 'overdue' ? 'Vencido' :
+                               loan.status === 'paid' ? 'Pagado' :
+                               loan.status}
+                            </span>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                            <div>
+                              <span className="font-medium">Monto:</span> ${loan.amount.toLocaleString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">Balance:</span> ${loan.remaining_balance.toLocaleString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">Cuota:</span> ${loan.monthly_payment.toLocaleString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">Próximo Pago:</span> {new Date(loan.next_payment_date).toLocaleDateString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">Plazo:</span> {loan.term_months} meses
+                            </div>
+                            <div>
+                              <span className="font-medium">Tasa:</span> {loan.interest_rate}%
+                            </div>
+                            <div>
+                              <span className="font-medium">Tipo:</span> {loan.loan_type}
+                            </div>
+                            <div>
+                              <span className="font-medium">Inicio:</span> {new Date(loan.start_date).toLocaleDateString()}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowPaymentForm(true)}
+                            disabled={loan.status === 'paid'}
+                          >
+                            <Receipt className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -136,7 +229,7 @@ const LoansModule = () => {
                 <Plus className="h-12 w-12 mx-auto mb-4 text-gray-400" />
                 <h3 className="text-lg font-medium mb-2">Formulario de Nuevo Préstamo</h3>
                 <p className="text-gray-600 mb-4">Completa la información para crear un nuevo préstamo</p>
-                <Button>Comenzar</Button>
+                <Button onClick={() => setShowLoanForm(true)}>Comenzar</Button>
               </div>
             </CardContent>
           </Card>
@@ -199,5 +292,3 @@ const LoansModule = () => {
     </div>
   );
 };
-
-export default LoansModule;
