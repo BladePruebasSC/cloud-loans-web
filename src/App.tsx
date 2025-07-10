@@ -60,6 +60,7 @@ function App() {
       <Route path="/utilidades" element={<Index />} />
       <Route path="/turnos" element={<Index />} />
       <Route path="/mi-empresa" element={<Index />} />
+      <Route path="/mapa" element={<Index />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   )
