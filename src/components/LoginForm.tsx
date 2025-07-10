@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff, DollarSign } from 'lucide-react';
 
 interface LoginFormProps {
-  onLogin: (email: string, password: string) => void;
+  onLogin: (email: string, password: string) => Promise<void>;
   onSwitchToRegister: () => void;
   error?: string;
   loading?: boolean;
@@ -18,10 +18,21 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onLogin(email, password);
+    setIsLoading(true);
+    setLoginError('');
+    
+    try {
+      await onLogin(email, password);
+    } catch (error: any) {
+      setLoginError(error.message || 'Error al iniciar sesión');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -44,10 +55,10 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
-              {error && (
+              {(error || loginError) && (
                 <Alert className="border-red-200 bg-red-50">
                   <AlertDescription className="text-red-800">
-                    {error}
+                    {error || loginError}
                   </AlertDescription>
                 </Alert>
               )}
@@ -97,9 +108,9 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
               <Button 
                 type="submit" 
                 className="w-full h-11"
-                disabled={loading}
+                disabled={loading || isLoading}
               >
-                {loading ? 'Iniciando...' : 'Iniciar Sesión'}
+                {(loading || isLoading) ? 'Iniciando...' : 'Iniciar Sesión'}
               </Button>
               
               <div className="text-center">

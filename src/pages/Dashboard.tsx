@@ -61,7 +61,7 @@ const Dashboard = () => {
     {
       title: 'Registrar Pago',
       description: 'Registrar un pago',
-      action: () => navigate('/pagos/nuevo'),
+      action: () => navigate('/prestamos'),
       icon: DollarSign,
       color: 'bg-yellow-600 hover:bg-yellow-700'
     }

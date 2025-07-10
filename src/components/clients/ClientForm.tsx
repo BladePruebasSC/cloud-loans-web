@@ -126,7 +126,7 @@ const ClientForm = () => {
       }
 
       toast.success('Cliente creado exitosamente');
-      navigate('/');
+      navigate('/clientes');
     } catch (error) {
       console.error('Error in handleSubmit:', error);
       toast.error('Error inesperado al crear el cliente');
@@ -139,7 +139,7 @@ const ClientForm = () => {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Nuevo Cliente</h1>
-        <Button variant="outline" onClick={() => navigate('/')}>
+        <Button variant="outline" onClick={() => navigate('/clientes')}>
           Cancelar
         </Button>
       </div>
@@ -493,7 +493,7 @@ const ClientForm = () => {
         </Tabs>
 
         <div className="flex justify-end space-x-4 mt-6">
-          <Button type="button" variant="outline" onClick={() => navigate('/')}>
+          <Button type="button" variant="outline" onClick={() => navigate('/clientes')}>
             Cancelar
           </Button>
           <Button type="submit" disabled={loading}>

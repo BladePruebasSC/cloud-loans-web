@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff, DollarSign } from 'lucide-react';
 
 interface RegisterFormProps {
-  onRegister: (data: RegisterData) => void;
+  onRegister: (data: RegisterData) => Promise<void>;
   onSwitchToLogin: () => void;
   error?: string;
   loading?: boolean;
@@ -31,14 +31,25 @@ const RegisterForm = ({ onRegister, onSwitchToLogin, error, loading }: RegisterF
     dni: ''
   });
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [registerError, setRegisterError] = useState('');
 
   const handleInputChange = (field: keyof RegisterData, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onRegister(formData);
+    setIsLoading(true);
+    setRegisterError('');
+    
+    try {
+      await onRegister(formData);
+    } catch (error: any) {
+      setRegisterError(error.message || 'Error al crear la cuenta');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -61,10 +72,10 @@ const RegisterForm = ({ onRegister, onSwitchToLogin, error, loading }: RegisterF
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
-              {error && (
+              {(error || registerError) && (
                 <Alert className="border-red-200 bg-red-50">
                   <AlertDescription className="text-red-800">
-                    {error}
+                    {error || registerError}
                   </AlertDescription>
                 </Alert>
               )}
@@ -155,9 +166,9 @@ const RegisterForm = ({ onRegister, onSwitchToLogin, error, loading }: RegisterF
               <Button 
                 type="submit" 
                 className="w-full h-11"
-                disabled={loading}
+                disabled={loading || isLoading}
               >
-                {loading ? 'Creando cuenta...' : 'Crear Cuenta'}
+                {(loading || isLoading) ? 'Creando cuenta...' : 'Crear Cuenta'}
               </Button>
               
               <div className="text-center">

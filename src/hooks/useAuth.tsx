@@ -128,8 +128,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (error) {
         throw error;
       }
+      
+      toast.success('Sesión iniciada exitosamente');
     } catch (error) {
       setLoading(false);
+      toast.error('Error al iniciar sesión');
       throw error;
     }
   };

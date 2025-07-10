@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import Dashboard from '@/pages/Dashboard';
@@ -12,9 +13,11 @@ import BanksModule from '@/components/banks/BanksModule';
 import UtilitiesModule from '@/components/utilities/UtilitiesModule';
 import ShiftsModule from '@/components/shifts/ShiftsModule';
 import ClientForm from '@/components/clients/ClientForm';
+import { ClientsModule } from '@/components/clients/ClientsModule';
 
 const Index = () => {
   const location = useLocation();
+  const { user, signOut } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeModule, setActiveModule] = useState('inicio');
 
@@ -61,7 +64,7 @@ const Index = () => {
       case 'turnos':
         return <ShiftsModule />;
       case 'clientes':
-        return <ClientForm />;
+        return location.pathname === '/clientes/nuevo' ? <ClientForm /> : <ClientsModule />;
       default:
         return (
           <div className="p-6">
@@ -85,7 +88,11 @@ const Index = () => {
         onToggle={() => setSidebarOpen(!sidebarOpen)} 
       />
       <div className="flex-1 flex flex-col">
-        <Header />
+        <Header 
+          user={user ? { name: user.email || 'Usuario', email: user.email || '' } : undefined}
+          onLogout={signOut}
+          onMenuToggle={() => setSidebarOpen(!sidebarOpen)}
+        />
         <main className="flex-1 overflow-auto">
           {renderActiveModule()}
         </main>
