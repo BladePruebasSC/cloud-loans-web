@@ -1,5 +1,6 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import Dashboard from '@/pages/Dashboard';
@@ -13,8 +14,33 @@ import ShiftsModule from '@/components/shifts/ShiftsModule';
 import ClientForm from '@/components/clients/ClientForm';
 
 const Index = () => {
-  const [activeModule, setActiveModule] = useState('inicio');
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeModule, setActiveModule] = useState('inicio');
+
+  // Set active module based on current route
+  useEffect(() => {
+    const path = location.pathname;
+    if (path === '/prestamos') {
+      setActiveModule('prestamos');
+    } else if (path === '/clientes') {
+      setActiveModule('clientes');
+    } else if (path === '/inventario') {
+      setActiveModule('inventario');
+    } else if (path === '/solicitudes') {
+      setActiveModule('solicitudes');
+    } else if (path === '/bancos') {
+      setActiveModule('bancos');
+    } else if (path === '/utilidades') {
+      setActiveModule('utilidades');
+    } else if (path === '/turnos') {
+      setActiveModule('turnos');
+    } else if (path === '/mi-empresa') {
+      setActiveModule('mi-empresa');
+    } else {
+      setActiveModule('inicio');
+    }
+  }, [location.pathname]);
 
   const renderActiveModule = () => {
     switch (activeModule) {
