@@ -26,6 +26,8 @@ const Index = () => {
     const path = location.pathname;
     if (path === '/prestamos') {
       setActiveModule('prestamos');
+    } else if (path === '/carteras') {
+      setActiveModule('carteras');
     } else if (path === '/clientes') {
       setActiveModule('clientes');
     } else if (path === '/inventario') {
@@ -55,6 +57,19 @@ const Index = () => {
         return <CompanyModule />;
       case 'prestamos':
         return <LoansModule />;
+      case 'carteras':
+        return (
+          <div className="p-6">
+            <div className="text-center py-12">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">
+                Módulo en Desarrollo
+              </h2>
+              <p className="text-gray-600">
+                Esta funcionalidad está siendo desarrollada y estará disponible próximamente.
+              </p>
+            </div>
+          </div>
+        );
       case 'inventario':
         return <InventoryModule />;
       case 'documentos':
