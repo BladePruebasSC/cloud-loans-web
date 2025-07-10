@@ -1,16 +1,16 @@
 
 import React, { useState } from 'react';
-import { Sidebar } from '@/components/Sidebar';
-import { Header } from '@/components/Header';
-import { Dashboard } from '@/components/Dashboard';
+import Sidebar from '@/components/Sidebar';
+import Header from '@/components/Header';
+import Dashboard from '@/components/Dashboard';
 import { CompanyModule } from '@/components/company/CompanyModule';
 import { LoansModule } from '@/components/loans/LoansModule';
-import { InventoryModule } from '@/components/inventory/InventoryModule';
-import { RequestsModule } from '@/components/requests/RequestsModule';
-import { BanksModule } from '@/components/banks/BanksModule';
-import { UtilitiesModule } from '@/components/utilities/UtilitiesModule';
-import { ShiftsModule } from '@/components/shifts/ShiftsModule';
-import { ClientForm } from '@/components/clients/ClientForm';
+import InventoryModule from '@/components/inventory/InventoryModule';
+import RequestsModule from '@/components/requests/RequestsModule';
+import BanksModule from '@/components/banks/BanksModule';
+import UtilitiesModule from '@/components/utilities/UtilitiesModule';
+import ShiftsModule from '@/components/shifts/ShiftsModule';
+import ClientForm from '@/components/clients/ClientForm';
 
 const Index = () => {
   const [activeModule, setActiveModule] = useState('inicio');

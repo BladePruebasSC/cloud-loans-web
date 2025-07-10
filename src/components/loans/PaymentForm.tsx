@@ -77,7 +77,16 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
       return;
     }
 
-    setLoans(data || []);
+    // Transformar los datos para que coincidan con la interfaz Loan
+    const transformedLoans = (data || []).map(loan => ({
+      ...loan,
+      client: {
+        full_name: (loan.clients as any)?.full_name || '',
+        dni: (loan.clients as any)?.dni || ''
+      }
+    }));
+
+    setLoans(transformedLoans);
   };
 
   const handleLoanSelect = (loanId: string) => {
@@ -131,22 +140,6 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
         .eq('id', data.loan_id);
 
       if (loanError) throw loanError;
-
-      // Registrar movimiento de caja
-      const { error: cashError } = await supabase
-        .from('cash_movements')
-        .insert([{
-          user_id: user.id,
-          type: 'in',
-          amount: data.amount,
-          description: `Pago de préstamo - ${selectedLoan.client?.full_name}`,
-          category: 'loan_payment',
-          reference_id: data.loan_id,
-          reference_type: 'loan',
-          created_by: user.id,
-        }]);
-
-      if (cashError) throw cashError;
 
       toast.success('Pago registrado exitosamente');
       onBack();

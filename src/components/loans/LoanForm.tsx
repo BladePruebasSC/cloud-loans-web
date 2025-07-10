@@ -107,7 +107,13 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
 
       const loanData = {
-        ...data,
+        client_id: data.client_id,
+        amount: data.amount,
+        interest_rate: data.interest_rate,
+        term_months: data.term_months,
+        loan_type: data.loan_type,
+        purpose: data.purpose || null,
+        collateral: data.collateral || null,
         loan_officer_id: user.id,
         monthly_payment: monthlyPayment,
         total_amount: totalAmount,
@@ -116,8 +122,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         end_date: endDate.toISOString().split('T')[0],
         next_payment_date: nextPaymentDate.toISOString().split('T')[0],
         status: 'active',
-        approval_date: new Date().toISOString().split('T')[0],
-        approved_by: user.id,
       };
 
       const { error } = await supabase

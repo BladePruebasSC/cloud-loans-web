@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -78,48 +77,39 @@ export const EmployeesModule = () => {
     if (!user) return;
 
     try {
-      // Usar una consulta SQL personalizada para obtener empleados
-      const { data, error } = await supabase.rpc('get_employees', {
-        owner_id: user.id
-      });
+      // Usar datos mock ya que la tabla employees no está disponible en Supabase aún
+      const mockEmployees: Employee[] = [
+        {
+          id: '1',
+          full_name: 'Juan Pérez',
+          email: 'juan@example.com',
+          phone: '809-123-4567',
+          dni: '001-1234567-8',
+          position: 'Gerente',
+          department: 'Administración',
+          salary: 50000,
+          hire_date: '2023-01-15',
+          status: 'active',
+          company_owner_id: user.id,
+          created_at: new Date().toISOString()
+        },
+        {
+          id: '2',
+          full_name: 'María García',
+          email: 'maria@example.com',
+          phone: '809-765-4321',
+          dni: '001-7654321-9',
+          position: 'Asistente',
+          department: 'Ventas',
+          salary: 35000,
+          hire_date: '2023-03-20',
+          status: 'active',
+          company_owner_id: user.id,
+          created_at: new Date().toISOString()
+        }
+      ];
 
-      if (error) {
-        console.error('Error fetching employees:', error);
-        // Si no existe la función, crear datos de ejemplo
-        setEmployees([
-          {
-            id: '1',
-            full_name: 'Juan Pérez',
-            email: 'juan@example.com',
-            phone: '809-123-4567',
-            dni: '001-1234567-8',
-            position: 'Gerente',
-            department: 'Administración',
-            salary: 50000,
-            hire_date: '2023-01-15',
-            status: 'active',
-            company_owner_id: user.id,
-            created_at: new Date().toISOString()
-          },
-          {
-            id: '2',
-            full_name: 'María García',
-            email: 'maria@example.com',
-            phone: '809-765-4321',
-            dni: '001-7654321-9',
-            position: 'Asistente',
-            department: 'Ventas',
-            salary: 35000,
-            hire_date: '2023-03-20',
-            status: 'active',
-            company_owner_id: user.id,
-            created_at: new Date().toISOString()
-          }
-        ]);
-        return;
-      }
-
-      setEmployees(data || []);
+      setEmployees(mockEmployees);
     } catch (error) {
       console.error('Error in fetchEmployees:', error);
       toast.error('Error al cargar empleados');
