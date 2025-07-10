@@ -71,7 +71,6 @@ const Dashboard = () => {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Bienvenido a PrestamosFácil</h1>
-        <Button onClick={() => navigate('/empresa')}>
         <Button onClick={() => navigate('/mi-empresa')}>
           <Plus className="h-4 w-4 mr-2" />
           Configurar Empresa
@@ -142,7 +141,6 @@ const Dashboard = () => {
               <h3 className="font-medium">Configurar tu empresa</h3>
               <p className="text-sm text-gray-600">Añade información de tu empresa, logo y datos de contacto</p>
             </div>
-            <Button variant="outline" onClick={() => navigate('/empresa')}>
             <Button variant="outline" onClick={() => navigate('/mi-empresa')}>
               Configurar
             </Button>
