@@ -54,6 +54,7 @@ function App() {
       <Route path="/clientes" element={<Index />} />
       <Route path="/clientes/nuevo" element={<Index />} />
       <Route path="/inventario" element={<Index />} />
+      <Route path="/documentos" element={<Index />} />
       <Route path="/solicitudes" element={<Index />} />
       <Route path="/bancos" element={<Index />} />
       <Route path="/utilidades" element={<Index />} />

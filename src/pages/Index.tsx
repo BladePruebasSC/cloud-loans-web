@@ -30,6 +30,8 @@ const Index = () => {
       setActiveModule('clientes');
     } else if (path === '/inventario') {
       setActiveModule('inventario');
+    } else if (path === '/documentos') {
+      setActiveModule('documentos');
     } else if (path === '/solicitudes') {
       setActiveModule('solicitudes');
     } else if (path === '/bancos') {
@@ -55,6 +57,19 @@ const Index = () => {
         return <LoansModule />;
       case 'inventario':
         return <InventoryModule />;
+      case 'documentos':
+        return (
+          <div className="p-6">
+            <div className="text-center py-12">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">
+                Módulo en Desarrollo
+              </h2>
+              <p className="text-gray-600">
+                Esta funcionalidad está siendo desarrollada y estará disponible próximamente.
+              </p>
+            </div>
+          </div>
+        );
       case 'solicitudes':
         return <RequestsModule />;
       case 'bancos':
