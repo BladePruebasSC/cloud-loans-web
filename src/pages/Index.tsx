@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
-import Dashboard from '@/components/Dashboard';
+import Dashboard from '@/pages/Dashboard';
 import { CompanyModule } from '@/components/company/CompanyModule';
 import { LoansModule } from '@/components/loans/LoansModule';
 import InventoryModule from '@/components/inventory/InventoryModule';
@@ -14,6 +14,7 @@ import ClientForm from '@/components/clients/ClientForm';
 
 const Index = () => {
   const [activeModule, setActiveModule] = useState('inicio');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const renderActiveModule = () => {
     switch (activeModule) {
@@ -34,7 +35,7 @@ const Index = () => {
       case 'turnos':
         return <ShiftsModule />;
       case 'clientes':
-        return <ClientForm onBack={() => setActiveModule('inicio')} />;
+        return <ClientForm />;
       default:
         return (
           <div className="p-6">
@@ -53,7 +54,10 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar activeModule={activeModule} onModuleChange={setActiveModule} />
+      <Sidebar 
+        isOpen={sidebarOpen} 
+        onToggle={() => setSidebarOpen(!sidebarOpen)} 
+      />
       <div className="flex-1 flex flex-col">
         <Header />
         <main className="flex-1 overflow-auto">
