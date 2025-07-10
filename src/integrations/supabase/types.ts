@@ -14,6 +14,65 @@ export type Database = {
   }
   public: {
     Tables: {
+      appointments: {
+        Row: {
+          appointment_date: string
+          appointment_time: string
+          client_id: string | null
+          created_at: string
+          description: string | null
+          duration_minutes: number | null
+          id: string
+          location: string | null
+          reminder_sent: boolean | null
+          status: string | null
+          title: string
+          type: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          appointment_date: string
+          appointment_time: string
+          client_id?: string | null
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          id?: string
+          location?: string | null
+          reminder_sent?: boolean | null
+          status?: string | null
+          title: string
+          type?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          appointment_date?: string
+          appointment_time?: string
+          client_id?: string | null
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          id?: string
+          location?: string | null
+          reminder_sent?: boolean | null
+          status?: string | null
+          title?: string
+          type?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "appointments_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       capital_funds: {
         Row: {
           amount: number
@@ -55,55 +114,178 @@ export type Database = {
       }
       clients: {
         Row: {
+          account_number: string | null
           address: string | null
+          bank_name: string | null
           birth_date: string | null
           city: string | null
           created_at: string | null
           credit_score: number | null
           dni: string
           email: string | null
+          emergency_contact_name: string | null
+          emergency_contact_phone: string | null
           full_name: string
           id: string
+          marital_status: string | null
           monthly_income: number | null
           occupation: string | null
           phone: string
+          references_json: Json | null
+          routing_number: string | null
+          spouse_name: string | null
+          spouse_phone: string | null
           status: string | null
+          supervisor_name: string | null
+          supervisor_phone: string | null
           updated_at: string | null
           user_id: string | null
+          workplace_address: string | null
+          workplace_name: string | null
+          workplace_phone: string | null
+          years_employed: number | null
         }
         Insert: {
+          account_number?: string | null
           address?: string | null
+          bank_name?: string | null
           birth_date?: string | null
           city?: string | null
           created_at?: string | null
           credit_score?: number | null
           dni: string
           email?: string | null
+          emergency_contact_name?: string | null
+          emergency_contact_phone?: string | null
           full_name: string
           id?: string
+          marital_status?: string | null
           monthly_income?: number | null
           occupation?: string | null
           phone: string
+          references_json?: Json | null
+          routing_number?: string | null
+          spouse_name?: string | null
+          spouse_phone?: string | null
           status?: string | null
+          supervisor_name?: string | null
+          supervisor_phone?: string | null
           updated_at?: string | null
           user_id?: string | null
+          workplace_address?: string | null
+          workplace_name?: string | null
+          workplace_phone?: string | null
+          years_employed?: number | null
         }
         Update: {
+          account_number?: string | null
           address?: string | null
+          bank_name?: string | null
           birth_date?: string | null
           city?: string | null
           created_at?: string | null
           credit_score?: number | null
           dni?: string
           email?: string | null
+          emergency_contact_name?: string | null
+          emergency_contact_phone?: string | null
           full_name?: string
           id?: string
+          marital_status?: string | null
           monthly_income?: number | null
           occupation?: string | null
           phone?: string
+          references_json?: Json | null
+          routing_number?: string | null
+          spouse_name?: string | null
+          spouse_phone?: string | null
           status?: string | null
+          supervisor_name?: string | null
+          supervisor_phone?: string | null
           updated_at?: string | null
           user_id?: string | null
+          workplace_address?: string | null
+          workplace_name?: string | null
+          workplace_phone?: string | null
+          years_employed?: number | null
+        }
+        Relationships: []
+      }
+      company_settings: {
+        Row: {
+          address: string | null
+          business_type: string | null
+          city: string | null
+          company_name: string
+          country: string | null
+          created_at: string
+          currency: string | null
+          description: string | null
+          email: string | null
+          grace_period_days: number | null
+          id: string
+          interest_rate_default: number | null
+          late_fee_percentage: number | null
+          logo_url: string | null
+          max_loan_amount: number | null
+          min_loan_amount: number | null
+          phone: string | null
+          postal_code: string | null
+          state: string | null
+          tax_id: string | null
+          updated_at: string
+          user_id: string
+          website: string | null
+        }
+        Insert: {
+          address?: string | null
+          business_type?: string | null
+          city?: string | null
+          company_name: string
+          country?: string | null
+          created_at?: string
+          currency?: string | null
+          description?: string | null
+          email?: string | null
+          grace_period_days?: number | null
+          id?: string
+          interest_rate_default?: number | null
+          late_fee_percentage?: number | null
+          logo_url?: string | null
+          max_loan_amount?: number | null
+          min_loan_amount?: number | null
+          phone?: string | null
+          postal_code?: string | null
+          state?: string | null
+          tax_id?: string | null
+          updated_at?: string
+          user_id: string
+          website?: string | null
+        }
+        Update: {
+          address?: string | null
+          business_type?: string | null
+          city?: string | null
+          company_name?: string
+          country?: string | null
+          created_at?: string
+          currency?: string | null
+          description?: string | null
+          email?: string | null
+          grace_period_days?: number | null
+          id?: string
+          interest_rate_default?: number | null
+          late_fee_percentage?: number | null
+          logo_url?: string | null
+          max_loan_amount?: number | null
+          min_loan_amount?: number | null
+          phone?: string | null
+          postal_code?: string | null
+          state?: string | null
+          tax_id?: string | null
+          updated_at?: string
+          user_id?: string
+          website?: string | null
         }
         Relationships: []
       }
@@ -142,6 +324,71 @@ export type Database = {
           status?: string | null
         }
         Relationships: []
+      }
+      loan_requests: {
+        Row: {
+          client_id: string
+          collateral_description: string | null
+          created_at: string
+          employment_status: string | null
+          existing_debts: number | null
+          id: string
+          income_verification: string | null
+          monthly_income: number | null
+          purpose: string | null
+          requested_amount: number
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          collateral_description?: string | null
+          created_at?: string
+          employment_status?: string | null
+          existing_debts?: number | null
+          id?: string
+          income_verification?: string | null
+          monthly_income?: number | null
+          purpose?: string | null
+          requested_amount: number
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          collateral_description?: string | null
+          created_at?: string
+          employment_status?: string | null
+          existing_debts?: number | null
+          id?: string
+          income_verification?: string | null
+          monthly_income?: number | null
+          purpose?: string | null
+          requested_amount?: number
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "loan_requests_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       loans: {
         Row: {
@@ -273,6 +520,63 @@ export type Database = {
           },
         ]
       }
+      products: {
+        Row: {
+          barcode: string | null
+          brand: string | null
+          category: string | null
+          created_at: string
+          current_stock: number | null
+          description: string | null
+          id: string
+          min_stock: number | null
+          name: string
+          purchase_price: number | null
+          selling_price: number | null
+          sku: string | null
+          status: string | null
+          unit_type: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          barcode?: string | null
+          brand?: string | null
+          category?: string | null
+          created_at?: string
+          current_stock?: number | null
+          description?: string | null
+          id?: string
+          min_stock?: number | null
+          name: string
+          purchase_price?: number | null
+          selling_price?: number | null
+          sku?: string | null
+          status?: string | null
+          unit_type?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          barcode?: string | null
+          brand?: string | null
+          category?: string | null
+          created_at?: string
+          current_stock?: number | null
+          description?: string | null
+          id?: string
+          min_stock?: number | null
+          name?: string
+          purchase_price?: number | null
+          selling_price?: number | null
+          sku?: string | null
+          status?: string | null
+          unit_type?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           address: string | null
@@ -303,6 +607,333 @@ export type Database = {
           id?: string
           phone?: string | null
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      purchase_details: {
+        Row: {
+          created_at: string
+          id: string
+          product_id: string
+          purchase_id: string
+          quantity: number
+          total_price: number
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          product_id: string
+          purchase_id: string
+          quantity: number
+          total_price: number
+          unit_price: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          product_id?: string
+          purchase_id?: string
+          quantity?: number
+          total_price?: number
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_details_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_details_purchase_id_fkey"
+            columns: ["purchase_id"]
+            isOneToOne: false
+            referencedRelation: "purchases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchases: {
+        Row: {
+          created_at: string
+          id: string
+          notes: string | null
+          purchase_date: string | null
+          purchase_number: string
+          status: string | null
+          supplier_id: string | null
+          total_amount: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          purchase_date?: string | null
+          purchase_number: string
+          status?: string | null
+          supplier_id?: string | null
+          total_amount?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          purchase_date?: string | null
+          purchase_number?: string
+          status?: string | null
+          supplier_id?: string | null
+          total_amount?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchases_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quote_details: {
+        Row: {
+          created_at: string
+          id: string
+          product_id: string
+          quantity: number
+          quote_id: string
+          total_price: number
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          product_id: string
+          quantity: number
+          quote_id: string
+          total_price: number
+          unit_price: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          product_id?: string
+          quantity?: number
+          quote_id?: string
+          total_price?: number
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_details_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_details_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quotes: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          id: string
+          notes: string | null
+          quote_date: string | null
+          quote_number: string
+          status: string | null
+          total_amount: number | null
+          updated_at: string
+          user_id: string
+          valid_until: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          quote_date?: string | null
+          quote_number: string
+          status?: string | null
+          total_amount?: number | null
+          updated_at?: string
+          user_id: string
+          valid_until?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          quote_date?: string | null
+          quote_number?: string
+          status?: string | null
+          total_amount?: number | null
+          updated_at?: string
+          user_id?: string
+          valid_until?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quotes_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sale_details: {
+        Row: {
+          created_at: string
+          id: string
+          product_id: string
+          quantity: number
+          sale_id: string
+          total_price: number
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          product_id: string
+          quantity: number
+          sale_id: string
+          total_price: number
+          unit_price: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          product_id?: string
+          quantity?: number
+          sale_id?: string
+          total_price?: number
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sale_details_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sale_details_sale_id_fkey"
+            columns: ["sale_id"]
+            isOneToOne: false
+            referencedRelation: "sales"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          id: string
+          notes: string | null
+          payment_method: string | null
+          sale_date: string | null
+          sale_number: string
+          status: string | null
+          total_amount: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          payment_method?: string | null
+          sale_date?: string | null
+          sale_number: string
+          status?: string | null
+          total_amount?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          notes?: string | null
+          payment_method?: string | null
+          sale_date?: string | null
+          sale_number?: string
+          status?: string | null
+          total_amount?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      suppliers: {
+        Row: {
+          address: string | null
+          city: string | null
+          company_name: string
+          contact_name: string | null
+          created_at: string
+          email: string | null
+          id: string
+          phone: string | null
+          status: string | null
+          tax_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          address?: string | null
+          city?: string | null
+          company_name: string
+          contact_name?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          phone?: string | null
+          status?: string | null
+          tax_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          address?: string | null
+          city?: string | null
+          company_name?: string
+          contact_name?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          phone?: string | null
+          status?: string | null
+          tax_id?: string | null
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }

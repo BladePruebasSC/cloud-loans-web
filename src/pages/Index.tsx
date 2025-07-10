@@ -7,11 +7,13 @@ import RegisterForm from '@/components/RegisterForm';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import Dashboard from '@/pages/Dashboard';
+import CompanySettings from '@/components/company/CompanySettings';
+import ClientForm from '@/components/clients/ClientForm';
+import LoansModule from '@/components/loans/LoansModule';
+import InventoryModule from '@/components/inventory/InventoryModule';
+import RequestsModule from '@/components/requests/RequestsModule';
 
 // Placeholder components para las rutas
-const Prestamos = () => <div className="p-6"><h1 className="text-2xl font-bold">Préstamos</h1></div>;
-const Inventario = () => <div className="p-6"><h1 className="text-2xl font-bold">Inventario</h1></div>;
-const Solicitudes = () => <div className="p-6"><h1 className="text-2xl font-bold">Solicitudes</h1></div>;
 const Bancos = () => <div className="p-6"><h1 className="text-2xl font-bold">Bancos</h1></div>;
 const Utilidades = () => <div className="p-6"><h1 className="text-2xl font-bold">Utilidades</h1></div>;
 const Turnos = () => <div className="p-6"><h1 className="text-2xl font-bold">Turnos</h1></div>;
@@ -20,7 +22,6 @@ const Documentos = () => <div className="p-6"><h1 className="text-2xl font-bold"
 const Mapa = () => <div className="p-6"><h1 className="text-2xl font-bold">Mapa en vivo</h1></div>;
 const Acuerdos = () => <div className="p-6"><h1 className="text-2xl font-bold">Acuerdo de pagos</h1></div>;
 const Reportes = () => <div className="p-6"><h1 className="text-2xl font-bold">Reportes</h1></div>;
-const Empresa = () => <div className="p-6"><h1 className="text-2xl font-bold">Mi empresa</h1></div>;
 const Ayuda = () => <div className="p-6"><h1 className="text-2xl font-bold">Ayuda</h1></div>;
 
 const Index = () => {
@@ -117,9 +118,9 @@ const Index = () => {
           <main className="flex-1">
             <Routes>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/prestamos" element={<Prestamos />} />
-              <Route path="/inventario" element={<Inventario />} />
-              <Route path="/solicitudes" element={<Solicitudes />} />
+              <Route path="/prestamos" element={<LoansModule />} />
+              <Route path="/inventario" element={<InventoryModule />} />
+              <Route path="/solicitudes" element={<RequestsModule />} />
               <Route path="/bancos" element={<Bancos />} />
               <Route path="/utilidades" element={<Utilidades />} />
               <Route path="/turnos" element={<Turnos />} />
@@ -128,7 +129,8 @@ const Index = () => {
               <Route path="/mapa" element={<Mapa />} />
               <Route path="/acuerdos" element={<Acuerdos />} />
               <Route path="/reportes" element={<Reportes />} />
-              <Route path="/empresa" element={<Empresa />} />
+              <Route path="/empresa" element={<CompanySettings />} />
+              <Route path="/clientes/nuevo" element={<ClientForm />} />
               <Route path="/ayuda" element={<Ayuda />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
