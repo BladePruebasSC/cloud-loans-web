@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CompanySettings } from './CompanySettings';
+import CompanySettings from './CompanySettings';
 import { EmployeesModule } from './EmployeesModule';
 import { HolidaysModule } from './HolidaysModule';
 import { RoutesModule } from './RoutesModule';
