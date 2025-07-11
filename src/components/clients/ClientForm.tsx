@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,13 +10,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { User, Heart, Briefcase, CreditCard, Users, Star } from 'lucide-react';
 
 const ClientForm = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { id } = useParams();
   const [loading, setLoading] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState('personal');
 
   const [formData, setFormData] = useState({
@@ -62,6 +64,74 @@ const ClientForm = () => {
       { name: '', phone: '', relationship: '' },
     ]
   });
+
+  // Detectar si estamos editando basado en el ID en la URL
+  useEffect(() => {
+    if (id) {
+      setIsEditing(true);
+      loadClientData(id);
+    }
+  }, [id]);
+
+  const loadClientData = async (clientId: string) => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('clients')
+        .select('*')
+        .eq('id', clientId)
+        .single();
+
+      if (error) {
+        console.error('Error loading client:', error);
+        toast.error('Error al cargar los datos del cliente');
+        navigate('/clientes');
+        return;
+      }
+
+      if (data) {
+        // Cargar referencias o usar referencias vacías
+        const references = data.references_json || [
+          { name: '', phone: '', relationship: '' },
+          { name: '', phone: '', relationship: '' }
+        ];
+
+        setFormData({
+          full_name: data.full_name || '',
+          dni: data.dni || '',
+          birth_date: data.birth_date || '',
+          phone: data.phone || '',
+          email: data.email || '',
+          address: data.address || '',
+          city: data.city || '',
+          marital_status: data.marital_status || '',
+          spouse_name: data.spouse_name || '',
+          spouse_phone: data.spouse_phone || '',
+          emergency_contact_name: data.emergency_contact_name || '',
+          emergency_contact_phone: data.emergency_contact_phone || '',
+          workplace_name: data.workplace_name || '',
+          workplace_address: data.workplace_address || '',
+          workplace_phone: data.workplace_phone || '',
+          occupation: data.occupation || '',
+          years_employed: data.years_employed ? data.years_employed.toString() : '',
+          monthly_income: data.monthly_income ? data.monthly_income.toString() : '',
+          supervisor_name: data.supervisor_name || '',
+          supervisor_phone: data.supervisor_phone || '',
+          bank_name: data.bank_name || '',
+          account_number: data.account_number || '',
+          routing_number: data.routing_number || '',
+          credit_score: data.credit_score ? data.credit_score.toString() : '',
+          references: references
+        });
+      }
+    } catch (error) {
+      console.error('Error loading client data:', error);
+      toast.error('Error inesperado al cargar los datos del cliente');
+      navigate('/clientes');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({
@@ -115,17 +185,35 @@ const ClientForm = () => {
         status: 'active'
       };
 
-      const { error } = await supabase
-        .from('clients')
-        .insert([clientData]);
+      if (isEditing && id) {
+        // Actualizar cliente existente
+        const { error } = await supabase
+          .from('clients')
+          .update(clientData)
+          .eq('id', id);
 
-      if (error) {
-        console.error('Error creating client:', error);
-        toast.error('Error al crear el cliente');
-        return;
+        if (error) {
+          console.error('Error updating client:', error);
+          toast.error('Error al actualizar el cliente');
+          return;
+        }
+
+        toast.success('Cliente actualizado exitosamente');
+      } else {
+        // Crear nuevo cliente
+        const { error } = await supabase
+          .from('clients')
+          .insert([clientData]);
+
+        if (error) {
+          console.error('Error creating client:', error);
+          toast.error('Error al crear el cliente');
+          return;
+        }
+
+        toast.success('Cliente creado exitosamente');
       }
 
-      toast.success('Cliente creado exitosamente');
       navigate('/clientes');
     } catch (error) {
       console.error('Error in handleSubmit:', error);
@@ -138,7 +226,7 @@ const ClientForm = () => {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Nuevo Cliente</h1>
+        <h1 className="text-3xl font-bold text-gray-900">{isEditing ? 'Editar Cliente' : 'Nuevo Cliente'}</h1>
         <Button variant="outline" onClick={() => navigate('/clientes')}>
           Cancelar
         </Button>
@@ -497,7 +585,7 @@ const ClientForm = () => {
             Cancelar
           </Button>
           <Button type="submit" disabled={loading}>
-            {loading ? 'Guardando...' : 'Crear Cliente'}
+            {loading ? 'Guardando...' : (isEditing ? 'Actualizar Cliente' : 'Crear Cliente')}
           </Button>
         </div>
       </form>
