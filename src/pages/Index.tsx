@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
@@ -14,9 +14,13 @@ import UtilitiesModule from '@/components/utilities/UtilitiesModule';
 import ShiftsModule from '@/components/shifts/ShiftsModule';
 import ClientForm from '@/components/clients/ClientForm';
 import { ClientsModule } from '@/components/clients/ClientsModule';
+import { MapModule } from '@/components/map/MapModule';
+import { DocumentsModule } from '@/components/documents/DocumentsModule';
+import { CarterasModule } from '@/components/carteras/CarterasModule';
 
 const Index = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeModule, setActiveModule] = useState('inicio');
@@ -42,8 +46,10 @@ const Index = () => {
       setActiveModule('utilidades');
     } else if (path === '/turnos') {
       setActiveModule('turnos');
-    } else if (path === '/mi-empresa') {
+    } else if (path === '/mi-empresa' || path === '/empresa') {
       setActiveModule('mi-empresa');
+    } else if (path === '/mapa') {
+      setActiveModule('mapa');
     } else {
       setActiveModule('inicio');
     }
@@ -58,33 +64,11 @@ const Index = () => {
       case 'prestamos':
         return <LoansModule />;
       case 'carteras':
-        return (
-          <div className="p-6">
-            <div className="text-center py-12">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                Módulo en Desarrollo
-              </h2>
-              <p className="text-gray-600">
-                Esta funcionalidad está siendo desarrollada y estará disponible próximamente.
-              </p>
-            </div>
-          </div>
-        );
+        return <CarterasModule />;
       case 'inventario':
         return <InventoryModule />;
       case 'documentos':
-        return (
-          <div className="p-6">
-            <div className="text-center py-12">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                Módulo en Desarrollo
-              </h2>
-              <p className="text-gray-600">
-                Esta funcionalidad está siendo desarrollada y estará disponible próximamente.
-              </p>
-            </div>
-          </div>
-        );
+        return <DocumentsModule />;
       case 'solicitudes':
         return <RequestsModule />;
       case 'bancos':
@@ -95,19 +79,10 @@ const Index = () => {
         return <ShiftsModule />;
       case 'clientes':
         return location.pathname === '/clientes/nuevo' ? <ClientForm /> : <ClientsModule />;
+      case 'mapa':
+        return <MapModule />;
       default:
-        return (
-          <div className="p-6">
-            <div className="text-center py-12">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                Módulo en Desarrollo
-              </h2>
-              <p className="text-gray-600">
-                Esta funcionalidad está siendo desarrollada y estará disponible próximamente.
-              </p>
-            </div>
-          </div>
-        );
+        return <Dashboard />;
     }
   };
 

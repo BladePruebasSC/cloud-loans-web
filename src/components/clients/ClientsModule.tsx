@@ -1,13 +1,15 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
 import { 
   Plus, 
   Users, 
@@ -43,27 +45,32 @@ export const ClientsModule = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const [showClientForm, setShowClientForm] = useState(false);
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchClients();
-  }, []);
+  }, [user]);
 
   const fetchClients = async () => {
     if (!user) return;
 
     try {
+      setLoading(true);
+      console.log('Fetching clients for user:', user.id);
+      
       const { data, error } = await supabase
         .from('clients')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (error) {
-        toast.error('Error al cargar clientes');
+        console.error('Error fetching clients:', error);
+        toast.error('Error al cargar clientes: ' + error.message);
         return;
       }
 
+      console.log('Fetched clients:', data);
       setClients(data || []);
     } catch (error) {
       console.error('Error fetching clients:', error);
@@ -113,7 +120,7 @@ export const ClientsModule = () => {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Gestión de Clientes</h1>
-        <Button onClick={() => setShowClientForm(true)}>
+        <Button onClick={() => navigate('/clientes/nuevo')}>
           <Plus className="h-4 w-4 mr-2" />
           Nuevo Cliente
         </Button>
@@ -210,12 +217,17 @@ export const ClientsModule = () => {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="text-center py-8 text-gray-500">Cargando clientes...</div>
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                  <p className="text-gray-500">Cargando clientes...</p>
+                </div>
               ) : filteredClients.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No hay clientes registrados</p>
-                  <Button className="mt-4" onClick={() => setShowClientForm(true)}>
+                  <p>
+                    {searchTerm ? 'No se encontraron clientes con ese criterio de búsqueda' : 'No hay clientes registrados'}
+                  </p>
+                  <Button className="mt-4" onClick={() => navigate('/clientes/nuevo')}>
                     <Plus className="h-4 w-4 mr-2" />
                     Crear Primer Cliente
                   </Button>
