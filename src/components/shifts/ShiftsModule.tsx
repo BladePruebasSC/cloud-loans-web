@@ -1,11 +1,17 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { toast } from 'sonner';
 import { 
   Clock, 
   Plus, 
@@ -15,17 +21,223 @@ import {
   XCircle,
   AlertCircle,
   User,
-  MapPin
+  MapPin,
+  Edit,
+  Trash2
 } from 'lucide-react';
 
+interface Appointment {
+  id: string;
+  user_id: string;
+  client_id: string | null;
+  appointment_date: string;
+  appointment_time: string;
+  type: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  status: string;
+  duration_minutes: number;
+  reminder_sent: boolean;
+  created_at: string;
+  updated_at: string;
+  clients?: {
+    id: string;
+    full_name: string;
+    phone: string;
+  };
+}
+
+interface Client {
+  id: string;
+  full_name: string;
+  dni: string;
+  phone: string;
+}
+
 const ShiftsModule = () => {
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('agenda');
+  const [showAppointmentForm, setShowAppointmentForm] = useState(false);
+  const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
+  const { user } = useAuth();
+
+  const [appointmentForm, setAppointmentForm] = useState({
+    client_id: '',
+    appointment_date: new Date().toISOString().split('T')[0],
+    appointment_time: '09:00',
+    type: 'meeting',
+    title: '',
+    description: '',
+    location: '',
+    duration_minutes: 60
+  });
+
+  useEffect(() => {
+    if (user) {
+      fetchAppointments();
+      fetchClients();
+    }
+  }, [user]);
+
+  const fetchAppointments = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('appointments')
+        .select(`
+          *,
+          clients (
+            id,
+            full_name,
+            phone
+          )
+        `)
+        .order('appointment_date', { ascending: true })
+        .order('appointment_time', { ascending: true });
+
+      if (error) throw error;
+      setAppointments(data || []);
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+      toast.error('Error al cargar citas');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchClients = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, full_name, dni, phone')
+        .eq('status', 'active')
+        .order('full_name');
+
+      if (error) throw error;
+      setClients(data || []);
+    } catch (error) {
+      console.error('Error fetching clients:', error);
+      toast.error('Error al cargar clientes');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    try {
+      const appointmentData = {
+        ...appointmentForm,
+        user_id: user.id,
+        status: 'scheduled'
+      };
+
+      if (editingAppointment) {
+        const { error } = await supabase
+          .from('appointments')
+          .update(appointmentData)
+          .eq('id', editingAppointment.id);
+
+        if (error) throw error;
+        toast.success('Cita actualizada exitosamente');
+      } else {
+        const { error } = await supabase
+          .from('appointments')
+          .insert([appointmentData]);
+
+        if (error) throw error;
+        toast.success('Cita programada exitosamente');
+      }
+
+      setShowAppointmentForm(false);
+      setEditingAppointment(null);
+      resetForm();
+      fetchAppointments();
+    } catch (error) {
+      console.error('Error saving appointment:', error);
+      toast.error('Error al guardar cita');
+    }
+  };
+
+  const updateAppointmentStatus = async (appointmentId: string, status: string) => {
+    try {
+      const { error } = await supabase
+        .from('appointments')
+        .update({ status })
+        .eq('id', appointmentId);
+
+      if (error) throw error;
+
+      toast.success(`Cita ${status === 'confirmed' ? 'confirmada' : status === 'completed' ? 'completada' : 'cancelada'} exitosamente`);
+      fetchAppointments();
+    } catch (error) {
+      console.error('Error updating appointment:', error);
+      toast.error('Error al actualizar cita');
+    }
+  };
+
+  const deleteAppointment = async (appointmentId: string) => {
+    if (!confirm('¿Estás seguro de que deseas eliminar esta cita?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('appointments')
+        .delete()
+        .eq('id', appointmentId);
+
+      if (error) throw error;
+
+      toast.success('Cita eliminada exitosamente');
+      fetchAppointments();
+    } catch (error) {
+      console.error('Error deleting appointment:', error);
+      toast.error('Error al eliminar cita');
+    }
+  };
+
+  const resetForm = () => {
+    setAppointmentForm({
+      client_id: '',
+      appointment_date: new Date().toISOString().split('T')[0],
+      appointment_time: '09:00',
+      type: 'meeting',
+      title: '',
+      description: '',
+      location: '',
+      duration_minutes: 60
+    });
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'scheduled':
+        return <Badge variant="secondary" className="bg-blue-100 text-blue-800">Programada</Badge>;
+      case 'confirmed':
+        return <Badge variant="default" className="bg-green-100 text-green-800">Confirmada</Badge>;
+      case 'completed':
+        return <Badge variant="default" className="bg-purple-100 text-purple-800">Completada</Badge>;
+      case 'cancelled':
+        return <Badge variant="destructive">Cancelada</Badge>;
+      default:
+        return <Badge variant="secondary">{status}</Badge>;
+    }
+  };
+
+  const todayAppointments = appointments.filter(apt => 
+    apt.appointment_date === new Date().toISOString().split('T')[0]
+  );
+  const confirmedAppointments = todayAppointments.filter(apt => apt.status === 'confirmed');
+  const pendingAppointments = todayAppointments.filter(apt => apt.status === 'scheduled');
+  const cancelledAppointments = todayAppointments.filter(apt => apt.status === 'cancelled');
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Gestión de Turnos</h1>
-        <Button>
+        <Button onClick={() => setShowAppointmentForm(true)}>
           <Plus className="h-4 w-4 mr-2" />
           Nuevo Turno
         </Button>
@@ -48,7 +260,7 @@ const ShiftsModule = () => {
                 <Calendar className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">8</div>
+                <div className="text-2xl font-bold">{todayAppointments.length}</div>
                 <p className="text-xs text-muted-foreground">Programados</p>
               </CardContent>
             </Card>
@@ -59,7 +271,7 @@ const ShiftsModule = () => {
                 <CheckCircle className="h-4 w-4 text-green-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">6</div>
+                <div className="text-2xl font-bold text-green-600">{confirmedAppointments.length}</div>
                 <p className="text-xs text-muted-foreground">Asistirán</p>
               </CardContent>
             </Card>
@@ -70,8 +282,8 @@ const ShiftsModule = () => {
                 <AlertCircle className="h-4 w-4 text-orange-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-orange-600">2</div>
-                <p className="text-xs text-muted-foreground">Sin confirmar</p>
+                <div className="text-2xl font-bold text-orange-600">{pendingAppointments.length}</div>
+                <p className="text-xs text-muted-foreference">Sin confirmar</p>
               </CardContent>
             </Card>
 
@@ -81,115 +293,99 @@ const ShiftsModule = () => {
                 <XCircle className="h-4 w-4 text-red-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-red-600">0</div>
+                <div className="text-2xl font-bold text-red-600">{cancelledAppointments.length}</div>
                 <p className="text-xs text-muted-foreground">Hoy</p>
               </CardContent>
             </Card>
           </div>
 
-          {/* Nuevo Turno */}
+          {/* Appointments List */}
           <Card>
             <CardHeader>
-              <CardTitle>Programar Nuevo Turno</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <Label htmlFor="client_select">Cliente</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar cliente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="client1">Juan Pérez</SelectItem>
-                      <SelectItem value="client2">María González</SelectItem>
-                      <SelectItem value="client3">Carlos Rodríguez</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="appointment_date">Fecha</Label>
-                  <Input id="appointment_date" type="date" />
-                </div>
-                <div>
-                  <Label htmlFor="appointment_time">Hora</Label>
-                  <Input id="appointment_time" type="time" />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="purpose">Propósito</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar propósito" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="payment">Cobro de Cuota</SelectItem>
-                      <SelectItem value="consultation">Consulta</SelectItem>
-                      <SelectItem value="new_loan">Nuevo Préstamo</SelectItem>
-                      <SelectItem value="documentation">Documentación</SelectItem>
-                      <SelectItem value="other">Otros</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="location">Ubicación</Label>
-                  <Input id="location" placeholder="Dirección o lugar de encuentro" />
-                </div>
-              </div>
-              <Button>Programar Turno</Button>
-            </CardContent>
-          </Card>
-
-          {/* Lista de Turnos */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Turnos de Hoy</CardTitle>
+              <CardTitle>Turnos Programados</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {[
-                  { time: '09:00', client: 'Juan Pérez', purpose: 'Cobro de Cuota', status: 'confirmed', location: 'Oficina' },
-                  { time: '10:30', client: 'María González', purpose: 'Nuevo Préstamo', status: 'pending', location: 'Casa del cliente' },
-                  { time: '14:00', client: 'Carlos Rodríguez', purpose: 'Consulta', status: 'confirmed', location: 'Oficina' },
-                  { time: '16:00', client: 'Ana Martínez', purpose: 'Documentación', status: 'pending', location: 'Oficina' },
-                ].map((appointment, index) => (
-                  <div key={index} className="border rounded-lg p-4 hover:bg-gray-50">
-                    <div className="flex justify-between items-start">
-                      <div className="space-y-2">
-                        <div className="flex items-center space-x-3">
-                          <Clock className="h-4 w-4 text-gray-500" />
-                          <span className="font-medium">{appointment.time}</span>
-                          <span className={`px-2 py-1 rounded text-xs ${
-                            appointment.status === 'confirmed' 
-                              ? 'bg-green-100 text-green-800' 
-                              : 'bg-orange-100 text-orange-800'
-                          }`}>
-                            {appointment.status === 'confirmed' ? 'Confirmado' : 'Pendiente'}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 text-sm text-gray-600">
-                          <div className="flex items-center">
-                            <User className="h-3 w-3 mr-1" />
-                            {appointment.client}
+              {loading ? (
+                <div className="text-center py-8">Cargando turnos...</div>
+              ) : appointments.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay turnos programados</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {appointments.map((appointment) => (
+                    <div key={appointment.id} className="border rounded-lg p-4 hover:bg-gray-50">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-2 flex-1">
+                          <div className="flex items-center space-x-3">
+                            <Clock className="h-4 w-4 text-gray-500" />
+                            <span className="font-medium">
+                              {new Date(appointment.appointment_date).toLocaleDateString()} - {appointment.appointment_time}
+                            </span>
+                            {getStatusBadge(appointment.status)}
                           </div>
-                          <div>{appointment.purpose}</div>
-                          <div className="flex items-center">
-                            <MapPin className="h-3 w-3 mr-1" />
-                            {appointment.location}
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+                            <div className="flex items-center">
+                              <User className="h-3 w-3 mr-1" />
+                              {appointment.clients?.full_name || 'Cliente no especificado'}
+                            </div>
+                            <div>{appointment.title}</div>
+                            <div className="flex items-center">
+                              <MapPin className="h-3 w-3 mr-1" />
+                              {appointment.location || 'Oficina'}
+                            </div>
                           </div>
+                          {appointment.description && (
+                            <p className="text-sm text-gray-600">
+                              <strong>Descripción:</strong> {appointment.description}
+                            </p>
+                          )}
                         </div>
-                      </div>
-                      <div className="flex space-x-2">
-                        <Button size="sm" variant="outline">Editar</Button>
-                        <Button size="sm">
-                          {appointment.status === 'confirmed' ? 'Completar' : 'Confirmar'}
-                        </Button>
+                        <div className="flex space-x-2 ml-4">
+                          {appointment.status === 'scheduled' && (
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              className="text-green-600 hover:bg-green-50"
+                              onClick={() => updateAppointmentStatus(appointment.id, 'confirmed')}
+                            >
+                              Confirmar
+                            </Button>
+                          )}
+                          {appointment.status === 'confirmed' && (
+                            <Button 
+                              size="sm"
+                              onClick={() => updateAppointmentStatus(appointment.id, 'completed')}
+                            >
+                              Completar
+                            </Button>
+                          )}
+                          <Button size="sm" variant="outline" onClick={() => {
+                            setEditingAppointment(appointment);
+                            setAppointmentForm({
+                              client_id: appointment.client_id || '',
+                              appointment_date: appointment.appointment_date,
+                              appointment_time: appointment.appointment_time,
+                              type: appointment.type,
+                              title: appointment.title,
+                              description: appointment.description || '',
+                              location: appointment.location || '',
+                              duration_minutes: appointment.duration_minutes
+                            });
+                            setShowAppointmentForm(true);
+                          }}>
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => deleteAppointment(appointment.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -200,59 +396,10 @@ const ShiftsModule = () => {
               <CardTitle>Gestión de Empleados</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="font-medium mb-4">Agregar Empleado</h3>
-                  <div className="space-y-3">
-                    <div>
-                      <Label htmlFor="employee_name">Nombre Completo</Label>
-                      <Input id="employee_name" placeholder="Nombre del empleado" />
-                    </div>
-                    <div>
-                      <Label htmlFor="employee_position">Posición</Label>
-                      <Select>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar posición" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="collector">Cobrador</SelectItem>
-                          <SelectItem value="advisor">Asesor</SelectItem>
-                          <SelectItem value="manager">Gerente</SelectItem>
-                          <SelectItem value="assistant">Asistente</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label htmlFor="employee_phone">Teléfono</Label>
-                      <Input id="employee_phone" placeholder="Teléfono de contacto" />
-                    </div>
-                    <Button>Agregar Empleado</Button>
-                  </div>
-                </div>
-                
-                <div>
-                  <h3 className="font-medium mb-4">Empleados Activos</h3>
-                  <div className="space-y-2">
-                    {[
-                      { name: 'Pedro García', position: 'Cobrador', phone: '809-123-4567' },
-                      { name: 'Laura Rodríguez', position: 'Asesora', phone: '809-234-5678' },
-                      { name: 'Miguel Santos', position: 'Gerente', phone: '809-345-6789' },
-                    ].map((employee, index) => (
-                      <div key={index} className="border rounded p-3">
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <div className="font-medium">{employee.name}</div>
-                            <div className="text-sm text-gray-600">{employee.position} - {employee.phone}</div>
-                          </div>
-                          <div className="flex space-x-2">
-                            <Button size="sm" variant="outline">Editar</Button>
-                            <Button size="sm" variant="outline">Horario</Button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              <div className="text-center py-8 text-gray-500">
+                <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>Funcionalidad de empleados en desarrollo</p>
+                <p className="text-sm">Próximamente podrás gestionar empleados y asignar turnos</p>
               </div>
             </CardContent>
           </Card>
@@ -264,100 +411,182 @@ const ShiftsModule = () => {
               <CardTitle>Configuración de Horarios</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="font-medium mb-4">Horarios de Atención</h3>
-                  <div className="space-y-3">
-                    {[
-                      'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'
-                    ].map((day) => (
-                      <div key={day} className="flex items-center space-x-3">
-                        <div className="w-20 text-sm font-medium">{day}</div>
-                        <Input type="time" defaultValue="08:00" className="w-24" />
-                        <span className="text-sm text-gray-500">a</span>
-                        <Input type="time" defaultValue="18:00" className="w-24" />
-                        <input type="checkbox" defaultChecked={day !== 'Domingo'} />
-                        <span className="text-sm text-gray-500">Activo</span>
-                      </div>
-                    ))}
-                  </div>
-                  <Button className="mt-4">Guardar Horarios</Button>
-                </div>
-                
-                <div>
-                  <h3 className="font-medium mb-4">Configuración de Turnos</h3>
-                  <div className="space-y-3">
-                    <div>
-                      <Label htmlFor="appointment_duration">Duración por Turno (minutos)</Label>
-                      <Select>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar duración" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="15">15 minutos</SelectItem>
-                          <SelectItem value="30">30 minutos</SelectItem>
-                          <SelectItem value="45">45 minutos</SelectItem>
-                          <SelectItem value="60">1 hora</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label htmlFor="max_appointments">Máximo de Turnos por Día</Label>
-                      <Input id="max_appointments" type="number" defaultValue="20" />
-                    </div>
-                    <div>
-                      <Label htmlFor="advance_booking">Días de Anticipación</Label>
-                      <Input id="advance_booking" type="number" defaultValue="7" />
-                    </div>
-                    <Button>Actualizar Configuración</Button>
-                  </div>
-                </div>
+              <div className="text-center py-8 text-gray-500">
+                <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>Configuración de horarios en desarrollo</p>
+                <p className="text-sm">Próximamente podrás configurar horarios de atención</p>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="reportes" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Reportes de Turnos</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Esta Semana</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">45</div>
-                    <p className="text-sm text-gray-600">Turnos programados</p>
-                  </CardContent>
-                </Card>
-                
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Confirmados</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold text-green-600">38</div>
-                    <p className="text-sm text-gray-600">84% de confirmación</p>
-                  </CardContent>
-                </Card>
-                
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">No Shows</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold text-red-600">3</div>
-                    <p className="text-sm text-gray-600">7% de ausencias</p>
-                  </CardContent>
-                </Card>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Esta Semana</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{appointments.length}</div>
+                <p className="text-sm text-gray-600">Turnos programados</p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Confirmados</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">
+                  {appointments.filter(apt => apt.status === 'confirmed').length}
+                </div>
+                <p className="text-sm text-gray-600">
+                  {appointments.length > 0 
+                    ? Math.round((appointments.filter(apt => apt.status === 'confirmed').length / appointments.length) * 100)
+                    : 0}% de confirmación
+                </p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Completados</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-purple-600">
+                  {appointments.filter(apt => apt.status === 'completed').length}
+                </div>
+                <p className="text-sm text-gray-600">
+                  {appointments.length > 0 
+                    ? Math.round((appointments.filter(apt => apt.status === 'completed').length / appointments.length) * 100)
+                    : 0}% completados
+                </p>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
+
+      {/* Appointment Form Dialog */}
+      <Dialog open={showAppointmentForm} onOpenChange={setShowAppointmentForm}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingAppointment ? 'Editar Turno' : 'Programar Nuevo Turno'}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="client_id">Cliente</Label>
+              <Select value={appointmentForm.client_id} onValueChange={(value) => setAppointmentForm({...appointmentForm, client_id: value})}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar cliente" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clients.map(client => (
+                    <SelectItem key={client.id} value={client.id}>
+                      {client.full_name} - {client.dni}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="appointment_date">Fecha *</Label>
+                <Input
+                  id="appointment_date"
+                  type="date"
+                  value={appointmentForm.appointment_date}
+                  onChange={(e) => setAppointmentForm({...appointmentForm, appointment_date: e.target.value})}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="appointment_time">Hora *</Label>
+                <Input
+                  id="appointment_time"
+                  type="time"
+                  value={appointmentForm.appointment_time}
+                  onChange={(e) => setAppointmentForm({...appointmentForm, appointment_time: e.target.value})}
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="title">Título *</Label>
+              <Input
+                id="title"
+                value={appointmentForm.title}
+                onChange={(e) => setAppointmentForm({...appointmentForm, title: e.target.value})}
+                placeholder="Ej: Reunión de seguimiento"
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="type">Tipo</Label>
+                <Select value={appointmentForm.type} onValueChange={(value) => setAppointmentForm({...appointmentForm, type: value})}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="meeting">Reunión</SelectItem>
+                    <SelectItem value="payment">Cobro de Cuota</SelectItem>
+                    <SelectItem value="consultation">Consulta</SelectItem>
+                    <SelectItem value="new_loan">Nuevo Préstamo</SelectItem>
+                    <SelectItem value="documentation">Documentación</SelectItem>
+                    <SelectItem value="other">Otros</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="duration_minutes">Duración (min)</Label>
+                <Input
+                  id="duration_minutes"
+                  type="number"
+                  value={appointmentForm.duration_minutes}
+                  onChange={(e) => setAppointmentForm({...appointmentForm, duration_minutes: Number(e.target.value)})}
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="location">Ubicación</Label>
+              <Input
+                id="location"
+                value={appointmentForm.location}
+                onChange={(e) => setAppointmentForm({...appointmentForm, location: e.target.value})}
+                placeholder="Dirección o lugar de encuentro"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="description">Descripción</Label>
+              <Textarea
+                id="description"
+                value={appointmentForm.description}
+                onChange={(e) => setAppointmentForm({...appointmentForm, description: e.target.value})}
+                placeholder="Detalles adicionales..."
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => {
+                setShowAppointmentForm(false);
+                setEditingAppointment(null);
+                resetForm();
+              }}>
+                Cancelar
+              </Button>
+              <Button type="submit">
+                {editingAppointment ? 'Actualizar' : 'Programar'} Turno
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
