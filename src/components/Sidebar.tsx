@@ -15,7 +15,7 @@ import {
   HandHeart, 
   BarChart3, 
   Settings,
-  HelpCircle,
+  Users,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
@@ -29,6 +29,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
   const menuItems = [
     { name: 'Inicio', path: '/', icon: Home },
     { name: 'Préstamos', path: '/prestamos', icon: CreditCard },
+    { name: 'Clientes', path: '/clientes', icon: Users },
     { name: 'Inventario', path: '/inventario', icon: Package },
     { name: 'Solicitudes', path: '/solicitudes', icon: FileText },
     { name: 'Bancos', path: '/bancos', icon: Building2 },
@@ -40,7 +41,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
     { name: 'Acuerdo de pagos', path: '/acuerdos', icon: HandHeart },
     { name: 'Reportes', path: '/reportes', icon: BarChart3 },
     { name: 'Mi empresa', path: '/empresa', icon: Settings },
-    { name: 'Ayuda', path: '/ayuda', icon: HelpCircle },
   ];
 
   return (

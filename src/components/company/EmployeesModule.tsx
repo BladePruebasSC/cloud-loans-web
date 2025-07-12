@@ -28,13 +28,15 @@ import {
 
 const employeeSchema = z.object({
   full_name: z.string().min(1, 'El nombre es requerido'),
-  email: z.string().email('Email inválido').optional().or(z.literal('')),
+  email: z.string().email('Email inválido'),
   phone: z.string().optional(),
   dni: z.string().optional(),
   position: z.string().min(1, 'El cargo es requerido'),
   department: z.string().optional(),
   salary: z.number().min(0, 'El salario debe ser mayor o igual a 0').optional(),
   hire_date: z.string().optional(),
+  role: z.enum(['admin', 'employee', 'manager']).default('employee'),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
 });
 
 type EmployeeFormData = z.infer<typeof employeeSchema>;
@@ -50,7 +52,9 @@ interface Employee {
   salary: number | null;
   hire_date: string | null;
   status: string;
+  role: string;
   company_owner_id: string | null;
+  auth_user_id: string | null;
   created_at: string;
 }
 
@@ -77,39 +81,19 @@ export const EmployeesModule = () => {
     if (!user) return;
 
     try {
-      // Usar datos mock ya que la tabla employees no está disponible en Supabase aún
-      const mockEmployees: Employee[] = [
-        {
-          id: '1',
-          full_name: 'Juan Pérez',
-          email: 'juan@example.com',
-          phone: '809-123-4567',
-          dni: '001-1234567-8',
-          position: 'Gerente',
-          department: 'Administración',
-          salary: 50000,
-          hire_date: '2023-01-15',
-          status: 'active',
-          company_owner_id: user.id,
-          created_at: new Date().toISOString()
-        },
-        {
-          id: '2',
-          full_name: 'María García',
-          email: 'maria@example.com',
-          phone: '809-765-4321',
-          dni: '001-7654321-9',
-          position: 'Asistente',
-          department: 'Ventas',
-          salary: 35000,
-          hire_date: '2023-03-20',
-          status: 'active',
-          company_owner_id: user.id,
-          created_at: new Date().toISOString()
-        }
-      ];
+      const { data, error } = await supabase
+        .from('employees')
+        .select('*')
+        .eq('company_owner_id', user.id)
+        .order('created_at', { ascending: false });
 
-      setEmployees(mockEmployees);
+      if (error) {
+        console.error('Error fetching employees:', error);
+        toast.error('Error al cargar empleados');
+        return;
+      }
+
+      setEmployees(data || []);
     } catch (error) {
       console.error('Error in fetchEmployees:', error);
       toast.error('Error al cargar empleados');
@@ -123,36 +107,70 @@ export const EmployeesModule = () => {
 
     setLoading(true);
     try {
-      const employeeData = {
-        ...data,
-        company_owner_id: user.id,
-        salary: data.salary || null,
-        status: 'active',
-        created_at: new Date().toISOString()
-      };
-
       if (editingEmployee) {
-        // Simular actualización
-        setEmployees(prev => prev.map(emp => 
-          emp.id === editingEmployee.id 
-            ? { ...emp, ...employeeData }
-            : emp
-        ));
+        // Update existing employee
+        const { error } = await supabase
+          .from('employees')
+          .update({
+            full_name: data.full_name,
+            email: data.email,
+            phone: data.phone,
+            dni: data.dni,
+            position: data.position,
+            department: data.department,
+            salary: data.salary || null,
+            hire_date: data.hire_date,
+            role: data.role,
+          })
+          .eq('id', editingEmployee.id);
+
+        if (error) {
+          throw error;
+        }
+
         toast.success('Empleado actualizado exitosamente');
       } else {
-        // Simular creación
-        const newEmployee = {
-          ...employeeData,
-          id: Date.now().toString(),
-        } as Employee;
+        // Create new employee with authentication
+        const { password, ...employeeData } = data;
         
-        setEmployees(prev => [...prev, newEmployee]);
-        toast.success('Empleado agregado exitosamente');
+        // Create auth user first
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: data.email,
+          password: password,
+          options: {
+            data: {
+              full_name: data.full_name,
+              role: data.role,
+            }
+          }
+        });
+
+        if (authError) {
+          throw authError;
+        }
+
+        // Create employee record
+        const { error: employeeError } = await supabase
+          .from('employees')
+          .insert({
+            ...employeeData,
+            company_owner_id: user.id,
+            auth_user_id: authData.user?.id,
+            salary: data.salary || null,
+            status: 'active',
+          });
+
+        if (employeeError) {
+          throw employeeError;
+        }
+
+        toast.success('Empleado creado exitosamente');
       }
 
       setIsDialogOpen(false);
       setEditingEmployee(null);
       form.reset();
+      fetchEmployees(); // Refresh the list
     } catch (error) {
       console.error('Error saving employee:', error);
       toast.error('Error al guardar empleado');
@@ -172,6 +190,8 @@ export const EmployeesModule = () => {
       department: employee.department || '',
       salary: employee.salary || undefined,
       hire_date: employee.hire_date || '',
+      role: employee.role as 'admin' | 'employee' | 'manager',
+      password: '', // Don't pre-fill password for editing
     });
     setIsDialogOpen(true);
   };
@@ -180,8 +200,17 @@ export const EmployeesModule = () => {
     if (!confirm('¿Está seguro de eliminar este empleado?')) return;
 
     try {
-      setEmployees(prev => prev.filter(emp => emp.id !== id));
+      const { error } = await supabase
+        .from('employees')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        throw error;
+      }
+
       toast.success('Empleado eliminado exitosamente');
+      fetchEmployees(); // Refresh the list
     } catch (error) {
       console.error('Error deleting employee:', error);
       toast.error('Error al eliminar empleado');
@@ -192,12 +221,17 @@ export const EmployeesModule = () => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
 
     try {
-      setEmployees(prev => prev.map(emp => 
-        emp.id === id 
-          ? { ...emp, status: newStatus }
-          : emp
-      ));
+      const { error } = await supabase
+        .from('employees')
+        .update({ status: newStatus })
+        .eq('id', id);
+
+      if (error) {
+        throw error;
+      }
+
       toast.success(`Empleado ${newStatus === 'active' ? 'activado' : 'desactivado'} exitosamente`);
+      fetchEmployees(); // Refresh the list
     } catch (error) {
       console.error('Error updating employee status:', error);
       toast.error('Error al actualizar estado del empleado');
@@ -355,6 +389,45 @@ export const EmployeesModule = () => {
                       </FormItem>
                     )}
                   />
+
+                  <FormField
+                    control={form.control}
+                    name="role"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Rol</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Seleccionar rol" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="employee">Empleado</SelectItem>
+                            <SelectItem value="manager">Gerente</SelectItem>
+                            <SelectItem value="admin">Administrador</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {!editingEmployee && (
+                    <FormField
+                      control={form.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Contraseña</FormLabel>
+                          <FormControl>
+                            <Input type="password" placeholder="Contraseña" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                 </div>
 
                 <div className="flex gap-4">

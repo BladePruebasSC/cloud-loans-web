@@ -1,14 +1,17 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Plus, Users, CreditCard, DollarSign, TrendingUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { toast } from 'sonner';
 
 const Dashboard = () => {
   const navigate = useNavigate();
-
-  const stats = [
+  const { user } = useAuth();
+  const [stats, setStats] = useState([
     {
       title: 'Total Clientes',
       value: '0',
@@ -41,7 +44,94 @@ const Dashboard = () => {
       color: 'text-purple-600',
       bgColor: 'bg-purple-100'
     }
-  ];
+  ]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (user) {
+      fetchDashboardData();
+    }
+  }, [user]);
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true);
+      
+      // Obtener total de clientes
+      const { data: clientsData, error: clientsError } = await supabase
+        .from('clients')
+        .select('id, status, monthly_income')
+        .eq('user_id', user?.id);
+      
+      if (clientsError) throw clientsError;
+      
+      // Obtener préstamos activos
+      const { data: loansData, error: loansError } = await supabase
+        .from('loans')
+        .select('id, amount, remaining_balance, status, total_amount')
+        .eq('status', 'active');
+      
+      if (loansError) throw loansError;
+      
+      // Obtener pagos para calcular ganancias
+      const { data: paymentsData, error: paymentsError } = await supabase
+        .from('payments')
+        .select('amount, interest_amount')
+        .eq('status', 'paid');
+      
+      if (paymentsError) throw paymentsError;
+      
+      // Calcular estadísticas
+      const totalClients = clientsData?.length || 0;
+      const activeClients = clientsData?.filter(c => c.status === 'active').length || 0;
+      const activeLoans = loansData?.length || 0;
+      const totalLent = loansData?.reduce((sum, loan) => sum + loan.amount, 0) || 0;
+      const totalBalance = loansData?.reduce((sum, loan) => sum + loan.remaining_balance, 0) || 0;
+      const totalInterest = paymentsData?.reduce((sum, payment) => sum + payment.interest_amount, 0) || 0;
+      
+      // Actualizar estadísticas
+      setStats([
+        {
+          title: 'Total Clientes',
+          value: totalClients.toString(),
+          description: `${activeClients} activos`,
+          icon: Users,
+          color: 'text-blue-600',
+          bgColor: 'bg-blue-100'
+        },
+        {
+          title: 'Préstamos Activos',
+          value: activeLoans.toString(),
+          description: 'Préstamos en curso',
+          icon: CreditCard,
+          color: 'text-green-600',
+          bgColor: 'bg-green-100'
+        },
+        {
+          title: 'Total Prestado',
+          value: `$${totalLent.toLocaleString()}`,
+          description: `Balance: $${totalBalance.toLocaleString()}`,
+          icon: DollarSign,
+          color: 'text-yellow-600',
+          bgColor: 'bg-yellow-100'
+        },
+        {
+          title: 'Ganancias',
+          value: `$${totalInterest.toLocaleString()}`,
+          description: 'Intereses cobrados',
+          icon: TrendingUp,
+          color: 'text-purple-600',
+          bgColor: 'bg-purple-100'
+        }
+      ]);
+      
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+      toast.error('Error al cargar estadísticas');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const quickActions = [
     {

@@ -5,6 +5,8 @@ import LoginForm from '@/components/LoginForm'
 import RegisterForm from '@/components/RegisterForm'
 import Index from '@/pages/Index'
 import NotFound from '@/pages/NotFound'
+import PaymentAgreements from '@/pages/PaymentAgreements'
+import Reports from '@/pages/Reports'
 
 function App() {
   const { user, loading, signIn, signUp } = useAuth()
@@ -54,6 +56,7 @@ function App() {
       <Route path="/carteras" element={<Index />} />
       <Route path="/clientes" element={<Index />} />
       <Route path="/clientes/nuevo" element={<Index />} />
+      <Route path="/clientes/editar/:id" element={<Index />} />
       <Route path="/inventario" element={<Index />} />
       <Route path="/documentos" element={<Index />} />
       <Route path="/solicitudes" element={<Index />} />
@@ -62,6 +65,8 @@ function App() {
       <Route path="/turnos" element={<Index />} />
       <Route path="/mi-empresa" element={<Index />} />
       <Route path="/empresa" element={<Index />} />
+      <Route path="/acuerdos" element={<PaymentAgreements />} />
+      <Route path="/reportes" element={<Reports />} />
       <Route path="/mapa" element={<Index />} />
       <Route path="*" element={<NotFound />} />
     </Routes>

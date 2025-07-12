@@ -57,9 +57,14 @@ const MapModule = () => {
   useEffect(() => {
     if (user) {
       fetchClients();
-      generateMockRoutes();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (clients.length > 0) {
+      generateRoutes();
+    }
+  }, [clients]);
 
   const fetchClients = async () => {
     try {
@@ -80,38 +85,45 @@ const MapModule = () => {
     }
   };
 
-  // Generate mock routes since we don't have a routes table
-  const generateMockRoutes = () => {
-    const mockRoutes: RouteData[] = [
-      {
-        id: '1',
-        name: 'Ruta Centro',
-        clients: clients.slice(0, 5),
-        total_distance: 15.5,
-        estimated_time: 120,
-        status: 'active',
-        created_at: new Date().toISOString()
-      },
-      {
-        id: '2',
-        name: 'Ruta Norte',
-        clients: clients.slice(5, 10),
-        total_distance: 22.3,
-        estimated_time: 180,
-        status: 'active',
-        created_at: new Date().toISOString()
-      },
-      {
-        id: '3',
-        name: 'Ruta Sur',
-        clients: clients.slice(10, 15),
-        total_distance: 18.7,
-        estimated_time: 150,
-        status: 'pending',
-        created_at: new Date().toISOString()
+  // Generate routes based on real client data
+  const generateRoutes = () => {
+    if (clients.length === 0) {
+      setRoutes([]);
+      return;
+    }
+
+    const clientsWithAddress = clients.filter(c => c.address && c.city);
+    const citiesMap = new Map<string, Client[]>();
+    
+    // Group clients by city
+    clientsWithAddress.forEach(client => {
+      const city = client.city!;
+      if (!citiesMap.has(city)) {
+        citiesMap.set(city, []);
       }
-    ];
-    setRoutes(mockRoutes);
+      citiesMap.get(city)!.push(client);
+    });
+    
+    // Create routes for each city with more than 2 clients
+    const generatedRoutes: RouteData[] = [];
+    let routeId = 1;
+    
+    citiesMap.forEach((cityClients, city) => {
+      if (cityClients.length >= 2) {
+        generatedRoutes.push({
+          id: routeId.toString(),
+          name: `Ruta ${city}`,
+          clients: cityClients,
+          total_distance: cityClients.length * 2.5, // Estimated 2.5km per client
+          estimated_time: cityClients.length * 15, // Estimated 15 minutes per client
+          status: 'pending',
+          created_at: new Date().toISOString()
+        });
+        routeId++;
+      }
+    });
+    
+    setRoutes(generatedRoutes);
   };
 
   const filteredClients = clients.filter(client => {

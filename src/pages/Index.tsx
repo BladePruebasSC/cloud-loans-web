@@ -28,11 +28,11 @@ const Index = () => {
   // Set active module based on current route
   useEffect(() => {
     const path = location.pathname;
-    if (path === '/prestamos') {
+    if (path.startsWith('/prestamos')) {
       setActiveModule('prestamos');
     } else if (path === '/carteras') {
       setActiveModule('carteras');
-    } else if (path === '/clientes') {
+    } else if (path.startsWith('/clientes')) {
       setActiveModule('clientes');
     } else if (path === '/inventario') {
       setActiveModule('inventario');
@@ -78,7 +78,13 @@ const Index = () => {
       case 'turnos':
         return <ShiftsModule />;
       case 'clientes':
-        return location.pathname === '/clientes/nuevo' ? <ClientForm /> : <ClientsModule />;
+        if (location.pathname === '/clientes/nuevo') {
+          return <ClientForm />;
+        } else if (location.pathname.startsWith('/clientes/editar/')) {
+          return <ClientForm />;
+        } else {
+          return <ClientsModule />;
+        }
       case 'mapa':
         return <MapModule />;
       default:
