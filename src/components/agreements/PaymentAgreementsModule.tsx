@@ -24,7 +24,12 @@ import {
   Trash2,
   FileText,
   Search,
-  Filter
+  Filter,
+  Download,
+  Eye,
+  AlertCircle,
+  TrendingUp,
+  Calculator
 } from 'lucide-react';
 
 interface PaymentAgreement {
@@ -32,18 +37,24 @@ interface PaymentAgreement {
   loan_id: string;
   client_name: string;
   client_dni: string;
+  client_phone: string;
   loan_amount: number;
+  original_payment: number;
   agreed_payment_amount: number;
   payment_frequency: string;
   start_date: string;
   end_date: string;
   status: string;
+  reason: string;
   notes: string | null;
   created_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
   loans?: {
     id: string;
     amount: number;
     remaining_balance: number;
+    monthly_payment: number;
     clients?: {
       full_name: string;
       dni: string;
@@ -56,6 +67,7 @@ interface Loan {
   id: string;
   amount: number;
   remaining_balance: number;
+  monthly_payment: number;
   clients?: {
     full_name: string;
     dni: string;
@@ -71,14 +83,16 @@ export const PaymentAgreementsModule = () => {
   const [editingAgreement, setEditingAgreement] = useState<PaymentAgreement | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [activeTab, setActiveTab] = useState('acuerdos');
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
     loan_id: '',
     agreed_payment_amount: 0,
-    payment_frequency: 'weekly',
+    payment_frequency: 'monthly',
     start_date: new Date().toISOString().split('T')[0],
     end_date: '',
+    reason: '',
     notes: ''
   });
 
@@ -93,36 +107,64 @@ export const PaymentAgreementsModule = () => {
     try {
       setLoading(true);
       
-      // Simulamos datos de acuerdos de pago
-      // En una implementación real, estos se almacenarían en una tabla específica
+      // Simulamos datos de acuerdos de pago más completos
       const mockAgreements: PaymentAgreement[] = [
         {
           id: '1',
           loan_id: 'loan-1',
           client_name: 'Juan Pérez',
           client_dni: '001-1234567-8',
+          client_phone: '(809) 123-4567',
           loan_amount: 50000,
+          original_payment: 3500,
           agreed_payment_amount: 2500,
-          payment_frequency: 'weekly',
+          payment_frequency: 'monthly',
           start_date: '2024-01-15',
           end_date: '2024-12-15',
           status: 'active',
-          notes: 'Acuerdo especial por situación económica',
-          created_at: '2024-01-10T10:00:00Z'
+          reason: 'Dificultades económicas temporales',
+          notes: 'Cliente perdió empleo, nuevo acuerdo por 6 meses',
+          created_at: '2024-01-10T10:00:00Z',
+          approved_by: 'admin',
+          approved_at: '2024-01-12T14:30:00Z'
         },
         {
           id: '2',
           loan_id: 'loan-2',
           client_name: 'María González',
           client_dni: '001-2345678-9',
+          client_phone: '(809) 234-5678',
           loan_amount: 75000,
-          agreed_payment_amount: 5000,
+          original_payment: 5200,
+          agreed_payment_amount: 4000,
           payment_frequency: 'monthly',
           start_date: '2024-02-01',
-          end_date: '2024-12-31',
+          end_date: '2024-08-01',
           status: 'pending',
-          notes: null,
-          created_at: '2024-01-28T14:30:00Z'
+          reason: 'Reducción de ingresos por enfermedad',
+          notes: 'Solicita reducción temporal por 6 meses',
+          created_at: '2024-01-28T14:30:00Z',
+          approved_by: null,
+          approved_at: null
+        },
+        {
+          id: '3',
+          loan_id: 'loan-3',
+          client_name: 'Carlos Rodríguez',
+          client_dni: '001-3456789-0',
+          client_phone: '(809) 345-6789',
+          loan_amount: 30000,
+          original_payment: 2100,
+          agreed_payment_amount: 1500,
+          payment_frequency: 'biweekly',
+          start_date: '2024-01-01',
+          end_date: '2024-06-30',
+          status: 'completed',
+          reason: 'Emergencia familiar',
+          notes: 'Acuerdo completado exitosamente',
+          created_at: '2023-12-15T09:00:00Z',
+          approved_by: 'admin',
+          approved_at: '2023-12-16T10:00:00Z'
         }
       ];
 
@@ -143,6 +185,7 @@ export const PaymentAgreementsModule = () => {
           id,
           amount,
           remaining_balance,
+          monthly_payment,
           clients (
             full_name,
             dni,
@@ -174,14 +217,19 @@ export const PaymentAgreementsModule = () => {
         loan_id: formData.loan_id,
         client_name: selectedLoan.clients?.full_name || 'N/A',
         client_dni: selectedLoan.clients?.dni || 'N/A',
+        client_phone: selectedLoan.clients?.phone || 'N/A',
         loan_amount: selectedLoan.amount,
+        original_payment: selectedLoan.monthly_payment,
         agreed_payment_amount: formData.agreed_payment_amount,
         payment_frequency: formData.payment_frequency,
         start_date: formData.start_date,
         end_date: formData.end_date,
         status: 'pending',
+        reason: formData.reason,
         notes: formData.notes || null,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        approved_by: null,
+        approved_at: null
       };
 
       if (editingAgreement) {
@@ -213,6 +261,7 @@ export const PaymentAgreementsModule = () => {
       payment_frequency: agreement.payment_frequency,
       start_date: agreement.start_date,
       end_date: agreement.end_date,
+      reason: agreement.reason,
       notes: agreement.notes || ''
     });
     setShowForm(true);
@@ -227,32 +276,44 @@ export const PaymentAgreementsModule = () => {
 
   const updateStatus = (id: string, status: string) => {
     setAgreements(prev => prev.map(agreement => 
-      agreement.id === id ? { ...agreement, status } : agreement
+      agreement.id === id 
+        ? { 
+            ...agreement, 
+            status,
+            approved_by: status === 'approved' ? 'admin' : null,
+            approved_at: status === 'approved' ? new Date().toISOString() : null
+          } 
+        : agreement
     ));
-    toast.success('Estado actualizado exitosamente');
+    toast.success(`Acuerdo ${status === 'approved' ? 'aprobado' : status === 'rejected' ? 'rechazado' : 'actualizado'} exitosamente`);
   };
 
   const resetForm = () => {
     setFormData({
       loan_id: '',
       agreed_payment_amount: 0,
-      payment_frequency: 'weekly',
+      payment_frequency: 'monthly',
       start_date: new Date().toISOString().split('T')[0],
       end_date: '',
+      reason: '',
       notes: ''
     });
   };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'active':
-        return <Badge className="bg-green-100 text-green-800">Activo</Badge>;
       case 'pending':
-        return <Badge className="bg-yellow-100 text-yellow-800">Pendiente</Badge>;
+        return <Badge className="bg-orange-100 text-orange-800">Pendiente</Badge>;
+      case 'approved':
+        return <Badge className="bg-green-100 text-green-800">Aprobado</Badge>;
+      case 'active':
+        return <Badge className="bg-blue-100 text-blue-800">Activo</Badge>;
       case 'completed':
-        return <Badge className="bg-blue-100 text-blue-800">Completado</Badge>;
+        return <Badge className="bg-purple-100 text-purple-800">Completado</Badge>;
+      case 'rejected':
+        return <Badge variant="destructive">Rechazado</Badge>;
       case 'cancelled':
-        return <Badge variant="destructive">Cancelado</Badge>;
+        return <Badge variant="secondary">Cancelado</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
@@ -276,26 +337,37 @@ export const PaymentAgreementsModule = () => {
 
   const activeAgreements = agreements.filter(a => a.status === 'active').length;
   const pendingAgreements = agreements.filter(a => a.status === 'pending').length;
-  const totalAmount = agreements.reduce((sum, a) => sum + a.agreed_payment_amount, 0);
+  const completedAgreements = agreements.filter(a => a.status === 'completed').length;
+  const totalSavings = agreements
+    .filter(a => a.status === 'active' || a.status === 'completed')
+    .reduce((sum, a) => sum + (a.original_payment - a.agreed_payment_amount), 0);
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Acuerdos de Pago</h1>
-        <Button onClick={() => {
-          setShowForm(true);
-          setEditingAgreement(null);
-          resetForm();
-        }}>
-          <Plus className="h-4 w-4 mr-2" />
-          Nuevo Acuerdo
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline">
+            <Download className="h-4 w-4 mr-2" />
+            Exportar
+          </Button>
+          <Button onClick={() => {
+            setShowForm(true);
+            setEditingAgreement(null);
+            resetForm();
+          }}>
+            <Plus className="h-4 w-4 mr-2" />
+            Nuevo Acuerdo
+          </Button>
+        </div>
       </div>
 
-      <Tabs defaultValue="acuerdos">
-        <TabsList>
-          <TabsTrigger value="acuerdos">Lista de Acuerdos</TabsTrigger>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="acuerdos">Acuerdos</TabsTrigger>
+          <TabsTrigger value="pendientes">Pendientes</TabsTrigger>
           <TabsTrigger value="estadisticas">Estadísticas</TabsTrigger>
+          <TabsTrigger value="configuracion">Configuración</TabsTrigger>
         </TabsList>
 
         <TabsContent value="acuerdos" className="space-y-6">
@@ -336,12 +408,12 @@ export const PaymentAgreementsModule = () => {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Monto Total</CardTitle>
-                <DollarSign className="h-4 w-4 text-purple-600" />
+                <CardTitle className="text-sm font-medium">Ahorro Total</CardTitle>
+                <TrendingUp className="h-4 w-4 text-purple-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-purple-600">${totalAmount.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground">Pagos acordados</p>
+                <div className="text-2xl font-bold text-purple-600">${totalSavings.toLocaleString()}</div>
+                <p className="text-xs text-muted-foreground">Reducción mensual</p>
               </CardContent>
             </Card>
           </div>
@@ -370,9 +442,11 @@ export const PaymentAgreementsModule = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos los estados</SelectItem>
-                    <SelectItem value="active">Activo</SelectItem>
                     <SelectItem value="pending">Pendiente</SelectItem>
+                    <SelectItem value="approved">Aprobado</SelectItem>
+                    <SelectItem value="active">Activo</SelectItem>
                     <SelectItem value="completed">Completado</SelectItem>
+                    <SelectItem value="rejected">Rechazado</SelectItem>
                     <SelectItem value="cancelled">Cancelado</SelectItem>
                   </SelectContent>
                 </Select>
@@ -383,11 +457,11 @@ export const PaymentAgreementsModule = () => {
           {/* Agreements List */}
           <Card>
             <CardHeader>
-              <CardTitle>Acuerdos de Pago ({filteredAgreements.length})</CardTitle>
+              <CardTitle>Lista de Acuerdos ({filteredAgreements.length})</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="text-center py-8">Cargando acuerdos...</div>
+                <div className="text-center py-8 text-gray-500">Cargando acuerdos...</div>
               ) : filteredAgreements.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <HandHeart className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -405,53 +479,95 @@ export const PaymentAgreementsModule = () => {
                             {getStatusBadge(agreement.status)}
                           </div>
                           
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600 mb-3">
                             <div>
                               <span className="font-medium">Cédula:</span> {agreement.client_dni}
+                            </div>
+                            <div>
+                              <span className="font-medium">Teléfono:</span> {agreement.client_phone}
                             </div>
                             <div>
                               <span className="font-medium">Monto Préstamo:</span> ${agreement.loan_amount.toLocaleString()}
                             </div>
                             <div>
-                              <span className="font-medium">Pago Acordado:</span> ${agreement.agreed_payment_amount.toLocaleString()}
+                              <span className="font-medium">Cuota Original:</span> ${agreement.original_payment.toLocaleString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">Cuota Acordada:</span> 
+                              <span className="text-green-600 font-semibold"> ${agreement.agreed_payment_amount.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Ahorro:</span> 
+                              <span className="text-purple-600 font-semibold"> ${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString()}</span>
                             </div>
                             <div>
                               <span className="font-medium">Frecuencia:</span> {getFrequencyLabel(agreement.payment_frequency)}
                             </div>
                             <div>
-                              <span className="font-medium">Inicio:</span> {new Date(agreement.start_date).toLocaleDateString()}
+                              <span className="font-medium">Vigencia:</span> {new Date(agreement.start_date).toLocaleDateString()} - {new Date(agreement.end_date).toLocaleDateString()}
                             </div>
-                            <div>
-                              <span className="font-medium">Fin:</span> {new Date(agreement.end_date).toLocaleDateString()}
-                            </div>
-                            <div>
-                              <span className="font-medium">Creado:</span> {new Date(agreement.created_at).toLocaleDateString()}
-                            </div>
+                          </div>
+
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Razón:</span> {agreement.reason}
                           </div>
                           
                           {agreement.notes && (
-                            <div className="mt-2">
-                              <span className="text-sm font-medium text-gray-600">Notas:</span>
-                              <p className="text-sm text-gray-600">{agreement.notes}</p>
+                            <div className="text-sm text-gray-600 mb-2">
+                              <span className="font-medium">Notas:</span> {agreement.notes}
+                            </div>
+                          )}
+
+                          {agreement.approved_by && agreement.approved_at && (
+                            <div className="text-xs text-gray-500">
+                              Aprobado por {agreement.approved_by} el {new Date(agreement.approved_at).toLocaleDateString()}
                             </div>
                           )}
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <Select 
-                            value={agreement.status} 
-                            onValueChange={(value) => updateStatus(agreement.id, value)}
-                          >
-                            <SelectTrigger className="w-32">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="pending">Pendiente</SelectItem>
-                              <SelectItem value="active">Activo</SelectItem>
-                              <SelectItem value="completed">Completado</SelectItem>
-                              <SelectItem value="cancelled">Cancelado</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          {agreement.status === 'pending' && (
+                            <>
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                className="text-green-600 hover:bg-green-50"
+                                onClick={() => updateStatus(agreement.id, 'approved')}
+                              >
+                                <CheckCircle className="h-4 w-4" />
+                              </Button>
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                className="text-red-600 hover:bg-red-50"
+                                onClick={() => updateStatus(agreement.id, 'rejected')}
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
+                          
+                          {agreement.status === 'approved' && (
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              className="text-blue-600 hover:bg-blue-50"
+                              onClick={() => updateStatus(agreement.id, 'active')}
+                            >
+                              Activar
+                            </Button>
+                          )}
+
+                          {agreement.status === 'active' && (
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              className="text-purple-600 hover:bg-purple-50"
+                              onClick={() => updateStatus(agreement.id, 'completed')}
+                            >
+                              Completar
+                            </Button>
+                          )}
                           
                           <Button variant="outline" size="sm" onClick={() => handleEdit(agreement)}>
                             <Edit className="h-4 w-4" />
@@ -470,7 +586,63 @@ export const PaymentAgreementsModule = () => {
           </Card>
         </TabsContent>
 
-        <TabsContent value="estadisticas">
+        <TabsContent value="pendientes" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <AlertCircle className="h-5 w-5 mr-2 text-orange-600" />
+                Acuerdos Pendientes de Aprobación
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {agreements.filter(a => a.status === 'pending').length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <CheckCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay acuerdos pendientes de aprobación</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {agreements.filter(a => a.status === 'pending').map((agreement) => (
+                    <div key={agreement.id} className="border border-orange-200 rounded-lg p-4 bg-orange-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-lg mb-2">{agreement.client_name}</h3>
+                          <div className="grid grid-cols-2 gap-4 text-sm text-gray-600 mb-2">
+                            <div>Cuota actual: ${agreement.original_payment.toLocaleString()}</div>
+                            <div>Cuota propuesta: ${agreement.agreed_payment_amount.toLocaleString()}</div>
+                            <div>Ahorro: ${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString()}</div>
+                            <div>Período: {new Date(agreement.start_date).toLocaleDateString()} - {new Date(agreement.end_date).toLocaleDateString()}</div>
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            <span className="font-medium">Razón:</span> {agreement.reason}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button 
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700"
+                            onClick={() => updateStatus(agreement.id, 'approved')}
+                          >
+                            Aprobar
+                          </Button>
+                          <Button 
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => updateStatus(agreement.id, 'rejected')}
+                          >
+                            Rechazar
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="estadisticas" className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
@@ -479,23 +651,21 @@ export const PaymentAgreementsModule = () => {
               <CardContent>
                 <div className="space-y-4">
                   <div className="flex justify-between">
-                    <span>Acuerdos activos:</span>
-                    <span className="font-semibold text-green-600">{activeAgreements}</span>
-                  </div>
-                  <div className="flex justify-between">
                     <span>Acuerdos pendientes:</span>
                     <span className="font-semibold text-orange-600">{pendingAgreements}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Acuerdos completados:</span>
-                    <span className="font-semibold text-blue-600">
-                      {agreements.filter(a => a.status === 'completed').length}
-                    </span>
+                    <span>Acuerdos activos:</span>
+                    <span className="font-semibold text-green-600">{activeAgreements}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Acuerdos cancelados:</span>
+                    <span>Acuerdos completados:</span>
+                    <span className="font-semibold text-blue-600">{completedAgreements}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Acuerdos rechazados:</span>
                     <span className="font-semibold text-red-600">
-                      {agreements.filter(a => a.status === 'cancelled').length}
+                      {agreements.filter(a => a.status === 'rejected').length}
                     </span>
                   </div>
                 </div>
@@ -504,26 +674,24 @@ export const PaymentAgreementsModule = () => {
 
             <Card>
               <CardHeader>
-                <CardTitle>Análisis de Frecuencias</CardTitle>
+                <CardTitle>Análisis Financiero</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
                   <div className="flex justify-between">
-                    <span>Pagos semanales:</span>
+                    <span>Ahorro total mensual:</span>
+                    <span className="font-semibold text-purple-600">${totalSavings.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Promedio de reducción:</span>
                     <span className="font-semibold">
-                      {agreements.filter(a => a.payment_frequency === 'weekly').length}
+                      ${agreements.length > 0 ? Math.round(totalSavings / agreements.length).toLocaleString() : 0}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Pagos quincenales:</span>
+                    <span>Tasa de aprobación:</span>
                     <span className="font-semibold">
-                      {agreements.filter(a => a.payment_frequency === 'biweekly').length}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Pagos mensuales:</span>
-                    <span className="font-semibold">
-                      {agreements.filter(a => a.payment_frequency === 'monthly').length}
+                      {agreements.length > 0 ? Math.round(((activeAgreements + completedAgreements) / agreements.length) * 100) : 0}%
                     </span>
                   </div>
                 </div>
@@ -531,11 +699,69 @@ export const PaymentAgreementsModule = () => {
             </Card>
           </div>
         </TabsContent>
+
+        <TabsContent value="configuracion" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Configuración de Acuerdos</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <Label htmlFor="max_reduction">Reducción Máxima Permitida (%)</Label>
+                  <Input 
+                    id="max_reduction"
+                    type="number" 
+                    defaultValue="50"
+                    placeholder="Porcentaje máximo de reducción"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="max_duration">Duración Máxima (meses)</Label>
+                  <Input 
+                    id="max_duration"
+                    type="number" 
+                    defaultValue="12"
+                    placeholder="Meses máximos para acuerdos"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label>Razones Predefinidas</Label>
+                <div className="mt-2 space-y-2">
+                  {[
+                    'Dificultades económicas temporales',
+                    'Pérdida de empleo',
+                    'Emergencia médica',
+                    'Reducción de ingresos',
+                    'Emergencia familiar'
+                  ].map((reason, index) => (
+                    <div key={index} className="flex items-center justify-between p-2 border rounded">
+                      <span className="text-sm">{reason}</span>
+                      <Button size="sm" variant="outline">
+                        <Edit className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <Button variant="outline" size="sm" className="mt-2">
+                  <Plus className="h-3 w-3 mr-2" />
+                  Agregar Razón
+                </Button>
+              </div>
+
+              <div className="flex justify-end">
+                <Button>Guardar Configuración</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* Form Dialog */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingAgreement ? 'Editar Acuerdo' : 'Nuevo Acuerdo de Pago'}
@@ -551,37 +777,39 @@ export const PaymentAgreementsModule = () => {
                 <SelectContent>
                   {loans.map((loan) => (
                     <SelectItem key={loan.id} value={loan.id}>
-                      {loan.clients?.full_name} - ${loan.amount.toLocaleString()}
+                      {loan.clients?.full_name} - ${loan.amount.toLocaleString()} (Cuota: ${loan.monthly_payment.toLocaleString()})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
-            <div>
-              <Label htmlFor="agreed_payment_amount">Monto del Pago Acordado *</Label>
-              <Input
-                id="agreed_payment_amount"
-                type="number"
-                step="0.01"
-                value={formData.agreed_payment_amount}
-                onChange={(e) => setFormData({...formData, agreed_payment_amount: Number(e.target.value)})}
-                required
-              />
-            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="agreed_payment_amount">Nueva Cuota Acordada *</Label>
+                <Input
+                  id="agreed_payment_amount"
+                  type="number"
+                  step="0.01"
+                  value={formData.agreed_payment_amount}
+                  onChange={(e) => setFormData({...formData, agreed_payment_amount: Number(e.target.value)})}
+                  required
+                />
+              </div>
 
-            <div>
-              <Label htmlFor="payment_frequency">Frecuencia de Pago *</Label>
-              <Select value={formData.payment_frequency} onValueChange={(value) => setFormData({...formData, payment_frequency: value})}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="weekly">Semanal</SelectItem>
-                  <SelectItem value="biweekly">Quincenal</SelectItem>
-                  <SelectItem value="monthly">Mensual</SelectItem>
-                </SelectContent>
-              </Select>
+              <div>
+                <Label htmlFor="payment_frequency">Frecuencia de Pago *</Label>
+                <Select value={formData.payment_frequency} onValueChange={(value) => setFormData({...formData, payment_frequency: value})}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="weekly">Semanal</SelectItem>
+                    <SelectItem value="biweekly">Quincenal</SelectItem>
+                    <SelectItem value="monthly">Mensual</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -608,12 +836,29 @@ export const PaymentAgreementsModule = () => {
             </div>
 
             <div>
-              <Label htmlFor="notes">Notas</Label>
+              <Label htmlFor="reason">Razón del Acuerdo *</Label>
+              <Select value={formData.reason} onValueChange={(value) => setFormData({...formData, reason: value})}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar razón" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Dificultades económicas temporales">Dificultades económicas temporales</SelectItem>
+                  <SelectItem value="Pérdida de empleo">Pérdida de empleo</SelectItem>
+                  <SelectItem value="Emergencia médica">Emergencia médica</SelectItem>
+                  <SelectItem value="Reducción de ingresos">Reducción de ingresos</SelectItem>
+                  <SelectItem value="Emergencia familiar">Emergencia familiar</SelectItem>
+                  <SelectItem value="Otro">Otro</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="notes">Notas Adicionales</Label>
               <Textarea
                 id="notes"
                 value={formData.notes}
                 onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                placeholder="Notas adicionales sobre el acuerdo..."
+                placeholder="Detalles adicionales sobre el acuerdo..."
               />
             </div>
 
