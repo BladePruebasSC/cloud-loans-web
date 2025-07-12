@@ -51,6 +51,35 @@ const UtilitiesModule = () => {
   const [interestRate, setInterestRate] = useState(15);
   const [termMonths, setTermMonths] = useState(12);
   const [calculatedPayment, setCalculatedPayment] = useState(0);
+  
+  // Simple Interest Calculator
+  const [simpleInterest, setSimpleInterest] = useState({
+    principal: 100000,
+    rate: 15,
+    time: 12,
+    result: 0
+  });
+  
+  // Profitability Calculator
+  const [profitability, setProfitability] = useState({
+    initialInvestment: 100000,
+    finalValue: 120000,
+    timeMonths: 12,
+    result: 0
+  });
+  
+  // Currency Converter
+  const [currency, setCurrency] = useState({
+    amount: 1000,
+    fromCurrency: 'DOP',
+    toCurrency: 'USD',
+    result: 0,
+    exchangeRate: 58.5 // DOP to USD
+  });
+  
+  const [showSimpleInterest, setShowSimpleInterest] = useState(false);
+  const [showProfitability, setShowProfitability] = useState(false);
+  const [showCurrencyConverter, setShowCurrencyConverter] = useState(false);
 
   // Expense form
   const [expenseForm, setExpenseForm] = useState({
@@ -159,9 +188,59 @@ const UtilitiesModule = () => {
     .reduce((sum, exp) => sum + exp.amount, 0);
   const categories = [...new Set(expenses.map(exp => exp.category).filter(Boolean))];
 
+  // Funciones para calculadoras adicionales
+  const calculateSimpleInterest = () => {
+    const interest = (simpleInterest.principal * simpleInterest.rate * simpleInterest.time) / (100 * 12);
+    setSimpleInterest(prev => ({ ...prev, result: Math.round(interest * 100) / 100 }));
+  };
+
+  const calculateProfitability = () => {
+    const profit = ((profitability.finalValue - profitability.initialInvestment) / profitability.initialInvestment) * 100;
+    const annualizedReturn = (profit / profitability.timeMonths) * 12;
+    setProfitability(prev => ({ ...prev, result: Math.round(annualizedReturn * 100) / 100 }));
+  };
+
+  const convertCurrency = () => {
+    let rate = currency.exchangeRate;
+    if (currency.fromCurrency === 'USD' && currency.toCurrency === 'DOP') {
+      rate = 58.5; // USD to DOP
+    } else if (currency.fromCurrency === 'DOP' && currency.toCurrency === 'USD') {
+      rate = 1 / 58.5; // DOP to USD
+    } else if (currency.fromCurrency === 'EUR' && currency.toCurrency === 'DOP') {
+      rate = 64.2; // EUR to DOP
+    } else if (currency.fromCurrency === 'DOP' && currency.toCurrency === 'EUR') {
+      rate = 1 / 64.2; // DOP to EUR
+    } else if (currency.fromCurrency === 'USD' && currency.toCurrency === 'EUR') {
+      rate = 0.91; // USD to EUR
+    } else if (currency.fromCurrency === 'EUR' && currency.toCurrency === 'USD') {
+      rate = 1.10; // EUR to USD
+    }
+    
+    const result = currency.amount * rate;
+    setCurrency(prev => ({ ...prev, result: Math.round(result * 100) / 100, exchangeRate: rate }));
+  };
+
   useEffect(() => {
     calculateLoanPayment();
   }, [loanAmount, interestRate, termMonths]);
+
+  useEffect(() => {
+    if (showSimpleInterest) {
+      calculateSimpleInterest();
+    }
+  }, [simpleInterest.principal, simpleInterest.rate, simpleInterest.time, showSimpleInterest]);
+
+  useEffect(() => {
+    if (showProfitability) {
+      calculateProfitability();
+    }
+  }, [profitability.initialInvestment, profitability.finalValue, profitability.timeMonths, showProfitability]);
+
+  useEffect(() => {
+    if (showCurrencyConverter) {
+      convertCurrency();
+    }
+  }, [currency.amount, currency.fromCurrency, currency.toCurrency, showCurrencyConverter]);
 
   return (
     <div className="p-6 space-y-6">
@@ -268,15 +347,27 @@ const UtilitiesModule = () => {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Button variant="outline" className="h-20 flex flex-col">
+                <Button 
+                  variant="outline" 
+                  className="h-20 flex flex-col"
+                  onClick={() => setShowSimpleInterest(true)}
+                >
                   <Calculator className="h-6 w-6 mb-2" />
                   Calculadora de Interés Simple
                 </Button>
-                <Button variant="outline" className="h-20 flex flex-col">
+                <Button 
+                  variant="outline" 
+                  className="h-20 flex flex-col"
+                  onClick={() => setShowProfitability(true)}
+                >
                   <TrendingUp className="h-6 w-6 mb-2" />
                   Calculadora de Rentabilidad
                 </Button>
-                <Button variant="outline" className="h-20 flex flex-col">
+                <Button 
+                  variant="outline" 
+                  className="h-20 flex flex-col"
+                  onClick={() => setShowCurrencyConverter(true)}
+                >
                   <DollarSign className="h-6 w-6 mb-2" />
                   Conversor de Monedas
                 </Button>
@@ -578,6 +669,232 @@ const UtilitiesModule = () => {
               <Button type="submit">Guardar Gasto</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Simple Interest Calculator Modal */}
+      <Dialog open={showSimpleInterest} onOpenChange={setShowSimpleInterest}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center">
+              <Calculator className="h-5 w-5 mr-2" />
+              Calculadora de Interés Simple
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="si_principal">Capital Principal ($)</Label>
+              <Input
+                id="si_principal"
+                type="number"
+                value={simpleInterest.principal}
+                onChange={(e) => setSimpleInterest({...simpleInterest, principal: Number(e.target.value)})}
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="si_rate">Tasa de Interés Anual (%)</Label>
+              <Input
+                id="si_rate"
+                type="number"
+                step="0.1"
+                value={simpleInterest.rate}
+                onChange={(e) => setSimpleInterest({...simpleInterest, rate: Number(e.target.value)})}
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="si_time">Tiempo (meses)</Label>
+              <Input
+                id="si_time"
+                type="number"
+                value={simpleInterest.time}
+                onChange={(e) => setSimpleInterest({...simpleInterest, time: Number(e.target.value)})}
+              />
+            </div>
+            
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h4 className="font-semibold mb-2">Resultados:</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span>Capital inicial:</span>
+                  <span className="font-medium">${simpleInterest.principal.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Interés ganado:</span>
+                  <span className="font-medium text-green-600">${simpleInterest.result.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between border-t pt-2">
+                  <span>Monto total:</span>
+                  <span className="font-bold text-lg">${(simpleInterest.principal + simpleInterest.result).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowSimpleInterest(false)}>
+                Cerrar
+              </Button>
+              <Button onClick={calculateSimpleInterest}>
+                Recalcular
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Profitability Calculator Modal */}
+      <Dialog open={showProfitability} onOpenChange={setShowProfitability}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center">
+              <TrendingUp className="h-5 w-5 mr-2" />
+              Calculadora de Rentabilidad
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="prof_initial">Inversión Inicial ($)</Label>
+              <Input
+                id="prof_initial"
+                type="number"
+                value={profitability.initialInvestment}
+                onChange={(e) => setProfitability({...profitability, initialInvestment: Number(e.target.value)})}
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="prof_final">Valor Final ($)</Label>
+              <Input
+                id="prof_final"
+                type="number"
+                value={profitability.finalValue}
+                onChange={(e) => setProfitability({...profitability, finalValue: Number(e.target.value)})}
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="prof_time">Tiempo (meses)</Label>
+              <Input
+                id="prof_time"
+                type="number"
+                value={profitability.timeMonths}
+                onChange={(e) => setProfitability({...profitability, timeMonths: Number(e.target.value)})}
+              />
+            </div>
+            
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h4 className="font-semibold mb-2">Resultados:</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span>Inversión inicial:</span>
+                  <span className="font-medium">${profitability.initialInvestment.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Valor final:</span>
+                  <span className="font-medium">${profitability.finalValue.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Ganancia total:</span>
+                  <span className="font-medium text-green-600">${(profitability.finalValue - profitability.initialInvestment).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between border-t pt-2">
+                  <span>Rentabilidad anualizada:</span>
+                  <span className="font-bold text-lg">{profitability.result.toFixed(2)}%</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowProfitability(false)}>
+                Cerrar
+              </Button>
+              <Button onClick={calculateProfitability}>
+                Recalcular
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Currency Converter Modal */}
+      <Dialog open={showCurrencyConverter} onOpenChange={setShowCurrencyConverter}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center">
+              <DollarSign className="h-5 w-5 mr-2" />
+              Conversor de Monedas
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="curr_amount">Cantidad</Label>
+              <Input
+                id="curr_amount"
+                type="number"
+                step="0.01"
+                value={currency.amount}
+                onChange={(e) => setCurrency({...currency, amount: Number(e.target.value)})}
+              />
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="from_currency">De</Label>
+                <Select value={currency.fromCurrency} onValueChange={(value) => setCurrency({...currency, fromCurrency: value})}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Moneda origen" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="DOP">DOP - Peso Dominicano</SelectItem>
+                    <SelectItem value="USD">USD - Dólar Americano</SelectItem>
+                    <SelectItem value="EUR">EUR - Euro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <Label htmlFor="to_currency">A</Label>
+                <Select value={currency.toCurrency} onValueChange={(value) => setCurrency({...currency, toCurrency: value})}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Moneda destino" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="DOP">DOP - Peso Dominicano</SelectItem>
+                    <SelectItem value="USD">USD - Dólar Americano</SelectItem>
+                    <SelectItem value="EUR">EUR - Euro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h4 className="font-semibold mb-2">Conversión:</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span>Cantidad original:</span>
+                  <span className="font-medium">{currency.amount.toLocaleString()} {currency.fromCurrency}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Tasa de cambio:</span>
+                  <span className="font-medium">{currency.exchangeRate.toFixed(4)}</span>
+                </div>
+                <div className="flex justify-between border-t pt-2">
+                  <span>Resultado:</span>
+                  <span className="font-bold text-lg">{currency.result.toLocaleString()} {currency.toCurrency}</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowCurrencyConverter(false)}>
+                Cerrar
+              </Button>
+              <Button onClick={convertCurrency}>
+                Convertir
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -471,11 +471,12 @@ export const ReportsModule = () => {
               </div>
             </CardContent>
           </Card>
+          
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Reporte de Pagos ({filteredPayments.length})</CardTitle>
-                <Button onClick={() => exportToCSV(reportData.payments, 'reporte_pagos')}>
+                <Button onClick={() => exportToCSV(filteredPayments, 'reporte_pagos')}>
                   <Download className="h-4 w-4 mr-2" />
                   Exportar CSV
                 </Button>
