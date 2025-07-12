@@ -17,6 +17,8 @@ import { ClientsModule } from '@/components/clients/ClientsModule';
 import { MapModule } from '@/components/map/MapModule';
 import { DocumentsModule } from '@/components/documents/DocumentsModule';
 import { CarterasModule } from '@/components/carteras/CarterasModule';
+import { ReportsModule } from '@/components/reports/ReportsModule';
+import { PaymentAgreementsModule } from '@/components/agreements/PaymentAgreementsModule';
 
 const Index = () => {
   const location = useLocation();
@@ -50,6 +52,10 @@ const Index = () => {
       setActiveModule('mi-empresa');
     } else if (path === '/mapa') {
       setActiveModule('mapa');
+    } else if (path === '/reportes') {
+      setActiveModule('reportes');
+    } else if (path === '/acuerdos') {
+      setActiveModule('acuerdos');
     } else {
       setActiveModule('inicio');
     }
@@ -87,6 +93,10 @@ const Index = () => {
         }
       case 'mapa':
         return <MapModule />;
+      case 'reportes':
+        return <ReportsModule />;
+      case 'acuerdos':
+        return <PaymentAgreementsModule />;
       default:
         return <Dashboard />;
     }
