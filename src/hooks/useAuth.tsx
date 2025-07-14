@@ -103,7 +103,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .from('employees')
         .select('*, company_owner_id')
         .eq('auth_user_id', userId)
-        .single();
+        .maybeSingle();
 
       if (employeeData && !employeeError) {
         console.log('User is an employee:', employeeData);

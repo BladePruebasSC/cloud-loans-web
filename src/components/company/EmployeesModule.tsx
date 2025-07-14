@@ -186,39 +186,27 @@ export const EmployeesModule = () => {
 
         toast.success('Empleado actualizado exitosamente');
       } else {
-        // Create new employee with authentication
-        const { password, ...employeeData } = data;
+        // Create new employee using Edge Function
+        const employeeData = {
+          ...data,
+          permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
+        };
+
+        const { data: session } = await supabase.auth.getSession();
         
-        // Create auth user first
-        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-          email: data.email,
-          password: password,
-          email_confirm: true, // Skip email confirmation for admin-created users
-          user_metadata: {
-            full_name: data.full_name,
-            role: data.role,
-            company_owner_id: user.id,
-          }
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-employee`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.session?.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ employeeData }),
         });
 
-        if (authError) {
-          throw authError;
-        }
-
-        // Create employee record
-        const { error: employeeError } = await supabase
-          .from('employees')
-          .insert({
-            ...employeeData,
-            company_owner_id: user.id,
-            auth_user_id: authData.user?.id,
-            salary: data.salary || null,
-            status: 'active',
-            permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
-          });
-
-        if (employeeError) {
-          throw employeeError;
+        const result = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(result.error || 'Error al crear empleado');
         }
 
         toast.success('Empleado creado exitosamente');
