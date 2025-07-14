@@ -97,6 +97,31 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const fetchProfile = async (userId: string) => {
     try {
       console.log('Fetching profile for user:', userId);
+      
+      // First check if this user is an employee
+      const { data: employeeData, error: employeeError } = await supabase
+        .from('employees')
+        .select('*, company_owner_id')
+        .eq('auth_user_id', userId)
+        .single();
+
+      if (employeeData && !employeeError) {
+        console.log('User is an employee:', employeeData);
+        setProfile({
+          id: userId,
+          full_name: employeeData.full_name,
+          phone: employeeData.phone,
+          dni: employeeData.dni,
+          role: employeeData.role,
+          permissions: employeeData.permissions,
+          company_owner_id: employeeData.company_owner_id,
+          is_employee: true
+        });
+        setLoading(false);
+        return;
+      }
+      
+      // If not an employee, check profiles table
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
@@ -109,7 +134,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
 
       console.log('Profile fetched:', data);
-      setProfile(data);
+      setProfile({
+        ...data,
+        is_employee: false
+      });
     } catch (error) {
       console.error('Error in fetchProfile:', error);
     } finally {

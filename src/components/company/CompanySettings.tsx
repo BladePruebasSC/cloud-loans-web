@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -306,24 +305,197 @@ const CompanySettings = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="min_loan_amount">Monto Mínimo de Préstamo</Label>
-              <Input
-                id="min_loan_amount"
-                type="number"
-                value={formData.min_loan_amount}
-                onChange={(e) => handleInputChange('min_loan_amount', parseFloat(e.target.value))}
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="min_loan_amount">Monto Mínimo de Préstamo</Label>
+                <Input
+                  id="min_loan_amount"
+                  type="number"
+                  value={formData.min_loan_amount}
+                  onChange={(e) => handleInputChange('min_loan_amount', parseFloat(e.target.value))}
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="max_loan_amount">Monto Máximo de Préstamo</Label>
+                <Input
+                  id="max_loan_amount"
+                  type="number"
+                  value={formData.max_loan_amount}
+                  onChange={(e) => handleInputChange('max_loan_amount', parseFloat(e.target.value))}
+                />
+              </div>
             </div>
 
-            <div>
-              <Label htmlFor="max_loan_amount">Monto Máximo de Préstamo</Label>
-              <Input
-                id="max_loan_amount"
-                type="number"
-                value={formData.max_loan_amount}
-                onChange={(e) => handleInputChange('max_loan_amount', parseFloat(e.target.value))}
-              />
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold">Configuraciones Adicionales</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="max_term_months">Plazo Máximo (meses)</Label>
+                  <Input
+                    id="max_term_months"
+                    type="number"
+                    defaultValue="60"
+                    placeholder="Plazo máximo en meses"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="min_term_months">Plazo Mínimo (meses)</Label>
+                  <Input
+                    id="min_term_months"
+                    type="number"
+                    defaultValue="6"
+                    placeholder="Plazo mínimo en meses"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="max_interest_rate">Tasa Máxima de Interés (%)</Label>
+                  <Input
+                    id="max_interest_rate"
+                    type="number"
+                    step="0.1"
+                    defaultValue="30"
+                    placeholder="Tasa máxima permitida"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="min_interest_rate">Tasa Mínima de Interés (%)</Label>
+                  <Input
+                    id="min_interest_rate"
+                    type="number"
+                    step="0.1"
+                    defaultValue="5"
+                    placeholder="Tasa mínima permitida"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="payment_reminder_days">Días de Recordatorio de Pago</Label>
+                  <Input
+                    id="payment_reminder_days"
+                    type="number"
+                    defaultValue="3"
+                    placeholder="Días antes del vencimiento"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="overdue_grace_days">Días de Gracia por Mora</Label>
+                  <Input
+                    id="overdue_grace_days"
+                    type="number"
+                    defaultValue="5"
+                    placeholder="Días de gracia antes de aplicar mora"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="backup_frequency">Frecuencia de Respaldo</Label>
+                  <Select defaultValue="daily">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Diario</SelectItem>
+                      <SelectItem value="weekly">Semanal</SelectItem>
+                      <SelectItem value="monthly">Mensual</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="report_frequency">Frecuencia de Reportes</Label>
+                  <Select defaultValue="monthly">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="weekly">Semanal</SelectItem>
+                      <SelectItem value="monthly">Mensual</SelectItem>
+                      <SelectItem value="quarterly">Trimestral</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              
+              <div className="space-y-4">
+                <h4 className="font-medium">Configuraciones de Seguridad</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="session_timeout">Tiempo de Sesión (minutos)</Label>
+                    <Input
+                      id="session_timeout"
+                      type="number"
+                      defaultValue="480"
+                      placeholder="Tiempo antes de cerrar sesión automáticamente"
+                    />
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="password_min_length">Longitud Mínima de Contraseña</Label>
+                    <Input
+                      id="password_min_length"
+                      type="number"
+                      defaultValue="8"
+                      placeholder="Caracteres mínimos para contraseñas"
+                    />
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="max_login_attempts">Intentos Máximos de Login</Label>
+                    <Input
+                      id="max_login_attempts"
+                      type="number"
+                      defaultValue="5"
+                      placeholder="Intentos antes de bloquear cuenta"
+                    />
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="lockout_duration">Duración de Bloqueo (minutos)</Label>
+                    <Input
+                      id="lockout_duration"
+                      type="number"
+                      defaultValue="30"
+                      placeholder="Tiempo de bloqueo tras intentos fallidos"
+                    />
+                  </div>
+                </div>
+              </div>
+              
+              <div className="space-y-4">
+                <h4 className="font-medium">Configuraciones de Notificaciones</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" defaultChecked className="rounded" />
+                    <Label className="text-sm">Notificaciones por email</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" defaultChecked className="rounded" />
+                    <Label className="text-sm">Recordatorios de pago</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" defaultChecked className="rounded" />
+                    <Label className="text-sm">Alertas de mora</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" className="rounded" />
+                    <Label className="text-sm">Notificaciones SMS</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" defaultChecked className="rounded" />
+                    <Label className="text-sm">Reportes automáticos</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" className="rounded" />
+                    <Label className="text-sm">Alertas de seguridad</Label>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="pt-4">
