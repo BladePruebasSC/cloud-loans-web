@@ -40,7 +40,22 @@ serve(async (req) => {
       )
     }
 
-    const { employeeData } = await req.json()
+    let employeeData;
+    try {
+      const body = await req.json();
+      employeeData = body.employeeData;
+      if (!employeeData) {
+        throw new Error("employeeData is missing in the request body");
+      }
+    } catch (e) {
+      return new Response(
+        JSON.stringify({ error: `Error parsing request body: ${e.message}` }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      )
+    }
 
     // Create the auth user for the employee
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
