@@ -9,6 +9,7 @@ interface AuthContextType {
   session: Session | null;
   profile: any | null;
   loading: boolean;
+  companyId: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (data: RegisterData) => Promise<void>;
   signOut: () => Promise<void>;
@@ -29,6 +30,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
+  const [companyId, setCompanyId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -52,6 +54,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           }, 0);
         } else {
           setProfile(null);
+          setCompanyId(null);
         }
         
         setLoading(false);
@@ -117,6 +120,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           company_id: employeeData.company_id,
           is_employee: true
         });
+        setCompanyId(employeeData.company_id);
         setLoading(false);
         return;
       }
@@ -138,6 +142,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         ...data,
         is_employee: false
       });
+      setCompanyId(data.id);
     } catch (error) {
       console.error('Error in fetchProfile:', error);
     } finally {
@@ -206,6 +211,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     session,
     profile,
     loading,
+    companyId,
     signIn,
     signUp,
     signOut,

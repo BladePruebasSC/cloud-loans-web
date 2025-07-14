@@ -120,7 +120,7 @@ export const EmployeesModule = () => {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
 
   const form = useForm<EmployeeFormData>({
     resolver: zodResolver(employeeSchema),
@@ -131,17 +131,19 @@ export const EmployeesModule = () => {
   });
 
   useEffect(() => {
-    fetchEmployees();
-  }, []);
+    if (companyId) {
+      fetchEmployees();
+    }
+  }, [companyId]);
 
   const fetchEmployees = async () => {
-    if (!user) return;
+    if (!companyId) return;
 
     try {
       const { data, error } = await supabase
         .from('employees')
         .select('*')
-        .eq('company_owner_id', user.id)
+        .eq('company_id', companyId)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -192,7 +194,7 @@ export const EmployeesModule = () => {
         const employeeData = {
           ...data,
           permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
-          company_id: user.user_metadata.company_id,
+          company_id: companyId,
         };
 
         const { data: session } = await supabase.auth.getSession();

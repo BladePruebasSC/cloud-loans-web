@@ -45,23 +45,25 @@ export const ClientsModule = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetchClients();
-  }, [user]);
+    if (companyId) {
+      fetchClients();
+    }
+  }, [companyId]);
 
   const fetchClients = async () => {
-    if (!user) return;
+    if (!companyId) return;
 
     try {
       setLoading(true);
-      console.log('Fetching clients for user:', user.id);
       
       const { data, error } = await supabase
         .from('clients')
         .select('*')
+        .eq('company_id', companyId)
         .order('created_at', { ascending: false });
 
       if (error) {
