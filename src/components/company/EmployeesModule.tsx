@@ -2,13 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
@@ -23,7 +27,13 @@ import {
   Edit,
   Trash2,
   UserCheck,
-  UserX
+  UserX,
+  Shield,
+  Settings,
+  Eye,
+  EyeOff,
+  Building,
+  Briefcase
 } from 'lucide-react';
 
 const employeeSchema = z.object({
@@ -35,7 +45,7 @@ const employeeSchema = z.object({
   department: z.string().optional(),
   salary: z.number().min(0, 'El salario debe ser mayor o igual a 0').optional(),
   hire_date: z.string().optional(),
-  role: z.enum(['admin', 'employee', 'manager']).default('employee'),
+  role: z.enum(['admin', 'manager', 'employee', 'collector', 'accountant']).default('employee'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
 });
 
@@ -53,10 +63,52 @@ interface Employee {
   hire_date: string | null;
   status: string;
   role: string;
+  permissions: any;
   company_owner_id: string | null;
   auth_user_id: string | null;
   created_at: string;
 }
+
+interface PermissionConfig {
+  [key: string]: {
+    label: string;
+    description: string;
+    category: string;
+  };
+}
+
+const PERMISSIONS_CONFIG: PermissionConfig = {
+  // Préstamos
+  'loans.view': { label: 'Ver Préstamos', description: 'Puede ver la lista de préstamos', category: 'Préstamos' },
+  'loans.create': { label: 'Crear Préstamos', description: 'Puede crear nuevos préstamos', category: 'Préstamos' },
+  'loans.edit': { label: 'Editar Préstamos', description: 'Puede modificar préstamos existentes', category: 'Préstamos' },
+  'loans.delete': { label: 'Eliminar Préstamos', description: 'Puede eliminar préstamos', category: 'Préstamos' },
+  
+  // Clientes
+  'clients.view': { label: 'Ver Clientes', description: 'Puede ver la lista de clientes', category: 'Clientes' },
+  'clients.create': { label: 'Crear Clientes', description: 'Puede registrar nuevos clientes', category: 'Clientes' },
+  'clients.edit': { label: 'Editar Clientes', description: 'Puede modificar información de clientes', category: 'Clientes' },
+  'clients.delete': { label: 'Eliminar Clientes', description: 'Puede eliminar clientes', category: 'Clientes' },
+  
+  // Pagos
+  'payments.view': { label: 'Ver Pagos', description: 'Puede ver el historial de pagos', category: 'Pagos' },
+  'payments.create': { label: 'Registrar Pagos', description: 'Puede registrar nuevos pagos', category: 'Pagos' },
+  'payments.edit': { label: 'Editar Pagos', description: 'Puede modificar pagos registrados', category: 'Pagos' },
+  
+  // Reportes
+  'reports.view': { label: 'Ver Reportes', description: 'Puede acceder a los reportes', category: 'Reportes' },
+  'reports.export': { label: 'Exportar Reportes', description: 'Puede exportar reportes', category: 'Reportes' },
+  'reports.financial': { label: 'Reportes Financieros', description: 'Puede ver reportes financieros sensibles', category: 'Reportes' },
+  
+  // Configuración
+  'settings.view': { label: 'Ver Configuración', description: 'Puede ver configuraciones de la empresa', category: 'Configuración' },
+  'settings.edit': { label: 'Editar Configuración', description: 'Puede modificar configuraciones', category: 'Configuración' },
+  'employees.manage': { label: 'Gestionar Empleados', description: 'Puede gestionar otros empleados', category: 'Configuración' },
+  
+  // Inventario
+  'inventory.view': { label: 'Ver Inventario', description: 'Puede ver el inventario', category: 'Inventario' },
+  'inventory.manage': { label: 'Gestionar Inventario', description: 'Puede gestionar productos del inventario', category: 'Inventario' },
+};
 
 export const EmployeesModule = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -64,12 +116,15 @@ export const EmployeesModule = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
   const { user } = useAuth();
 
   const form = useForm<EmployeeFormData>({
     resolver: zodResolver(employeeSchema),
     defaultValues: {
       hire_date: new Date().toISOString().split('T')[0],
+      role: 'employee',
     },
   });
 
@@ -121,6 +176,7 @@ export const EmployeesModule = () => {
             salary: data.salary || null,
             hire_date: data.hire_date,
             role: data.role,
+            permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
           })
           .eq('id', editingEmployee.id);
 
@@ -134,14 +190,14 @@ export const EmployeesModule = () => {
         const { password, ...employeeData } = data;
         
         // Create auth user first
-        const { data: authData, error: authError } = await supabase.auth.signUp({
+        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
           email: data.email,
           password: password,
-          options: {
-            data: {
-              full_name: data.full_name,
-              role: data.role,
-            }
+          email_confirm: true, // Skip email confirmation for admin-created users
+          user_metadata: {
+            full_name: data.full_name,
+            role: data.role,
+            company_owner_id: user.id,
           }
         });
 
@@ -158,6 +214,7 @@ export const EmployeesModule = () => {
             auth_user_id: authData.user?.id,
             salary: data.salary || null,
             status: 'active',
+            permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
           });
 
         if (employeeError) {
@@ -170,7 +227,8 @@ export const EmployeesModule = () => {
       setIsDialogOpen(false);
       setEditingEmployee(null);
       form.reset();
-      fetchEmployees(); // Refresh the list
+      setSelectedPermissions([]);
+      fetchEmployees();
     } catch (error) {
       console.error('Error saving employee:', error);
       toast.error('Error al guardar empleado');
@@ -190,9 +248,13 @@ export const EmployeesModule = () => {
       department: employee.department || '',
       salary: employee.salary || undefined,
       hire_date: employee.hire_date || '',
-      role: employee.role as 'admin' | 'employee' | 'manager',
+      role: employee.role as 'admin' | 'manager' | 'employee' | 'collector' | 'accountant',
       password: '', // Don't pre-fill password for editing
     });
+    
+    // Set permissions
+    const permissions = Object.keys(employee.permissions || {}).filter(key => employee.permissions[key]);
+    setSelectedPermissions(permissions);
     setIsDialogOpen(true);
   };
 
@@ -210,7 +272,7 @@ export const EmployeesModule = () => {
       }
 
       toast.success('Empleado eliminado exitosamente');
-      fetchEmployees(); // Refresh the list
+      fetchEmployees();
     } catch (error) {
       console.error('Error deleting employee:', error);
       toast.error('Error al eliminar empleado');
@@ -231,10 +293,18 @@ export const EmployeesModule = () => {
       }
 
       toast.success(`Empleado ${newStatus === 'active' ? 'activado' : 'desactivado'} exitosamente`);
-      fetchEmployees(); // Refresh the list
+      fetchEmployees();
     } catch (error) {
       console.error('Error updating employee status:', error);
       toast.error('Error al actualizar estado del empleado');
+    }
+  };
+
+  const handlePermissionChange = (permission: string, checked: boolean) => {
+    if (checked) {
+      setSelectedPermissions(prev => [...prev, permission]);
+    } else {
+      setSelectedPermissions(prev => prev.filter(p => p !== permission));
     }
   };
 
@@ -249,186 +319,263 @@ export const EmployeesModule = () => {
     .filter(e => e.status === 'active' && e.salary)
     .reduce((sum, e) => sum + (e.salary || 0), 0);
 
+  // Group permissions by category
+  const permissionsByCategory = Object.entries(PERMISSIONS_CONFIG).reduce((acc, [key, config]) => {
+    if (!acc[config.category]) {
+      acc[config.category] = [];
+    }
+    acc[config.category].push({ key, ...config });
+    return acc;
+  }, {} as Record<string, Array<{ key: string; label: string; description: string; category: string }>>);
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Empleados</h1>
+        <h2 className="text-2xl font-bold">Gestión de Empleados</h2>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button onClick={() => {
               setEditingEmployee(null);
               form.reset();
+              setSelectedPermissions([]);
             }}>
               <Plus className="h-4 w-4 mr-2" />
               Nuevo Empleado
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {editingEmployee ? 'Editar Empleado' : 'Nuevo Empleado'}
               </DialogTitle>
             </DialogHeader>
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="full_name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Nombre Completo</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Nombre completo" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                <Tabs defaultValue="basic" className="w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="basic">Información Básica</TabsTrigger>
+                    <TabsTrigger value="permissions">Permisos</TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="basic" className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="full_name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Nombre Completo</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Nombre completo" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="position"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Cargo</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Cargo o posición" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Email</FormLabel>
+                            <FormControl>
+                              <Input type="email" placeholder="email@ejemplo.com" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="email"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Email</FormLabel>
-                        <FormControl>
-                          <Input type="email" placeholder="email@ejemplo.com" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="phone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Teléfono</FormLabel>
+                            <FormControl>
+                              <Input placeholder="(809) 000-0000" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="phone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Teléfono</FormLabel>
-                        <FormControl>
-                          <Input placeholder="(809) 000-0000" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="dni"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Cédula</FormLabel>
+                            <FormControl>
+                              <Input placeholder="000-0000000-0" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="dni"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Cédula</FormLabel>
-                        <FormControl>
-                          <Input placeholder="000-0000000-0" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="position"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Cargo</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Cargo o posición" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="department"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Departamento</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Departamento" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="department"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Departamento</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Departamento" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="salary"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Salario</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="0.00"
-                            {...field}
-                            onChange={(e) => field.onChange(parseFloat(e.target.value) || undefined)}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="salary"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Salario</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                placeholder="0.00"
+                                {...field}
+                                onChange={(e) => field.onChange(parseFloat(e.target.value) || undefined)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="hire_date"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Fecha de Contratación</FormLabel>
-                        <FormControl>
-                          <Input type="date" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="hire_date"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Fecha de Contratación</FormLabel>
+                            <FormControl>
+                              <Input type="date" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  <FormField
-                    control={form.control}
-                    name="role"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Rol</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Seleccionar rol" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="employee">Empleado</SelectItem>
-                            <SelectItem value="manager">Gerente</SelectItem>
-                            <SelectItem value="admin">Administrador</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                      <FormField
+                        control={form.control}
+                        name="role"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Rol</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Seleccionar rol" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="employee">Empleado</SelectItem>
+                                <SelectItem value="collector">Cobrador</SelectItem>
+                                <SelectItem value="accountant">Contador</SelectItem>
+                                <SelectItem value="manager">Gerente</SelectItem>
+                                <SelectItem value="admin">Administrador</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                  {!editingEmployee && (
-                    <FormField
-                      control={form.control}
-                      name="password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Contraseña</FormLabel>
-                          <FormControl>
-                            <Input type="password" placeholder="Contraseña" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
+                      {!editingEmployee && (
+                        <FormField
+                          control={form.control}
+                          name="password"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Contraseña</FormLabel>
+                              <FormControl>
+                                <div className="relative">
+                                  <Input 
+                                    type={showPassword ? 'text' : 'password'} 
+                                    placeholder="Contraseña" 
+                                    {...field} 
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                  >
+                                    {showPassword ? (
+                                      <EyeOff className="h-4 w-4 text-gray-400" />
+                                    ) : (
+                                      <Eye className="h-4 w-4 text-gray-400" />
+                                    )}
+                                  </Button>
+                                </div>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
                       )}
-                    />
-                  )}
-                </div>
+                    </div>
+                  </TabsContent>
+                  
+                  <TabsContent value="permissions" className="space-y-4">
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Shield className="h-5 w-5 text-blue-600" />
+                        <h3 className="text-lg font-semibold">Permisos del Sistema</h3>
+                      </div>
+                      
+                      {Object.entries(permissionsByCategory).map(([category, permissions]) => (
+                        <Card key={category}>
+                          <CardHeader>
+                            <CardTitle className="text-base">{category}</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {permissions.map((permission) => (
+                                <div key={permission.key} className="flex items-start space-x-3">
+                                  <Switch
+                                    checked={selectedPermissions.includes(permission.key)}
+                                    onCheckedChange={(checked) => handlePermissionChange(permission.key, checked)}
+                                  />
+                                  <div className="space-y-1">
+                                    <Label className="text-sm font-medium">
+                                      {permission.label}
+                                    </Label>
+                                    <p className="text-xs text-gray-500">
+                                      {permission.description}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </TabsContent>
+                </Tabs>
 
                 <div className="flex gap-4">
                   <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
@@ -526,6 +673,12 @@ export const EmployeesModule = () => {
                         <Badge variant={employee.status === 'active' ? 'default' : 'secondary'}>
                           {employee.status === 'active' ? 'Activo' : 'Inactivo'}
                         </Badge>
+                        <Badge variant="outline">
+                          {employee.role === 'admin' ? 'Administrador' :
+                           employee.role === 'manager' ? 'Gerente' :
+                           employee.role === 'collector' ? 'Cobrador' :
+                           employee.role === 'accountant' ? 'Contador' : 'Empleado'}
+                        </Badge>
                       </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-gray-600">
@@ -536,7 +689,7 @@ export const EmployeesModule = () => {
                         
                         {employee.department && (
                           <div className="flex items-center gap-2">
-                            <span className="font-medium">Departamento:</span>
+                            <Building className="h-4 w-4" />
                             <span>{employee.department}</span>
                           </div>
                         )}

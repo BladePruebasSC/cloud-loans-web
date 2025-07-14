@@ -25,10 +25,6 @@ export const CompanyModule = () => {
             <Building2 className="h-4 w-4" />
             General
           </TabsTrigger>
-          <TabsTrigger value="clientes" className="flex items-center gap-2">
-            <Users className="h-4 w-4" />
-            Clientes
-          </TabsTrigger>
           <TabsTrigger value="empleados" className="flex items-center gap-2">
             <UserCog className="h-4 w-4" />
             Empleados
@@ -49,16 +45,6 @@ export const CompanyModule = () => {
 
         <TabsContent value="general">
           <CompanySettings />
-        </TabsContent>
-
-        <TabsContent value="clientes">
-          <div className="text-center py-8">
-            <Users className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-            <h3 className="text-lg font-medium mb-2">Gestión de Clientes</h3>
-            <p className="text-gray-600">
-              Los clientes se gestionan desde el módulo principal de Clientes
-            </p>
-          </div>
         </TabsContent>
 
         <TabsContent value="empleados">
