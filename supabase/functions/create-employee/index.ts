@@ -66,7 +66,7 @@ serve(async (req) => {
       user_metadata: {
         full_name: employeeData.full_name,
         role: employeeData.role,
-        company_owner_id: user.id,
+        company_id: employeeData.company_id,
       }
     })
 
@@ -97,6 +97,7 @@ serve(async (req) => {
         role: employeeData.role,
         status: 'active',
         permissions: employeeData.permissions || {},
+        company_id: employeeData.company_id,
       })
 
     if (employeeError) {

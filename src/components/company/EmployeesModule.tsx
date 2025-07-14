@@ -47,6 +47,7 @@ const employeeSchema = z.object({
   hire_date: z.string().optional(),
   role: z.enum(['admin', 'manager', 'employee', 'collector', 'accountant']).default('employee'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
+  company_id: z.string().optional(),
 });
 
 type EmployeeFormData = z.infer<typeof employeeSchema>;
@@ -65,8 +66,9 @@ interface Employee {
   role: string;
   permissions: any;
   company_owner_id: string | null;
-  auth_user_id: string | null;
+  auth__id: string | null;
   created_at: string;
+  company_id: string | null;
 }
 
 interface PermissionConfig {
@@ -190,6 +192,7 @@ export const EmployeesModule = () => {
         const employeeData = {
           ...data,
           permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
+          company_id: user.user_metadata.company_id,
         };
 
         const { data: session } = await supabase.auth.getSession();
