@@ -101,7 +101,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // First check if this user is an employee
       const { data: employeeData, error: employeeError } = await supabase
         .from('employees')
-        .select('*, company_owner_id')
+        .select('*, company_id')
         .eq('auth_user_id', userId)
         .maybeSingle();
 
@@ -114,7 +114,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           dni: employeeData.dni,
           role: employeeData.role,
           permissions: employeeData.permissions,
-          company_owner_id: employeeData.company_owner_id,
+          company_id: employeeData.company_id,
           is_employee: true
         });
         setLoading(false);
