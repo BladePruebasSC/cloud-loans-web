@@ -203,11 +203,17 @@ export const EmployeesModule = () => {
           body: JSON.stringify({ employeeData }),
         });
 
-        const result = await response.json();
-        
         if (!response.ok) {
-          throw new Error(result.error || 'Error al crear empleado');
+          const errorText = await response.text();
+          try {
+            const errorJson = JSON.parse(errorText);
+            throw new Error(errorJson.error || `Error del servidor: ${errorText}`);
+          } catch (e) {
+            throw new Error(`Error del servidor: ${errorText}`);
+          }
         }
+
+        const result = await response.json();
 
         toast.success('Empleado creado exitosamente');
       }
