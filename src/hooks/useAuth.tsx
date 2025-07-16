@@ -120,7 +120,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           company_id: employeeData.company_owner_id, // Use the company owner's ID as company_id
           is_employee: true
         });
-        setCompanyId(employeeData.company_owner_id); // Set company ID to the owner's ID
+        setCompanyId(employeeData.company_owner_id);
         setLoading(false);
         return;
       }
@@ -134,15 +134,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (error) {
         console.error('Error fetching profile:', error);
+        setLoading(false);
         return;
       }
 
-      console.log('Profile fetched:', data);
-      setProfile({
-        ...data,
-        is_employee: false
-      });
-      setCompanyId(data.id);
+      if (data) {
+        console.log('Profile fetched:', data);
+        setProfile({
+          ...data,
+          is_employee: false
+        });
+        setCompanyId(data.id);
+      }
     } catch (error) {
       console.error('Error in fetchProfile:', error);
     } finally {

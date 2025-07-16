@@ -84,6 +84,7 @@ serve(async (req) => {
     const { error: employeeError } = await supabaseAdmin
       .from('employees')
       .insert({
+        company_id: employeeData.company_id,
         company_owner_id: user.id,
         auth_user_id: authData.user?.id,
         full_name: employeeData.full_name,
