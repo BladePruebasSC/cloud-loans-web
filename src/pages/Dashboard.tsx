@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
   const [stats, setStats] = useState([
     {
       title: 'Total Clientes',
@@ -48,12 +48,12 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (user) {
-      fetchDashboardData();
+    if (user && companyId) {
+      fetchDashboardData(companyId);
     }
-  }, [user]);
+  }, [user, companyId]);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (companyId: string) => {
     try {
       setLoading(true);
       
@@ -61,7 +61,7 @@ const Dashboard = () => {
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
         .select('id, status, monthly_income')
-        .eq('user_id', companyId || user?.id); // Use companyId for employees, user.id for owners
+        .eq('user_id', companyId);
       
       if (clientsError) throw clientsError;
       
@@ -69,7 +69,7 @@ const Dashboard = () => {
       const { data: loansData, error: loansError } = await supabase
         .from('loans')
         .select('id, amount, remaining_balance, status, total_amount')
-        .eq('loan_officer_id', companyId || user?.id) // Use companyId for employees, user.id for owners
+        .eq('loan_officer_id', companyId)
         .eq('status', 'active');
       
       if (loansError) throw loansError;
@@ -78,7 +78,7 @@ const Dashboard = () => {
       const { data: paymentsData, error: paymentsError } = await supabase
         .from('payments')
         .select('amount, interest_amount')
-        .eq('created_by', companyId || user?.id) // Use companyId for employees, user.id for owners
+        .eq('created_by', companyId)
         .eq('status', 'paid');
       
       if (paymentsError) throw paymentsError;
