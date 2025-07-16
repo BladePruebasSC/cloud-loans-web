@@ -194,7 +194,7 @@ export const EmployeesModule = () => {
         const employeeData = {
           ...data,
           permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
-          company_id: companyId,
+          company_owner_id: user.id, // Always use the current user as company owner
         };
 
         const { data: session } = await supabase.auth.getSession();

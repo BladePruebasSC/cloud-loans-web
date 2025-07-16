@@ -55,7 +55,7 @@ export const ClientsModule = () => {
   }, [companyId]);
 
   const fetchClients = async () => {
-    if (!companyId) return;
+    if (!user) return;
 
     try {
       setLoading(true);
@@ -63,7 +63,7 @@ export const ClientsModule = () => {
       const { data, error } = await supabase
         .from('clients')
         .select('*')
-        .eq('company_id', companyId)
+        .eq('user_id', companyId || user.id) // Use companyId for employees, user.id for owners
         .order('created_at', { ascending: false });
 
       if (error) {

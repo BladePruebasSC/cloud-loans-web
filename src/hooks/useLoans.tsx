@@ -27,7 +27,7 @@ export const useLoans = () => {
   const { companyId } = useAuth();
 
   const fetchLoans = async () => {
-    if (!companyId) return;
+    if (!user) return;
 
     try {
       const { data, error } = await supabase
@@ -39,7 +39,7 @@ export const useLoans = () => {
             dni
           )
         `)
-        .eq('company_id', companyId)
+        .eq('loan_officer_id', companyId || user.id) // Use companyId for employees, user.id for owners
         .order('created_at', { ascending: false });
 
       if (error) {

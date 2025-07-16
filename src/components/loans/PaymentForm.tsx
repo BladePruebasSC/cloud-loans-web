@@ -70,6 +70,7 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
         )
       `)
       .in('status', ['active', 'overdue'])
+      .eq('loan_officer_id', companyId || user.id) // Use companyId for employees, user.id for owners
       .order('next_payment_date');
 
     if (error) {
@@ -116,7 +117,7 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
         payment_method: data.payment_method,
         reference_number: data.reference_number,
         notes: data.notes,
-        created_by: user.id,
+        created_by: companyId || user.id, // Use companyId for employees, user.id for owners
       };
 
       const { error: paymentError } = await supabase

@@ -156,7 +156,7 @@ const ClientForm = () => {
     setLoading(true);
     try {
       const clientData = {
-        user_id: user.id,
+        user_id: companyId || user.id, // Use companyId for employees, user.id for owners
         full_name: formData.full_name,
         dni: formData.dni,
         birth_date: formData.birth_date || null,

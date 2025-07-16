@@ -63,6 +63,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     const { data, error } = await supabase
       .from('clients')
       .select('id, full_name, dni')
+      .eq('user_id', companyId || user.id) // Use companyId for employees, user.id for owners
       .order('full_name');
 
     if (error) {
@@ -114,7 +115,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         loan_type: data.loan_type,
         purpose: data.purpose || null,
         collateral: data.collateral || null,
-        loan_officer_id: user.id,
+        loan_officer_id: companyId || user.id, // Use companyId for employees, user.id for owners
         monthly_payment: monthlyPayment,
         total_amount: totalAmount,
         remaining_balance: totalAmount,

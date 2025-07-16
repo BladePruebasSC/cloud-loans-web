@@ -104,7 +104,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // First check if this user is an employee
       const { data: employeeData, error: employeeError } = await supabase
         .from('employees')
-        .select('*, company_id')
+        .select('*, company_owner_id')
         .eq('auth_user_id', userId)
         .maybeSingle();
 
@@ -117,10 +117,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           dni: employeeData.dni,
           role: employeeData.role,
           permissions: employeeData.permissions,
-          company_id: employeeData.company_id,
+          company_id: employeeData.company_owner_id, // Use the company owner's ID as company_id
           is_employee: true
         });
-        setCompanyId(employeeData.company_id);
+        setCompanyId(employeeData.company_owner_id); // Set company ID to the owner's ID
         setLoading(false);
         return;
       }

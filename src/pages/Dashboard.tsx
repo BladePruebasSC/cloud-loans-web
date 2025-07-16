@@ -61,7 +61,7 @@ const Dashboard = () => {
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
         .select('id, status, monthly_income')
-        .eq('user_id', user?.id);
+        .eq('user_id', companyId || user?.id); // Use companyId for employees, user.id for owners
       
       if (clientsError) throw clientsError;
       
@@ -69,6 +69,7 @@ const Dashboard = () => {
       const { data: loansData, error: loansError } = await supabase
         .from('loans')
         .select('id, amount, remaining_balance, status, total_amount')
+        .eq('loan_officer_id', companyId || user?.id) // Use companyId for employees, user.id for owners
         .eq('status', 'active');
       
       if (loansError) throw loansError;
@@ -77,6 +78,7 @@ const Dashboard = () => {
       const { data: paymentsData, error: paymentsError } = await supabase
         .from('payments')
         .select('amount, interest_amount')
+        .eq('created_by', companyId || user?.id) // Use companyId for employees, user.id for owners
         .eq('status', 'paid');
       
       if (paymentsError) throw paymentsError;

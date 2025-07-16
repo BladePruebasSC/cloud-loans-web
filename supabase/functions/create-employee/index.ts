@@ -97,7 +97,6 @@ serve(async (req) => {
         role: employeeData.role,
         status: 'active',
         permissions: employeeData.permissions || {},
-        company_id: employeeData.company_id,
       })
 
     if (employeeError) {
