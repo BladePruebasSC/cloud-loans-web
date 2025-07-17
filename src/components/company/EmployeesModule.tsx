@@ -47,7 +47,6 @@ const employeeSchema = z.object({
   hire_date: z.string().optional(),
   role: z.enum(['admin', 'manager', 'employee', 'collector', 'accountant']).default('employee'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
-  company_id: z.string().optional(),
 });
 
 type EmployeeFormData = z.infer<typeof employeeSchema>;
@@ -65,10 +64,9 @@ interface Employee {
   status: string;
   role: string;
   permissions: any;
-  company_owner_id: string | null;
-  auth__id: string | null;
+  company_owner_id: string;
+  auth_user_id: string | null;
   created_at: string;
-  company_id: string | null;
 }
 
 interface PermissionConfig {
@@ -120,7 +118,7 @@ export const EmployeesModule = () => {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
-  const { user, companyId } = useAuth();
+  const { user } = useAuth();
 
   const form = useForm<EmployeeFormData>({
     resolver: zodResolver(employeeSchema),
@@ -131,7 +129,7 @@ export const EmployeesModule = () => {
   });
 
   useEffect(() => {
-    if (companyId) {
+    if (user) {
       fetchEmployees();
     }
   }, [user]);
@@ -162,7 +160,7 @@ export const EmployeesModule = () => {
   };
 
   const onSubmit = async (data: EmployeeFormData) => {
-    if (user) {
+    if (!user) return;
 
     setLoading(true);
     try {
@@ -194,7 +192,7 @@ export const EmployeesModule = () => {
         const employeeData = {
           ...data,
           permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
-          company_owner_id: user.id, // Always use the current user as company owner
+          company_owner_id: user.id,
         };
 
         const { data: session } = await supabase.auth.getSession();
@@ -210,16 +208,19 @@ export const EmployeesModule = () => {
 
         if (!response.ok) {
           const errorText = await response.text();
+          let errorMessage = 'Error del servidor';
+          
           try {
             const errorJson = JSON.parse(errorText);
-            throw new Error(errorJson.error || `Error del servidor: ${errorText}`);
+            errorMessage = errorJson.error || errorText;
           } catch (e) {
-            throw new Error(`Error del servidor: ${errorText}`);
+            errorMessage = errorText || 'Error desconocido';
           }
+          
+          throw new Error(errorMessage);
         }
 
         const result = await response.json();
-
         toast.success('Empleado creado exitosamente');
       }
 
@@ -228,9 +229,10 @@ export const EmployeesModule = () => {
       form.reset();
       setSelectedPermissions([]);
       fetchEmployees();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving employee:', error);
-      toast.error('Error al guardar empleado');
+      const errorMessage = error?.message || 'Error al guardar empleado';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -525,6 +527,7 @@ export const EmployeesModule = () => {
                                     {showPassword ? (
                                       <EyeOff className="h-4 w-4 text-gray-400" />
                                     ) : (
+                                
                                       <Eye className="h-4 w-4 text-gray-400" />
                                     )}
                                   </Button>
@@ -544,6 +547,7 @@ export const EmployeesModule = () => {
                         <Shield className="h-5 w-5 text-blue-600" />
                         <h3 className="text-lg font-semibold">Permisos del Sistema</h3>
                       </div>
+                
                       
                       {Object.entries(permissionsByCategory).map(([category, permissions]) => (
                         <Card key={category}>
@@ -570,7 +574,7 @@ export const EmployeesModule = () => {
                               ))}
                             </div>
                           </CardContent>
-                        </Card>
+                        </Car>
                       ))}
                     </div>
                   </TabsContent>
@@ -581,7 +585,7 @@ export const EmployeesModule = () => {
                     Cancelar
                   </Button>
                   <Button type="submit" disabled={loading}>
-                    {loading ? 'Guardando...' : editingEmployee ? 'Actualizar' : 'Crear'}
+                    {loading ? 'Guardando...'  : editingEmployee ? 'Actualizar' : 'Crear'}
                   </Button>
                 </div>
               </form>
@@ -599,6 +603,7 @@ export const EmployeesModule = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{employees.length}</div>
+            
             <p className="text-xs text-muted-foreground">
               {activeEmployees} activos
             </p>
@@ -608,6 +613,7 @@ export const EmployeesModule = () => {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Empleados Activos</CardTitle>
+            
             <UserCheck className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
@@ -615,7 +621,7 @@ export const EmployeesModule = () => {
             <p className="text-xs text-muted-foreground">
               {employees.length - activeEmployees} inactivos
             </p>
-          </CardContent>
+          </Car>
         </Card>
 
         <Card>
@@ -642,6 +648,7 @@ export const EmployeesModule = () => {
               placeholder="Buscar por nombre, cargo o departamento..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              
               className="max-w-sm"
             />
           </div>
@@ -668,7 +675,7 @@ export const EmployeesModule = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-semibold text-lg">{employee.full_name}</h3>
+                        <h3 className="font-semibol text-lg">{employee.full_name}</h3>
                         <Badge variant={employee.status === 'active' ? 'default' : 'secondary'}>
                           {employee.status === 'active' ? 'Activo' : 'Inactivo'}
                         </Badge>
@@ -709,6 +716,7 @@ export const EmployeesModule = () => {
                         
                         {employee.hire_date && (
                           <div className="flex items-center gap-2">
+                
                             <Calendar className="h-4 w-4" />
                             <span>Desde: {new Date(employee.hire_date).toLocaleDateString()}</span>
                           </div>
