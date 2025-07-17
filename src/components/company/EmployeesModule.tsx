@@ -134,16 +134,16 @@ export const EmployeesModule = () => {
     if (companyId) {
       fetchEmployees();
     }
-  }, [companyId]);
+  }, [user]);
 
   const fetchEmployees = async () => {
-    if (!companyId) return;
+    if (!user) return;
 
     try {
       const { data, error } = await supabase
         .from('employees')
         .select('*')
-        .eq('company_id', companyId)
+        .eq('company_owner_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -162,7 +162,7 @@ export const EmployeesModule = () => {
   };
 
   const onSubmit = async (data: EmployeeFormData) => {
-    if (!user) return;
+    if (user) {
 
     setLoading(true);
     try {

@@ -49,13 +49,13 @@ export const ClientsModule = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (companyId) {
+    if (user && companyId) {
       fetchClients();
     }
-  }, [companyId]);
+  }, [user, companyId]);
 
   const fetchClients = async () => {
-    if (!user) return;
+    if (!user || !companyId) return;
 
     try {
       setLoading(true);
@@ -63,7 +63,7 @@ export const ClientsModule = () => {
       const { data, error } = await supabase
         .from('clients')
         .select('*')
-        .eq('user_id', companyId || user.id) // Use companyId for employees, user.id for owners
+        .eq('user_id', companyId)
         .order('created_at', { ascending: false });
 
       if (error) {

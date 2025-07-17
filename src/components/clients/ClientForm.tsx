@@ -14,7 +14,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { User, Heart, Briefcase, CreditCard, Users, Star } from 'lucide-react';
 
 const ClientForm = () => {
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
   const navigate = useNavigate();
   const { id } = useParams();
   const [loading, setLoading] = useState(false);
@@ -151,12 +151,12 @@ const ClientForm = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !companyId) return;
 
     setLoading(true);
     try {
       const clientData = {
-        user_id: companyId || user.id, // Use companyId for employees, user.id for owners
+        user_id: companyId,
         full_name: formData.full_name,
         dni: formData.dni,
         birth_date: formData.birth_date || null,

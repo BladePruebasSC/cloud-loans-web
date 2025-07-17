@@ -41,7 +41,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
   const [monthlyPayment, setMonthlyPayment] = useState<number>(0);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
 
   const form = useForm<LoanFormData>({
     resolver: zodResolver(loanSchema),
@@ -58,12 +58,12 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   }, []);
 
   const fetchClients = async () => {
-    if (!user) return;
+    if (!user || !companyId) return;
 
     const { data, error } = await supabase
       .from('clients')
       .select('id, full_name, dni')
-      .eq('user_id', companyId || user.id) // Use companyId for employees, user.id for owners
+      .eq('user_id', companyId)
       .order('full_name');
 
     if (error) {
@@ -95,7 +95,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   }, [watchedValues]);
 
   const onSubmit = async (data: LoanFormData) => {
-    if (!user) return;
+    if (!user || !companyId) return;
 
     setLoading(true);
     try {
@@ -115,7 +115,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         loan_type: data.loan_type,
         purpose: data.purpose || null,
         collateral: data.collateral || null,
-        loan_officer_id: companyId || user.id, // Use companyId for employees, user.id for owners
+        loan_officer_id: companyId,
         monthly_payment: monthlyPayment,
         total_amount: totalAmount,
         remaining_balance: totalAmount,

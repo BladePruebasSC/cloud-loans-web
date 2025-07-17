@@ -24,10 +24,10 @@ export interface Loan {
 export const useLoans = () => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
-  const { companyId } = useAuth();
+  const { user, companyId } = useAuth();
 
   const fetchLoans = async () => {
-    if (!user) return;
+    if (!user || !companyId) return;
 
     try {
       const { data, error } = await supabase
@@ -39,7 +39,7 @@ export const useLoans = () => {
             dni
           )
         `)
-        .eq('loan_officer_id', companyId || user.id) // Use companyId for employees, user.id for owners
+        .eq('loan_officer_id', companyId)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -57,10 +57,10 @@ export const useLoans = () => {
   };
 
   useEffect(() => {
-    if (companyId) {
+    if (user && companyId) {
       fetchLoans();
     }
-  }, [companyId]);
+  }, [user, companyId]);
 
   return {
     loans,

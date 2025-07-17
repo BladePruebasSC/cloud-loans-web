@@ -40,7 +40,7 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(false);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
 
   const form = useForm<PaymentFormData>({
     resolver: zodResolver(paymentSchema),
@@ -54,7 +54,7 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
   }, []);
 
   const fetchActiveLoans = async () => {
-    if (!user) return;
+    if (!user || !companyId) return;
 
     const { data, error } = await supabase
       .from('loans')
@@ -70,7 +70,7 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
         )
       `)
       .in('status', ['active', 'overdue'])
-      .eq('loan_officer_id', companyId || user.id) // Use companyId for employees, user.id for owners
+      .eq('loan_officer_id', companyId)
       .order('next_payment_date');
 
     if (error) {
@@ -99,7 +99,7 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
   };
 
   const onSubmit = async (data: PaymentFormData) => {
-    if (!user || !selectedLoan) return;
+    if (!user || !companyId || !selectedLoan) return;
 
     setLoading(true);
     try {
@@ -117,7 +117,7 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
         payment_method: data.payment_method,
         reference_number: data.reference_number,
         notes: data.notes,
-        created_by: companyId || user.id, // Use companyId for employees, user.id for owners
+        created_by: companyId,
       };
 
       const { error: paymentError } = await supabase

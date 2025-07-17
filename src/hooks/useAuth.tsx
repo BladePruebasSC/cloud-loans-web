@@ -117,10 +117,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           dni: employeeData.dni,
           role: employeeData.role,
           permissions: employeeData.permissions,
-          company_id: employeeData.company_owner_id, // Use the company owner's ID as company_id
+          company_id: employeeData.company_owner_id,
           is_employee: true
         });
-        setCompanyId(employeeData.company_owner_id); // Set company ID to the owner's ID
+        setCompanyId(employeeData.company_owner_id);
         setLoading(false);
         return;
       }
