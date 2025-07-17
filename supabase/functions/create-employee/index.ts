@@ -66,7 +66,7 @@ serve(async (req) => {
       user_metadata: {
         full_name: employeeData.full_name,
         role: employeeData.role,
-        company_id: employeeData.company_id,
+        company_owner_id: employeeData.company_owner_id,
       }
     })
 
