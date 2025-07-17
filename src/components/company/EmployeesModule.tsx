@@ -186,6 +186,17 @@ export const EmployeesModule = () => {
           throw error;
         }
 
+        // Also update the auth user if the email has changed
+        if (data.email && data.email !== editingEmployee.email) {
+          const { error: authError } = await supabase.auth.admin.updateUserById(
+            editingEmployee.auth_user_id!,
+            { email: data.email }
+          );
+          if (authError) {
+            toast.error(`Error al actualizar el email del empleado: ${authError.message}`);
+          }
+        }
+
         toast.success('Empleado actualizado exitosamente');
       } else {
         // Create new employee using Edge Function
@@ -197,7 +208,7 @@ export const EmployeesModule = () => {
 
         const { data: session } = await supabase.auth.getSession();
         
-        const response = await fetch(`/api/create-employee`, {
+        const response = await fetch(`/functions/v1/create-employee`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session.session?.access_token}`,
