@@ -1,40 +1,36 @@
-        if (!hasPermission('loans.view')) {
-          return <RestrictedAccess module="loans" />;
-  DollarSign, 
-  Clock, 
-  Briefcase, 
-  File, 
-  MapPin, 
-  HandHeart, 
-        if (!hasPermission('inventory.view')) {
-          return <RestrictedAccess module="inventory" />;
-}
-
-const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
-  const menuItems = [
-    { name: 'Inicio', path: '/', icon: Home },
+import React, { useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+import Sidebar from '@/components/Sidebar';
+import Header from '@/components/Header';
+import Dashboard from '@/pages/Dashboard';
+import { LoansModule } from '@/components/loans/LoansModule';
+import { ClientsModule } from '@/components/clients/ClientsModule';
+import ClientForm from '@/components/clients/ClientForm';
+import InventoryModule from '@/components/inventory/InventoryModule';
+import RequestsModule from '@/components/requests/RequestsModule';
+import BanksModule from '@/components/banks/BanksModule';
+import UtilitiesModule from '@/components/utilities/UtilitiesModule';
+import ShiftsModule from '@/components/shifts/ShiftsModule';
+import { CarterasModule } from '@/components/carteras/CarterasModule';
+import { DocumentsModule } from '@/components/documents/DocumentsModule';
+import { MapModule } from '@/components/map/MapModule';
+import { PaymentAgreementsModule } from '@/components/agreements/PaymentAgreementsModule';
+import { ReportsModule } from '@/components/reports/ReportsModule';
+import { CompanyModule } from '@/components/company/CompanyModule';
 import { Building, CreditCard, Package, Users, BarChart3 } from 'lucide-react';
-    { name: 'Préstamos', path: '/prestamos', icon: CreditCard },
-    { name: 'Clientes', path: '/clientes', icon: Users },
-    { name: 'Inventario', path: '/inventario', icon: Package },
-    { name: 'Solicitudes', path: '/solicitudes', icon: FileText },
-    { name: 'Bancos', path: '/bancos', icon: Building2 },
-    { name: 'Utilidades', path: '/utilidades', icon: DollarSign },
-    { name: 'Turnos', path: '/turnos', icon: Clock },
-    { name: 'Carteras', path: '/carteras', icon: Briefcase },
-        if (!hasPermission('clients.view')) {
-          return <RestrictedAccess module="clients" />;
-      {isOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
-          if (!hasPermission('clients.create')) {
-            return <RestrictedAccess module="clients" />;
-        {/* Toggle Button */}
-        <button
-          onClick={onToggle}
-          className="absolute -right-3 top-6 bg-white border border-gray-200 rounded-full p-1 shadow-md hover:shadow-lg transition-shadow z-10"
-          if (!hasPermission('clients.edit')) {
-            return <RestrictedAccess module="clients" />;
+
+// Componente para mostrar acceso restringido
+const RestrictedAccess = ({ module }: { module: string }) => {
+  const moduleNames = {
+    loans: 'Préstamos',
+    clients: 'Clientes', 
+    inventory: 'Inventario',
+    reports: 'Reportes',
+    company: 'Configuración de Empresa'
+  };
+
+  return (
     <div className="p-6">
       <div className="text-center py-8">
         <div className="h-12 w-12 mx-auto mb-4 text-gray-400">
@@ -44,38 +40,127 @@ import { Building, CreditCard, Package, Users, BarChart3 } from 'lucide-react';
           {module === 'reports' && <BarChart3 className="h-12 w-12" />}
           {module === 'company' && <Building className="h-12 w-12" />}
         </div>
-        if (!hasPermission('reports.view')) {
-          return <RestrictedAccess module="reports" />;
-        </button>
-
-        <div className="p-4 h-full overflow-y-auto">
-          {/* Logo/Title */}
-            )}
-          </div>
-
-          {/* Menu Items */}
-          <nav className="space-y-2">
-            {menuItems.map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={({ isActive }) =>
-                  `flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-700'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  } ${!isOpen ? 'justify-center' : ''}`
-                }
-                title={!isOpen ? item.name : undefined}
-              >
-                <item.icon className="h-5 w-5 flex-shrink-0" />
-                {isOpen && <span className="text-sm font-medium">{item.name}</span>}
-              </NavLink>
-            ))}
-          </nav>
-        </div>
-          return <RestrictedAccess module="company" />;
+        <h3 className="text-lg font-medium mb-2 text-gray-900">Acceso Restringido</h3>
+        <p className="text-gray-600 mb-4">
+          No tienes permisos para acceder al módulo de {moduleNames[module as keyof typeof moduleNames] || module}.
+        </p>
+        <p className="text-sm text-gray-500">
+          Contacta a tu supervisor si necesitas acceso a esta funcionalidad.
+        </p>
       </div>
+    </div>
+  );
 };
 
-export default Sidebar;
+const Index = () => {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const location = useLocation();
+  const { profile } = useAuth();
+
+  // Función para verificar permisos
+  const hasPermission = (permission: string) => {
+    if (!profile?.is_employee) return true; // Los dueños tienen todos los permisos
+    return profile?.permissions?.[permission] === true;
+  };
+
+  const renderContent = () => {
+    const path = location.pathname;
+
+    switch (path) {
+      case '/':
+        return <Dashboard />;
+      
+      case '/prestamos':
+        if (!hasPermission('loans.view')) {
+          return <RestrictedAccess module="loans" />;
+        }
+        return <LoansModule />;
+      
+      case '/prestamos/nuevo':
+        if (!hasPermission('loans.create')) {
+          return <RestrictedAccess module="loans" />;
+        }
+        return <LoansModule />;
+      
+      case '/clientes':
+        if (!hasPermission('clients.view')) {
+          return <RestrictedAccess module="clients" />;
+        }
+        return <ClientsModule />;
+      
+      case '/clientes/nuevo':
+        if (!hasPermission('clients.create')) {
+          return <RestrictedAccess module="clients" />;
+        }
+        return <ClientForm />;
+      
+      case path.match(/^\/clientes\/editar\//)?.input:
+        if (!hasPermission('clients.edit')) {
+          return <RestrictedAccess module="clients" />;
+        }
+        return <ClientForm />;
+      
+      case '/inventario':
+        if (!hasPermission('inventory.view')) {
+          return <RestrictedAccess module="inventory" />;
+        }
+        return <InventoryModule />;
+      
+      case '/solicitudes':
+        return <RequestsModule />;
+      
+      case '/bancos':
+        return <BanksModule />;
+      
+      case '/utilidades':
+        return <UtilitiesModule />;
+      
+      case '/turnos':
+        return <ShiftsModule />;
+      
+      case '/carteras':
+        return <CarterasModule />;
+      
+      case '/documentos':
+        return <DocumentsModule />;
+      
+      case '/mapa':
+        return <MapModule />;
+      
+      case '/acuerdos':
+        return <PaymentAgreementsModule />;
+      
+      case '/reportes':
+        if (!hasPermission('reports.view')) {
+          return <RestrictedAccess module="reports" />;
+        }
+        return <ReportsModule />;
+      
+      case '/empresa':
+      case '/mi-empresa':
+        if (profile?.is_employee) {
+          return <RestrictedAccess module="company" />;
+        }
+        return <CompanyModule />;
+      
+      default:
+        return <Dashboard />;
+    }
+  };
+
+  return (
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+      
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+        
+        <main className="flex-1 overflow-y-auto">
+          {renderContent()}
+        </main>
+      </div>
+    </div>
+  );
+};
+
+export default Index;

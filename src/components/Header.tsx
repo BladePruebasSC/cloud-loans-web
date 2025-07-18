@@ -1,116 +1,85 @@
-
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
-import { 
-  Home,
-  CreditCard, 
-  Package, 
-  FileText, 
-  Building2, 
-  DollarSign, 
-  Clock, 
-  Briefcase, 
-  File, 
-  MapPin, 
-  HandHeart, 
-  BarChart3, 
+import { LogOut, User, Building, Users } from 'lucide-react';
+
+interface HeaderProps {
+  onToggleSidebar: () => void;
+}
+
+const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
+  const { user, profile, signOut } = useAuth();
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+  };
+
+  return (
+    <header className="bg-white border-b border-gray-200 px-6 py-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-4">
+          <h2 className="text-xl font-semibold text-gray-800">
+            {profile?.is_employee ? 'Panel de Empleado' : 'Panel de Control'}
+          </h2>
+        </div>
+        
+        <div className="flex items-center space-x-4">
+          {profile && (
+            <div className="flex items-center space-x-3">
+              <div className="text-right">
+                <p className="text-sm font-medium text-gray-900">
+                  {profile.full_name}
+                </p>
+                <p className="text-xs text-gray-500 flex items-center gap-1">
+                  {profile.is_employee ? (
+                    <>
+                      <Users className="h-3 w-3" />
                       {profile.role === 'admin' ? 'Administrador' :
                        profile.role === 'manager' ? 'Gerente' :
                        profile.role === 'collector' ? 'Cobrador' :
                        profile.role === 'accountant' ? 'Contador' : 'Empleado'} • Empresa
-  Users,
-  ChevronLeft,
-  ChevronRight
-} from 'lucide-react';
-
-interface SidebarProps {
-  isOpen: boolean;
-  onToggle: () => void;
-}
-
-const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
-  const menuItems = [
-    { name: 'Inicio', path: '/', icon: Home },
-    { name: 'Préstamos', path: '/prestamos', icon: CreditCard },
-    { name: 'Clientes', path: '/clientes', icon: Users },
-    { name: 'Inventario', path: '/inventario', icon: Package },
-    { name: 'Solicitudes', path: '/solicitudes', icon: FileText },
-    { name: 'Bancos', path: '/bancos', icon: Building2 },
-    { name: 'Utilidades', path: '/utilidades', icon: DollarSign },
-    { name: 'Turnos', path: '/turnos', icon: Clock },
-    { name: 'Carteras', path: '/carteras', icon: Briefcase },
-    { name: 'Documentos', path: '/documentos', icon: File },
-    { name: 'Mapa en vivo', path: '/mapa', icon: MapPin },
-    { name: 'Acuerdo de pagos', path: '/acuerdos', icon: HandHeart },
-    { name: 'Reportes', path: '/reportes', icon: BarChart3 },
-    { name: 'Mi empresa', path: '/empresa', icon: Settings },
-  ];
-
-  return (
-    <>
-      {/* Mobile Overlay */}
-      {isOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
-          onClick={onToggle}
-        />
-      )}
-      
-      {/* Sidebar */}
-      <div className={`
-        fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-50 transition-all duration-300 shadow-lg
-        ${isOpen ? 'w-64' : 'w-0 lg:w-16'}
-        lg:relative lg:z-auto
-      `}>
-        {/* Toggle Button */}
-        <button
-          onClick={onToggle}
-          className="absolute -right-3 top-6 bg-white border border-gray-200 rounded-full p-1 shadow-md hover:shadow-lg transition-shadow z-10"
-        >
-          {isOpen ? (
-            <ChevronLeft className="h-4 w-4 text-gray-600" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-gray-600" />
-          )}
-        </button>
-
-        <div className="p-4 h-full overflow-y-auto">
-          {/* Logo/Title */}
-          <div className="mb-8">
-            {isOpen ? (
-              <h1 className="text-xl font-bold text-gray-800">PrestamosPro</h1>
-            ) : (
-              <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">
-                <span className="text-white font-bold text-sm">P</span>
+                    </>
+                  ) : (
+                    <>
+                      <Building className="h-3 w-3" />
+                      Dueño de Empresa
+                    </>
+                  )}
+                </p>
               </div>
-            )}
-          </div>
-
-          {/* Menu Items */}
-          <nav className="space-y-2">
-            {menuItems.map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={({ isActive }) =>
-                  `flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-700'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  } ${!isOpen ? 'justify-center' : ''}`
-                }
-                title={!isOpen ? item.name : undefined}
-              >
-                <item.icon className="h-5 w-5 flex-shrink-0" />
-                {isOpen && <span className="text-sm font-medium">{item.name}</span>}
-              </NavLink>
-            ))}
-          </nav>
+              <div className="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center">
+                {profile.is_employee ? (
+                  <Users className="h-4 w-4 text-white" />
+                ) : (
+                  <User className="h-4 w-4 text-white" />
+                )}
+              </div>
+            </div>
+          )}
+          
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSignOut}
+            className="flex items-center space-x-2"
+          >
+            <LogOut className="h-4 w-4" />
+            <span>Cerrar Sesión</span>
+          </Button>
         </div>
       </div>
-    </>
+      
+      {profile?.is_employee && profile.company_name && (
+        <div className="mt-2 text-xs text-gray-600">
+          Trabajando para: <span className="font-medium">{profile.company_name}</span>
+        </div>
+      )}
+    </header>
   );
 };
 
-export default Sidebar;
+export default Header;
