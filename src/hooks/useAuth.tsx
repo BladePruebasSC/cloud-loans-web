@@ -48,17 +48,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setUser(session.user);
-        loadUserProfile(session.user);
-      } else {
-        setLoading(false);
-      }
-    });
-
-    // Listen for auth changes
+    setLoading(true);
+    setError(null);
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         setUser(session.user);
@@ -67,18 +58,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         setProfile(null);
         setCompanyId(null);
-        setLoading(false);
       }
+      setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const loadUserProfile = async (authUser: User) => {
     setLoading(true);
     setError(null);
     try {
-      // First, check if this user is an employee
       const { data: employeeData, error: employeeError } = await supabase
         .from('employees')
         .select(`
@@ -98,7 +90,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .single();
 
       if (employeeData && !employeeError) {
-        // User is an employee
         const employeeProfile: EmployeeProfile = {
           id: employeeData.id,
           full_name: employeeData.full_name,
@@ -111,11 +102,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         setProfile(employeeProfile);
-        setCompanyId(employeeData.company_owner_id); // Use company owner's ID
+        setCompanyId(employeeData.company_owner_id);
         setError(null);
         console.log('Employee logged in:', employeeProfile);
       } else {
-        // User is a company owner
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
           .select('*')
@@ -132,13 +122,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           full_name: profileData?.full_name || authUser.user_metadata?.full_name || 'Usuario',
           email: authUser.email || '',
           role: 'owner',
-          permissions: {}, // Owners have all permissions
+          permissions: {},
           company_owner_id: authUser.id,
           is_employee: false
         };
 
         setProfile(ownerProfile);
-        setCompanyId(authUser.id); // Use their own ID as company ID
+        setCompanyId(authUser.id);
         setError(null);
         console.log('Owner logged in:', ownerProfile);
       }
