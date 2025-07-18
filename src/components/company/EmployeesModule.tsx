@@ -208,7 +208,8 @@ export const EmployeesModule = () => {
 
         const { data: session } = await supabase.auth.getSession();
         
-        const response = await fetch(`/functions/v1/create-employee`, {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const response = await fetch(`${supabaseUrl}/functions/v1/create-employee`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session.session?.access_token}`,
