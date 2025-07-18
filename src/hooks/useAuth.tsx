@@ -24,6 +24,7 @@ interface AuthContextType {
   profile: EmployeeProfile | null;
   companyId: string | null;
   loading: boolean;
+  error: Error | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (data: RegisterData) => Promise<void>;
   signOut: () => Promise<void>;
@@ -44,6 +45,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<EmployeeProfile | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
     // Get initial session
@@ -73,6 +75,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const loadUserProfile = async (authUser: User) => {
+    setLoading(true);
+    setError(null);
     try {
       // First, check if this user is an employee
       const { data: employeeData, error: employeeError } = await supabase
@@ -108,6 +112,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setProfile(employeeProfile);
         setCompanyId(employeeData.company_owner_id); // Use company owner's ID
+        setError(null);
         console.log('Employee logged in:', employeeProfile);
       } else {
         // User is a company owner
@@ -118,6 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .single();
 
         if (profileError && profileError.code !== 'PGRST116') {
+          setError(profileError);
           console.error('Error loading profile:', profileError);
         }
 
@@ -133,16 +139,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setProfile(ownerProfile);
         setCompanyId(authUser.id); // Use their own ID as company ID
+        setError(null);
         console.log('Owner logged in:', ownerProfile);
       }
-    } catch (error) {
-      console.error('Error loading user profile:', error);
+    } catch (err: any) {
+      setError(err);
+      console.error('Error loading user profile:', err);
     } finally {
       setLoading(false);
     }
   };
 
   const signIn = async (email: string, password: string) => {
+    setLoading(true);
+    setError(null);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -150,6 +160,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error) {
+        setError(error);
         throw error;
       }
 
@@ -158,13 +169,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await loadUserProfile(data.user);
         toast.success('Inicio de sesión exitoso');
       }
-    } catch (error: any) {
-      console.error('Error signing in:', error);
-      throw new Error(error.message || 'Error al iniciar sesión');
+    } catch (err: any) {
+      setError(err);
+      console.error('Error signing in:', err);
+      throw new Error(err.message || 'Error al iniciar sesión');
+    } finally {
+      setLoading(false);
     }
   };
 
   const signUp = async (data: RegisterData) => {
+    setLoading(true);
+    setError(null);
     try {
       const { data: authData, error } = await supabase.auth.signUp({
         email: data.email,
@@ -179,32 +195,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error) {
+        setError(error);
         throw error;
       }
 
       if (authData.user) {
         toast.success('Cuenta creada exitosamente');
       }
-    } catch (error: any) {
-      console.error('Error signing up:', error);
-      throw new Error(error.message || 'Error al crear la cuenta');
+    } catch (err: any) {
+      setError(err);
+      console.error('Error signing up:', err);
+      throw new Error(err.message || 'Error al crear la cuenta');
+    } finally {
+      setLoading(false);
     }
   };
 
   const signOut = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const { error } = await supabase.auth.signOut();
       if (error) {
+        setError(error);
         throw error;
       }
-      
       setUser(null);
       setProfile(null);
       setCompanyId(null);
       toast.success('Sesión cerrada exitosamente');
-    } catch (error: any) {
-      console.error('Error signing out:', error);
+    } catch (err: any) {
+      setError(err);
+      console.error('Error signing out:', err);
       toast.error('Error al cerrar sesión');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -213,6 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     profile,
     companyId,
     loading,
+    error,
     signIn,
     signUp,
     signOut,

@@ -1,1238 +1,780 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
-import { Badge } from '../components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Textarea } from '../components/ui/textarea';
-import { toast } from '../components/ui/use-toast';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { toast } from 'sonner';
 import { 
+  Plus, 
   Users, 
-  UserPlus, 
-  Calendar, 
-  Clock, 
-  DollarSign, 
-  Edit, 
-  Trash2, 
-  Search,
-  CheckCircle,
-  XCircle,
+  Search, 
+  Mail, 
+  Phone, 
+  Calendar,
+  DollarSign,
+  Edit,
+  Trash2,
   UserCheck,
   UserX,
+  Shield,
+  Settings,
+  Eye,
+  EyeOff,
   Building,
-  Phone,
-  Mail,
-  MapPin,
-  FileText,
-  TrendingUp,
-  Award,
-  AlertCircle
+  Briefcase
 } from 'lucide-react';
+
+const employeeSchema = z.object({
+  full_name: z.string().min(1, 'El nombre es requerido'),
+  email: z.string().email('Email inválido'),
+  phone: z.string().optional(),
+  dni: z.string().optional(),
+  position: z.string().min(1, 'El cargo es requerido'),
+  department: z.string().optional(),
+  salary: z.number().min(0, 'El salario debe ser mayor o igual a 0').optional(),
+  hire_date: z.string().optional(),
+  role: z.enum(['admin', 'manager', 'employee', 'collector', 'accountant']).default('employee'),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
+});
+
+type EmployeeFormData = z.infer<typeof employeeSchema>;
 
 interface Employee {
   id: string;
-  employee_id: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  phone: string;
-  position: string;
-  department: string;
-  hire_date: string;
-  salary: number;
-  status: 'active' | 'inactive' | 'on_leave';
-  address: string;
-  emergency_contact: string;
-  emergency_phone: string;
-  notes: string;
+  full_name: string;
+  email: string | null;
+  phone: string | null;
+  dni: string | null;
+  position: string | null;
+  department: string | null;
+  salary: number | null;
+  hire_date: string | null;
+  status: string;
+  role: string;
+  permissions: any;
+  company_owner_id: string;
+  auth_user_id: string | null;
   created_at: string;
 }
 
-interface Shift {
-  id: string;
-  employee_id: string;
-  date: string;
-  start_time: string;
-  end_time: string;
-  break_start?: string;
-  break_end?: string;
-  total_hours: number;
-  overtime_hours: number;
-  status: 'scheduled' | 'completed' | 'missed' | 'partial';
-  notes: string;
-  created_at: string;
+interface PermissionConfig {
+  [key: string]: {
+    label: string;
+    description: string;
+    category: string;
+  };
 }
 
-interface Attendance {
-  id: string;
-  employee_id: string;
-  date: string;
-  check_in: string;
-  check_out?: string;
-  total_hours?: number;
-  status: 'present' | 'absent' | 'late' | 'early_out';
-  notes: string;
-  created_at: string;
-}
+const PERMISSIONS_CONFIG: PermissionConfig = {
+  // Préstamos
+  'loans.view': { label: 'Ver Préstamos', description: 'Puede ver la lista de préstamos', category: 'Préstamos' },
+  'loans.create': { label: 'Crear Préstamos', description: 'Puede crear nuevos préstamos', category: 'Préstamos' },
+  'loans.edit': { label: 'Editar Préstamos', description: 'Puede modificar préstamos existentes', category: 'Préstamos' },
+  'loans.delete': { label: 'Eliminar Préstamos', description: 'Puede eliminar préstamos', category: 'Préstamos' },
+  
+  // Clientes
+  'clients.view': { label: 'Ver Clientes', description: 'Puede ver la lista de clientes', category: 'Clientes' },
+  'clients.create': { label: 'Crear Clientes', description: 'Puede registrar nuevos clientes', category: 'Clientes' },
+  'clients.edit': { label: 'Editar Clientes', description: 'Puede modificar información de clientes', category: 'Clientes' },
+  'clients.delete': { label: 'Eliminar Clientes', description: 'Puede eliminar clientes', category: 'Clientes' },
+  
+  // Pagos
+  'payments.view': { label: 'Ver Pagos', description: 'Puede ver el historial de pagos', category: 'Pagos' },
+  'payments.create': { label: 'Registrar Pagos', description: 'Puede registrar nuevos pagos', category: 'Pagos' },
+  'payments.edit': { label: 'Editar Pagos', description: 'Puede modificar pagos registrados', category: 'Pagos' },
+  
+  // Reportes
+  'reports.view': { label: 'Ver Reportes', description: 'Puede acceder a los reportes', category: 'Reportes' },
+  'reports.export': { label: 'Exportar Reportes', description: 'Puede exportar reportes', category: 'Reportes' },
+  'reports.financial': { label: 'Reportes Financieros', description: 'Puede ver reportes financieros sensibles', category: 'Reportes' },
+  
+  // Configuración
+  'settings.view': { label: 'Ver Configuración', description: 'Puede ver configuraciones de la empresa', category: 'Configuración' },
+  'settings.edit': { label: 'Editar Configuración', description: 'Puede modificar configuraciones', category: 'Configuración' },
+  'employees.manage': { label: 'Gestionar Empleados', description: 'Puede gestionar otros empleados', category: 'Configuración' },
+  
+  // Inventario
+  'inventory.view': { label: 'Ver Inventario', description: 'Puede ver el inventario', category: 'Inventario' },
+  'inventory.manage': { label: 'Gestionar Inventario', description: 'Puede gestionar productos del inventario', category: 'Inventario' },
+};
 
-interface Payroll {
-  id: string;
-  employee_id: string;
-  pay_period_start: string;
-  pay_period_end: string;
-  base_salary: number;
-  overtime_pay: number;
-  bonuses: number;
-  deductions: number;
-  net_pay: number;
-  status: 'draft' | 'processed' | 'paid';
-  created_at: string;
-}
-
-export default function EmployeesModule() {
+export const EmployeesModule = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [attendance, setAttendance] = useState<Attendance[]>([]);
-  const [payroll, setPayroll] = useState<Payroll[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedEmployee, setSelectedEmployee] = useState<string>('');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [activeTab, setActiveTab] = useState('employees');
-
-  // Estados para modales
-  const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
-  const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
-  const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
-  const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
-  const [editingShift, setEditingShift] = useState<Shift | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const { user } = useAuth();
 
-  // Estados para formularios
-  const [employeeForm, setEmployeeForm] = useState({
-    employee_id: '',
-    first_name: '',
-    last_name: '',
-    email: '',
-    phone: '',
-    position: '',
-    department: '',
-    hire_date: '',
-    salary: 0,
-    status: 'active' as const,
-    address: '',
-    emergency_contact: '',
-    emergency_phone: '',
-    notes: ''
+  const form = useForm<EmployeeFormData>({
+    resolver: zodResolver(employeeSchema),
+    defaultValues: {
+      hire_date: new Date().toISOString().split('T')[0],
+      role: 'employee',
+    },
   });
 
-  const [shiftForm, setShiftForm] = useState({
-    employee_id: '',
-    date: '',
-    start_time: '',
-    end_time: '',
-    break_start: '',
-    break_end: '',
-    notes: ''
-  });
-
-  const [attendanceForm, setAttendanceForm] = useState({
-    employee_id: '',
-    date: '',
-    check_in: '',
-    check_out: '',
-    notes: ''
-  });
-
-  // Cargar datos
   useEffect(() => {
-    fetchEmployees();
-    fetchShifts();
-    fetchAttendance();
-    fetchPayroll();
-  }, []);
+    if (user) {
+      fetchEmployees();
+    }
+  }, [user]);
 
   const fetchEmployees = async () => {
-    setLoading(true);
+    if (!user) return;
+
     try {
       const { data, error } = await supabase
         .from('employees')
         .select('*')
+        .eq('company_owner_id', user.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error fetching employees:', error);
+        toast.error('Error al cargar empleados');
+        return;
+      }
+
       setEmployees(data || []);
     } catch (error) {
-      console.error('Error fetching employees:', error);
-      toast({
-        title: "Error",
-        description: "Error al cargar empleados",
-        variant: "destructive"
-      });
+      console.error('Error in fetchEmployees:', error);
+      toast.error('Error al cargar empleados');
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchShifts = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('shifts')
-        .select('*')
-        .order('date', { ascending: false });
-
-      if (error) throw error;
-      setShifts(data || []);
-    } catch (error) {
-      console.error('Error fetching shifts:', error);
-    }
-  };
-
-  const fetchAttendance = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('attendance')
-        .select('*')
-        .order('date', { ascending: false });
-
-      if (error) throw error;
-      setAttendance(data || []);
-    } catch (error) {
-      console.error('Error fetching attendance:', error);
-    }
-  };
-
-  const fetchPayroll = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('payroll')
-        .select('*')
-        .order('pay_period_start', { ascending: false });
-
-      if (error) throw error;
-      setPayroll(data || []);
-    } catch (error) {
-      console.error('Error fetching payroll:', error);
-    }
-  };
-
-  const saveEmployee = async () => {
-    if (!employeeForm.first_name || !employeeForm.last_name || !employeeForm.email) {
-      toast({
-        title: "Error",
-        description: "Por favor complete los campos requeridos",
-        variant: "destructive"
-      });
-      return;
-    }
+  const onSubmit = async (data: EmployeeFormData) => {
+    if (!user) return;
 
     setLoading(true);
     try {
       if (editingEmployee) {
+        // Update existing employee
         const { error } = await supabase
           .from('employees')
-          .update(employeeForm)
+          .update({
+            full_name: data.full_name,
+            email: data.email,
+            phone: data.phone,
+            dni: data.dni,
+            position: data.position,
+            department: data.department,
+            salary: data.salary || null,
+            hire_date: data.hire_date,
+            role: data.role,
+            permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
+          })
           .eq('id', editingEmployee.id);
 
-        if (error) throw error;
-        toast({
-          title: "Éxito",
-          description: "Empleado actualizado correctamente"
-        });
-      } else {
-        const { error } = await supabase
-          .from('employees')
-          .insert([employeeForm]);
+        if (error) {
+          throw error;
+        }
 
-        if (error) throw error;
-        toast({
-          title: "Éxito",
-          description: "Empleado creado correctamente"
+        // Also update the auth user if the email has changed
+        if (data.email && data.email !== editingEmployee.email) {
+          const { error: authError } = await supabase.auth.admin.updateUserById(
+            editingEmployee.auth_user_id!,
+            { email: data.email }
+          );
+          if (authError) {
+            toast.error(`Error al actualizar el email del empleado: ${authError.message}`);
+          }
+        }
+
+        toast.success('Empleado actualizado exitosamente');
+      } else {
+        // Create new employee using Edge Function
+        const employeeData = {
+          ...data,
+          permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
+          company_owner_id: user.id,
+        };
+
+        const { data: session } = await supabase.auth.getSession();
+        
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const response = await fetch(`${supabaseUrl}/functions/v1/create-employee`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.session?.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ employeeData }),
         });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          let errorMessage = 'Error del servidor';
+          
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.error || errorText;
+          } catch (e) {
+            errorMessage = errorText || 'Error desconocido';
+          }
+          
+          throw new Error(errorMessage);
+        }
+
+        const result = await response.json();
+        toast.success('Empleado creado exitosamente');
       }
 
-      setIsEmployeeModalOpen(false);
+      setIsDialogOpen(false);
       setEditingEmployee(null);
-      resetEmployeeForm();
+      form.reset();
+      setSelectedPermissions([]);
       fetchEmployees();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving employee:', error);
-      toast({
-        title: "Error",
-        description: "Error al guardar empleado",
-        variant: "destructive"
-      });
+      const errorMessage = error?.message || 'Error al guardar empleado';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const deleteEmployee = async (id: string) => {
-    if (!confirm('¿Está seguro de que desea eliminar este empleado?')) return;
+  const handleEdit = (employee: Employee) => {
+    setEditingEmployee(employee);
+    form.reset({
+      full_name: employee.full_name,
+      email: employee.email || '',
+      phone: employee.phone || '',
+      dni: employee.dni || '',
+      position: employee.position || '',
+      department: employee.department || '',
+      salary: employee.salary || undefined,
+      hire_date: employee.hire_date || '',
+      role: employee.role as 'admin' | 'manager' | 'employee' | 'collector' | 'accountant',
+      password: '', // Don't pre-fill password for editing
+    });
+    
+    // Set permissions
+    const permissions = Object.keys(employee.permissions || {}).filter(key => employee.permissions[key]);
+    setSelectedPermissions(permissions);
+    setIsDialogOpen(true);
+  };
 
-    setLoading(true);
+  const handleDelete = async (id: string) => {
+    if (!confirm('¿Está seguro de eliminar este empleado?')) return;
+
     try {
       const { error } = await supabase
         .from('employees')
         .delete()
         .eq('id', id);
 
-      if (error) throw error;
-      toast({
-        title: "Éxito",
-        description: "Empleado eliminado correctamente"
-      });
+      if (error) {
+        throw error;
+      }
+
+      toast.success('Empleado eliminado exitosamente');
       fetchEmployees();
     } catch (error) {
       console.error('Error deleting employee:', error);
-      toast({
-        title: "Error",
-        description: "Error al eliminar empleado",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
+      toast.error('Error al eliminar empleado');
     }
   };
 
-  const saveShift = async () => {
-    if (!shiftForm.employee_id || !shiftForm.date || !shiftForm.start_time || !shiftForm.end_time) {
-      toast({
-        title: "Error",
-        description: "Por favor complete todos los campos requeridos",
-        variant: "destructive"
-      });
-      return;
-    }
+  const toggleStatus = async (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
 
-    // Calcular horas totales
-    const startTime = new Date(`${shiftForm.date} ${shiftForm.start_time}`);
-    const endTime = new Date(`${shiftForm.date} ${shiftForm.end_time}`);
-    const totalHours = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
-    const overtimeHours = Math.max(0, totalHours - 8);
-
-    const shiftData = {
-      ...shiftForm,
-      total_hours: totalHours,
-      overtime_hours: overtimeHours,
-      status: 'scheduled' as const
-    };
-
-    setLoading(true);
     try {
-      if (editingShift) {
-        const { error } = await supabase
-          .from('shifts')
-          .update(shiftData)
-          .eq('id', editingShift.id);
+      const { error } = await supabase
+        .from('employees')
+        .update({ status: newStatus })
+        .eq('id', id);
 
-        if (error) throw error;
-        toast({
-          title: "Éxito",
-          description: "Turno actualizado correctamente"
-        });
-      } else {
-        const { error } = await supabase
-          .from('shifts')
-          .insert([shiftData]);
-
-        if (error) throw error;
-        toast({
-          title: "Éxito",
-          description: "Turno creado correctamente"
-        });
+      if (error) {
+        throw error;
       }
 
-      setIsShiftModalOpen(false);
-      setEditingShift(null);
-      resetShiftForm();
-      fetchShifts();
+      toast.success(`Empleado ${newStatus === 'active' ? 'activado' : 'desactivado'} exitosamente`);
+      fetchEmployees();
     } catch (error) {
-      console.error('Error saving shift:', error);
-      toast({
-        title: "Error",
-        description: "Error al guardar turno",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
+      console.error('Error updating employee status:', error);
+      toast.error('Error al actualizar estado del empleado');
     }
   };
 
-  const markAttendance = async () => {
-    if (!attendanceForm.employee_id || !attendanceForm.date || !attendanceForm.check_in) {
-      toast({
-        title: "Error",
-        description: "Por favor complete los campos requeridos",
-        variant: "destructive"
-      });
-      return;
+  const handlePermissionChange = (permission: string, checked: boolean) => {
+    if (checked) {
+      setSelectedPermissions(prev => [...prev, permission]);
+    } else {
+      setSelectedPermissions(prev => prev.filter(p => p !== permission));
     }
-
-    let totalHours = 0;
-    let status: 'present' | 'absent' | 'late' | 'early_out' = 'present';
-
-    if (attendanceForm.check_out) {
-      const checkIn = new Date(`${attendanceForm.date} ${attendanceForm.check_in}`);
-      const checkOut = new Date(`${attendanceForm.date} ${attendanceForm.check_out}`);
-      totalHours = (checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60);
-    }
-
-    const attendanceData = {
-      ...attendanceForm,
-      total_hours: totalHours,
-      status
-    };
-
-    setLoading(true);
-    try {
-      const { error } = await supabase
-        .from('attendance')
-        .insert([attendanceData]);
-
-      if (error) throw error;
-      toast({
-        title: "Éxito",
-        description: "Asistencia registrada correctamente"
-      });
-
-      setIsAttendanceModalOpen(false);
-      resetAttendanceForm();
-      fetchAttendance();
-    } catch (error) {
-      console.error('Error marking attendance:', error);
-      toast({
-        title: "Error",
-        description: "Error al registrar asistencia",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const generatePayroll = async (employeeId: string) => {
-    const employee = employees.find(e => e.id === employeeId);
-    if (!employee) return;
-
-    const startDate = new Date();
-    startDate.setDate(1);
-    const endDate = new Date();
-    endDate.setMonth(endDate.getMonth() + 1);
-    endDate.setDate(0);
-
-    const employeeShifts = shifts.filter(s => 
-      s.employee_id === employeeId &&
-      s.date >= startDate.toISOString().split('T')[0] &&
-      s.date <= endDate.toISOString().split('T')[0]
-    );
-
-    const totalHours = employeeShifts.reduce((sum, shift) => sum + shift.total_hours, 0);
-    const overtimeHours = employeeShifts.reduce((sum, shift) => sum + shift.overtime_hours, 0);
-    const hourlyRate = employee.salary / (40 * 4); // Asumiendo 40 horas por semana
-    const overtimeRate = hourlyRate * 1.5;
-
-    const baseSalary = totalHours * hourlyRate;
-    const overtimePay = overtimeHours * overtimeRate;
-    const bonuses = 0; // Puede ser configurado
-    const deductions = baseSalary * 0.1; // 10% de deducciones (impuestos, etc.)
-    const netPay = baseSalary + overtimePay + bonuses - deductions;
-
-    const payrollData = {
-      employee_id: employeeId,
-      pay_period_start: startDate.toISOString().split('T')[0],
-      pay_period_end: endDate.toISOString().split('T')[0],
-      base_salary: baseSalary,
-      overtime_pay: overtimePay,
-      bonuses,
-      deductions,
-      net_pay: netPay,
-      status: 'draft' as const
-    };
-
-    setLoading(true);
-    try {
-      const { error } = await supabase
-        .from('payroll')
-        .insert([payrollData]);
-
-      if (error) throw error;
-      toast({
-        title: "Éxito",
-        description: "Nómina generada correctamente"
-      });
-      fetchPayroll();
-    } catch (error) {
-      console.error('Error generating payroll:', error);
-      toast({
-        title: "Error",
-        description: "Error al generar nómina",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resetEmployeeForm = () => {
-    setEmployeeForm({
-      employee_id: '',
-      first_name: '',
-      last_name: '',
-      email: '',
-      phone: '',
-      position: '',
-      department: '',
-      hire_date: '',
-      salary: 0,
-      status: 'active',
-      address: '',
-      emergency_contact: '',
-      emergency_phone: '',
-      notes: ''
-    });
-  };
-
-  const resetShiftForm = () => {
-    setShiftForm({
-      employee_id: '',
-      date: '',
-      start_time: '',
-      end_time: '',
-      break_start: '',
-      break_end: '',
-      notes: ''
-    });
-  };
-
-  const resetAttendanceForm = () => {
-    setAttendanceForm({
-      employee_id: '',
-      date: '',
-      check_in: '',
-      check_out: '',
-      notes: ''
-    });
-  };
-
-  const editEmployee = (employee: Employee) => {
-    setEditingEmployee(employee);
-    setEmployeeForm(employee);
-    setIsEmployeeModalOpen(true);
   };
 
   const filteredEmployees = employees.filter(employee =>
-    employee.first_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    employee.last_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    employee.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    employee.position.toLowerCase().includes(searchTerm.toLowerCase())
+    employee.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    employee.position?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    employee.department?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const getStatusBadge = (status: string) => {
-    const statusColors = {
-      active: 'bg-green-100 text-green-800',
-      inactive: 'bg-red-100 text-red-800',
-      on_leave: 'bg-yellow-100 text-yellow-800',
-      scheduled: 'bg-blue-100 text-blue-800',
-      completed: 'bg-green-100 text-green-800',
-      missed: 'bg-red-100 text-red-800',
-      partial: 'bg-yellow-100 text-yellow-800',
-      present: 'bg-green-100 text-green-800',
-      absent: 'bg-red-100 text-red-800',
-      late: 'bg-yellow-100 text-yellow-800',
-      early_out: 'bg-orange-100 text-orange-800',
-      draft: 'bg-gray-100 text-gray-800',
-      processed: 'bg-blue-100 text-blue-800',
-      paid: 'bg-green-100 text-green-800'
-    };
-
-    return statusColors[status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800';
-  };
-
-  const getStatusText = (status: string) => {
-    const statusTexts = {
-      active: 'Activo',
-      inactive: 'Inactivo',
-      on_leave: 'En Licencia',
-      scheduled: 'Programado',
-      completed: 'Completado',
-      missed: 'No Asistió',
-      partial: 'Parcial',
-      present: 'Presente',
-      absent: 'Ausente',
-      late: 'Tarde',
-      early_out: 'Salida Temprana',
-      draft: 'Borrador',
-      processed: 'Procesado',
-      paid: 'Pagado'
-    };
-
-    return statusTexts[status as keyof typeof statusTexts] || status;
-  };
-
-  // Estadísticas
-  const totalEmployees = employees.length;
   const activeEmployees = employees.filter(e => e.status === 'active').length;
-  const onLeaveEmployees = employees.filter(e => e.status === 'on_leave').length;
-  const totalPayroll = payroll.reduce((sum, p) => sum + p.net_pay, 0);
+  const totalSalary = employees
+    .filter(e => e.status === 'active' && e.salary)
+    .reduce((sum, e) => sum + (e.salary || 0), 0);
+
+  // Group permissions by category
+  const permissionsByCategory = Object.entries(PERMISSIONS_CONFIG).reduce((acc, [key, config]) => {
+    if (!acc[config.category]) {
+      acc[config.category] = [];
+    }
+    acc[config.category].push({ key, ...config });
+    return acc;
+  }, {} as Record<string, Array<{ key: string; label: string; description: string; category: string }>>);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold">Gestión de Empleados</h2>
-        <div className="flex gap-2">
-          <Dialog open={isEmployeeModalOpen} onOpenChange={setIsEmployeeModalOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={() => {
-                setEditingEmployee(null);
-                resetEmployeeForm();
-              }}>
-                <UserPlus className="w-4 h-4 mr-2" />
-                Nuevo Empleado
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingEmployee ? 'Editar Empleado' : 'Nuevo Empleado'}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-4">
-                  <div>
-                    <Label htmlFor="employee_id">ID Empleado</Label>
-                    <Input
-                      id="employee_id"
-                      value={employeeForm.employee_id}
-                      onChange={(e) => setEmployeeForm({...employeeForm, employee_id: e.target.value})}
-                      placeholder="EMP001"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="first_name">Nombre *</Label>
-                    <Input
-                      id="first_name"
-                      value={employeeForm.first_name}
-                      onChange={(e) => setEmployeeForm({...employeeForm, first_name: e.target.value})}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="last_name">Apellido *</Label>
-                    <Input
-                      id="last_name"
-                      value={employeeForm.last_name}
-                      onChange={(e) => setEmployeeForm({...employeeForm, last_name: e.target.value})}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="email">Email *</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={employeeForm.email}
-                      onChange={(e) => setEmployeeForm({...employeeForm, email: e.target.value})}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="phone">Teléfono</Label>
-                    <Input
-                      id="phone"
-                      value={employeeForm.phone}
-                      onChange={(e) => setEmployeeForm({...employeeForm, phone: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="position">Posición</Label>
-                    <Input
-                      id="position"
-                      value={employeeForm.position}
-                      onChange={(e) => setEmployeeForm({...employeeForm, position: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="department">Departamento</Label>
-                    <Select value={employeeForm.department} onValueChange={(value) => setEmployeeForm({...employeeForm, department: value})}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar departamento" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="administracion">Administración</SelectItem>
-                        <SelectItem value="creditos">Créditos</SelectItem>
-                        <SelectItem value="cobranzas">Cobranzas</SelectItem>
-                        <SelectItem value="atencion_cliente">Atención al Cliente</SelectItem>
-                        <SelectItem value="gerencia">Gerencia</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">Gestión de Empleados</h2>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button onClick={() => {
+              setEditingEmployee(null);
+              form.reset();
+              setSelectedPermissions([]);
+            }}>
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Empleado
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {editingEmployee ? 'Editar Empleado' : 'Nuevo Empleado'}
+              </DialogTitle>
+            </DialogHeader>
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                <Tabs defaultValue="basic" className="w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="basic">Información Básica</TabsTrigger>
+                    <TabsTrigger value="permissions">Permisos</TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="basic" className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="full_name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Nombre Completo</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Nombre completo" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="email"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Email</FormLabel>
+                            <FormControl>
+                              <Input type="email" placeholder="email@ejemplo.com" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="phone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Teléfono</FormLabel>
+                            <FormControl>
+                              <Input placeholder="(809) 000-0000" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="dni"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Cédula</FormLabel>
+                            <FormControl>
+                              <Input placeholder="000-0000000-0" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="position"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Cargo</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Cargo o posición" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="department"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Departamento</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Departamento" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="salary"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Salario</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                placeholder="0.00"
+                                {...field}
+                                onChange={(e) => field.onChange(parseFloat(e.target.value) || undefined)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="hire_date"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Fecha de Contratación</FormLabel>
+                            <FormControl>
+                              <Input type="date" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="role"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Rol</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Seleccionar rol" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="employee">Empleado</SelectItem>
+                                <SelectItem value="collector">Cobrador</SelectItem>
+                                <SelectItem value="accountant">Contador</SelectItem>
+                                <SelectItem value="manager">Gerente</SelectItem>
+                                <SelectItem value="admin">Administrador</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      {!editingEmployee && (
+                        <FormField
+                          control={form.control}
+                          name="password"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Contraseña</FormLabel>
+                              <FormControl>
+                                <div className="relative">
+                                  <Input 
+                                    type={showPassword ? 'text' : 'password'} 
+                                    placeholder="Contraseña" 
+                                    {...field} 
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                  >
+                                    {showPassword ? (
+                                      <EyeOff className="h-4 w-4 text-gray-400" />
+                                    ) : (
+                                
+                                      <Eye className="h-4 w-4 text-gray-400" />
+                                    )}
+                                  </Button>
+                                </div>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+                    </div>
+                  </TabsContent>
+                  
+                  <TabsContent value="permissions" className="space-y-4">
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Shield className="h-5 w-5 text-blue-600" />
+                        <h3 className="text-lg font-semibold">Permisos del Sistema</h3>
+                      </div>
+                
+                      
+                      {Object.entries(permissionsByCategory).map(([category, permissions]) => (
+                        <Card key={category}>
+                          <CardHeader>
+                            <CardTitle className="text-base">{category}</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {permissions.map((permission) => (
+                                <div key={permission.key} className="flex items-start space-x-3">
+                                  <Switch
+                                    checked={selectedPermissions.includes(permission.key)}
+                                    onCheckedChange={(checked) => handlePermissionChange(permission.key, checked)}
+                                  />
+                                  <div className="space-y-1">
+                                    <Label className="text-sm font-medium">
+                                      {permission.label}
+                                    </Label>
+                                    <p className="text-xs text-gray-500">
+                                      {permission.description}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </TabsContent>
+                </Tabs>
+
+                <div className="flex gap-4">
+                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                    Cancelar
+                  </Button>
+                  <Button type="submit" disabled={loading}>
+                    {loading ? 'Guardando...'  : editingEmployee ? 'Actualizar' : 'Crear'}
+                  </Button>
                 </div>
-                <div className="space-y-4">
-                  <div>
-                    <Label htmlFor="hire_date">Fecha de Contratación</Label>
-                    <Input
-                      id="hire_date"
-                      type="date"
-                      value={employeeForm.hire_date}
-                      onChange={(e) => setEmployeeForm({...employeeForm, hire_date: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="salary">Salario</Label>
-                    <Input
-                      id="salary"
-                      type="number"
-                      value={employeeForm.salary}
-                      onChange={(e) => setEmployeeForm({...employeeForm, salary: parseFloat(e.target.value)})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="status">Estado</Label>
-                    <Select value={employeeForm.status} onValueChange={(value: 'active' | 'inactive' | 'on_leave') => setEmployeeForm({...employeeForm, status: value})}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="active">Activo</SelectItem>
-                        <SelectItem value="inactive">Inactivo</SelectItem>
-                        <SelectItem value="on_leave">En Licencia</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="address">Dirección</Label>
-                    <Textarea
-                      id="address"
-                      value={employeeForm.address}
-                      onChange={(e) => setEmployeeForm({...employeeForm, address: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="emergency_contact">Contacto de Emergencia</Label>
-                    <Input
-                      id="emergency_contact"
-                      value={employeeForm.emergency_contact}
-                      onChange={(e) => setEmployeeForm({...employeeForm, emergency_contact: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="emergency_phone">Teléfono de Emergencia</Label>
-                    <Input
-                      id="emergency_phone"
-                      value={employeeForm.emergency_phone}
-                      onChange={(e) => setEmployeeForm({...employeeForm, emergency_phone: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="notes">Notas</Label>
-                    <Textarea
-                      id="notes"
-                      value={employeeForm.notes}
-                      onChange={(e) => setEmployeeForm({...employeeForm, notes: e.target.value})}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 mt-6">
-                <Button variant="outline" onClick={() => setIsEmployeeModalOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button onClick={saveEmployee} disabled={loading}>
-                  {loading ? 'Guardando...' : editingEmployee ? 'Actualizar' : 'Crear'}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+              </form>
+            </Form>
+          </DialogContent>
+        </Dialog>
       </div>
 
-      {/* Estadísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Empleados</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalEmployees}</div>
+            <div className="text-2xl font-bold">{employees.length}</div>
+            
+            <p className="text-xs text-muted-foreground">
+              {activeEmployees} activos
+            </p>
           </CardContent>
         </Card>
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Empleados Activos</CardTitle>
-            <UserCheck className="h-4 w-4 text-muted-foreground" />
+            <UserCheck className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">{activeEmployees}</div>
+            <p className="text-xs text-muted-foreground">
+              {employees.length - activeEmployees} inactivos
+            </p>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">En Licencia</CardTitle>
-            <UserX className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">{onLeaveEmployees}</div>
-          </CardContent>
-        </Card>
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Nómina Total</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">RD${totalPayroll.toLocaleString()}</div>
+            <div className="text-2xl font-bold">${totalSalary.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">Salarios mensuales</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="employees">Empleados</TabsTrigger>
-          <TabsTrigger value="shifts">Turnos</TabsTrigger>
-          <TabsTrigger value="attendance">Asistencia</TabsTrigger>
-          <TabsTrigger value="payroll">Nómina</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="employees" className="space-y-4">
-          {/* Búsqueda */}
-          <div className="flex gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar empleados..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
+      {/* Search */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Buscar Empleados</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center space-x-2">
+            <Search className="h-4 w-4 text-gray-400" />
+            <Input
+              placeholder="Buscar por nombre, cargo o departamento..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              
+              className="max-w-sm"
+            />
           </div>
+        </CardContent>
+      </Card>
 
-          {/* Lista de empleados */}
-          <div className="grid gap-4">
-            {filteredEmployees.map((employee) => (
-              <Card key={employee.id}>
-                <CardContent className="p-6">
-                  <div className="flex justify-between items-start">
+      {/* Employees List */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Lista de Empleados</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">Cargando empleados...</div>
+          ) : filteredEmployees.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No hay empleados registrados</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {filteredEmployees.map((employee) => (
+                <div key={employee.id} className="border rounded-lg p-4">
+                  <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
-                        <h3 className="text-lg font-semibold">
-                          {employee.first_name} {employee.last_name}
-                        </h3>
-                        <Badge className={getStatusBadge(employee.status)}>
-                          {getStatusText(employee.status)}
+                        <h3 className="font-semibol text-lg">{employee.full_name}</h3>
+                        <Badge variant={employee.status === 'active' ? 'default' : 'secondary'}>
+                          {employee.status === 'active' ? 'Activo' : 'Inactivo'}
+                        </Badge>
+                        <Badge variant="outline">
+                          {employee.role === 'admin' ? 'Administrador' :
+                           employee.role === 'manager' ? 'Gerente' :
+                           employee.role === 'collector' ? 'Cobrador' :
+                           employee.role === 'accountant' ? 'Contador' : 'Empleado'}
                         </Badge>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground">
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-gray-600">
                         <div className="flex items-center gap-2">
-                          <Building className="h-4 w-4" />
-                          <span>{employee.position} - {employee.department}</span>
+                          <span className="font-medium">Cargo:</span>
+                          <span>{employee.position}</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Mail className="h-4 w-4" />
-                          <span>{employee.email}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Phone className="h-4 w-4" />
-                          <span>{employee.phone}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <DollarSign className="h-4 w-4" />
-                          <span>RD${employee.salary.toLocaleString()}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4" />
-                          <span>Desde: {new Date(employee.hire_date).toLocaleDateString()}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <MapPin className="h-4 w-4" />
-                          <span>{employee.address}</span>
-                        </div>
+                        
+                        {employee.department && (
+                          <div className="flex items-center gap-2">
+                            <Building className="h-4 w-4" />
+                            <span>{employee.department}</span>
+                          </div>
+                        )}
+                        
+                        {employee.email && (
+                          <div className="flex items-center gap-2">
+                            <Mail className="h-4 w-4" />
+                            <span>{employee.email}</span>
+                          </div>
+                        )}
+                        
+                        {employee.phone && (
+                          <div className="flex items-center gap-2">
+                            <Phone className="h-4 w-4" />
+                            <span>{employee.phone}</span>
+                          </div>
+                        )}
+                        
+                        {employee.hire_date && (
+                          <div className="flex items-center gap-2">
+                
+                            <Calendar className="h-4 w-4" />
+                            <span>Desde: {new Date(employee.hire_date).toLocaleDateString()}</span>
+                          </div>
+                        )}
+                        
+                        {employee.salary && (
+                          <div className="flex items-center gap-2">
+                            <DollarSign className="h-4 w-4" />
+                            <span>${employee.salary.toLocaleString()}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div className="flex gap-2">
+
+                    <div className="flex items-center gap-2">
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => editEmployee(employee)}
+                        onClick={() => toggleStatus(employee.id, employee.status)}
                       >
+                        {employee.status === 'active' ? (
+                          <UserX className="h-4 w-4" />
+                        ) : (
+                          <UserCheck className="h-4 w-4" />
+                        )}
+                      </Button>
+                      
+                      <Button variant="outline" size="sm" onClick={() => handleEdit(employee)}>
                         <Edit className="h-4 w-4" />
                       </Button>
+                      
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => generatePayroll(employee.id)}
-                      >
-                        <DollarSign className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => deleteEmployee(employee.id)}
+                        onClick={() => handleDelete(employee.id)}
+                        className="text-red-600 hover:text-red-700"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="shifts" className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold">Gestión de Turnos</h3>
-            <Dialog open={isShiftModalOpen} onOpenChange={setIsShiftModalOpen}>
-              <DialogTrigger asChild>
-                <Button onClick={() => {
-                  setEditingShift(null);
-                  resetShiftForm();
-                }}>
-                  <Clock className="w-4 h-4 mr-2" />
-                  Nuevo Turno
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl">
-                <DialogHeader>
-                  <DialogTitle>
-                    {editingShift ? 'Editar Turno' : 'Nuevo Turno'}
-                  </DialogTitle>
-                </DialogHeader>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="shift_employee">Empleado</Label>
-                    <Select value={shiftForm.employee_id} onValueChange={(value) => setShiftForm({...shiftForm, employee_id: value})}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar empleado" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {employees.map((employee) => (
-                          <SelectItem key={employee.id} value={employee.id}>
-                            {employee.first_name} {employee.last_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="shift_date">Fecha</Label>
-                    <Input
-                      id="shift_date"
-                      type="date"
-                      value={shiftForm.date}
-                      onChange={(e) => setShiftForm({...shiftForm, date: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="start_time">Hora Inicio</Label>
-                    <Input
-                      id="start_time"
-                      type="time"
-                      value={shiftForm.start_time}
-                      onChange={(e) => setShiftForm({...shiftForm, start_time: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="end_time">Hora Fin</Label>
-                    <Input
-                      id="end_time"
-                      type="time"
-                      value={shiftForm.end_time}
-                      onChange={(e) => setShiftForm({...shiftForm, end_time: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="break_start">Inicio Descanso</Label>
-                    <Input
-                      id="break_start"
-                      type="time"
-                      value={shiftForm.break_start}
-                      onChange={(e) => setShiftForm({...shiftForm, break_start: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="break_end">Fin Descanso</Label>
-                    <Input
-                      id="break_end"
-                      type="time"
-                      value={shiftForm.break_end}
-                      onChange={(e) => setShiftForm({...shiftForm, break_end: e.target.value})}
-                    />
-                  </div>
                 </div>
-                <div>
-                  <Label htmlFor="shift_notes">Notas</Label>
-                  <Textarea
-                    id="shift_notes"
-                    value={shiftForm.notes}
-                    onChange={(e) => setShiftForm({...shiftForm, notes: e.target.value})}
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setIsShiftModalOpen(false)}>
-                    Cancelar
-                  </Button>
-                  <Button onClick={saveShift} disabled={loading}>
-                    {loading ? 'Guardando...' : editingShift ? 'Actualizar' : 'Crear'}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          <div className="grid gap-4">
-            {shifts.map((shift) => {
-              const employee = employees.find(e => e.id === shift.employee_id);
-              return (
-                <Card key={shift.id}>
-                  <CardContent className="p-4">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h4 className="font-semibold">
-                            {employee?.first_name} {employee?.last_name}
-                          </h4>
-                          <Badge className={getStatusBadge(shift.status)}>
-                            {getStatusText(shift.status)}
-                          </Badge>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm text-muted-foreground">
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-4 w-4" />
-                            <span>{new Date(shift.date).toLocaleDateString()}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Clock className="h-4 w-4" />
-                            <span>{shift.start_time} - {shift.end_time}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <TrendingUp className="h-4 w-4" />
-                            <span>{shift.total_hours.toFixed(1)} hrs</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Award className="h-4 w-4" />
-                            <span>{shift.overtime_hours.toFixed(1)} hrs extra</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setEditingShift(shift);
-                            setShiftForm({
-                              employee_id: shift.employee_id,
-                              date: shift.date,
-                              start_time: shift.start_time,
-                              end_time: shift.end_time,
-                              break_start: shift.break_start || '',
-                              break_end: shift.break_end || '',
-                              notes: shift.notes
-                            });
-                            setIsShiftModalOpen(true);
-                          }}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="attendance" className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold">Control de Asistencia</h3>
-            <Dialog open={isAttendanceModalOpen} onOpenChange={setIsAttendanceModalOpen}>
-              <DialogTrigger asChild>
-                <Button onClick={() => resetAttendanceForm()}>
-                  <UserCheck className="w-4 h-4 mr-2" />
-                  Marcar Asistencia
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Registrar Asistencia</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <div>
-                    <Label htmlFor="attendance_employee">Empleado</Label>
-                    <Select value={attendanceForm.employee_id} onValueChange={(value) => setAttendanceForm({...attendanceForm, employee_id: value})}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar empleado" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {employees.map((employee) => (
-                          <SelectItem key={employee.id} value={employee.id}>
-                            {employee.first_name} {employee.last_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="attendance_date">Fecha</Label>
-                    <Input
-                      id="attendance_date"
-                      type="date"
-                      value={attendanceForm.date}
-                      onChange={(e) => setAttendanceForm({...attendanceForm, date: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="check_in">Hora Entrada</Label>
-                    <Input
-                      id="check_in"
-                      type="time"
-                      value={attendanceForm.check_in}
-                      onChange={(e) => setAttendanceForm({...attendanceForm, check_in: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="check_out">Hora Salida</Label>
-                    <Input
-                      id="check_out"
-                      type="time"
-                      value={attendanceForm.check_out}
-                      onChange={(e) => setAttendanceForm({...attendanceForm, check_out: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="attendance_notes">Notas</Label>
-                    <Textarea
-                      id="attendance_notes"
-                      value={attendanceForm.notes}
-                      onChange={(e) => setAttendanceForm({...attendanceForm, notes: e.target.value})}
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setIsAttendanceModalOpen(false)}>
-                    Cancelar
-                  </Button>
-                  <Button onClick={markAttendance} disabled={loading}>
-                    {loading ? 'Registrando...' : 'Registrar'}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          <div className="grid gap-4">
-            {attendance.map((record) => {
-              const employee = employees.find(e => e.id === record.employee_id);
-              return (
-                <Card key={record.id}>
-                  <CardContent className="p-4">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h4 className="font-semibold">
-                            {employee?.first_name} {employee?.last_name}
-                          </h4>
-                          <Badge className={getStatusBadge(record.status)}>
-                            {getStatusText(record.status)}
-                          </Badge>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm text-muted-foreground">
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-4 w-4" />
-                            <span>{new Date(record.date).toLocaleDateString()}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <CheckCircle className="h-4 w-4" />
-                            <span>Entrada: {record.check_in}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <XCircle className="h-4 w-4" />
-                            <span>Salida: {record.check_out || 'N/A'}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Clock className="h-4 w-4" />
-                            <span>{record.total_hours?.toFixed(1) || 0} hrs</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="payroll" className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold">Nómina</h3>
-          </div>
-
-          <div className="grid gap-4">
-            {payroll.map((record) => {
-              const employee = employees.find(e => e.id === record.employee_id);
-              return (
-                <Card key={record.id}>
-                  <CardContent className="p-4">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h4 className="font-semibold">
-                            {employee?.first_name} {employee?.last_name}
-                          </h4>
-                          <Badge className={getStatusBadge(record.status)}>
-                            {getStatusText(record.status)}
-                          </Badge>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-muted-foreground">
-                          <div className="space-y-1">
-                            <div className="flex justify-between">
-                              <span>Período:</span>
-                              <span>{new Date(record.pay_period_start).toLocaleDateString()} - {new Date(record.pay_period_end).toLocaleDateString()}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Salario Base:</span>
-                              <span>RD${record.base_salary.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Horas Extra:</span>
-                              <span>RD${record.overtime_pay.toLocaleString()}</span>
-                            </div>
-                          </div>
-                          <div className="space-y-1">
-                            <div className="flex justify-between">
-                              <span>Bonificaciones:</span>
-                              <span>RD${record.bonuses.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>Deducciones:</span>
-                              <span>RD${record.deductions.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between font-semibold">
-                              <span>Pago Neto:</span>
-                              <span>RD${record.net_pay.toLocaleString()}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </TabsContent>
-      </Tabs>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
-}
+};
