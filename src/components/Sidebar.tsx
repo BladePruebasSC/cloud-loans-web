@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { NavLink } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
 import { 
   Home,
   CreditCard, 
@@ -26,11 +27,19 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
+  const { profile } = useAuth();
+
+  // Función para verificar permisos
+  const hasPermission = (permission: string) => {
+    if (!profile?.is_employee) return true; // Los dueños tienen todos los permisos
+    return profile?.permissions?.[permission] === true;
+  };
+
   const menuItems = [
     { name: 'Inicio', path: '/', icon: Home },
-    { name: 'Préstamos', path: '/prestamos', icon: CreditCard },
-    { name: 'Clientes', path: '/clientes', icon: Users },
-    { name: 'Inventario', path: '/inventario', icon: Package },
+    { name: 'Préstamos', path: '/prestamos', icon: CreditCard, permission: 'loans.view' },
+    { name: 'Clientes', path: '/clientes', icon: Users, permission: 'clients.view' },
+    { name: 'Inventario', path: '/inventario', icon: Package, permission: 'inventory.view' },
     { name: 'Solicitudes', path: '/solicitudes', icon: FileText },
     { name: 'Bancos', path: '/bancos', icon: Building2 },
     { name: 'Utilidades', path: '/utilidades', icon: DollarSign },
@@ -39,9 +48,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
     { name: 'Documentos', path: '/documentos', icon: File },
     { name: 'Mapa en vivo', path: '/mapa', icon: MapPin },
     { name: 'Acuerdo de pagos', path: '/acuerdos', icon: HandHeart },
-    { name: 'Reportes', path: '/reportes', icon: BarChart3 },
-    { name: 'Mi empresa', path: '/empresa', icon: Settings },
-  ];
+    { name: 'Reportes', path: '/reportes', icon: BarChart3, permission: 'reports.view' },
+    { name: 'Mi empresa', path: '/empresa', icon: Settings, ownerOnly: true },
+  ].filter(item => {
+    // Filtrar elementos según permisos
+    if (item.ownerOnly && profile?.is_employee) return false;
+    if (item.permission && !hasPermission(item.permission)) return false;
+    return true;
+  });
 
   return (
     <>
@@ -75,7 +89,17 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
           {/* Logo/Title */}
           <div className="mb-8">
             {isOpen ? (
-              <h1 className="text-xl font-bold text-gray-800">PrestamosPro</h1>
+              <div>
+                <h1 className="text-xl font-bold text-gray-800">PrestamosPro</h1>
+                {profile?.is_employee && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    {profile.role === 'admin' ? 'Administrador' :
+                     profile.role === 'manager' ? 'Gerente' :
+                     profile.role === 'collector' ? 'Cobrador' :
+                     profile.role === 'accountant' ? 'Contador' : 'Empleado'}
+                  </p>
+                )}
+              </div>
             ) : (
               <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">
                 <span className="text-white font-bold text-sm">P</span>

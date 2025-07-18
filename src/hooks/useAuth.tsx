@@ -1,229 +1,113 @@
 
-import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-import { User, Session } from '@supabase/supabase-js';
-import { toast } from 'sonner';
+import React from 'react';
+import { NavLink } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+import { 
+  Home,
+  CreditCard, 
+  Package, 
+  FileText, 
+  Building2, 
+  DollarSign, 
+  Clock, 
+  Briefcase, 
+  File, 
+  MapPin, 
+  HandHeart, 
+  BarChart3, 
+  Settings,
+  Users,
+  ChevronLeft,
+  ChevronRight
+} from 'lucide-react';
 
-interface AuthContextType {
-  user: User | null;
-  session: Session | null;
-  profile: any | null;
-  loading: boolean;
-  companyId: string | null;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (data: RegisterData) => Promise<void>;
-  signOut: () => Promise<void>;
+interface SidebarProps {
+  isOpen: boolean;
+  onToggle: () => void;
 }
 
-interface RegisterData {
-  name: string;
-  email: string;
-  password: string;
-  phone: string;
-  dni: string;
-}
+const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
+  const menuItems = [
+    { name: 'Inicio', path: '/', icon: Home },
+    { name: 'Préstamos', path: '/prestamos', icon: CreditCard },
+    { name: 'Clientes', path: '/clientes', icon: Users },
+    { name: 'Inventario', path: '/inventario', icon: Package },
+    { name: 'Solicitudes', path: '/solicitudes', icon: FileText },
+    { name: 'Bancos', path: '/bancos', icon: Building2 },
+    { name: 'Utilidades', path: '/utilidades', icon: DollarSign },
+    { name: 'Turnos', path: '/turnos', icon: Clock },
+    { name: 'Carteras', path: '/carteras', icon: Briefcase },
+    { name: 'Documentos', path: '/documentos', icon: File },
+    { name: 'Mapa en vivo', path: '/mapa', icon: MapPin },
+    { name: 'Acuerdo de pagos', path: '/acuerdos', icon: HandHeart },
+    { name: 'Reportes', path: '/reportes', icon: BarChart3 },
+    { name: 'Mi empresa', path: '/empresa', icon: Settings },
+  ];
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<any | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [companyId, setCompanyId] = useState<string | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-
-    // Configurar el listener de cambios de autenticación PRIMERO
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth state changed:', event, session?.user?.id);
-        
-        if (!mounted) return;
-
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user && mounted) {
-          // Diferir la carga del perfil para evitar bucles
-          setTimeout(() => {
-            if (mounted) {
-              fetchProfile(session.user.id);
-            }
-          }, 0);
-        } else {
-          setProfile(null);
-          setCompanyId(null);
-        }
-        
-        setLoading(false);
-      }
-    );
-
-    // LUEGO obtener la sesión inicial
-    const getInitialSession = async () => {
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) {
-          console.error('Error getting session:', error);
-          setLoading(false);
-          return;
-        }
-        
-        if (mounted) {
-          setSession(session);
-          setUser(session?.user ?? null);
-          
-          if (session?.user) {
-            fetchProfile(session.user.id);
-          } else {
-            setLoading(false);
-          }
-        }
-      } catch (error) {
-        console.error('Error in getInitialSession:', error);
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    getInitialSession();
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  const fetchProfile = async (userId: string) => {
-    try {
-      console.log('Fetching profile for user:', userId);
+  return (
+    <>
+      {/* Mobile Overlay */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+          onClick={onToggle}
+        />
+      )}
       
-      // First check if this user is an employee
-      const { data: employeeData, error: employeeError } = await supabase
-        .from('employees')
-        .select('*, company_owner_id')
-        .eq('auth_user_id', userId)
-        .maybeSingle();
+      {/* Sidebar */}
+      <div className={`
+        fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-50 transition-all duration-300 shadow-lg
+        ${isOpen ? 'w-64' : 'w-0 lg:w-16'}
+        lg:relative lg:z-auto
+      `}>
+        {/* Toggle Button */}
+        <button
+          onClick={onToggle}
+          className="absolute -right-3 top-6 bg-white border border-gray-200 rounded-full p-1 shadow-md hover:shadow-lg transition-shadow z-10"
+        >
+          {isOpen ? (
+            <ChevronLeft className="h-4 w-4 text-gray-600" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-gray-600" />
+          )}
+        </button>
 
-      if (employeeData && !employeeError) {
-        console.log('User is an employee:', employeeData);
-        setProfile({
-          id: userId,
-          full_name: employeeData.full_name,
-          phone: employeeData.phone,
-          dni: employeeData.dni,
-          role: employeeData.role,
-          permissions: employeeData.permissions,
-          company_id: employeeData.company_owner_id,
-          is_employee: true
-        });
-        setCompanyId(employeeData.company_owner_id);
-        setLoading(false);
-        return;
-      }
-      
-      // If not an employee, check profiles table
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
+        <div className="p-4 h-full overflow-y-auto">
+          {/* Logo/Title */}
+          <div className="mb-8">
+            {isOpen ? (
+              <h1 className="text-xl font-bold text-gray-800">PrestamosPro</h1>
+            ) : (
+              <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">
+                <span className="text-white font-bold text-sm">P</span>
+              </div>
+            )}
+          </div>
 
-      if (error) {
-        console.error('Error fetching profile:', error);
-        return;
-      }
-
-      console.log('Profile fetched:', data);
-      setProfile({
-        ...data,
-        is_employee: false
-      });
-      setCompanyId(data.id);
-    } catch (error) {
-      console.error('Error in fetchProfile:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const signIn = async (email: string, password: string) => {
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        throw error;
-      }
-      
-      toast.success('Sesión iniciada exitosamente');
-    } catch (error) {
-      setLoading(false);
-      toast.error('Error al iniciar sesión');
-      throw error;
-    }
-  };
-
-  const signUp = async (data: RegisterData) => {
-    setLoading(true);
-    try {
-      const redirectUrl = `${window.location.origin}/`;
-      
-      const { error } = await supabase.auth.signUp({
-        email: data.email,
-        password: data.password,
-        options: {
-          emailRedirectTo: redirectUrl,
-          data: {
-            full_name: data.name,
-            phone: data.phone,
-            dni: data.dni,
-          }
-        }
-      });
-
-      if (error) {
-        throw error;
-      }
-      
-      toast.success('Cuenta creada exitosamente. Revisa tu email para confirmar.');
-    } catch (error) {
-      setLoading(false);
-      throw error;
-    }
-  };
-
-  const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      toast.error('Error al cerrar sesión');
-    }
-  };
-
-  const value = {
-    user,
-    session,
-    profile,
-    loading,
-    companyId,
-    signIn,
-    signUp,
-    signOut,
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+          {/* Menu Items */}
+          <nav className="space-y-2">
+            {menuItems.map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) =>
+                  `flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+                    isActive
+                      ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  } ${!isOpen ? 'justify-center' : ''}`
+                }
+                title={!isOpen ? item.name : undefined}
+              >
+                <item.icon className="h-5 w-5 flex-shrink-0" />
+                {isOpen && <span className="text-sm font-medium">{item.name}</span>}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+      </div>
+    </>
+  );
 };
 
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
+export default Sidebar;
