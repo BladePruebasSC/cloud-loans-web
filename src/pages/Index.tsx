@@ -60,6 +60,7 @@ const Index = () => {
   // Función para verificar permisos
   const hasPermission = (permission: string) => {
     if (!profile?.is_employee) return true; // Los dueños tienen todos los permisos
+    if (!profile?.permissions) return false; // Si no hay permisos definidos, denegar acceso
     return profile?.permissions?.[permission] === true;
   };
 

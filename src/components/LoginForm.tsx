@@ -81,7 +81,7 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
                 <Alert>
                   <Users className="h-4 w-4" />
                   <AlertDescription>
-                    <strong>Empleados:</strong> Usa el email y contraseña que te proporcionó tu empresa. Si no puedes acceder, contacta a tu supervisor.
+                    <strong>Empleados:</strong> Usa el email y contraseña que te proporcionó tu empresa. Al iniciar sesión trabajarás con los datos de la empresa, no tendrás tu propia empresa.
                   </AlertDescription>
                 </Alert>
               </TabsContent>
