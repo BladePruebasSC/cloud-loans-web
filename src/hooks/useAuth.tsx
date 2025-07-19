@@ -71,6 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     setError(null);
     try {
+      // Primero verificar si es un empleado
       const { data: employeeData, error: employeeError } = await supabase
         .from('employees')
         .select(`
@@ -81,8 +82,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           permissions,
           company_owner_id,
           status,
-          company_settings:company_owner_id (
-            company_name
+          company_owner:company_owner_id (
+            id,
+            email
           )
         `)
         .eq('auth_user_id', authUser.id)
@@ -90,6 +92,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .single();
 
       if (employeeData && !employeeError) {
+        // Es un empleado - obtener información de la empresa
+        const { data: companyData, error: companyError } = await supabase
+          .from('company_settings')
+          .select('company_name')
+          .eq('user_id', employeeData.company_owner_id)
+          .single();
+
         const employeeProfile: EmployeeProfile = {
           id: employeeData.id,
           full_name: employeeData.full_name,
@@ -98,7 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           permissions: employeeData.permissions || {},
           company_owner_id: employeeData.company_owner_id,
           is_employee: true,
-          company_name: employeeData.company_settings?.company_name
+          company_name: companyData?.company_name || 'Empresa'
         };
 
         setProfile(employeeProfile);
@@ -106,6 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setError(null);
         console.log('Employee logged in:', employeeProfile);
       } else {
+        // No es empleado, es dueño de empresa
         const { data: profileData, error: profileError } = await supabase
           .from('profiles')
           .select('*')

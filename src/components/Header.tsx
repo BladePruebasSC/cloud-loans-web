@@ -41,7 +41,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
                       {profile.role === 'admin' ? 'Administrador' :
                        profile.role === 'manager' ? 'Gerente' :
                        profile.role === 'collector' ? 'Cobrador' :
-                       profile.role === 'accountant' ? 'Contador' : 'Empleado'} • Empresa
+                       profile.role === 'accountant' ? 'Contador' : 'Empleado'}
                     </>
                   ) : (
                     <>
