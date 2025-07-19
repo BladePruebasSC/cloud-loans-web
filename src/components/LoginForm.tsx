@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Eye, EyeOff, DollarSign, Building, Users } from 'lucide-react';
 
 interface LoginFormProps {
-  onLogin: (email: string, password: string) => Promise<void>;
+  onLogin: (email: string, password: string, role: 'owner' | 'employee') => Promise<void>;
   onSwitchToRegister: () => void;
   error?: string;
   loading?: boolean;
@@ -28,7 +28,7 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
     setLoginError('');
     
     try {
-      await onLogin(email, password);
+      await onLogin(email, password, activeTab as 'owner' | 'employee');
     } catch (error: any) {
       setLoginError(error.message || 'Error al iniciar sesión');
     } finally {
