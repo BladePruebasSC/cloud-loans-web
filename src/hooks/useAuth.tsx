@@ -71,7 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .from('company_settings')
       .select('company_name')
       .eq('user_id', employeeData.company_owner_id)
-      .single();
+      .maybeSingle();
 
     const employeeProfile: EmployeeProfile = {
       id: employeeData.id,
