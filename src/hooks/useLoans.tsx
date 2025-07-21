@@ -68,6 +68,7 @@ export const useLoans = () => {
         // Si es dueño, mostrar sus propios préstamos
         console.log('Filtering loans by user:', user.id);
         query = query.eq('user_id', user.id);
+      }
       const { data, error } = await query;
 
       if (error) {
