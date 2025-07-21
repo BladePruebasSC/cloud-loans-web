@@ -64,14 +64,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .single();
 
     if (employeeError || !employeeData) {
+      console.error('Employee profile error:', employeeError);
       throw new Error('No se encontró un perfil de empleado activo.');
     }
+
+    console.log('Employee data found:', employeeData);
 
     const { data: companyData } = await supabase
       .from('company_settings')
       .select('company_name')
       .eq('user_id', employeeData.company_owner_id)
       .maybeSingle();
+
+    console.log('Company data:', companyData);
 
     const employeeProfile: EmployeeProfile = {
       id: employeeData.id,
@@ -86,7 +91,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setProfile(employeeProfile);
     setCompanyId(employeeData.company_owner_id);
-    console.log('Employee logged in:', employeeProfile);
+    console.log('Employee profile set:', employeeProfile);
+    console.log('Company ID set to:', employeeData.company_owner_id);
   };
 
   const loadOwnerProfile = async (authUser: User) => {

@@ -25,6 +25,10 @@ export const LoansModule = () => {
   const [showLoanForm, setShowLoanForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const { loans, loading } = useLoans();
+  const { profile, companyId } = useAuth();
+
+  console.log('LoansModule - Profile:', profile);
+  console.log('LoansModule - CompanyId:', companyId);
 
   // Calcular estadísticas
   const activeLoans = loans.filter(loan => loan.status === 'active');

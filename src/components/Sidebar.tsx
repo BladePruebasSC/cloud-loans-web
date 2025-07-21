@@ -30,7 +30,13 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
 
   // Función para verificar permisos
   const hasPermission = (permission: string) => {
-    if (!profile?.is_employee) return true; // Los dueños tienen todos los permisos
+    if (!profile?.is_employee) {
+      console.log('User is owner, granting all permissions');
+      return true; // Los dueños tienen todos los permisos
+    }
+    
+    const hasAccess = profile?.permissions?.[permission] === true;
+    console.log(`Permission check for ${permission}:`, hasAccess, 'Permissions:', profile?.permissions);
     return profile?.permissions?.[permission] === true;
   };
 

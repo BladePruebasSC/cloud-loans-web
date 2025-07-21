@@ -27,7 +27,12 @@ export const useLoans = () => {
   const { user, companyId } = useAuth();
 
   const fetchLoans = async () => {
-    if (!user || !companyId) return;
+    if (!user || !companyId) {
+      console.log('useLoans - Missing user or companyId:', { user: !!user, companyId });
+      return;
+    }
+
+    console.log('useLoans - Fetching loans for companyId:', companyId);
 
     try {
       const { data, error } = await supabase
@@ -48,6 +53,7 @@ export const useLoans = () => {
         return;
       }
 
+      console.log('useLoans - Fetched loans:', data);
       setLoans(data || []);
     } catch (error) {
       console.error('Error in fetchLoans:', error);
