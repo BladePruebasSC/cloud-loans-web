@@ -47,7 +47,7 @@ const CompanySettings = () => {
         .from('company_settings')
         .select('*')
         .eq('user_id', user?.id)
-        .single();
+        .maybeSingle();
 
       if (error && error.code !== 'PGRST116') {
         console.error('Error fetching company settings:', error);

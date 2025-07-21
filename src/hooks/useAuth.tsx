@@ -47,6 +47,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
+<<<<<<< Updated upstream
   const loadEmployeeProfile = async (authUser: User) => {
     const { data: employeeData, error: employeeError } = await supabase
       .from('employees')
@@ -93,6 +94,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCompanyId(employeeData.company_owner_id);
     console.log('Employee profile set:', employeeProfile);
     console.log('Company ID set to:', employeeData.company_owner_id);
+=======
+  const loadEmployeeProfile = async (userId: string) => {
+    try {
+      console.log('Loading employee profile for user:', userId);
+      const { data: employeeData, error: employeeError } = await supabase
+        .from('employees')
+        .select('id,full_name,email,role,permissions,company_owner_id,status')
+        .eq('auth_user_id', userId)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (employeeError) {
+        console.error('Error loading employee profile:', employeeError);
+        return null;
+      }
+
+      if (!employeeData) {
+        console.log('No employee profile found for user:', userId);
+        return null;
+      }
+
+      console.log('Employee profile loaded:', employeeData);
+
+      // Cargar datos de la empresa empleadora
+      const { data: companyData, error: companyError } = await supabase
+        .from('company_settings')
+        .select('company_name')
+        .eq('user_id', employeeData.company_owner_id)
+        .maybeSingle();
+
+      if (companyError) {
+        console.error('Error loading company data:', companyError);
+      }
+
+      console.log('Company data for employee:', companyData);
+
+      return {
+        ...employeeData,
+        companyName: companyData?.company_name || 'Empresa',
+        isEmployee: true
+      };
+    } catch (error) {
+      console.error('Error in loadEmployeeProfile:', error);
+      return null;
+    }
+>>>>>>> Stashed changes
   };
 
   const loadOwnerProfile = async (authUser: User) => {

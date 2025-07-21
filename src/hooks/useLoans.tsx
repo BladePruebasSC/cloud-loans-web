@@ -1,7 +1,6 @@
-
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from './useAuth';
+import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 
 export interface Loan {
@@ -24,49 +23,89 @@ export interface Loan {
 export const useLoans = () => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
-  const { user, companyId } = useAuth();
+  const { user, profile, companyId } = useAuth();
 
   const fetchLoans = async () => {
+<<<<<<< Updated upstream
     if (!user || !companyId) {
       console.log('useLoans - Missing user or companyId:', { user: !!user, companyId });
+=======
+    if (!user) {
+      console.log('No user found, skipping loan fetch');
+      setLoading(false);
+      return;
+    }
+
+    console.log('Fetching loans for user:', user.id);
+    console.log('Profile:', profile);
+    console.log('Company ID:', companyId);
+
+    if (!user || !companyId) {
+      console.log('useLoans - Missing user or companyId:', { user: !!user, companyId });
+      setLoading(false);
+>>>>>>> Stashed changes
       return;
     }
 
     console.log('useLoans - Fetching loans for companyId:', companyId);
 
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('loans')
         .select(`
           *,
-          clients (
+          client:client_id (
+            id,
             full_name,
             dni
           )
-        `)
-        .eq('loan_officer_id', companyId)
-        .order('created_at', { ascending: false });
+        `);
+
+      // Si es empleado, filtrar por la empresa del empleado
+      if (profile?.is_employee && profile?.company_owner_id) {
+        console.log('Filtering loans by company owner:', profile.company_owner_id);
+        query = query.eq('user_id', profile.company_owner_id);
+      } else {
+        // Si es dueño, mostrar sus propios préstamos
+        console.log('Filtering loans by user:', user.id);
+        query = query.eq('user_id', user.id);
+      }
+      const { data, error } = await query;
 
       if (error) {
         console.error('Error fetching loans:', error);
-        toast.error('Error al cargar préstamos');
+        if (typeof error.message === 'string' && error.message.indexOf('rate limit') > -1) {
+          toast.error('Has superado el límite de peticiones. Intenta más tarde.');
+        } else {
+          toast.error('Error al cargar préstamos');
+        }
         return;
       }
 
+<<<<<<< Updated upstream
+=======
+      console.log('Loans fetched:', data?.length || 0);
+>>>>>>> Stashed changes
       console.log('useLoans - Fetched loans:', data);
       setLoans(data || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error in fetchLoans:', error);
+      if (typeof error?.message === 'string') {
+        toast.error(error.message);
+      } else {
+        toast.error('Error inesperado al cargar préstamos');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (user && companyId) {
+    if (user && profile !== undefined) { // Esperar a que el perfil se cargue
       fetchLoans();
     }
-  }, [user, companyId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, profile, companyId]);
 
   return {
     loans,
