@@ -28,9 +28,12 @@ export const useLoans = () => {
   const fetchLoans = async () => {
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     if (!user || !companyId) {
       console.log('useLoans - Missing user or companyId:', { user: !!user, companyId });
 =======
+=======
+>>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
     if (!user) {
@@ -47,6 +50,9 @@ export const useLoans = () => {
       console.log('useLoans - Missing user or companyId:', { user: !!user, companyId });
       setLoading(false);
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 =======
 >>>>>>> Stashed changes
@@ -90,6 +96,10 @@ export const useLoans = () => {
 
 <<<<<<< Updated upstream
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+      console.log('Loans fetched:', data?.length || 0);
+>>>>>>> Stashed changes
 =======
       console.log('Loans fetched:', data?.length || 0);
 >>>>>>> Stashed changes
