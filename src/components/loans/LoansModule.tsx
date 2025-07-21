@@ -6,7 +6,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LoanForm } from './LoanForm';
 import { PaymentForm } from './PaymentForm';
 import { useLoans } from '@/hooks/useLoans';
-import { useAuth } from '@/hooks/useAuth';
 import { 
   CreditCard, 
   Plus, 
