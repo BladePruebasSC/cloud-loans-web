@@ -1,4 +1,5 @@
 import React from 'react';
+import { useAuth } from '@/hooks/useAuth';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { 
@@ -11,56 +12,85 @@ import {
   Clock, 
   Briefcase, 
   File, 
+      permission: 'clients'
   MapPin, 
   HandHeart, 
   BarChart3, 
   Settings,
   Users,
+      permission: 'loans'
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
 
+  const { profile } = useAuth();
+      permission: 'reports'
+  
+  // Función para verificar permisos
+  const hasPermission = (permission: string) => {
+    if (!profile?.isEmployee) return true; // Los dueños tienen todos los permisos
+    return profile?.permissions?.includes(permission) || false;
+      permission: 'requests'
+  };
 interface SidebarProps {
   isOpen: boolean;
   onToggle: () => void;
 }
+      permission: 'agreements'
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
   const { profile } = useAuth();
 
   // Función para verificar permisos
+      permission: 'shifts'
   const hasPermission = (permission: string) => {
     if (!profile?.is_employee) {
       console.log('User is owner, granting all permissions');
       return true; // Los dueños tienen todos los permisos
     }
+      permission: 'map'
     
     const hasAccess = profile?.permissions?.[permission] === true;
     console.log(`Permission check for ${permission}:`, hasAccess, 'Permissions:', profile?.permissions);
     return profile?.permissions?.[permission] === true;
   };
+      permission: 'portfolios'
 
   const menuItems = [
     { name: 'Inicio', path: '/', icon: Home },
     { name: 'Préstamos', path: '/prestamos', icon: CreditCard, permission: 'loans.view' },
     { name: 'Clientes', path: '/clientes', icon: Users, permission: 'clients.view' },
+      permission: 'banks'
     { name: 'Inventario', path: '/inventario', icon: Package, permission: 'inventory.view' },
+      permission: 'dashboard'
     { name: 'Solicitudes', path: '/solicitudes', icon: FileText },
     { name: 'Bancos', path: '/bancos', icon: Building2 },
     { name: 'Utilidades', path: '/utilidades', icon: DollarSign },
+      permission: 'inventory'
     { name: 'Turnos', path: '/turnos', icon: Clock },
     { name: 'Carteras', path: '/carteras', icon: Briefcase },
     { name: 'Documentos', path: '/documentos', icon: File },
     { name: 'Mapa en vivo', path: '/mapa', icon: MapPin },
     { name: 'Acuerdo de pagos', path: '/acuerdos', icon: HandHeart },
+      permission: 'documents'
     { name: 'Reportes', path: '/reportes', icon: BarChart3, permission: 'reports.view' },
     { name: 'Mi empresa', path: '/empresa', icon: Settings, ownerOnly: true },
   ].filter(item => {
     // Filtrar elementos según permisos
     if (item.ownerOnly && profile?.is_employee) return false;
+      permission: 'utilities'
     if (item.permission && !hasPermission(item.permission)) return false;
     return true;
   });
+  // Solo mostrar "Empresa" si NO es empleado (solo dueños)
+  const companyMenuItems = !profile?.isEmployee ? [
+    { 
+      path: '/empresa', 
+      icon: Building, 
+      label: 'Empresa',
+      permission: 'company'
+    }
+  ] : [];
 
   return (
     <>
@@ -113,7 +143,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
           </div>
 
           {/* Menu Items */}
-          <nav className="space-y-2">
+          {[...menuItems, ...companyMenuItems].filter(item => hasPermission(item.permission)).map((item) => {
             {menuItems.map((item) => (
               <NavLink
                 key={item.path}
@@ -131,8 +161,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
                 {isOpen && <span className="text-sm font-medium">{item.name}</span>}
               </NavLink>
             ))}
-          </nav>
-        </div>
+        )}
       </div>
     </>
   );

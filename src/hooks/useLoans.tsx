@@ -1,6 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 import { useAuth } from './useAuth';
 import { toast } from 'sonner';
 
@@ -24,9 +25,20 @@ export interface Loan {
 export const useLoans = () => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
+  const { user, profile, companyId } = useAuth();
   const { user, companyId } = useAuth();
 
   const fetchLoans = async () => {
+    if (!user) {
+      console.log('No user found, skipping loan fetch');
+      setLoading(false);
+      return;
+    }
+
+    console.log('Fetching loans for user:', user.id);
+    console.log('Profile:', profile);
+    console.log('Company ID:', companyId);
+
     if (!user || !companyId) {
       console.log('useLoans - Missing user or companyId:', { user: !!user, companyId });
       return;
@@ -36,16 +48,27 @@ export const useLoans = () => {
 
     try {
       const { data, error } = await supabase
+      
+      let query = supabase
         .from('loans')
         .select(`
           *,
-          clients (
+          client:client_id (
+            id,
             full_name,
             dni
           )
-        `)
-        .eq('loan_officer_id', companyId)
-        .order('created_at', { ascending: false });
+        `);
+
+      // Si es empleado, filtrar por la empresa del empleado
+      if (profile?.isEmployee && profile?.company_owner_id) {
+        console.log('Filtering loans by company owner:', profile.company_owner_id);
+        query = query.eq('user_id', profile.company_owner_id);
+      } else {
+        // Si es dueño, mostrar sus propios préstamos
+        console.log('Filtering loans by user:', user.id);
+        query = query.eq('user_id', user.id);
+      const { data, error } = await query;
 
       if (error) {
         console.error('Error fetching loans:', error);
@@ -53,6 +76,7 @@ export const useLoans = () => {
         return;
       }
 
+      console.log('Loans fetched:', data?.length || 0);
       console.log('useLoans - Fetched loans:', data);
       setLoans(data || []);
     } catch (error) {
@@ -63,10 +87,10 @@ export const useLoans = () => {
   };
 
   useEffect(() => {
-    if (user && companyId) {
+    if (user && (profile !== undefined)) { // Esperar a que el perfil se cargue
       fetchLoans();
     }
-  }, [user, companyId]);
+  }, [user, profile, companyId]);
 
   return {
     loans,
