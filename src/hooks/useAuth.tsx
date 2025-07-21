@@ -57,11 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role,
         permissions,
         company_owner_id,
-        status,
-        company_owner:company_owner_id (
-          id,
-          email
-        )
+        status
       `)
       .eq('auth_user_id', authUser.id)
       .eq('status', 'active')
