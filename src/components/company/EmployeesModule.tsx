@@ -108,6 +108,40 @@ const PERMISSIONS_CONFIG: PermissionConfig = {
   // Inventario
   'inventory.view': { label: 'Ver Inventario', description: 'Puede ver el inventario', category: 'Inventario' },
   'inventory.manage': { label: 'Gestionar Inventario', description: 'Puede gestionar productos del inventario', category: 'Inventario' },
+  
+  // Citas y Agenda
+  'appointments.view': { label: 'Ver Citas', description: 'Puede ver las citas programadas', category: 'Agenda' },
+  'appointments.create': { label: 'Crear Citas', description: 'Puede programar nuevas citas', category: 'Agenda' },
+  'appointments.edit': { label: 'Editar Citas', description: 'Puede modificar citas existentes', category: 'Agenda' },
+  
+  // Gastos
+  'expenses.view': { label: 'Ver Gastos', description: 'Puede ver los gastos registrados', category: 'Finanzas' },
+  'expenses.create': { label: 'Registrar Gastos', description: 'Puede registrar nuevos gastos', category: 'Finanzas' },
+  'expenses.edit': { label: 'Editar Gastos', description: 'Puede modificar gastos registrados', category: 'Finanzas' },
+  
+  // Carteras
+  'portfolios.view': { label: 'Ver Carteras', description: 'Puede ver las carteras de préstamos', category: 'Carteras' },
+  'portfolios.manage': { label: 'Gestionar Carteras', description: 'Puede gestionar carteras de préstamos', category: 'Carteras' },
+  
+  // Rutas
+  'routes.view': { label: 'Ver Rutas', description: 'Puede ver las rutas de cobranza', category: 'Cobranza' },
+  'routes.manage': { label: 'Gestionar Rutas', description: 'Puede gestionar rutas de cobranza', category: 'Cobranza' },
+  
+  // Turnos
+  'shifts.view': { label: 'Ver Turnos', description: 'Puede ver los turnos de trabajo', category: 'Personal' },
+  'shifts.manage': { label: 'Gestionar Turnos', description: 'Puede gestionar turnos de trabajo', category: 'Personal' },
+  
+  // Documentos
+  'documents.view': { label: 'Ver Documentos', description: 'Puede ver documentos del sistema', category: 'Documentos' },
+  'documents.manage': { label: 'Gestionar Documentos', description: 'Puede gestionar documentos', category: 'Documentos' },
+  
+  // Solicitudes
+  'requests.view': { label: 'Ver Solicitudes', description: 'Puede ver solicitudes de préstamos', category: 'Solicitudes' },
+  'requests.manage': { label: 'Gestionar Solicitudes', description: 'Puede gestionar solicitudes', category: 'Solicitudes' },
+  
+  // Acuerdos de Pago
+  'agreements.view': { label: 'Ver Acuerdos', description: 'Puede ver acuerdos de pago', category: 'Acuerdos' },
+  'agreements.manage': { label: 'Gestionar Acuerdos', description: 'Puede gestionar acuerdos de pago', category: 'Acuerdos' },
 };
 
 export const EmployeesModule = () => {
