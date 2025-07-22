@@ -223,7 +223,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
     try {
       const { error } = await supabase.auth.signOut();
-      if (error) {
+      if (error && error.message !== 'Auth session missing!' && !error.message.includes('session_not_found')) {
         setError(error);
         throw error;
       }
@@ -232,9 +232,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCompanyId(null);
       toast.success('Sesión cerrada exitosamente');
     } catch (err: any) {
-      setError(err);
-      console.error('Error signing out:', err);
-      toast.error('Error al cerrar sesión');
+      // If it's a session not found error, treat it as successful logout
+      if (err.message === 'Auth session missing!' || err.message.includes('session_not_found')) {
+        setUser(null);
+        setProfile(null);
+        setCompanyId(null);
+        toast.success('Sesión cerrada exitosamente');
+      } else {
+        setError(err);
+        console.error('Error signing out:', err);
+        toast.error('Error al cerrar sesión');
+      }
     } finally {
       setLoading(false);
     }

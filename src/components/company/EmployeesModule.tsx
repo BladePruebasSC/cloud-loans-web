@@ -166,7 +166,7 @@ export const EmployeesModule = () => {
     try {
       if (editingEmployee) {
         // Update existing employee
-        const { error } = await supabase
+        const { error: updateError } = await supabase
           .from('employees')
           .update({
             full_name: data.full_name,
@@ -182,8 +182,9 @@ export const EmployeesModule = () => {
           })
           .eq('id', editingEmployee.id);
 
-        if (error) {
-          throw error;
+        if (updateError) {
+          console.error('Error updating employee:', updateError);
+          throw new Error(`Error al actualizar empleado: ${updateError.message}`);
         }
 
         // Also update the auth user if the email has changed
