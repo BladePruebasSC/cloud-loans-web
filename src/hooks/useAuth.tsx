@@ -143,7 +143,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (role === 'employee') {
         const employeeProfile = await loadEmployeeProfile(data.user.id);
         if (!employeeProfile) {
-          throw new Error('No se encontró un perfil de empleado activo.');
+          // Cerrar sesión si no se encuentra perfil de empleado
+          await supabase.auth.signOut();
+          throw new Error('No se encontró un perfil de empleado activo para este usuario. Por favor, inicia sesión como Dueño de Empresa o contacta al administrador.');
         }
         
         setProfile(employeeProfile);
@@ -151,6 +153,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('Employee profile set:', employeeProfile);
         console.log('Company ID set to:', employeeProfile.company_owner_id);
       } else {
+        // Verificar que el usuario no sea un empleado intentando entrar como dueño
+        const { data: employeeCheck, error: employeeCheckError } = await supabase
+          .from('employees')
+          .select('id')
+          .eq('auth_user_id', data.user.id)
+          .eq('status', 'active')
+          .maybeSingle();
+
+        if (employeeCheckError) {
+          console.error('Error checking employee status:', employeeCheckError);
+        }
+
+        if (employeeCheck) {
+          // Cerrar sesión si es un empleado intentando entrar como dueño
+          await supabase.auth.signOut();
+          throw new Error('Este usuario es un empleado. Por favor, inicia sesión usando la pestaña "Empleado".');
+        }
+
         await loadOwnerProfile(data.user);
       }
 

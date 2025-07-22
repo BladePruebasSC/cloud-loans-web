@@ -45,10 +45,10 @@ export const useLoans = () => {
 
       // Si es empleado, filtrar por la empresa del empleado
       if (profile?.is_employee && profile?.company_owner_id) {
-        query = query.eq('user_id', profile.company_owner_id);
+        query = query.eq('loan_officer_id', profile.company_owner_id);
       } else {
         // Si es dueño, mostrar sus propios préstamos
-        query = query.eq('user_id', user.id);
+        query = query.eq('loan_officer_id', user.id);
       }
       const { data, error } = await query;
 
