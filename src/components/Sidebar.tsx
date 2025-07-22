@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { 
   Home,
@@ -17,7 +17,9 @@ import {
   Settings,
   Users,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Calculator,
+  Lock
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,42 +27,68 @@ interface SidebarProps {
   onToggle: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
+export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
+  const location = useLocation();
   const { profile } = useAuth();
 
-  // Función para verificar permisos
+  // Function to check if user has permission
   const hasPermission = (permission: string) => {
-    if (!profile?.is_employee) {
-      console.log('User is owner, granting all permissions');
-      return true; // Los dueños tienen todos los permisos
-    }
-    
-    const hasAccess = profile?.permissions?.[permission] === true;
-    console.log(`Permission check for ${permission}:`, hasAccess, 'Permissions:', profile?.permissions);
-    return profile?.permissions?.[permission] === true;
+    if (!profile) return false;
+    if (profile.role === 'owner' || profile.role === 'admin') return true;
+    return profile.permissions?.[permission] === true;
+  };
+
+  // Function to check if menu item should be disabled
+  const isDisabled = (permission: string) => {
+    return !hasPermission(permission);
   };
 
   const menuItems = [
     { name: 'Inicio', path: '/', icon: Home },
-    { name: 'Préstamos', path: '/prestamos', icon: CreditCard, permission: 'loans.view' },
-    { name: 'Clientes', path: '/clientes', icon: Users, permission: 'clients.view' },
-    { name: 'Inventario', path: '/inventario', icon: Package, permission: 'inventory.view' },
+    {
+      title: 'Clientes',
+      icon: Users,
+      path: '/clientes',
+      permission: 'clients.view',
+    },
+    {
+      title: 'Préstamos',
+      icon: DollarSign,
+      path: '/prestamos',
+      permission: 'loans.view',
+    },
+    {
+      title: 'Reportes',
+      icon: BarChart3,
+      path: '/reportes',
+      permission: 'reports.view',
+    },
+    {
+      title: 'Empresa',
+      icon: Building2,
+      path: '/empresa',
+      permission: 'settings.view',
+    },
+    {
+      title: 'Inventario',
+      icon: Package,
+      path: '/inventario',
+      permission: 'inventory.view',
+    },
+    {
+      title: 'Utilidades',
+      icon: Calculator,
+      path: '/utilidades',
+      permission: 'settings.view',
+    },
     { name: 'Solicitudes', path: '/solicitudes', icon: FileText },
     { name: 'Bancos', path: '/bancos', icon: Building2 },
-    { name: 'Utilidades', path: '/utilidades', icon: DollarSign },
     { name: 'Turnos', path: '/turnos', icon: Clock },
     { name: 'Carteras', path: '/carteras', icon: Briefcase },
     { name: 'Documentos', path: '/documentos', icon: File },
     { name: 'Mapa en vivo', path: '/mapa', icon: MapPin },
     { name: 'Acuerdo de pagos', path: '/acuerdos', icon: HandHeart },
-    { name: 'Reportes', path: '/reportes', icon: BarChart3, permission: 'reports.view' },
-    { name: 'Mi empresa', path: '/empresa', icon: Settings, ownerOnly: true },
-  ].filter(item => {
-    // Filtrar elementos según permisos
-    if (item.ownerOnly && profile?.is_employee) return false;
-    if (item.permission && !hasPermission(item.permission)) return false;
-    return true;
-  });
+  ];
 
   return (
     <>
@@ -114,23 +142,37 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
 
           {/* Menu Items */}
           <nav className="space-y-2">
-            {menuItems.map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={({ isActive }) =>
-                  `flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-blue-100 text-blue-700 border-r-2 border-blue-700'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  } ${!isOpen ? 'justify-center' : ''}`
-                }
-                title={!isOpen ? item.name : undefined}
-              >
-                <item.icon className="h-5 w-5 flex-shrink-0" />
-                {isOpen && <span className="text-sm font-medium">{item.name}</span>}
-              </NavLink>
-            ))}
+            {menuItems.map((item) => {
+              const isActive = location.pathname === item.path;
+              const disabled = item.permission && isDisabled(item.permission);
+              
+              return (
+                <div
+                  key={item.path}
+                  className={`relative ${disabled ? 'opacity-50' : ''}`}
+                >
+                  {disabled ? (
+                    <div className="flex items-center space-x-3 px-3 py-2 rounded-lg text-gray-400 cursor-not-allowed">
+                      <item.icon className="h-5 w-5" />
+                      <span>{item.title}</span>
+                      <Lock className="h-4 w-4 ml-auto" />
+                    </div>
+                  ) : (
+                    <Link
+                      to={item.path}
+                      className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+                        isActive
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                    >
+                      <item.icon className="h-5 w-5" />
+                      <span>{item.title}</span>
+                    </Link>
+                  )}
+                </div>
+              );
+            })}
           </nav>
         </div>
       </div>
