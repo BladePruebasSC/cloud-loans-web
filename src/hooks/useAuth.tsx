@@ -47,56 +47,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-  const loadEmployeeProfile = async (authUser: User) => {
-    const { data: employeeData, error: employeeError } = await supabase
-      .from('employees')
-      .select(`
-        id,
-        full_name,
-        email,
-        role,
-        permissions,
-        company_owner_id,
-        status
-      `)
-      .eq('auth_user_id', authUser.id)
-      .eq('status', 'active')
-      .single();
-
-    if (employeeError || !employeeData) {
-      console.error('Employee profile error:', employeeError);
-      throw new Error('No se encontró un perfil de empleado activo.');
-    }
-
-    console.log('Employee data found:', employeeData);
-
-    const { data: companyData } = await supabase
-      .from('company_settings')
-      .select('company_name')
-      .eq('user_id', employeeData.company_owner_id)
-      .maybeSingle();
-
-    console.log('Company data:', companyData);
-
-    const employeeProfile: EmployeeProfile = {
-      id: employeeData.id,
-      full_name: employeeData.full_name,
-      email: employeeData.email,
-      role: employeeData.role,
-      permissions: employeeData.permissions || {},
-      company_owner_id: employeeData.company_owner_id,
-      is_employee: true,
-      company_name: companyData?.company_name || 'Empresa'
-    };
-
-    setProfile(employeeProfile);
-    setCompanyId(employeeData.company_owner_id);
-    console.log('Employee profile set:', employeeProfile);
-    console.log('Company ID set to:', employeeData.company_owner_id);
-=======
   const loadEmployeeProfile = async (userId: string) => {
     try {
       console.log('Loading employee profile for user:', userId);
@@ -132,108 +82,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.log('Company data for employee:', companyData);
 
-      return {
-        ...employeeData,
-        companyName: companyData?.company_name || 'Empresa',
-        isEmployee: true
+      const employeeProfile: EmployeeProfile = {
+        id: employeeData.id,
+        full_name: employeeData.full_name,
+        email: employeeData.email,
+        role: employeeData.role,
+        permissions: employeeData.permissions || {},
+        company_owner_id: employeeData.company_owner_id,
+        is_employee: true,
+        company_name: companyData?.company_name || 'Empresa'
       };
+
+      return employeeProfile;
     } catch (error) {
       console.error('Error in loadEmployeeProfile:', error);
       return null;
     }
->>>>>>> Stashed changes
-=======
-  const loadEmployeeProfile = async (userId: string) => {
-    try {
-      console.log('Loading employee profile for user:', userId);
-      const { data: employeeData, error: employeeError } = await supabase
-        .from('employees')
-        .select('id,full_name,email,role,permissions,company_owner_id,status')
-        .eq('auth_user_id', userId)
-        .eq('status', 'active')
-        .maybeSingle();
-
-      if (employeeError) {
-        console.error('Error loading employee profile:', employeeError);
-        return null;
-      }
-
-      if (!employeeData) {
-        console.log('No employee profile found for user:', userId);
-        return null;
-      }
-
-      console.log('Employee profile loaded:', employeeData);
-
-      // Cargar datos de la empresa empleadora
-      const { data: companyData, error: companyError } = await supabase
-        .from('company_settings')
-        .select('company_name')
-        .eq('user_id', employeeData.company_owner_id)
-        .maybeSingle();
-
-      if (companyError) {
-        console.error('Error loading company data:', companyError);
-      }
-
-      console.log('Company data for employee:', companyData);
-
-      return {
-        ...employeeData,
-        companyName: companyData?.company_name || 'Empresa',
-        isEmployee: true
-      };
-    } catch (error) {
-      console.error('Error in loadEmployeeProfile:', error);
-      return null;
-    }
->>>>>>> Stashed changes
-=======
-  const loadEmployeeProfile = async (userId: string) => {
-    try {
-      console.log('Loading employee profile for user:', userId);
-      const { data: employeeData, error: employeeError } = await supabase
-        .from('employees')
-        .select('id,full_name,email,role,permissions,company_owner_id,status')
-        .eq('auth_user_id', userId)
-        .eq('status', 'active')
-        .maybeSingle();
-
-      if (employeeError) {
-        console.error('Error loading employee profile:', employeeError);
-        return null;
-      }
-
-      if (!employeeData) {
-        console.log('No employee profile found for user:', userId);
-        return null;
-      }
-
-      console.log('Employee profile loaded:', employeeData);
-
-      // Cargar datos de la empresa empleadora
-      const { data: companyData, error: companyError } = await supabase
-        .from('company_settings')
-        .select('company_name')
-        .eq('user_id', employeeData.company_owner_id)
-        .maybeSingle();
-
-      if (companyError) {
-        console.error('Error loading company data:', companyError);
-      }
-
-      console.log('Company data for employee:', companyData);
-
-      return {
-        ...employeeData,
-        companyName: companyData?.company_name || 'Empresa',
-        isEmployee: true
-      };
-    } catch (error) {
-      console.error('Error in loadEmployeeProfile:', error);
-      return null;
-    }
->>>>>>> Stashed changes
   };
 
   const loadOwnerProfile = async (authUser: User) => {
@@ -277,7 +141,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(data.user);
 
       if (role === 'employee') {
-        await loadEmployeeProfile(data.user);
+        const employeeProfile = await loadEmployeeProfile(data.user.id);
+        if (!employeeProfile) {
+          throw new Error('No se encontró un perfil de empleado activo.');
+        }
+        
+        setProfile(employeeProfile);
+        setCompanyId(employeeProfile.company_owner_id);
+        console.log('Employee profile set:', employeeProfile);
+        console.log('Company ID set to:', employeeProfile.company_owner_id);
       } else {
         await loadOwnerProfile(data.user);
       }
@@ -347,6 +219,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('Auth state changed:', event, session?.user?.id);
+      
+      if (event === 'SIGNED_IN' && session?.user) {
+        setUser(session.user);
+        setLoading(false);
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setProfile(null);
+        setCompanyId(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const value = {
     user,
