@@ -46,48 +46,84 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
   const menuItems = [
     { name: 'Inicio', path: '/', icon: Home },
     {
-      title: 'Clientes',
+      name: 'Clientes',
       icon: Users,
       path: '/clientes',
       permission: 'clients.view',
     },
     {
-      title: 'Préstamos',
+      name: 'Préstamos',
       icon: DollarSign,
       path: '/prestamos',
       permission: 'loans.view',
     },
+    { 
+      name: 'Carteras', 
+      path: '/carteras', 
+      icon: Briefcase,
+      permission: 'portfolios.view'
+    },
+    { 
+      name: 'Inventario', 
+      path: '/inventario', 
+      icon: Package,
+      permission: 'inventory.view'
+    },
+    { 
+      name: 'Documentos', 
+      path: '/documentos', 
+      icon: File,
+      permission: 'documents.view'
+    },
+    { 
+      name: 'Solicitudes', 
+      path: '/solicitudes', 
+      icon: FileText,
+      permission: 'requests.view'
+    },
+    { 
+      name: 'Bancos', 
+      path: '/bancos', 
+      icon: Building2,
+      permission: 'settings.view'
+    },
+    { 
+      name: 'Utilidades', 
+      path: '/utilidades', 
+      icon: Calculator,
+      permission: 'settings.view'
+    },
+    { 
+      name: 'Turnos', 
+      path: '/turnos', 
+      icon: Clock,
+      permission: 'shifts.view'
+    },
+    { 
+      name: 'Mapa', 
+      path: '/mapa', 
+      icon: MapPin,
+      permission: 'routes.view'
+    },
+    { 
+      name: 'Acuerdos', 
+      path: '/acuerdos', 
+      icon: HandHeart,
+      permission: 'agreements.view'
+    },
     {
-      title: 'Reportes',
+      name: 'Reportes',
       icon: BarChart3,
       path: '/reportes',
       permission: 'reports.view',
     },
     {
-      title: 'Empresa',
+      name: 'Mi Empresa',
       icon: Building2,
-      path: '/empresa',
+      path: '/mi-empresa',
       permission: 'settings.view',
+      ownerOnly: true
     },
-    {
-      title: 'Inventario',
-      icon: Package,
-      path: '/inventario',
-      permission: 'inventory.view',
-    },
-    {
-      title: 'Utilidades',
-      icon: Calculator,
-      path: '/utilidades',
-      permission: 'settings.view',
-    },
-    { name: 'Solicitudes', path: '/solicitudes', icon: FileText },
-    { name: 'Bancos', path: '/bancos', icon: Building2 },
-    { name: 'Turnos', path: '/turnos', icon: Clock },
-    { name: 'Carteras', path: '/carteras', icon: Briefcase },
-    { name: 'Documentos', path: '/documentos', icon: File },
-    { name: 'Mapa en vivo', path: '/mapa', icon: MapPin },
-    { name: 'Acuerdo de pagos', path: '/acuerdos', icon: HandHeart },
   ];
 
   return (
@@ -145,29 +181,40 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
             {menuItems.map((item) => {
               const isActive = location.pathname === item.path;
               const disabled = item.permission && isDisabled(item.permission);
+              const isOwnerOnly = item.ownerOnly && profile?.is_employee;
+              const shouldBlock = disabled || isOwnerOnly;
               
               return (
                 <div
                   key={item.path}
-                  className={`relative ${disabled ? 'opacity-50' : ''}`}
+                  className={`relative ${shouldBlock ? 'opacity-50' : ''}`}
                 >
-                  {disabled ? (
-                    <div className="flex items-center space-x-3 px-3 py-2 rounded-lg text-gray-400 cursor-not-allowed">
+                  {shouldBlock ? (
+                    <div className={`flex items-center px-3 py-2 rounded-lg text-gray-400 cursor-not-allowed ${
+                      isOpen ? 'space-x-3' : 'justify-center'
+                    }`}>
                       <item.icon className="h-5 w-5" />
-                      <span>{item.title}</span>
-                      <Lock className="h-4 w-4 ml-auto" />
+                      {isOpen && (
+                        <>
+                          <span className="flex-1">{item.name}</span>
+                          <Lock className="h-4 w-4" />
+                        </>
+                      )}
                     </div>
                   ) : (
                     <Link
                       to={item.path}
-                      className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
+                      className={`flex items-center px-3 py-2 rounded-lg transition-colors ${
+                        isOpen ? 'space-x-3' : 'justify-center'
+                      } ${
                         isActive
                           ? 'bg-blue-100 text-blue-700'
                           : 'text-gray-600 hover:bg-gray-100'
                       }`}
+                      title={!isOpen ? item.name : undefined}
                     >
                       <item.icon className="h-5 w-5" />
-                      <span>{item.title}</span>
+                      {isOpen && <span>{item.name}</span>}
                     </Link>
                   )}
                 </div>
