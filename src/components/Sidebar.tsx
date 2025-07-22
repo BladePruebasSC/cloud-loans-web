@@ -22,7 +22,12 @@ import {
   Lock
 } from 'lucide-react';
 
-export const Sidebar = () => {
+interface SidebarProps {
+  isOpen: boolean;
+  onToggle: () => void;
+}
+
+export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
   const location = useLocation();
   const { profile } = useAuth();
 
