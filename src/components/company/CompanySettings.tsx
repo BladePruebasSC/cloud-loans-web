@@ -498,6 +498,293 @@ const CompanySettings = () => {
               </div>
             </div>
 
+            <div className="space-y-4">
+              <h4 className="font-medium">Configuraciones de Integración</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="whatsapp_api">API de WhatsApp</Label>
+                  <Input
+                    id="whatsapp_api"
+                    placeholder="Token de API de WhatsApp"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="sms_provider">Proveedor SMS</Label>
+                  <Select defaultValue="none">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Ninguno</SelectItem>
+                      <SelectItem value="twilio">Twilio</SelectItem>
+                      <SelectItem value="nexmo">Nexmo</SelectItem>
+                      <SelectItem value="local">Proveedor Local</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="email_provider">Proveedor de Email</Label>
+                  <Select defaultValue="smtp">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="smtp">SMTP</SelectItem>
+                      <SelectItem value="sendgrid">SendGrid</SelectItem>
+                      <SelectItem value="mailgun">Mailgun</SelectItem>
+                      <SelectItem value="ses">Amazon SES</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="payment_gateway">Pasarela de Pago</Label>
+                  <Select defaultValue="none">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Ninguna</SelectItem>
+                      <SelectItem value="stripe">Stripe</SelectItem>
+                      <SelectItem value="paypal">PayPal</SelectItem>
+                      <SelectItem value="azul">Azul (RD)</SelectItem>
+                      <SelectItem value="banreservas">BanReservas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <h4 className="font-medium">Configuraciones de Cobranza</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="collection_strategy">Estrategia de Cobranza</Label>
+                  <Select defaultValue="standard">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="standard">Estándar</SelectItem>
+                      <SelectItem value="aggressive">Agresiva</SelectItem>
+                      <SelectItem value="soft">Suave</SelectItem>
+                      <SelectItem value="custom">Personalizada</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="auto_late_fees">Aplicar Moras Automáticamente</Label>
+                  <Select defaultValue="yes">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Sí</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                      <SelectItem value="after_grace">Después del período de gracia</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="collection_calls_per_day">Llamadas de Cobranza por Día</Label>
+                  <Input
+                    id="collection_calls_per_day"
+                    type="number"
+                    defaultValue="3"
+                    placeholder="Máximo de llamadas diarias"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="collection_start_time">Hora de Inicio de Cobranza</Label>
+                  <Input
+                    id="collection_start_time"
+                    type="time"
+                    defaultValue="08:00"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="collection_end_time">Hora de Fin de Cobranza</Label>
+                  <Input
+                    id="collection_end_time"
+                    type="time"
+                    defaultValue="18:00"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="weekend_collections">Cobranza en Fines de Semana</Label>
+                  <Select defaultValue="no">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Sí</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                      <SelectItem value="saturday_only">Solo sábados</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <h4 className="font-medium">Configuraciones de Riesgo</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="max_debt_to_income">Máximo Deuda/Ingreso (%)</Label>
+                  <Input
+                    id="max_debt_to_income"
+                    type="number"
+                    defaultValue="40"
+                    placeholder="Porcentaje máximo de endeudamiento"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="min_credit_score_required">Score Mínimo Requerido</Label>
+                  <Input
+                    id="min_credit_score_required"
+                    type="number"
+                    defaultValue="600"
+                    placeholder="Score crediticio mínimo"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="max_loans_per_client">Máximo Préstamos por Cliente</Label>
+                  <Input
+                    id="max_loans_per_client"
+                    type="number"
+                    defaultValue="3"
+                    placeholder="Número máximo de préstamos simultáneos"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="risk_assessment_model">Modelo de Evaluación de Riesgo</Label>
+                  <Select defaultValue="basic">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="basic">Básico</SelectItem>
+                      <SelectItem value="advanced">Avanzado</SelectItem>
+                      <SelectItem value="ai_powered">Con IA</SelectItem>
+                      <SelectItem value="custom">Personalizado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="auto_approval_limit">Límite de Aprobación Automática</Label>
+                  <Input
+                    id="auto_approval_limit"
+                    type="number"
+                    defaultValue="25000"
+                    placeholder="Monto máximo para aprobación automática"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="require_guarantor_above">Requerir Garante Arriba de</Label>
+                  <Input
+                    id="require_guarantor_above"
+                    type="number"
+                    defaultValue="100000"
+                    placeholder="Monto que requiere garante"
+                  />
+                </div>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <h4 className="font-medium">Configuraciones de Documentación</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex items-center space-x-2">
+                  <input type="checkbox" defaultChecked className="rounded" />
+                  <Label className="text-sm">Requerir foto de cédula</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input type="checkbox" defaultChecked className="rounded" />
+                  <Label className="text-sm">Requerir comprobante de ingresos</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input type="checkbox" className="rounded" />
+                  <Label className="text-sm">Requerir referencias laborales</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input type="checkbox" className="rounded" />
+                  <Label className="text-sm">Requerir estados bancarios</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input type="checkbox" defaultChecked className="rounded" />
+                  <Label className="text-sm">Requerir foto del cliente</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input type="checkbox" className="rounded" />
+                  <Label className="text-sm">Requerir firma digital</Label>
+                </div>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <h4 className="font-medium">Configuraciones de Reportes</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="daily_report_time">Hora de Reporte Diario</Label>
+                  <Input
+                    id="daily_report_time"
+                    type="time"
+                    defaultValue="18:00"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="weekly_report_day">Día de Reporte Semanal</Label>
+                  <Select defaultValue="friday">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="monday">Lunes</SelectItem>
+                      <SelectItem value="tuesday">Martes</SelectItem>
+                      <SelectItem value="wednesday">Miércoles</SelectItem>
+                      <SelectItem value="thursday">Jueves</SelectItem>
+                      <SelectItem value="friday">Viernes</SelectItem>
+                      <SelectItem value="saturday">Sábado</SelectItem>
+                      <SelectItem value="sunday">Domingo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="monthly_report_day">Día de Reporte Mensual</Label>
+                  <Input
+                    id="monthly_report_day"
+                    type="number"
+                    min="1"
+                    max="28"
+                    defaultValue="1"
+                    placeholder="Día del mes (1-28)"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="report_recipients">Destinatarios de Reportes</Label>
+                  <Input
+                    id="report_recipients"
+                    placeholder="emails@ejemplo.com, separados por comas"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="pt-4">
               <Label htmlFor="logo_upload">Logo de la Empresa</Label>
               <div className="mt-2 flex items-center space-x-4">

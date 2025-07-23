@@ -219,6 +219,7 @@ export const EmployeesModule = () => {
         if (updateError) {
           console.error('Error updating employee:', updateError);
           throw new Error(`Error al actualizar empleado: ${updateError.message}`);
+          throw new Error(`Error al actualizar empleado: ${updateError.message}`);
         }
 
         // Also update the auth user if the email has changed
