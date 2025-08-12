@@ -90,11 +90,12 @@ const ClientForm = () => {
       }
 
       if (data) {
-        // Cargar referencias o usar referencias vacías
-        const references = data.references_json || [
-          { name: '', phone: '', relationship: '' },
-          { name: '', phone: '', relationship: '' }
-        ];
+        const references = Array.isArray(data.references_json)
+          ? (data.references_json as { name: string; phone: string; relationship: string }[])
+          : [
+            { name: '', phone: '', relationship: '' },
+            { name: '', phone: '', relationship: '' }
+          ];
 
         setFormData({
           full_name: data.full_name || '',

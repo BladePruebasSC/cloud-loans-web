@@ -138,7 +138,7 @@ export const EmployeesModule = () => {
     if (!user) return;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('employees')
         .select('*')
         .eq('company_owner_id', user.id)
@@ -150,7 +150,7 @@ export const EmployeesModule = () => {
         return;
       }
 
-      setEmployees(data || []);
+      setEmployees((data as Employee[]) || []);
     } catch (error) {
       console.error('Error in fetchEmployees:', error);
       toast.error('Error al cargar empleados');
@@ -166,7 +166,7 @@ export const EmployeesModule = () => {
     try {
       if (editingEmployee) {
         // Update existing employee
-        const { error } = await supabase
+        const { error } = await (supabase as any)
           .from('employees')
           .update({
             full_name: data.full_name,
@@ -275,7 +275,7 @@ export const EmployeesModule = () => {
     if (!confirm('¿Está seguro de eliminar este empleado?')) return;
 
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('employees')
         .delete()
         .eq('id', id);
@@ -296,7 +296,7 @@ export const EmployeesModule = () => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
 
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('employees')
         .update({ status: newStatus })
         .eq('id', id);
