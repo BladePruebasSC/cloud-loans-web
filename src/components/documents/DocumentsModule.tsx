@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -14,9 +14,41 @@ import {
   Eye,
   Trash2
 } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { toast } from 'sonner';
 
 export const DocumentsModule = () => {
   const [activeTab, setActiveTab] = useState('todos');
+  const { user } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUploadClick = () => fileInputRef.current?.click();
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    if (!user) {
+      toast.error('Debes iniciar sesión para subir documentos');
+      return;
+    }
+    toast.loading('Subiendo documentos...', { id: 'upload-docs' });
+    try {
+      for (const file of Array.from(files)) {
+        const filePath = `user-${user.id}/${Date.now()}-${file.name}`;
+        const { error } = await supabase.storage.from('documents').upload(filePath, file, {
+          upsert: false,
+        });
+        if (error) throw error;
+      }
+      toast.success('Documentos subidos correctamente', { id: 'upload-docs' });
+    } catch (err: any) {
+      console.error('Error al subir documentos:', err);
+      toast.error(err.message || 'Error al subir documentos', { id: 'upload-docs' });
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   const mockDocuments = [
     { id: 1, name: 'Contrato Préstamo #001', type: 'Contrato', date: '2024-01-15', size: '2.4 MB' },
@@ -26,17 +58,18 @@ export const DocumentsModule = () => {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-bold text-gray-900">Gestión de Documentos</h1>
         <div className="flex gap-2">
           <Button variant="outline">
             <Download className="h-4 w-4 mr-2" />
             Descargar Todos
           </Button>
-          <Button>
+          <Button onClick={handleUploadClick}>
             <Upload className="h-4 w-4 mr-2" />
             Subir Documento
           </Button>
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple className="hidden" />
         </div>
       </div>
 
@@ -88,7 +121,7 @@ export const DocumentsModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="w-full overflow-x-auto">
           <TabsTrigger value="todos">Todos</TabsTrigger>
           <TabsTrigger value="contratos">Contratos</TabsTrigger>
           <TabsTrigger value="comprobantes">Comprobantes</TabsTrigger>

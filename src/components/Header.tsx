@@ -2,6 +2,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { LogOut, User, Building, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -73,9 +74,9 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
         </div>
       </div>
       
-      {profile?.is_employee && profile.company_name && (
+      {profile?.company_name && (
         <div className="mt-2 text-xs text-gray-600">
-          Trabajando para: <span className="font-medium">{profile.company_name}</span>
+          Trabajando para: <Link to="/mi-empresa" className="font-medium hover:underline">{profile.company_name}</Link>
         </div>
       )}
     </header>

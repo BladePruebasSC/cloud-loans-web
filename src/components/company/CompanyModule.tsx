@@ -20,7 +20,7 @@ export const CompanyModule = () => {
   return (
     <div className="p-6">
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="w-full overflow-x-auto">
           <TabsTrigger value="general" className="flex items-center gap-2">
             <Building2 className="h-4 w-4" />
             General
@@ -36,10 +36,6 @@ export const CompanyModule = () => {
           <TabsTrigger value="rutas" className="flex items-center gap-2">
             <Route className="h-4 w-4" />
             Rutas
-          </TabsTrigger>
-          <TabsTrigger value="configuracion" className="flex items-center gap-2">
-            <Settings className="h-4 w-4" />
-            Configuración
           </TabsTrigger>
         </TabsList>
 
@@ -59,15 +55,6 @@ export const CompanyModule = () => {
           <RoutesModule />
         </TabsContent>
 
-        <TabsContent value="configuracion">
-          <div className="text-center py-8">
-            <Settings className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-            <h3 className="text-lg font-medium mb-2">Configuraciones Avanzadas</h3>
-            <p className="text-gray-600">
-              Configuraciones adicionales del sistema en desarrollo
-            </p>
-          </div>
-        </TabsContent>
       </Tabs>
     </div>
   );
