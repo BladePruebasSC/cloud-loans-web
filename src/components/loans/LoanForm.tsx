@@ -509,7 +509,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                <SelectItem value="">SIN CARTERA</SelectItem>
+                                <SelectItem value="none">SIN CARTERA</SelectItem>
                                 <SelectItem value="personal">Cartera Personal</SelectItem>
                                 <SelectItem value="comercial">Cartera Comercial</SelectItem>
                                 <SelectItem value="emergencia">Cartera Emergencia</SelectItem>
