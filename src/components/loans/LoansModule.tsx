@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LoanForm } from './LoanForm';
 import { PaymentForm } from './PaymentForm';
+import { LoanUpdateForm } from './LoanUpdateForm';
+import { LoanHistoryView } from './LoanHistoryView';
 import { useLoans } from '@/hooks/useLoans';
 import { useAuth } from '@/hooks/useAuth';
 import { 
@@ -18,13 +20,18 @@ import {
   AlertCircle,
   CheckCircle,
   Filter,
-  Receipt
+  Receipt,
+  Edit,
+  History
 } from 'lucide-react';
 
 export const LoansModule = () => {
   const [activeTab, setActiveTab] = useState('mis-prestamos');
   const [showLoanForm, setShowLoanForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [showUpdateForm, setShowUpdateForm] = useState(false);
+  const [showHistoryView, setShowHistoryView] = useState(false);
+  const [selectedLoan, setSelectedLoan] = useState(null);
   const { loans, loading } = useLoans();
   const { profile, companyId } = useAuth();
 
@@ -43,6 +50,25 @@ export const LoansModule = () => {
 
   if (showPaymentForm) {
     return <PaymentForm onBack={() => setShowPaymentForm(false)} />;
+  }
+
+  if (showUpdateForm && selectedLoan) {
+    return (
+      <LoanUpdateForm
+        loan={selectedLoan}
+        isOpen={showUpdateForm}
+        onClose={() => {
+          setShowUpdateForm(false);
+          setSelectedLoan(null);
+        }}
+        onUpdate={() => {
+          setShowUpdateForm(false);
+          setSelectedLoan(null);
+          // Refresh loans data
+          window.location.reload();
+        }}
+      />
+    );
   }
 
   return (
@@ -214,6 +240,27 @@ export const LoansModule = () => {
                           >
                             <Receipt className="h-4 w-4" />
                           </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedLoan(loan);
+                              setShowUpdateForm(true);
+                            }}
+                            disabled={loan.status === 'paid'}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedLoan(loan);
+                              setShowHistoryView(true);
+                            }}
+                          >
+                            <History className="h-4 w-4" />
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -294,6 +341,18 @@ export const LoansModule = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Loan History View */}
+      {selectedLoan && (
+        <LoanHistoryView
+          loanId={selectedLoan.id}
+          isOpen={showHistoryView}
+          onClose={() => {
+            setShowHistoryView(false);
+            setSelectedLoan(null);
+          }}
+        />
+      )}
     </div>
   );
 };
