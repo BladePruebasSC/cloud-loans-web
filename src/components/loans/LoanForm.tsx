@@ -35,7 +35,6 @@ const loanSchema = z.object({
   minimum_payment_percentage: z.number().default(100),
   guarantor_name: z.string().optional(),
   guarantor_phone: z.string().optional(),
-  guarantor_address: z.string().optional(),
   guarantor_dni: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -197,7 +196,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         status: data.loan_started ? 'active' : 'pending',
         guarantor_name: data.guarantor_name || null,
         guarantor_phone: data.guarantor_phone || null,
-        guarantor_address: data.guarantor_address || null,
         guarantor_dni: data.guarantor_dni || null,
         notes: data.notes || null,
       };
@@ -860,19 +858,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                         <FormLabel>Teléfono</FormLabel>
                         <FormControl>
                           <Input placeholder="Teléfono del garante" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="guarantor_dni"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Cédula</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Cédula del garante" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
