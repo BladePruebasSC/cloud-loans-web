@@ -36,10 +36,25 @@ export const DocumentsModule = () => {
     try {
       for (const file of Array.from(files)) {
         const filePath = `user-${user.id}/${Date.now()}-${file.name}`;
-        const { error } = await supabase.storage.from('documents').upload(filePath, file, {
+        const { error: uploadError } = await supabase.storage.from('documents').upload(filePath, file, {
           upsert: false,
         });
-        if (error) throw error;
+        if (uploadError) throw uploadError;
+
+        // Save metadata in documents table
+        const { error: insertError } = await (supabase as any)
+          .from('documents')
+          .insert({
+            user_id: user.id,
+            title: file.name,
+            document_type: 'general',
+            file_url: filePath,
+            file_name: file.name,
+            mime_type: file.type || null,
+            file_size: file.size || null,
+            status: 'active',
+          });
+        if (insertError) throw insertError;
       }
       toast.success('Documentos subidos correctamente', { id: 'upload-docs' });
     } catch (err: any) {
