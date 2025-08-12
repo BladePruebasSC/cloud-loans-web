@@ -304,13 +304,23 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
 
                     <div>
                       <FormLabel>$</FormLabel>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        placeholder="0"
-                        value={form.watch('amount') / 58.5}
-                        readOnly
-                        className="bg-gray-50"
+                      <FormField
+                        control={form.control}
+                        name="amount_usd"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                placeholder="0"
+                                {...field}
+                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
                       />
                     </div>
 
