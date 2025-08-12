@@ -52,13 +52,18 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
                   )}
                 </p>
               </div>
-              <div className="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center">
+              <Link
+                to="/mi-empresa"
+                className="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+                title="Ir a Mi Empresa"
+                aria-label="Ir a Mi Empresa"
+              >
                 {profile.is_employee ? (
                   <Users className="h-4 w-4 text-white" />
                 ) : (
                   <User className="h-4 w-4 text-white" />
                 )}
-              </div>
+              </Link>
             </div>
           )}
           
