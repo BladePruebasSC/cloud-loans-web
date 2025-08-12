@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 
 interface User {
   id: string;
-  email: string;
+  email?: string | null;
   user_metadata?: any;
 }
 

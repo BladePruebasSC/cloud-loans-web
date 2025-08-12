@@ -195,7 +195,7 @@ export const PaymentAgreementsModule = () => {
         .eq('status', 'active');
 
       if (error) throw error;
-      setLoans(data || []);
+      setLoans((data as unknown as Loan[]) || []);
     } catch (error) {
       console.error('Error fetching loans:', error);
       toast.error('Error al cargar préstamos');
