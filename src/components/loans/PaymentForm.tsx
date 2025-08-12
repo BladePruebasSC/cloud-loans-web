@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign } from 'lucide-react';
+import { Search, User } from 'lucide-react';
 
 const paymentSchema = z.object({
   loan_id: z.string().min(1, 'Debe seleccionar un préstamo'),
@@ -38,7 +39,10 @@ interface Loan {
 
 export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
   const [loans, setLoans] = useState<Loan[]>([]);
+  const [filteredLoans, setFilteredLoans] = useState<Loan[]>([]);
+  const [loanSearch, setLoanSearch] = useState('');
   const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
+  const [showLoanDropdown, setShowLoanDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
   const { user, companyId } = useAuth();
 
@@ -88,6 +92,32 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
     }));
 
     setLoans(transformedLoans);
+    setFilteredLoans(transformedLoans);
+  };
+
+  const handleLoanSearch = (searchTerm: string) => {
+    setLoanSearch(searchTerm);
+    if (searchTerm.length === 0) {
+      setFilteredLoans(loans);
+      setShowLoanDropdown(false);
+      return;
+    }
+
+    const filtered = loans.filter(loan =>
+      loan.client?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      loan.client?.dni?.includes(searchTerm)
+    );
+    
+    setFilteredLoans(filtered);
+    setShowLoanDropdown(filtered.length > 0);
+  };
+
+  const selectLoan = (loan: Loan) => {
+    setSelectedLoan(loan);
+    setLoanSearch(`${loan.client?.full_name} - ${loan.client?.dni}`);
+    setShowLoanDropdown(false);
+    form.setValue('loan_id', loan.id);
+    form.setValue('amount', loan.monthly_payment);
   };
 
   const handleLoanSelect = (loanId: string) => {
@@ -171,36 +201,47 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
             <CardContent>
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                  <FormField
-                    control={form.control}
-                    name="loan_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Préstamo</FormLabel>
-                        <Select 
-                          onValueChange={(value) => {
-                            field.onChange(value);
-                            handleLoanSelect(value);
-                          }} 
-                          defaultValue={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Seleccionar préstamo" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent className="bg-white">
-                            {loans.map((loan) => (
-                              <SelectItem key={loan.id} value={loan.id}>
-                                {loan.client?.full_name} - Balance: ${loan.remaining_balance.toLocaleString()}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
+                  {/* Búsqueda de Préstamo */}
+                  <div className="space-y-2">
+                    <FormLabel>Préstamo:</FormLabel>
+                    <div className="relative">
+                      <div className="flex items-center">
+                        <Search className="h-4 w-4 text-gray-400 absolute left-3 z-10" />
+                        <Input
+                          placeholder="Buscar préstamo por cliente..."
+                          value={loanSearch}
+                          onChange={(e) => handleLoanSearch(e.target.value)}
+                          className="pl-10"
+                          onFocus={() => setShowLoanDropdown(filteredLoans.length > 0)}
+                        />
+                      </div>
+                      
+                      {showLoanDropdown && (
+                        <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                          {filteredLoans.map((loan) => (
+                            <div
+                              key={loan.id}
+                              className="p-3 hover:bg-gray-100 cursor-pointer border-b"
+                              onClick={() => selectLoan(loan)}
+                            >
+                              <div className="font-medium">{loan.client?.full_name}</div>
+                              <div className="text-sm text-gray-600">
+                                {loan.client?.dni} • Balance: ${loan.remaining_balance.toLocaleString()}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    
+                    {selectedLoan && (
+                      <div className="flex items-center gap-2 p-2 bg-blue-50 rounded">
+                        <User className="h-4 w-4 text-blue-600" />
+                        <span className="font-medium">{selectedLoan.client?.full_name}</span>
+                        <Badge variant="outline">{selectedLoan.client?.dni}</Badge>
+                      </div>
                     )}
-                  />
+                  </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <FormField

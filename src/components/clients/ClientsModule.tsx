@@ -198,21 +198,20 @@ export const ClientsModule = () => {
           {/* Search */}
           <Card>
             <CardHeader>
-              <CardTitle>Buscar Clientes</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Search className="h-5 w-5" />
+                Buscar Clientes
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center space-x-2">
+              <div className="relative">
                 <Search className="h-4 w-4 text-gray-400" />
                 <Input
                   placeholder="Buscar por nombre, cédula, teléfono o email..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="max-w-sm"
+                  className="pl-10"
                 />
-                <Button variant="outline">
-                  <Filter className="h-4 w-4 mr-2" />
-                  Filtros
-                </Button>
               </div>
             </CardContent>
           </Card>
