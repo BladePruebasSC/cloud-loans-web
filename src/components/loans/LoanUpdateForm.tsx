@@ -704,7 +704,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             </Card>
           </div>
         </div>
-      </form>
     </Dialog>
   );
 };
