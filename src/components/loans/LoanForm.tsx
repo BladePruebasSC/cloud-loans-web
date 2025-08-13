@@ -366,27 +366,23 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
 
                     <div className="flex items-end">
-                      <Button 
-                        type="button" 
-                        className="w-full bg-blue-500 hover:bg-blue-600"
-                        onClick={() => {
-                          // Trigger calculation by updating watched values
-                          const currentValues = form.getValues();
-                          const { payment, total, totalPayments } = calculatePayment(
-                            currentValues.amount,
-                            currentValues.interest_rate,
-                            currentValues.term_months,
-                            currentValues.amortization_type,
-                            currentValues.payment_frequency,
-                            currentValues.fixed_payment_enabled ? currentValues.fixed_payment_amount : undefined
-                          );
-                          setPaymentAmount(payment);
-                          setTotalAmount(total);
-                          setTotalPayments(totalPayments);
-                        }}
-                      >
-                        📊 CALCULAR PRÉSTAMO
-                      </Button>
+                      <FormField
+                        control={form.control}
+                        name="fixed_payment_enabled"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center space-x-2">
+                            <FormControl>
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={field.onChange}
+                                className="rounded"
+                              />
+                            </FormControl>
+                            <FormLabel className="text-sm">Fijar Cuota</FormLabel>
+                          </FormItem>
+                        )}
+                      />
                     </div>
                   </div>
 
@@ -437,6 +433,30 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                       />
                     </div>
                   </div>
+
+                  {form.watch('fixed_payment_enabled') && (
+                    <div>
+                      <FormLabel>Monto de Cuota Fija:</FormLabel>
+                      <FormField
+                        control={form.control}
+                        name="fixed_payment_amount"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                placeholder="0.00"
+                                {...field}
+                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-3 gap-4">
                     <div>
@@ -510,8 +530,26 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   </div>
 
                   <div className="flex items-center justify-center">
-                    <Button type="button" className="bg-blue-500 hover:bg-blue-600 px-8">
-                      CUOTAS
+                    <Button 
+                      type="button" 
+                      className="bg-blue-500 hover:bg-blue-600 px-8"
+                      onClick={() => {
+                        // Trigger calculation by updating watched values
+                        const currentValues = form.getValues();
+                        const { payment, total, totalPayments } = calculatePayment(
+                          currentValues.amount,
+                          currentValues.interest_rate,
+                          currentValues.term_months,
+                          currentValues.amortization_type,
+                          currentValues.payment_frequency,
+                          currentValues.fixed_payment_enabled ? currentValues.fixed_payment_amount : undefined
+                        );
+                        setPaymentAmount(payment);
+                        setTotalAmount(total);
+                        setTotalPayments(totalPayments);
+                      }}
+                    >
+                      📊 CALCULAR PRÉSTAMO
                     </Button>
                   </div>
                 </CardContent>
@@ -731,46 +769,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     <div className="space-y-3">
                       <FormField
                         control={form.control}
-                        name="fixed_payment_enabled"
-                        render={({ field }) => (
-                          <FormItem className="flex items-center space-x-2">
-                            <FormControl>
-                              <input
-                                type="checkbox"
-                                checked={field.value}
-                                onChange={field.onChange}
-                                className="rounded"
-                              />
-                            </FormControl>
-                            <FormLabel className="text-sm">Fijar Cuota</FormLabel>
-                          </FormItem>
-                        )}
-                      />
-
-                      {form.watch('fixed_payment_enabled') && (
-                        <FormField
-                          control={form.control}
-                          name="fixed_payment_amount"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Monto Cuota Fija</FormLabel>
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  placeholder="0.00"
-                                  {...field}
-                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      <FormField
-                        control={form.control}
                         name="guarantor_required"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
@@ -858,7 +856,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                 <Button 
                   type="submit" 
                   disabled={loading || !selectedClient}
-                  className="bg-green-500 hover:bg-green-600 px-12 py-3 text-lg"
+                  className="bg-blue-500 hover:bg-blue-600 px-12 py-3 text-lg"
                 >
                   💰 CREAR PRÉSTAMO
                 </Button>
