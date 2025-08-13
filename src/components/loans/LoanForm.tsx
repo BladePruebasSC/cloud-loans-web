@@ -12,34 +12,34 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
-import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent } from 'lucide-react';
+import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer } from 'lucide-react';
 
-  const loanSchema = z.object({
-    client_id: z.string().min(1, 'Debe seleccionar un cliente'),
-    amount: z.number().min(1, 'El monto debe ser mayor a 0'),
-    interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0'),
-    term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes'),
-    loan_type: z.string().min(1, 'Debe seleccionar un tipo de préstamo'),
-    amortization_type: z.string().default('simple'),
-    payment_frequency: z.string().default('monthly'),
-    first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
-    closing_costs: z.number().default(0),
-    portfolio: z.string().optional(),
-    comments: z.string().optional(),
-    guarantor_required: z.boolean().default(false),
-    loan_started: z.boolean().default(false),
-    late_fee: z.boolean().default(false),
-    add_expense: z.boolean().default(false),
-    minimum_payment: z.boolean().default(true),
-    minimum_payment_type: z.string().default('interest'),
-    minimum_payment_percentage: z.number().default(100),
-    guarantor_name: z.string().optional(),
-    guarantor_phone: z.string().optional(),
-    guarantor_dni: z.string().optional(),
-    notes: z.string().optional(),
-    fixed_payment_enabled: z.boolean().default(false),
-    fixed_payment_amount: z.number().optional(),
-  });
+const loanSchema = z.object({
+  client_id: z.string().min(1, 'Debe seleccionar un cliente'),
+  amount: z.number().min(1, 'El monto debe ser mayor a 0'),
+  interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0'),
+  term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes'),
+  loan_type: z.string().min(1, 'Debe seleccionar un tipo de préstamo'),
+  amortization_type: z.string().default('simple'),
+  payment_frequency: z.string().default('monthly'),
+  first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
+  closing_costs: z.number().default(0),
+  portfolio: z.string().optional(),
+  comments: z.string().optional(),
+  guarantor_required: z.boolean().default(false),
+  loan_started: z.boolean().default(false),
+  late_fee: z.boolean().default(false),
+  add_expense: z.boolean().default(false),
+  minimum_payment: z.boolean().default(true),
+  minimum_payment_type: z.string().default('interest'),
+  minimum_payment_percentage: z.number().default(100),
+  guarantor_name: z.string().optional(),
+  guarantor_phone: z.string().optional(),
+  guarantor_dni: z.string().optional(),
+  notes: z.string().optional(),
+  fixed_payment_enabled: z.boolean().default(false),
+  fixed_payment_amount: z.number().optional(),
+});
 
 type LoanFormData = z.infer<typeof loanSchema>;
 
@@ -51,6 +51,15 @@ interface Client {
   email: string | null;
 }
 
+interface AmortizationRow {
+  payment: number;
+  date: string;
+  interest: number;
+  principal: number;
+  totalPayment: number;
+  remainingBalance: number;
+}
+
 export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
@@ -58,9 +67,14 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [paymentAmount, setPaymentAmount] = useState<number>(0);
-  const [totalAmount, setTotalAmount] = useState<number>(0);
-  const [totalPayments, setTotalPayments] = useState<number>(0);
+  const [showAmortizationTable, setShowAmortizationTable] = useState(false);
+  const [amortizationSchedule, setAmortizationSchedule] = useState<AmortizationRow[]>([]);
+  const [calculatedValues, setCalculatedValues] = useState({
+    monthlyPayment: 0,
+    totalAmount: 0,
+    totalInterest: 0,
+    usdAmount: 0
+  });
   const [excludedDays, setExcludedDays] = useState<string[]>([]);
   const { user, companyId } = useAuth();
 
@@ -106,8 +120,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const handleClientSearch = (searchTerm: string) => {
     setClientSearch(searchTerm);
     if (searchTerm.length === 0) {
-      setFilteredClients(clients);
+      setFilteredClients([]);
       setShowClientDropdown(false);
+      setSelectedClient(null);
+      form.setValue('client_id', '');
       return;
     }
 
@@ -128,92 +144,149 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     form.setValue('client_id', client.id);
   };
 
-  const calculatePayment = (amount: number, rate: number, term: number, amortizationType: string, frequency: string, fixedPayment?: number) => {
-    if (amount <= 0 || rate < 0 || term <= 0) return { payment: 0, total: 0, totalPayments: 0 };
+  const calculateAmortization = () => {
+    const formValues = form.getValues();
+    const { amount, interest_rate, term_months, amortization_type, payment_frequency, first_payment_date } = formValues;
     
-    // Convertir term y rate según la frecuencia
-    let periods = term;
-    let periodRate = rate / 100;
+    if (!amount || !interest_rate || !term_months) {
+      toast.error('Complete todos los campos requeridos para calcular');
+      return;
+    }
+
+    // Convertir a USD (tasa aproximada)
+    const usdAmount = amount / 58.5;
     
-    switch (frequency) {
+    // Calcular según frecuencia
+    let periods = term_months;
+    let periodRate = interest_rate / 100;
+    
+    switch (payment_frequency) {
       case 'daily':
-        periods = term * 30; // Aproximadamente 30 días por mes
+        periods = term_months * 30;
         periodRate = periodRate / 365;
         break;
       case 'weekly':
-        periods = term * 4; // 4 semanas por mes
+        periods = term_months * 4;
         periodRate = periodRate / 52;
         break;
       case 'biweekly':
-        periods = term * 2; // 2 quincenas por mes
+        periods = term_months * 2;
         periodRate = periodRate / 24;
         break;
       case 'monthly':
       default:
-        periods = term;
+        periods = term_months;
         periodRate = periodRate / 12;
         break;
     }
 
-    if (fixedPayment && fixedPayment > 0) {
-      // Cuota fija - calcular total basado en la cuota fija
-      const total = fixedPayment * periods;
-      return { 
-        payment: Math.round(fixedPayment * 100) / 100, 
-        total: Math.round(total * 100) / 100,
-        totalPayments: periods
-      };
-    }
-    
-    if (amortizationType === 'simple') {
+    let monthlyPayment = 0;
+    let totalAmount = 0;
+    let schedule: AmortizationRow[] = [];
+
+    if (amortization_type === 'simple') {
       // Interés simple
-      const totalInterest = amount * periodRate * periods;
-      const total = amount + totalInterest;
-      const payment = total / periods;
-      return { 
-        payment: Math.round(payment * 100) / 100, 
-        total: Math.round(total * 100) / 100,
-        totalPayments: periods
-      };
+      const totalInterest = amount * (interest_rate / 100) * (term_months / 12);
+      totalAmount = amount + totalInterest;
+      monthlyPayment = totalAmount / periods;
+      
+      // Generar tabla de amortización para interés simple
+      let remainingBalance = totalAmount;
+      const interestPerPayment = totalInterest / periods;
+      const principalPerPayment = amount / periods;
+      
+      for (let i = 1; i <= periods; i++) {
+        const paymentDate = new Date(first_payment_date);
+        
+        switch (payment_frequency) {
+          case 'daily':
+            paymentDate.setDate(paymentDate.getDate() + (i - 1));
+            break;
+          case 'weekly':
+            paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
+            break;
+          case 'biweekly':
+            paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
+            break;
+          case 'monthly':
+          default:
+            paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
+            break;
+        }
+        
+        remainingBalance -= monthlyPayment;
+        
+        schedule.push({
+          payment: i,
+          date: paymentDate.toISOString().split('T')[0],
+          interest: interestPerPayment,
+          principal: principalPerPayment,
+          totalPayment: monthlyPayment,
+          remainingBalance: Math.max(0, remainingBalance)
+        });
+      }
     } else {
       // Interés compuesto (amortización francesa)
       if (periodRate === 0) {
-        const payment = amount / periods;
-        return { 
-          payment: Math.round(payment * 100) / 100, 
-          total: Math.round(amount * 100) / 100,
-          totalPayments: periods
-        };
+        monthlyPayment = amount / periods;
+        totalAmount = amount;
+      } else {
+        monthlyPayment = (amount * periodRate * Math.pow(1 + periodRate, periods)) / 
+                       (Math.pow(1 + periodRate, periods) - 1);
+        totalAmount = monthlyPayment * periods;
       }
       
-      const payment = (amount * periodRate * Math.pow(1 + periodRate, periods)) / 
-                     (Math.pow(1 + periodRate, periods) - 1);
-      const total = payment * periods;
+      // Generar tabla de amortización para interés compuesto
+      let remainingBalance = amount;
       
-      return { 
-        payment: Math.round(payment * 100) / 100, 
-        total: Math.round(total * 100) / 100,
-        totalPayments: periods
-      };
+      for (let i = 1; i <= periods; i++) {
+        const paymentDate = new Date(first_payment_date);
+        
+        switch (payment_frequency) {
+          case 'daily':
+            paymentDate.setDate(paymentDate.getDate() + (i - 1));
+            break;
+          case 'weekly':
+            paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
+            break;
+          case 'biweekly':
+            paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
+            break;
+          case 'monthly':
+          default:
+            paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
+            break;
+        }
+        
+        const interestPayment = remainingBalance * periodRate;
+        const principalPayment = monthlyPayment - interestPayment;
+        remainingBalance -= principalPayment;
+        
+        schedule.push({
+          payment: i,
+          date: paymentDate.toISOString().split('T')[0],
+          interest: interestPayment,
+          principal: principalPayment,
+          totalPayment: monthlyPayment,
+          remainingBalance: Math.max(0, remainingBalance)
+        });
+      }
     }
-  };
 
-  const watchedValues = form.watch(['amount', 'interest_rate', 'term_months', 'amortization_type', 'payment_frequency', 'fixed_payment_enabled', 'fixed_payment_amount']);
-  
-  useEffect(() => {
-    const [amount, rate, months, amortizationType, frequency, fixedEnabled, fixedAmount] = watchedValues;
-    const { payment, total, totalPayments } = calculatePayment(
-      amount, 
-      rate, 
-      months, 
-      amortizationType, 
-      frequency,
-      fixedEnabled ? fixedAmount : undefined
-    );
-    setPaymentAmount(payment);
-    setTotalAmount(total);
-    setTotalPayments(totalPayments);
-  }, [watchedValues]);
+    const totalInterest = totalAmount - amount;
+
+    setCalculatedValues({
+      monthlyPayment: Math.round(monthlyPayment * 100) / 100,
+      totalAmount: Math.round(totalAmount * 100) / 100,
+      totalInterest: Math.round(totalInterest * 100) / 100,
+      usdAmount: Math.round(usdAmount * 100) / 100
+    });
+
+    setAmortizationSchedule(schedule);
+    setShowAmortizationTable(true);
+    
+    toast.success('Préstamo calculado exitosamente');
+  };
 
   const handleExcludedDayChange = (day: string, checked: boolean) => {
     if (checked) {
@@ -224,7 +297,15 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   };
 
   const onSubmit = async (data: LoanFormData) => {
-    if (!user || !companyId || !selectedClient) return;
+    if (!user || !companyId || !selectedClient) {
+      toast.error('Debe seleccionar un cliente');
+      return;
+    }
+
+    if (calculatedValues.monthlyPayment === 0) {
+      toast.error('Debe calcular el préstamo antes de crearlo');
+      return;
+    }
 
     setLoading(true);
     try {
@@ -243,9 +324,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         purpose: data.comments || null,
         collateral: data.guarantor_required ? 'Garantía requerida' : null,
         loan_officer_id: companyId,
-        monthly_payment: paymentAmount,
-        total_amount: totalAmount,
-        remaining_balance: totalAmount,
+        monthly_payment: calculatedValues.monthlyPayment,
+        total_amount: calculatedValues.totalAmount,
+        remaining_balance: calculatedValues.totalAmount,
         start_date: startDate.toISOString().split('T')[0],
         end_date: endDate.toISOString().split('T')[0],
         next_payment_date: firstPaymentDate.toISOString().split('T')[0],
@@ -272,19 +353,109 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     }
   };
 
+  const copyAmortizationTable = () => {
+    const headers = ['CUOTA', 'FECHA', 'INTERÉS', 'CAPITAL', 'A PAGAR', 'CAPITAL RESTANTE'];
+    const rows = amortizationSchedule.map(row => [
+      `${row.payment}/${amortizationSchedule.length}`,
+      row.date,
+      `RD$${row.interest.toFixed(2)}`,
+      `RD$${row.principal.toFixed(2)}`,
+      `RD$${row.totalPayment.toFixed(2)}`,
+      `RD$${row.remainingBalance.toFixed(2)}`
+    ]);
+    
+    const tableText = [headers.join('\t'), ...rows.map(row => row.join('\t'))].join('\n');
+    navigator.clipboard.writeText(tableText);
+    toast.success('Tabla copiada al portapapeles');
+  };
+
+  const printAmortizationTable = () => {
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      const tableHTML = `
+        <html>
+          <head>
+            <title>Tabla de Amortización</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; }
+              .header { text-align: center; margin-bottom: 30px; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+              th { background-color: #3b82f6; color: white; }
+              .totals { background-color: #f8f9fa; font-weight: bold; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Tabla de Amortización</h1>
+              <p>Cliente: ${selectedClient?.full_name}</p>
+              <p>Monto: RD$${form.getValues('amount').toLocaleString()}</p>
+              <p>Tasa: ${form.getValues('interest_rate')}% | Plazo: ${form.getValues('term_months')} meses</p>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>CUOTA</th>
+                  <th>FECHA</th>
+                  <th>INTERÉS</th>
+                  <th>CAPITAL</th>
+                  <th>A PAGAR</th>
+                  <th>CAPITAL RESTANTE</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${amortizationSchedule.map(row => `
+                  <tr>
+                    <td>${row.payment}/${amortizationSchedule.length}</td>
+                    <td>${row.date}</td>
+                    <td>RD$${row.interest.toFixed(2)}</td>
+                    <td>RD$${row.principal.toFixed(2)}</td>
+                    <td>RD$${row.totalPayment.toFixed(2)}</td>
+                    <td>RD$${row.remainingBalance.toFixed(2)}</td>
+                  </tr>
+                `).join('')}
+                <tr class="totals">
+                  <td colspan="2">TOTALES</td>
+                  <td>RD$${calculatedValues.totalInterest.toFixed(2)}</td>
+                  <td>RD$${form.getValues('amount').toFixed(2)}</td>
+                  <td>RD$${calculatedValues.totalAmount.toFixed(2)}</td>
+                  <td>RD$0.00</td>
+                </tr>
+              </tbody>
+            </table>
+          </body>
+        </html>
+      `;
+      printWindow.document.write(tableHTML);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
+  // Calcular USD automáticamente
+  useEffect(() => {
+    const amount = form.watch('amount');
+    if (amount) {
+      setCalculatedValues(prev => ({
+        ...prev,
+        usdAmount: Math.round((amount / 58.5) * 100) / 100
+      }));
+    }
+  }, [form.watch('amount')]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="outline" onClick={onBack}>
           <ArrowLeft className="h-4 w-4 mr-2" />
-          Volver
+          VOLVER
         </Button>
-        <h2 className="text-2xl font-bold">Crear Préstamo</h2>
-        <p className="text-gray-600">¿No sabes como crear un préstamo?</p>
+        <h2 className="text-2xl font-bold">CREAR PRÉSTAMO</h2>
+        <p className="text-blue-600 cursor-pointer">¿No sabes como crear un préstamo?</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-6">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               {/* Información Principal */}
@@ -297,16 +468,12 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   <div className="space-y-2">
                     <FormLabel>Cliente:</FormLabel>
                     <div className="relative">
-                      <div className="flex items-center">
-                        <Search className="h-4 w-4 text-gray-400 absolute left-3 z-10" />
-                        <Input
-                          placeholder="Buscar cliente por nombre, cédula o teléfono..."
-                          value={clientSearch}
-                          onChange={(e) => handleClientSearch(e.target.value)}
-                          className="pl-10"
-                          onFocus={() => setShowClientDropdown(filteredClients.length > 0)}
-                        />
-                      </div>
+                      <Input
+                        placeholder="Buscar cliente por nombre..."
+                        value={clientSearch}
+                        onChange={(e) => handleClientSearch(e.target.value)}
+                        className="w-full"
+                      />
                       
                       {showClientDropdown && (
                         <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
@@ -357,32 +524,34 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
 
                     <div>
-                      <FormLabel>Cuota Calculada:</FormLabel>
+                      <FormLabel>$</FormLabel>
                       <div className="p-2 bg-gray-100 rounded border">
-                        <span className="font-semibold text-lg">
-                          ${paymentAmount.toLocaleString()}
+                        <span className="font-semibold">
+                          {calculatedValues.usdAmount.toLocaleString()}
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex items-end">
-                      <FormField
-                        control={form.control}
-                        name="fixed_payment_enabled"
-                        render={({ field }) => (
-                          <FormItem className="flex items-center space-x-2">
-                            <FormControl>
-                              <input
-                                type="checkbox"
-                                checked={field.value}
-                                onChange={field.onChange}
-                                className="rounded"
-                              />
-                            </FormControl>
-                            <FormLabel className="text-sm">Fijar Cuota</FormLabel>
-                          </FormItem>
-                        )}
-                      />
+                    <div>
+                      <FormLabel>FIJAR CUOTA</FormLabel>
+                      <div className="flex items-center justify-center h-10">
+                        <FormField
+                          control={form.control}
+                          name="fixed_payment_enabled"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormControl>
+                                <input
+                                  type="checkbox"
+                                  checked={field.value}
+                                  onChange={field.onChange}
+                                  className="rounded scale-125"
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -433,30 +602,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                       />
                     </div>
                   </div>
-
-                  {form.watch('fixed_payment_enabled') && (
-                    <div>
-                      <FormLabel>Monto de Cuota Fija:</FormLabel>
-                      <FormField
-                        control={form.control}
-                        name="fixed_payment_amount"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                placeholder="0.00"
-                                {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  )}
 
                   <div className="grid grid-cols-3 gap-4">
                     <div>
@@ -532,22 +677,8 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   <div className="flex items-center justify-center">
                     <Button 
                       type="button" 
-                      className="bg-blue-500 hover:bg-blue-600 px-8"
-                      onClick={() => {
-                        // Trigger calculation by updating watched values
-                        const currentValues = form.getValues();
-                        const { payment, total, totalPayments } = calculatePayment(
-                          currentValues.amount,
-                          currentValues.interest_rate,
-                          currentValues.term_months,
-                          currentValues.amortization_type,
-                          currentValues.payment_frequency,
-                          currentValues.fixed_payment_enabled ? currentValues.fixed_payment_amount : undefined
-                        );
-                        setPaymentAmount(payment);
-                        setTotalAmount(total);
-                        setTotalPayments(totalPayments);
-                      }}
+                      className="bg-blue-500 hover:bg-blue-600 px-8 py-3 text-lg"
+                      onClick={calculateAmortization}
                     >
                       📊 CALCULAR PRÉSTAMO
                     </Button>
@@ -688,25 +819,24 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     />
                   </div>
 
-                  {/* Configuraciones adicionales */}
+                  {/* Configuraciones de pago mínimo */}
                   <div className="grid grid-cols-3 gap-4">
                     <div>
                       <FormLabel>Pago mínimo</FormLabel>
                       <FormField
                         control={form.control}
-                        name="minimum_payment_type"
+                        name="minimum_payment"
                         render={({ field }) => (
                           <FormItem>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                            <Select onValueChange={(value) => field.onChange(value === 'true')} defaultValue={field.value ? 'true' : 'false'}>
                               <FormControl>
                                 <SelectTrigger>
                                   <SelectValue />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                <SelectItem value="interest">Pago al Interés</SelectItem>
-                                <SelectItem value="principal">Pago al Principal</SelectItem>
-                                <SelectItem value="both">Ambos</SelectItem>
+                                <SelectItem value="true">Sí</SelectItem>
+                                <SelectItem value="false">No</SelectItem>
                               </SelectContent>
                             </Select>
                             <FormMessage />
@@ -841,9 +971,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                         )}
                       />
 
-                      <div className="flex items-center space-x-2">
-                        <input type="checkbox" defaultChecked className="rounded" />
-                        <FormLabel className="text-sm">
+                      <div className="flex items-start space-x-2">
+                        <input type="checkbox" defaultChecked className="rounded mt-1" />
+                        <FormLabel className="text-sm leading-tight">
                           Crear un gasto de tipo [Préstamo de caja chica] por el monto del total capital de este préstamo?
                         </FormLabel>
                       </div>
@@ -855,7 +985,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
               <div className="flex justify-center">
                 <Button 
                   type="submit" 
-                  disabled={loading || !selectedClient}
+                  disabled={loading || !selectedClient || calculatedValues.monthlyPayment === 0}
                   className="bg-blue-500 hover:bg-blue-600 px-12 py-3 text-lg"
                 >
                   💰 CREAR PRÉSTAMO
@@ -865,119 +995,83 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
           </Form>
         </div>
 
-        {/* Panel de Cálculo */}
+        {/* Tabla de Amortización */}
         <div>
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calculator className="h-5 w-5" />
-                Calculadora de Préstamo
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Cliente:</span>
-                  <span className="font-semibold">{selectedClient?.full_name || 'No seleccionado'}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Monto:</span>
-                  <span className="font-semibold">${form.watch('amount')?.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Tasa:</span>
-                  <span className="font-semibold">{form.watch('interest_rate')}%</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Plazo:</span>
-                  <span className="font-semibold">{form.watch('term_months')} meses</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Amortización:</span>
-                  <span className="font-semibold">
-                    {form.watch('amortization_type') === 'simple' ? 'Simple' : 'Compuesto'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Frecuencia:</span>
-                  <span className="font-semibold">
-                    {form.watch('payment_frequency') === 'monthly' ? 'Mensual' :
-                     form.watch('payment_frequency') === 'biweekly' ? 'Quincenal' :
-                     form.watch('payment_frequency') === 'weekly' ? 'Semanal' : 'Diario'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Total de Pagos:</span>
-                  <span className="font-semibold">{totalPayments} pagos</span>
-                </div>
-                {form.watch('fixed_payment_enabled') && (
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-blue-600">🔒 Cuota Fija:</span>
-                    <span className="font-semibold text-blue-600">
-                      ${form.watch('fixed_payment_amount')?.toLocaleString() || '0'}
-                    </span>
+          {showAmortizationTable ? (
+            <Card>
+              <CardHeader className="bg-blue-500 text-white">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg">Tabla de Amortización</CardTitle>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={copyAmortizationTable} className="text-white border-white hover:bg-blue-600">
+                      <Copy className="h-4 w-4 mr-1" />
+                      Copiar
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={printAmortizationTable} className="text-white border-white hover:bg-blue-600">
+                      <Printer className="h-4 w-4 mr-1" />
+                      Imprimir
+                    </Button>
                   </div>
-                )}
-                <hr />
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Cuota {form.watch('fixed_payment_enabled') ? 'Fija' : 'Calculada'}:</span>
-                  <span className="font-bold text-lg text-green-600">
-                    ${paymentAmount.toLocaleString()}
-                  </span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Total a Pagar:</span>
-                  <span className="font-semibold">
-                    ${totalAmount.toLocaleString()}
-                  </span>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="max-h-96 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-100 sticky top-0">
+                      <tr>
+                        <th className="p-2 text-left border">CUOTA</th>
+                        <th className="p-2 text-left border">FECHA</th>
+                        <th className="p-2 text-right border">INTERÉS</th>
+                        <th className="p-2 text-right border">CAPITAL</th>
+                        <th className="p-2 text-right border">A PAGAR</th>
+                        <th className="p-2 text-right border">CAPITAL RESTANTE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {amortizationSchedule.map((row, index) => (
+                        <tr key={index} className="hover:bg-gray-50">
+                          <td className="p-2 border">{row.payment}/{amortizationSchedule.length}</td>
+                          <td className="p-2 border">{row.date}</td>
+                          <td className="p-2 text-right border">RD${row.interest.toFixed(2)}</td>
+                          <td className="p-2 text-right border">RD${row.principal.toFixed(2)}</td>
+                          <td className="p-2 text-right border font-semibold">RD${row.totalPayment.toFixed(2)}</td>
+                          <td className="p-2 text-right border">RD${row.remainingBalance.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                      <tr className="bg-blue-50 font-bold">
+                        <td className="p-2 border" colSpan={2}>TOTALES</td>
+                        <td className="p-2 text-right border">RD${calculatedValues.totalInterest.toFixed(2)}</td>
+                        <td className="p-2 text-right border">RD${form.getValues('amount').toFixed(2)}</td>
+                        <td className="p-2 text-right border">RD${calculatedValues.totalAmount.toFixed(2)}</td>
+                        <td className="p-2 text-right border">RD$0.00</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Intereses:</span>
-                  <span className="font-semibold text-orange-600">
-                    ${(totalAmount - form.watch('amount')).toLocaleString()}
-                  </span>
+                
+                <div className="p-4 bg-gray-50 border-t">
+                  <p className="text-sm text-gray-600">
+                    Mostrando registros del 1 al {amortizationSchedule.length} de un total de {amortizationSchedule.length} registros
+                  </p>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600">Gastos de cierre:</span>
-                  <span className="font-semibold">
-                    ${((form.watch('amount') * form.watch('closing_costs')) / 100).toLocaleString()}
-                  </span>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calculator className="h-5 w-5" />
+                  Calculadora de Préstamo
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="text-center py-8 text-gray-500">
+                  <Calculator className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Haga clic en "CALCULAR PRÉSTAMO" para ver la tabla de amortización</p>
                 </div>
-              </div>
-
-              {form.watch('guarantor_required') && (
-                <div className="space-y-3 pt-4 border-t">
-                  <h4 className="font-semibold">Información del Garante</h4>
-                  <FormField
-                    control={form.control}
-                    name="guarantor_name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Nombre</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Nombre del garante" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="guarantor_phone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Teléfono</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Teléfono del garante" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>
