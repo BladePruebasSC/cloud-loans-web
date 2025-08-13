@@ -14,30 +14,32 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent } from 'lucide-react';
 
-const loanSchema = z.object({
-  client_id: z.string().min(1, 'Debe seleccionar un cliente'),
-  amount: z.number().min(1, 'El monto debe ser mayor a 0'),
-  interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0'),
-  term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes'),
-  loan_type: z.string().min(1, 'Debe seleccionar un tipo de préstamo'),
-  amortization_type: z.string().default('simple'),
-  payment_frequency: z.string().default('monthly'),
-  first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
-  closing_costs: z.number().default(0),
-  portfolio: z.string().optional(),
-  comments: z.string().optional(),
-  guarantor_required: z.boolean().default(false),
-  loan_started: z.boolean().default(false),
-  late_fee: z.boolean().default(false),
-  add_expense: z.boolean().default(false),
-  minimum_payment: z.boolean().default(true),
-  minimum_payment_type: z.string().default('interest'),
-  minimum_payment_percentage: z.number().default(100),
-  guarantor_name: z.string().optional(),
-  guarantor_phone: z.string().optional(),
-  guarantor_dni: z.string().optional(),
-  notes: z.string().optional(),
-});
+  const loanSchema = z.object({
+    client_id: z.string().min(1, 'Debe seleccionar un cliente'),
+    amount: z.number().min(1, 'El monto debe ser mayor a 0'),
+    interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0'),
+    term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes'),
+    loan_type: z.string().min(1, 'Debe seleccionar un tipo de préstamo'),
+    amortization_type: z.string().default('simple'),
+    payment_frequency: z.string().default('monthly'),
+    first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
+    closing_costs: z.number().default(0),
+    portfolio: z.string().optional(),
+    comments: z.string().optional(),
+    guarantor_required: z.boolean().default(false),
+    loan_started: z.boolean().default(false),
+    late_fee: z.boolean().default(false),
+    add_expense: z.boolean().default(false),
+    minimum_payment: z.boolean().default(true),
+    minimum_payment_type: z.string().default('interest'),
+    minimum_payment_percentage: z.number().default(100),
+    guarantor_name: z.string().optional(),
+    guarantor_phone: z.string().optional(),
+    guarantor_dni: z.string().optional(),
+    notes: z.string().optional(),
+    fixed_payment_enabled: z.boolean().default(false),
+    fixed_payment_amount: z.number().optional(),
+  });
 
 type LoanFormData = z.infer<typeof loanSchema>;
 
@@ -56,8 +58,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [monthlyPayment, setMonthlyPayment] = useState<number>(0);
+  const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [totalAmount, setTotalAmount] = useState<number>(0);
+  const [totalPayments, setTotalPayments] = useState<number>(0);
   const [excludedDays, setExcludedDays] = useState<string[]>([]);
   const { user, companyId } = useAuth();
 
@@ -125,38 +128,91 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     form.setValue('client_id', client.id);
   };
 
-  const calculatePayment = (amount: number, rate: number, months: number, amortizationType: string) => {
-    if (amount <= 0 || rate < 0 || months <= 0) return { payment: 0, total: 0 };
+  const calculatePayment = (amount: number, rate: number, term: number, amortizationType: string, frequency: string, fixedPayment?: number) => {
+    if (amount <= 0 || rate < 0 || term <= 0) return { payment: 0, total: 0, totalPayments: 0 };
+    
+    // Convertir term y rate según la frecuencia
+    let periods = term;
+    let periodRate = rate / 100;
+    
+    switch (frequency) {
+      case 'daily':
+        periods = term * 30; // Aproximadamente 30 días por mes
+        periodRate = periodRate / 365;
+        break;
+      case 'weekly':
+        periods = term * 4; // 4 semanas por mes
+        periodRate = periodRate / 52;
+        break;
+      case 'biweekly':
+        periods = term * 2; // 2 quincenas por mes
+        periodRate = periodRate / 24;
+        break;
+      case 'monthly':
+      default:
+        periods = term;
+        periodRate = periodRate / 12;
+        break;
+    }
+
+    if (fixedPayment && fixedPayment > 0) {
+      // Cuota fija - calcular total basado en la cuota fija
+      const total = fixedPayment * periods;
+      return { 
+        payment: Math.round(fixedPayment * 100) / 100, 
+        total: Math.round(total * 100) / 100,
+        totalPayments: periods
+      };
+    }
     
     if (amortizationType === 'simple') {
       // Interés simple
-      const totalInterest = (amount * rate * months) / (100 * 12);
+      const totalInterest = amount * periodRate * periods;
       const total = amount + totalInterest;
-      const payment = total / months;
-      return { payment: Math.round(payment * 100) / 100, total: Math.round(total * 100) / 100 };
+      const payment = total / periods;
+      return { 
+        payment: Math.round(payment * 100) / 100, 
+        total: Math.round(total * 100) / 100,
+        totalPayments: periods
+      };
     } else {
       // Interés compuesto (amortización francesa)
-      const monthlyRate = (rate / 100) / 12;
-      if (monthlyRate === 0) {
-        const payment = amount / months;
-        return { payment, total: amount };
+      if (periodRate === 0) {
+        const payment = amount / periods;
+        return { 
+          payment: Math.round(payment * 100) / 100, 
+          total: Math.round(amount * 100) / 100,
+          totalPayments: periods
+        };
       }
       
-      const payment = (amount * monthlyRate * Math.pow(1 + monthlyRate, months)) / 
-                     (Math.pow(1 + monthlyRate, months) - 1);
-      const total = payment * months;
+      const payment = (amount * periodRate * Math.pow(1 + periodRate, periods)) / 
+                     (Math.pow(1 + periodRate, periods) - 1);
+      const total = payment * periods;
       
-      return { payment: Math.round(payment * 100) / 100, total: Math.round(total * 100) / 100 };
+      return { 
+        payment: Math.round(payment * 100) / 100, 
+        total: Math.round(total * 100) / 100,
+        totalPayments: periods
+      };
     }
   };
 
-  const watchedValues = form.watch(['amount', 'interest_rate', 'term_months', 'amortization_type']);
+  const watchedValues = form.watch(['amount', 'interest_rate', 'term_months', 'amortization_type', 'payment_frequency', 'fixed_payment_enabled', 'fixed_payment_amount']);
   
   useEffect(() => {
-    const [amount, rate, months, amortizationType] = watchedValues;
-    const { payment, total } = calculatePayment(amount, rate, months, amortizationType);
-    setMonthlyPayment(payment);
+    const [amount, rate, months, amortizationType, frequency, fixedEnabled, fixedAmount] = watchedValues;
+    const { payment, total, totalPayments } = calculatePayment(
+      amount, 
+      rate, 
+      months, 
+      amortizationType, 
+      frequency,
+      fixedEnabled ? fixedAmount : undefined
+    );
+    setPaymentAmount(payment);
     setTotalAmount(total);
+    setTotalPayments(totalPayments);
   }, [watchedValues]);
 
   const handleExcludedDayChange = (day: string, checked: boolean) => {
@@ -187,7 +243,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         purpose: data.comments || null,
         collateral: data.guarantor_required ? 'Garantía requerida' : null,
         loan_officer_id: companyId,
-        monthly_payment: monthlyPayment,
+        monthly_payment: paymentAmount,
         total_amount: totalAmount,
         remaining_balance: totalAmount,
         start_date: startDate.toISOString().split('T')[0],
@@ -301,31 +357,32 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
 
                     <div>
-                      <FormLabel>$</FormLabel>
-                      <FormField
-                        control={form.control}
-                        name="amount_usd"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                placeholder="0"
-                                {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                      <FormLabel>Cuota Calculada:</FormLabel>
+                      <div className="p-2 bg-gray-100 rounded border">
+                        <span className="font-semibold text-lg">
+                          ${paymentAmount.toLocaleString()}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="flex items-end">
-                      <Button type="button" className="w-full bg-blue-500 hover:bg-blue-600">
-                        FIJAR CUOTA
-                      </Button>
+                      <FormField
+                        control={form.control}
+                        name="fixed_payment_enabled"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center space-x-2">
+                            <FormControl>
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={field.onChange}
+                                className="rounded"
+                              />
+                            </FormControl>
+                            <FormLabel className="text-sm">Fijar Cuota</FormLabel>
+                          </FormItem>
+                        )}
+                      />
                     </div>
                   </div>
 
@@ -376,6 +433,30 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                       />
                     </div>
                   </div>
+
+                  {form.watch('fixed_payment_enabled') && (
+                    <div>
+                      <FormLabel>Monto de Cuota Fija:</FormLabel>
+                      <FormField
+                        control={form.control}
+                        name="fixed_payment_amount"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                placeholder="0.00"
+                                {...field}
+                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-3 gap-4">
                     <div>
@@ -807,11 +888,21 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                      form.watch('payment_frequency') === 'weekly' ? 'Semanal' : 'Diario'}
                   </span>
                 </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Total de Pagos:</span>
+                  <span className="font-semibold">{totalPayments} pagos</span>
+                </div>
+                {form.watch('fixed_payment_enabled') && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-blue-600">🔒 Cuota Fija:</span>
+                    <span className="font-semibold text-blue-600">Activada</span>
+                  </div>
+                )}
                 <hr />
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-600">Cuota:</span>
                   <span className="font-bold text-lg text-green-600">
-                    ${monthlyPayment.toLocaleString()}
+                    ${paymentAmount.toLocaleString()}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">

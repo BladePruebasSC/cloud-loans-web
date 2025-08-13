@@ -238,7 +238,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
       // Agregar notas de auditoría
       const auditNote = `${new Date().toLocaleDateString()} - ${updateType}: ${data.adjustment_reason}`;
-      loanUpdates.notes = loan.notes ? `${loan.notes}\n${auditNote}` : auditNote;
+      // Note: loan.notes doesn't exist in the Loan interface, using purpose instead
+      loanUpdates.purpose = auditNote;
 
       const { error: loanError } = await supabase
         .from('loans')
