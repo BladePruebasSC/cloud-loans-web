@@ -577,12 +577,48 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
 
                     <div>
-                      <FormLabel>$</FormLabel>
-                      <div className="p-2 bg-gray-100 rounded border">
-                        <span className="font-semibold">
-                          {calculatedValues.usdAmount.toLocaleString()}
-                        </span>
-                      </div>
+                      <FormLabel>
+                        {form.watch('fixed_payment_enabled') ? 'Cuota' : '$'}
+                      </FormLabel>
+                      {form.watch('fixed_payment_enabled') ? (
+                        <FormField
+                          control={form.control}
+                          name="fixed_payment_amount"
+                          render={({ field }) => {
+                            const minimumPayment = getMinimumPayment();
+                            const isBelow = field.value && field.value < minimumPayment;
+                            
+                            return (
+                              <FormItem>
+                                <FormControl>
+                                  <div className="relative">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      placeholder={`Mínimo: ${minimumPayment.toFixed(2)}`}
+                                      {...field}
+                                      onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                      className={`h-10 ${isBelow ? "border-red-500 bg-red-50" : ""}`}
+                                    />
+                                    {isBelow && (
+                                      <span className="text-red-500 text-xs mt-1 block">
+                                        Por debajo del mínimo (${minimumPayment.toFixed(2)})
+                                      </span>
+                                    )}
+                                  </div>
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            );
+                          }}
+                        />
+                      ) : (
+                        <div className="p-2 bg-gray-100 rounded border h-10 flex items-center">
+                          <span className="font-semibold">
+                            {calculatedValues.usdAmount.toLocaleString()}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     <div>
@@ -608,43 +644,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
                   </div>
 
-                  {/* Fixed Payment Amount Input - Show when checkbox is enabled */}
-                  {form.watch('fixed_payment_enabled') && (
-                    <div className="mt-4">
-                      <FormLabel>Monto de cuota fija:</FormLabel>
-                      <FormField
-                        control={form.control}
-                        name="fixed_payment_amount"
-                        render={({ field }) => {
-                          const minimumPayment = getMinimumPayment();
-                          const isBelow = field.value && field.value < minimumPayment;
-                          
-                          return (
-                            <FormItem>
-                              <FormControl>
-                                <div className="relative">
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    placeholder={`Mínimo: ${minimumPayment.toFixed(2)}`}
-                                    {...field}
-                                    onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                    className={isBelow ? "border-red-500 bg-red-50" : ""}
-                                  />
-                                  {isBelow && (
-                                    <span className="text-red-500 text-xs mt-1 block">
-                                      La cuota está por debajo del mínimo (${minimumPayment.toFixed(2)})
-                                    </span>
-                                  )}
-                                </div>
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          );
-                        }}
-                      />
-                    </div>
-                  )}
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
