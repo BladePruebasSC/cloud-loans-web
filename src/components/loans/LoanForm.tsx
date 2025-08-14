@@ -82,8 +82,8 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     resolver: zodResolver(loanSchema),
     defaultValues: {
       amount: 0,
-      interest_rate: 15,
-      term_months: 12,
+      interest_rate: 0,
+      term_months: 1,
       loan_type: 'personal',
       amortization_type: 'simple',
       payment_frequency: 'monthly',
@@ -91,6 +91,8 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       closing_costs: 0,
       minimum_payment_percentage: 100,
       minimum_payment_type: 'interest',
+      fixed_payment_enabled: false,
+      fixed_payment_amount: 0,
     },
   });
 
