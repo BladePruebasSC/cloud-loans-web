@@ -171,7 +171,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     
     // Si no hay tasa de interés, el mínimo es solo el capital dividido por períodos
     if (!interest_rate || interest_rate <= 0) {
-      return amount / term_months;
+      return Math.ceil(amount / term_months);
     }
     
     // Calculate periods based on frequency
@@ -211,7 +211,8 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       }
     }
     
-    return minimumPayment;
+    // Redondear hacia arriba para evitar problemas con decimales muy pequeños
+    return Math.ceil(minimumPayment);
   };
 
   const calculateAmortization = () => {
@@ -235,8 +236,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         toast.error('Debe ingresar una cuota fija válida');
         return;
       }
-      if (fixed_payment_amount < minimumPayment) {
-        toast.error(`La cuota fija debe ser al menos RD$${minimumPayment.toFixed(2)}`);
+      // Permitir un margen de tolerancia del 1% para evitar problemas con decimales
+      const tolerance = minimumPayment * 0.01;
+      if (fixed_payment_amount < (minimumPayment - tolerance)) {
+        toast.error(`La cuota fija debe ser al menos RD$${minimumPayment}`);
         return;
       }
     }
@@ -704,7 +707,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           <FormItem>
                             <FormControl>
                               <Input
-                                type="text"
+                                type="number"
                                 placeholder="0"
                                 value={field.value || ''}
                                 onChange={(e) => {
@@ -715,9 +718,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                     field.onChange(numValue);
                                   }
                                 }}
-                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                className=""
                               />
                             </FormControl>
+                            
                             <FormMessage />
                           </FormItem>
                         )}
@@ -732,14 +736,16 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           name="fixed_payment_amount"
                           render={({ field }) => {
                             const minimumPayment = getMinimumPayment();
-                            const isBelow = field.value && field.value < minimumPayment;
+                            // Permitir un margen de tolerancia del 1% para evitar problemas con decimales
+                            const tolerance = minimumPayment * 0.01;
+                            const isBelow = field.value && field.value < (minimumPayment - tolerance);
                             
                             return (
                               <FormItem>
                                 <FormControl>
                                   <div className="relative">
                                     <Input
-                                      type="text"
+                                      type="number"
                                       placeholder="0"
                                       value={field.value || ''}
                                       onChange={(e) => {
@@ -750,13 +756,21 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                           field.onChange(numValue);
                                         }
                                       }}
-                                      className={`h-10 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${isBelow ? "border-red-500 bg-red-50" : ""}`}
+                                      onKeyPress={(e) => {
+                                        // Permitir solo números, punto decimal y teclas de control
+                                        const char = String.fromCharCode(e.which);
+                                        if (!/[\d.]/.test(char) && e.which !== 8 && e.which !== 9 && e.which !== 37 && e.which !== 39) {
+                                          e.preventDefault();
+                                        }
+                                      }}
+                                      className={`h-10 ${isBelow ? "border-red-500 bg-red-50" : ""}`}
                                     />
                                     {isBelow && minimumPayment > 0 && (
                                       <span className="text-red-500 text-xs mt-1 block">
-                                        Mínimo: RD${minimumPayment.toFixed(2)}
+                                        Mínimo recomendado: RD${minimumPayment}
                                       </span>
                                     )}
+                                    
                                   </div>
                                 </FormControl>
                                 <FormMessage />
@@ -801,10 +815,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <FormLabel className="flex items-center gap-2">
-                        Porcentaje interés (mensual):
-                        <span className="text-blue-500 cursor-pointer">Lista de interés</span>
-                      </FormLabel>
+                                             <FormLabel className="flex items-center gap-2">
+                         Porcentaje interés:
+                         <span className="text-blue-500 cursor-pointer">Lista de interés</span>
+                       </FormLabel>
                       <FormField
                         control={form.control}
                         name="interest_rate"
@@ -812,7 +826,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           <FormItem>
                             <FormControl>
                               <Input
-                                type="text"
+                                type="number"
                                 placeholder="0"
                                 value={field.value || ''}
                                 onChange={(e) => {
@@ -823,14 +837,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                     field.onChange(numValue);
                                   }
                                 }}
-                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                className=""
                               />
                             </FormControl>
-                            {form.watch('fixed_payment_enabled') && form.watch('fixed_payment_amount') > 0 && (
-                              <p className="text-xs text-green-600 mt-1">
-                                ✓ Tasa ajustada automáticamente para la cuota fija
-                              </p>
-                            )}
+                            
                             <FormMessage />
                           </FormItem>
                         )}
@@ -845,19 +855,19 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                         render={({ field }) => (
                           <FormItem>
                             <FormControl>
-                              <Input
-                                type="text"
-                                placeholder="0"
-                                {...field}
-                                value={field.value || ''}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  if (value === '' || /^\d*$/.test(value)) {
-                                    field.onChange(value === '' ? 0 : parseInt(value) || 0);
-                                  }
-                                }}
-                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
+                                                             <Input
+                                 type="number"
+                                 placeholder="0"
+                                 {...field}
+                                 value={field.value || ''}
+                                 onChange={(e) => {
+                                   const value = e.target.value;
+                                   if (value === '' || /^\d*$/.test(value)) {
+                                     field.onChange(value === '' ? 0 : parseInt(value) || 0);
+                                   }
+                                 }}
+                                 className=""
+                               />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -983,7 +993,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           <FormItem>
                             <FormControl>
                               <Input
-                                type="text"
+                                type="number"
                                 placeholder="0"
                                 value={field.value || ''}
                                 onChange={(e) => {
@@ -994,7 +1004,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                     field.onChange(numValue);
                                   }
                                 }}
-                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                className=""
                               />
                             </FormControl>
                             <FormMessage />
@@ -1149,7 +1159,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                             <FormItem className="flex-1">
                               <FormControl>
                                 <Input
-                                  type="text"
+                                  type="number"
                                   placeholder="0"
                                   value={field.value || ''}
                                   onChange={(e) => {
@@ -1160,7 +1170,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                       field.onChange(numValue);
                                     }
                                   }}
-                                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  className=""
                                 />
                               </FormControl>
                               <FormMessage />
