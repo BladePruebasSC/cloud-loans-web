@@ -423,12 +423,9 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
             
             {/* Cuota Fija */}
             <div className="col-span-2">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <input
+                          setFixedPaymentAmount(value === '' ? '' : parseFloat(value) || 0);
                     type="checkbox"
-                    checked={fixedPaymentEnabled}
-                    onChange={(e) => setFixedPaymentEnabled(e.target.checked)}
+                        placeholder="0.00"
                     className="rounded"
                   />
                   <label className="text-sm font-medium">Fijar Cuota</label>
@@ -452,7 +449,9 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
               </div>
             </div>
           </div>
-        </div>
+                        type="number"
+                        step="0.01"
+                        min="0"
 
         {/* Table Controls */}
         <div className="p-4 border-b flex items-center justify-between">
