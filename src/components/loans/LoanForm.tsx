@@ -76,6 +76,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     usdAmount: 0
   });
   const [excludedDays, setExcludedDays] = useState<string[]>([]);
+  const [isFixingQuota, setIsFixingQuota] = useState(false);
   const { user, companyId } = useAuth();
 
   const form = useForm<LoanFormData>({
@@ -99,6 +100,45 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   useEffect(() => {
     fetchClients();
   }, []);
+
+  // Función para calcular la tasa de interés basada en una cuota fija
+  const calculateInterestFromQuota = (principal: number, quota: number, months: number) => {
+    if (principal <= 0 || quota <= 0 || months <= 0) return 0;
+    
+    // Si la cuota es menor o igual al principal dividido por meses, es 0% interés
+    if (quota <= principal / months) return 0;
+    
+    // Usar aproximación iterativa para encontrar la tasa
+    let rate = 0.01; // Empezar con 1%
+    let maxRate = 100; // Máximo 100%
+    let minRate = 0;
+    let iterations = 0;
+    const maxIterations = 100;
+    
+    while (iterations < maxIterations) {
+      const monthlyRate = rate / 12;
+      const calculatedQuota = (principal * monthlyRate * Math.pow(1 + monthlyRate, months)) / 
+                             (Math.pow(1 + monthlyRate, months) - 1);
+      
+      const difference = Math.abs(calculatedQuota - quota);
+      
+      if (difference < 0.01) { // Precisión de 1 centavo
+        return Math.round(rate * 100) / 100; // Redondear a 2 decimales
+      }
+      
+      if (calculatedQuota < quota) {
+        minRate = rate;
+        rate = (rate + maxRate) / 2;
+      } else {
+        maxRate = rate;
+        rate = (minRate + rate) / 2;
+      }
+      
+      iterations++;
+    }
+    
+    return Math.round(rate * 100) / 100;
+  };
 
   const fetchClients = async () => {
     if (!user || !companyId) return;
@@ -446,6 +486,42 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     }
   };
 
+  const handleFixQuota = () => {
+    const amount = form.getValues('amount');
+    const months = form.getValues('term_months');
+    const quotaRD = form.getValues('monthly_payment_rd');
+    const quotaUSD = form.getValues('monthly_payment_usd');
+    
+    if (amount <= 0 || months <= 0) {
+      toast.error('Debe ingresar el monto y plazo antes de fijar la cuota');
+      return;
+    }
+    
+    let newInterestRate = 0;
+    
+    // Usar la cuota que tenga valor (RD$ o USD)
+    if (quotaRD > 0) {
+      newInterestRate = calculateInterestFromQuota(amount, quotaRD, months);
+    } else if (quotaUSD > 0) {
+      newInterestRate = calculateInterestFromQuota(amount, quotaUSD, months);
+    } else {
+      toast.error('Debe ingresar una cuota en RD$ o USD');
+      return;
+    }
+    
+    // Actualizar la tasa de interés
+    form.setValue('interest_rate', newInterestRate);
+    setIsFixingQuota(true);
+    
+    toast.success(`Tasa de interés ajustada a ${newInterestRate}% para la cuota fijada`);
+    
+    // Recalcular para asegurar consistencia
+    setTimeout(() => {
+      calculateLoanDetails();
+      setIsFixingQuota(false);
+    }, 100);
+  };
+
   const onSubmit = async (data: LoanFormData) => {
     if (!user || !companyId || !selectedClient) {
       toast.error('Debe seleccionar un cliente');
@@ -663,6 +739,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                 type="number"
                                 step="0.01"
                                 placeholder="0"
+                                style={{
+                                  MozAppearance: 'textfield',
+                                  WebkitAppearance: 'none',
+                                }}
                                 {...field}
                                 onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                               />
@@ -758,6 +838,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                 type="number"
                                 step="0.01"
                                 placeholder="0"
+                                style={{
+                                  MozAppearance: 'textfield',
+                                  WebkitAppearance: 'none',
+                                }}
                                 {...field}
                                 onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                               />
@@ -778,7 +862,11 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                             <FormControl>
                               <Input
                                 type="number"
-                                placeholder="1"
+                                placeholder="0"
+                                style={{
+                                  MozAppearance: 'textfield',
+                                  WebkitAppearance: 'none',
+                                }}
                                 {...field}
                                 onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
                               />
@@ -910,6 +998,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                 type="number"
                                 step="0.01"
                                 placeholder="0"
+                                style={{
+                                  MozAppearance: 'textfield',
+                                  WebkitAppearance: 'none',
+                                }}
                                 {...field}
                                 onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                               />
