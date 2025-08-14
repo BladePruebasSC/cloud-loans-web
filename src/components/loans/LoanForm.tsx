@@ -156,26 +156,22 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     // Convertir a USD (tasa aproximada)
     const usdAmount = amount / 58.5;
     
-    // Calcular según frecuencia
-    let periods = term_months;
+    // Calcular períodos según frecuencia - ahora term_months representa períodos, no meses
+    let periods = term_months; // El término ya está en la unidad correcta según la frecuencia
     let periodRate = interest_rate / 100;
     
     switch (payment_frequency) {
       case 'daily':
-        periods = term_months * 30;
         periodRate = periodRate / 365;
         break;
       case 'weekly':
-        periods = term_months * 4;
         periodRate = periodRate / 52;
         break;
       case 'biweekly':
-        periods = term_months * 2;
         periodRate = periodRate / 24;
         break;
       case 'monthly':
       default:
-        periods = term_months;
         periodRate = periodRate / 12;
         break;
     }
@@ -185,8 +181,25 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     let schedule: AmortizationRow[] = [];
 
     if (amortization_type === 'simple') {
-      // Interés simple
-      const totalInterest = amount * (interest_rate / 100) * (term_months / 12);
+      // Interés simple - calcular tiempo en años según frecuencia
+      let timeInYears = 0;
+      switch (payment_frequency) {
+        case 'daily':
+          timeInYears = term_months / 365;
+          break;
+        case 'weekly':
+          timeInYears = term_months / 52;
+          break;
+        case 'biweekly':
+          timeInYears = term_months / 24;
+          break;
+        case 'monthly':
+        default:
+          timeInYears = term_months / 12;
+          break;
+      }
+      
+      const totalInterest = amount * (interest_rate / 100) * timeInYears;
       totalAmount = amount + totalInterest;
       monthlyPayment = totalAmount / periods;
       
