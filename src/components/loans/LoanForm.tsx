@@ -218,6 +218,11 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       return;
     }
 
+    if (!selectedClient) {
+      toast.error('Debe seleccionar un cliente');
+      return;
+    }
+
     // Validate fixed payment if enabled
     if (fixed_payment_enabled) {
       const minimumPayment = getMinimumPayment();
@@ -227,9 +232,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       }
     }
 
-    // Convertir a USD (tasa aproximada)
-    const usdAmount = amount / 58.5;
-    
     // Calcular períodos según frecuencia - ahora term_months representa períodos, no meses
     let periods = term_months; // El término ya está en la unidad correcta según la frecuencia
     let periodRate = interest_rate / 100;
@@ -277,46 +279,89 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       totalAmount = amount + totalInterest;
       monthlyPayment = fixed_payment_enabled && fixed_payment_amount ? fixed_payment_amount : totalAmount / periods;
       
-      // Generar tabla de amortización para interés simple
-      let remainingBalance = totalAmount;
-      const interestPerPayment = totalInterest / periods;
-      const principalPerPayment = amount / periods;
-      
-      for (let i = 1; i <= periods; i++) {
-        const paymentDate = new Date(first_payment_date);
+      // Si hay cuota fija, recalcular el interés total basado en la cuota
+      if (fixed_payment_enabled && fixed_payment_amount) {
+        totalAmount = fixed_payment_amount * periods;
+        const newTotalInterest = totalAmount - amount;
         
-        switch (payment_frequency) {
-          case 'daily':
-            paymentDate.setDate(paymentDate.getDate() + (i - 1));
-            break;
-          case 'weekly':
-            paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-            break;
-          case 'biweekly':
-            paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-            break;
-          case 'monthly':
-          default:
-            paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-            break;
+        // Generar tabla con interés distribuido
+        let remainingBalance = amount;
+        const interestPerPayment = newTotalInterest / periods;
+        
+        for (let i = 1; i <= periods; i++) {
+          const paymentDate = new Date(first_payment_date);
+          
+          switch (payment_frequency) {
+            case 'daily':
+              paymentDate.setDate(paymentDate.getDate() + (i - 1));
+              break;
+            case 'weekly':
+              paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
+              break;
+            case 'biweekly':
+              paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
+              break;
+            case 'monthly':
+            default:
+              paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
+              break;
+          }
+          
+          const principalPayment = fixed_payment_amount - interestPerPayment;
+          remainingBalance -= principalPayment;
+          
+          schedule.push({
+            payment: i,
+            date: paymentDate.toISOString().split('T')[0],
+            interest: interestPerPayment,
+            principal: principalPayment,
+            totalPayment: fixed_payment_amount,
+            remainingBalance: Math.max(0, remainingBalance)
+          });
         }
+      } else {
+        // Generar tabla de amortización normal para interés simple
+        let remainingBalance = totalAmount;
+        const interestPerPayment = totalInterest / periods;
+        const principalPerPayment = amount / periods;
         
-        remainingBalance -= monthlyPayment;
-        
-        schedule.push({
-          payment: i,
-          date: paymentDate.toISOString().split('T')[0],
-          interest: interestPerPayment,
-          principal: principalPerPayment,
-          totalPayment: monthlyPayment,
-          remainingBalance: Math.max(0, remainingBalance)
-        });
+        for (let i = 1; i <= periods; i++) {
+          const paymentDate = new Date(first_payment_date);
+          
+          switch (payment_frequency) {
+            case 'daily':
+              paymentDate.setDate(paymentDate.getDate() + (i - 1));
+              break;
+            case 'weekly':
+              paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
+              break;
+            case 'biweekly':
+              paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
+              break;
+            case 'monthly':
+            default:
+              paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
+              break;
+          }
+          
+          remainingBalance -= monthlyPayment;
+          
+          schedule.push({
+            payment: i,
+            date: paymentDate.toISOString().split('T')[0],
+            interest: interestPerPayment,
+            principal: principalPerPayment,
+            totalPayment: monthlyPayment,
+            remainingBalance: Math.max(0, remainingBalance)
+          });
+        }
       }
     } else {
       // Interés compuesto (amortización francesa)
       if (fixed_payment_enabled && fixed_payment_amount) {
         monthlyPayment = fixed_payment_amount;
-        totalAmount = monthlyPayment * periods;
+        // Para cuota fija en interés compuesto, calcular el total basado en la cuota
+        totalAmount = 0; // Se calculará en el loop
       } else if (periodRate === 0) {
         monthlyPayment = amount / periods;
         totalAmount = amount;
@@ -328,6 +373,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       
       // Generar tabla de amortización para interés compuesto
       let remainingBalance = amount;
+      let totalPaid = 0;
       
       for (let i = 1; i <= periods; i++) {
         const paymentDate = new Date(first_payment_date);
@@ -349,21 +395,35 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         }
         
         const interestPayment = remainingBalance * periodRate;
-        const principalPayment = monthlyPayment - interestPayment;
+        let actualPayment = monthlyPayment;
+        
+        // Si es cuota fija, usar esa cuota
+        if (fixed_payment_enabled && fixed_payment_amount) {
+          actualPayment = fixed_payment_amount;
+        }
+        
+        const principalPayment = actualPayment - interestPayment;
         remainingBalance -= principalPayment;
+        totalPaid += actualPayment;
         
         schedule.push({
           payment: i,
           date: paymentDate.toISOString().split('T')[0],
           interest: interestPayment,
           principal: principalPayment,
-          totalPayment: monthlyPayment,
+          totalPayment: actualPayment,
           remainingBalance: Math.max(0, remainingBalance)
         });
+      }
+      
+      // Si era cuota fija, actualizar el total
+      if (fixed_payment_enabled && fixed_payment_amount) {
+        totalAmount = totalPaid;
       }
     }
 
     const totalInterest = totalAmount - amount;
+    const usdAmount = amount / 58.5; // Conversión a USD
 
     setCalculatedValues({
       monthlyPayment: Math.round(monthlyPayment * 100) / 100,
@@ -614,9 +674,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
 
                     <div>
-                      <FormLabel>
-                        {form.watch('fixed_payment_enabled') ? 'Cuota' : '$'}
-                      </FormLabel>
+                      <FormLabel>Cuota</FormLabel>
                       {form.watch('fixed_payment_enabled') ? (
                         <FormField
                           control={form.control}
@@ -632,7 +690,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                     <Input
                                       type="number"
                                       step="0.01"
-                                      placeholder={`Mínimo: ${minimumPayment.toFixed(2)}`}
+                                      placeholder="0.00"
                                       {...field}
                                       onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                                       className={`h-10 ${isBelow ? "border-red-500 bg-red-50" : ""}`}
@@ -650,11 +708,13 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           }}
                         />
                       ) : (
-                        <div className="p-2 bg-gray-100 rounded border h-10 flex items-center">
-                          <span className="font-semibold">
-                            {calculatedValues.usdAmount.toLocaleString()}
-                          </span>
-                        </div>
+                        <Input
+                          type="number"
+                          value={0}
+                          disabled
+                          className="h-10 bg-gray-100"
+                          placeholder="0.00"
+                        />
                       )}
                     </div>
 
