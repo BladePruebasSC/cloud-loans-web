@@ -144,13 +144,50 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     form.setValue('client_id', client.id);
   };
 
+  const getMinimumPayment = () => {
+    const formValues = form.getValues();
+    const { amount, interest_rate, payment_frequency } = formValues;
+    
+    if (!amount || !interest_rate) return 0;
+    
+    // Calculate minimum payment based on interest only
+    let periodRate = interest_rate / 100;
+    
+    switch (payment_frequency) {
+      case 'daily':
+        periodRate = periodRate / 365;
+        break;
+      case 'weekly':
+        periodRate = periodRate / 52;
+        break;
+      case 'biweekly':
+        periodRate = periodRate / 24;
+        break;
+      case 'monthly':
+      default:
+        periodRate = periodRate / 12;
+        break;
+    }
+    
+    return amount * periodRate;
+  };
+
   const calculateAmortization = () => {
     const formValues = form.getValues();
-    const { amount, interest_rate, term_months, amortization_type, payment_frequency, first_payment_date } = formValues;
+    const { amount, interest_rate, term_months, amortization_type, payment_frequency, first_payment_date, fixed_payment_enabled, fixed_payment_amount } = formValues;
     
     if (!amount || !interest_rate || !term_months) {
       toast.error('Complete todos los campos requeridos para calcular');
       return;
+    }
+
+    // Validate fixed payment if enabled
+    if (fixed_payment_enabled) {
+      const minimumPayment = getMinimumPayment();
+      if (!fixed_payment_amount || fixed_payment_amount < minimumPayment) {
+        toast.error(`La cuota fija debe ser al menos ${minimumPayment.toFixed(2)}`);
+        return;
+      }
     }
 
     // Convertir a USD (tasa aproximada)
@@ -201,7 +238,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       
       const totalInterest = amount * (interest_rate / 100) * timeInYears;
       totalAmount = amount + totalInterest;
-      monthlyPayment = totalAmount / periods;
+      monthlyPayment = fixed_payment_enabled && fixed_payment_amount ? fixed_payment_amount : totalAmount / periods;
       
       // Generar tabla de amortización para interés simple
       let remainingBalance = totalAmount;
@@ -240,7 +277,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       }
     } else {
       // Interés compuesto (amortización francesa)
-      if (periodRate === 0) {
+      if (fixed_payment_enabled && fixed_payment_amount) {
+        monthlyPayment = fixed_payment_amount;
+        totalAmount = monthlyPayment * periods;
+      } else if (periodRate === 0) {
         monthlyPayment = amount / periods;
         totalAmount = amount;
       } else {
@@ -567,6 +607,44 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                       </div>
                     </div>
                   </div>
+
+                  {/* Fixed Payment Amount Input - Show when checkbox is enabled */}
+                  {form.watch('fixed_payment_enabled') && (
+                    <div className="mt-4">
+                      <FormLabel>Monto de cuota fija:</FormLabel>
+                      <FormField
+                        control={form.control}
+                        name="fixed_payment_amount"
+                        render={({ field }) => {
+                          const minimumPayment = getMinimumPayment();
+                          const isBelow = field.value && field.value < minimumPayment;
+                          
+                          return (
+                            <FormItem>
+                              <FormControl>
+                                <div className="relative">
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    placeholder={`Mínimo: ${minimumPayment.toFixed(2)}`}
+                                    {...field}
+                                    onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                    className={isBelow ? "border-red-500 bg-red-50" : ""}
+                                  />
+                                  {isBelow && (
+                                    <span className="text-red-500 text-xs mt-1 block">
+                                      La cuota está por debajo del mínimo (${minimumPayment.toFixed(2)})
+                                    </span>
+                                  )}
+                                </div>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          );
+                        }}
+                      />
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
