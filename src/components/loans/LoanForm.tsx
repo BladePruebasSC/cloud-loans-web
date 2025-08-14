@@ -146,11 +146,12 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
 
   const getMinimumPayment = () => {
     const formValues = form.getValues();
-    const { amount, interest_rate, payment_frequency } = formValues;
+    const { amount, interest_rate, term_months, amortization_type, payment_frequency } = formValues;
     
-    if (!amount || !interest_rate) return 0;
+    if (!amount || !interest_rate || !term_months) return 0;
     
-    // Calculate minimum payment based on interest only
+    // Calculate periods based on frequency
+    let periods = term_months;
     let periodRate = interest_rate / 100;
     
     switch (payment_frequency) {
@@ -168,8 +169,42 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         periodRate = periodRate / 12;
         break;
     }
+
+    let minimumPayment = 0;
+
+    if (amortization_type === 'simple') {
+      // Simple interest calculation
+      let timeInYears = 0;
+      switch (payment_frequency) {
+        case 'daily':
+          timeInYears = term_months / 365;
+          break;
+        case 'weekly':
+          timeInYears = term_months / 52;
+          break;
+        case 'biweekly':
+          timeInYears = term_months / 24;
+          break;
+        case 'monthly':
+        default:
+          timeInYears = term_months / 12;
+          break;
+      }
+      
+      const totalInterest = amount * (interest_rate / 100) * timeInYears;
+      const totalAmount = amount + totalInterest;
+      minimumPayment = totalAmount / periods;
+    } else {
+      // Compound interest calculation
+      if (periodRate === 0) {
+        minimumPayment = amount / periods;
+      } else {
+        minimumPayment = (amount * periodRate * Math.pow(1 + periodRate, periods)) / 
+                       (Math.pow(1 + periodRate, periods) - 1);
+      }
+    }
     
-    return amount * periodRate;
+    return minimumPayment;
   };
 
   const calculateAmortization = () => {
