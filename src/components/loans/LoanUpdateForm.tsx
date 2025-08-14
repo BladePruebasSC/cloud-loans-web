@@ -401,11 +401,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             </FormLabel>
                             <FormControl>
                               <Input
-                                type="number"
-                                step="0.01"
-                                placeholder="0.00"
+                                type="text"
+                                placeholder="0"
                                 {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                    field.onChange(value === '' ? 0 : parseFloat(value) || 0);
+                                  }
+                                }}
+                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />
@@ -423,11 +429,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             <FormLabel>Nueva Tasa de Interés (%)</FormLabel>
                             <FormControl>
                               <Input
-                                type="number"
-                                step="0.01"
-                                placeholder="15.00"
+                                type="text"
+                                placeholder="0"
                                 {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                    field.onChange(value === '' ? 0 : parseFloat(value) || 0);
+                                  }
+                                }}
+                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />
@@ -445,10 +457,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             <FormLabel>Meses Adicionales</FormLabel>
                             <FormControl>
                               <Input
-                                type="number"
-                                placeholder="6"
+                                type="text"
+                                placeholder="0"
                                 {...field}
-                                onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  if (value === '' || /^\d*$/.test(value)) {
+                                    field.onChange(value === '' ? 0 : parseInt(value) || 0);
+                                  }
+                                }}
+                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />

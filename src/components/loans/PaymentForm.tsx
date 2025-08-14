@@ -253,11 +253,17 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
                           <FormLabel>Monto del Pago</FormLabel>
                           <FormControl>
                             <Input
-                              type="number"
-                              step="0.01"
-                              placeholder="0.00"
+                              type="text"
+                              placeholder="0"
                               {...field}
-                              onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                              value={field.value || ''}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                                  field.onChange(value === '' ? 0 : parseFloat(value) || 0);
+                                }
+                              }}
+                              className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                           </FormControl>
                           <FormMessage />

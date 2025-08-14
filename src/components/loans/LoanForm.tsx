@@ -108,36 +108,13 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     // Si la cuota es menor o igual al principal dividido por meses, es 0% interés
     if (quota <= principal / months) return 0;
     
-    // Usar aproximación iterativa para encontrar la tasa
-    let rate = 0.01; // Empezar con 1%
-    let maxRate = 100; // Máximo 100%
-    let minRate = 0;
-    let iterations = 0;
-    const maxIterations = 100;
+    // Para interés simple mensual, calcular directamente
+    const totalPayment = quota * months;
+    const totalInterest = totalPayment - principal;
     
-    while (iterations < maxIterations) {
-      const monthlyRate = rate / 12;
-      const calculatedQuota = (principal * monthlyRate * Math.pow(1 + monthlyRate, months)) / 
-                             (Math.pow(1 + monthlyRate, months) - 1);
-      
-      const difference = Math.abs(calculatedQuota - quota);
-      
-      if (difference < 0.01) { // Precisión de 1 centavo
-        return Math.round(rate * 100) / 100; // Redondear a 2 decimales
-      }
-      
-      if (calculatedQuota < quota) {
-        minRate = rate;
-        rate = (rate + maxRate) / 2;
-      } else {
-        maxRate = rate;
-        rate = (minRate + rate) / 2;
-      }
-      
-      iterations++;
-    }
-    
-    return Math.round(rate * 100) / 100;
+    // Calcular tasa de interés mensual
+    const monthlyRate = (totalInterest / principal) / months * 100;
+    return Math.max(0, Math.round(monthlyRate * 100) / 100);
   };
 
   const fetchClients = async () => {
@@ -190,7 +167,12 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     const formValues = form.getValues();
     const { amount, interest_rate, term_months, amortization_type, payment_frequency } = formValues;
     
-    if (!amount || !interest_rate || !term_months) return 0;
+    if (!amount || amount <= 0 || !term_months || term_months <= 0) return 0;
+    
+    // Si no hay tasa de interés, el mínimo es solo el capital dividido por períodos
+    if (!interest_rate || interest_rate <= 0) {
+      return amount / term_months;
+    }
     
     // Calculate periods based on frequency
     let periods = term_months;
@@ -198,42 +180,25 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     
     switch (payment_frequency) {
       case 'daily':
-        periodRate = periodRate / 365;
+        periodRate = periodRate / 30; // Tasa diaria basada en mes de 30 días
         break;
       case 'weekly':
-        periodRate = periodRate / 52;
+        periodRate = periodRate / 4; // Tasa semanal (mes/4)
         break;
       case 'biweekly':
-        periodRate = periodRate / 24;
+        periodRate = periodRate / 2; // Tasa quincenal (mes/2)
         break;
       case 'monthly':
       default:
-        periodRate = periodRate / 12;
+        periodRate = periodRate; // Tasa mensual directa
         break;
     }
 
     let minimumPayment = 0;
 
     if (amortization_type === 'simple') {
-      // Simple interest calculation
-      let timeInYears = 0;
-      switch (payment_frequency) {
-        case 'daily':
-          timeInYears = term_months / 365;
-          break;
-        case 'weekly':
-          timeInYears = term_months / 52;
-          break;
-        case 'biweekly':
-          timeInYears = term_months / 24;
-          break;
-        case 'monthly':
-        default:
-          timeInYears = term_months / 12;
-          break;
-      }
-      
-      const totalInterest = amount * (interest_rate / 100) * timeInYears;
+      // Simple interest calculation - usar tasa mensual directamente
+      const totalInterest = amount * (interest_rate / 100) * term_months;
       const totalAmount = amount + totalInterest;
       minimumPayment = totalAmount / periods;
     } else {
@@ -266,8 +231,12 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     // Validate fixed payment if enabled
     if (fixed_payment_enabled) {
       const minimumPayment = getMinimumPayment();
-      if (!fixed_payment_amount || fixed_payment_amount < minimumPayment) {
-        toast.error(`La cuota fija debe ser al menos ${minimumPayment.toFixed(2)}`);
+      if (!fixed_payment_amount || fixed_payment_amount <= 0) {
+        toast.error('Debe ingresar una cuota fija válida');
+        return;
+      }
+      if (fixed_payment_amount < minimumPayment) {
+        toast.error(`La cuota fija debe ser al menos RD$${minimumPayment.toFixed(2)}`);
         return;
       }
     }
@@ -278,17 +247,17 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     
     switch (payment_frequency) {
       case 'daily':
-        periodRate = periodRate / 365;
+        periodRate = periodRate / 30; // Tasa diaria basada en mes de 30 días
         break;
       case 'weekly':
-        periodRate = periodRate / 52;
+        periodRate = periodRate / 4; // Tasa semanal (mes/4)
         break;
       case 'biweekly':
-        periodRate = periodRate / 24;
+        periodRate = periodRate / 2; // Tasa quincenal (mes/2)
         break;
       case 'monthly':
       default:
-        periodRate = periodRate / 12;
+        periodRate = periodRate; // Tasa mensual directa
         break;
     }
 
@@ -297,25 +266,8 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     let schedule: AmortizationRow[] = [];
 
     if (amortization_type === 'simple') {
-      // Interés simple - calcular tiempo en años según frecuencia
-      let timeInYears = 0;
-      switch (payment_frequency) {
-        case 'daily':
-          timeInYears = term_months / 365;
-          break;
-        case 'weekly':
-          timeInYears = term_months / 52;
-          break;
-        case 'biweekly':
-          timeInYears = term_months / 24;
-          break;
-        case 'monthly':
-        default:
-          timeInYears = term_months / 12;
-          break;
-      }
-      
-      const totalInterest = amount * (interest_rate / 100) * timeInYears;
+      // Interés simple - usar tasa mensual directamente
+      const totalInterest = amount * (interest_rate / 100) * term_months;
       totalAmount = amount + totalInterest;
       monthlyPayment = fixed_payment_enabled && fixed_payment_amount ? fixed_payment_amount : totalAmount / periods;
       
@@ -489,8 +441,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const handleFixQuota = () => {
     const amount = form.getValues('amount');
     const months = form.getValues('term_months');
-    const quotaRD = form.getValues('monthly_payment_rd');
-    const quotaUSD = form.getValues('monthly_payment_usd');
+    const quotaRD = form.getValues('fixed_payment_amount');
     
     if (amount <= 0 || months <= 0) {
       toast.error('Debe ingresar el monto y plazo antes de fijar la cuota');
@@ -499,13 +450,11 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     
     let newInterestRate = 0;
     
-    // Usar la cuota que tenga valor (RD$ o USD)
+    // Usar la cuota fija
     if (quotaRD > 0) {
       newInterestRate = calculateInterestFromQuota(amount, quotaRD, months);
-    } else if (quotaUSD > 0) {
-      newInterestRate = calculateInterestFromQuota(amount, quotaUSD, months);
     } else {
-      toast.error('Debe ingresar una cuota en RD$ o USD');
+      toast.error('Debe ingresar una cuota fija');
       return;
     }
     
@@ -517,7 +466,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     
     // Recalcular para asegurar consistencia
     setTimeout(() => {
-      calculateLoanDetails();
+      calculateAmortization();
       setIsFixingQuota(false);
     }, 100);
   };
@@ -669,6 +618,25 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     }
   }, [form.watch('amount')]);
 
+  // Recalcular tasa de interés cuando cambie la cuota fija
+  useEffect(() => {
+    const fixedPaymentEnabled = form.watch('fixed_payment_enabled');
+    const fixedPaymentAmount = form.watch('fixed_payment_amount');
+    const amount = form.watch('amount');
+    const term_months = form.watch('term_months');
+    
+    if (fixedPaymentEnabled && fixedPaymentAmount && amount > 0 && term_months > 0) {
+      const newInterestRate = calculateInterestFromQuota(amount, fixedPaymentAmount, term_months);
+      form.setValue('interest_rate', newInterestRate);
+      
+      // Mostrar mensaje informativo
+      toast.success(`Tasa de interés ajustada automáticamente a ${newInterestRate.toFixed(2)}% para la cuota fija de RD$${fixedPaymentAmount.toLocaleString()}`);
+    } else if (!fixedPaymentEnabled) {
+      // Si se desactiva la cuota fija, limpiar el campo de cuota fija
+      form.setValue('fixed_payment_amount', 0);
+    }
+  }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months')]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -736,15 +704,18 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           <FormItem>
                             <FormControl>
                               <Input
-                                type="number"
-                                step="0.01"
+                                type="text"
                                 placeholder="0"
-                                style={{
-                                  MozAppearance: 'textfield',
-                                  WebkitAppearance: 'none',
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  // Permitir decimales con hasta 2 decimales
+                                  if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
+                                    const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                    field.onChange(numValue);
+                                  }
                                 }}
-                                {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />
@@ -768,16 +739,22 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                 <FormControl>
                                   <div className="relative">
                                     <Input
-                                      type="number"
-                                      step="0.01"
-                                      placeholder="0.00"
-                                      {...field}
-                                      onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                      className={`h-10 ${isBelow ? "border-red-500 bg-red-50" : ""}`}
+                                      type="text"
+                                      placeholder="0"
+                                      value={field.value || ''}
+                                      onChange={(e) => {
+                                        const value = e.target.value;
+                                        // Permitir decimales con hasta 2 decimales
+                                        if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
+                                          const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                          field.onChange(numValue);
+                                        }
+                                      }}
+                                      className={`h-10 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${isBelow ? "border-red-500 bg-red-50" : ""}`}
                                     />
-                                    {isBelow && (
+                                    {isBelow && minimumPayment > 0 && (
                                       <span className="text-red-500 text-xs mt-1 block">
-                                        Por debajo del mínimo (${minimumPayment.toFixed(2)})
+                                        Mínimo: RD${minimumPayment.toFixed(2)}
                                       </span>
                                     )}
                                   </div>
@@ -789,11 +766,11 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                         />
                       ) : (
                         <Input
-                          type="number"
-                          value={0}
+                          type="text"
+                          value=""
                           disabled
-                          className="h-10 bg-gray-100"
-                          placeholder="0.00"
+                          className="h-10 bg-gray-100 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          placeholder="0"
                         />
                       )}
                     </div>
@@ -825,7 +802,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <FormLabel className="flex items-center gap-2">
-                        Porcentaje interés:
+                        Porcentaje interés (mensual):
                         <span className="text-blue-500 cursor-pointer">Lista de interés</span>
                       </FormLabel>
                       <FormField
@@ -835,17 +812,25 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           <FormItem>
                             <FormControl>
                               <Input
-                                type="number"
-                                step="0.01"
+                                type="text"
                                 placeholder="0"
-                                style={{
-                                  MozAppearance: 'textfield',
-                                  WebkitAppearance: 'none',
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  // Permitir decimales con hasta 2 decimales
+                                  if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
+                                    const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                    field.onChange(numValue);
+                                  }
                                 }}
-                                {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
+                            {form.watch('fixed_payment_enabled') && form.watch('fixed_payment_amount') > 0 && (
+                              <p className="text-xs text-green-600 mt-1">
+                                ✓ Tasa ajustada automáticamente para la cuota fija
+                              </p>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}
@@ -861,14 +846,17 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           <FormItem>
                             <FormControl>
                               <Input
-                                type="number"
+                                type="text"
                                 placeholder="0"
-                                style={{
-                                  MozAppearance: 'textfield',
-                                  WebkitAppearance: 'none',
-                                }}
                                 {...field}
-                                onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  if (value === '' || /^\d*$/.test(value)) {
+                                    field.onChange(value === '' ? 0 : parseInt(value) || 0);
+                                  }
+                                }}
+                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />
@@ -995,15 +983,18 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           <FormItem>
                             <FormControl>
                               <Input
-                                type="number"
-                                step="0.01"
+                                type="text"
                                 placeholder="0"
-                                style={{
-                                  MozAppearance: 'textfield',
-                                  WebkitAppearance: 'none',
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  // Permitir decimales con hasta 2 decimales
+                                  if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
+                                    const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                    field.onChange(numValue);
+                                  }
                                 }}
-                                {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />
@@ -1158,10 +1149,18 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                             <FormItem className="flex-1">
                               <FormControl>
                                 <Input
-                                  type="number"
-                                  placeholder="100"
-                                  {...field}
-                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                  type="text"
+                                  placeholder="0"
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    // Permitir decimales con hasta 2 decimales
+                                    if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
+                                      const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                      field.onChange(numValue);
+                                    }
+                                  }}
+                                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 />
                               </FormControl>
                               <FormMessage />
