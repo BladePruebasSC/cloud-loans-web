@@ -324,25 +324,25 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
   const adjustedInterestRate = calculateAdjustedInterestRate();
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg w-full max-w-7xl max-h-[90vh] overflow-hidden">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
+      <div className="bg-white rounded-lg w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b">
-          <div className="flex items-center gap-4">
-            <Calculator className="h-6 w-6 text-blue-600" />
+        <div className="flex items-center justify-between p-3 sm:p-6 border-b flex-shrink-0">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <Calculator className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600" />
             <div>
-              <h2 className="text-2xl font-bold">Tabla de Amortización</h2>
-              <p className="text-gray-600">Cálculo detallado de pagos del préstamo</p>
+              <h2 className="text-lg sm:text-2xl font-bold">Tabla de Amortización</h2>
+              <p className="text-xs sm:text-sm text-gray-600 hidden sm:block">Cálculo detallado de pagos del préstamo</p>
             </div>
           </div>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" size="sm" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </div>
 
         {/* Controls */}
-        <div className="p-6 border-b bg-gray-50">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="p-3 sm:p-6 border-b bg-gray-50 flex-shrink-0 overflow-y-auto max-h-48 sm:max-h-none">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Monto del Préstamo</label>
               <Input
@@ -422,178 +422,258 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
             </div>
             
             {/* Cuota Fija */}
-            <div className="col-span-2">
-                          setFixedPaymentAmount(value === '' ? '' : parseFloat(value) || 0);
-                    type="checkbox"
-                        placeholder="0.00"
-                    className="rounded"
-                  />
-                  <label className="text-sm font-medium">Fijar Cuota</label>
-                </div>
-                {fixedPaymentEnabled && (
-                  <div className="flex-1">
-                    <Input
-                      type="text"
-                      value={fixedPaymentAmount || ''}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                          setFixedPaymentAmount(value === '' ? '' : parseFloat(value) || '');
-                        }
-                      }}
-                      placeholder="0"
-                      className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    />
-                  </div>
-                )}
+            <div className="col-span-full md:col-span-2">
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  type="checkbox"
+                  checked={fixedPaymentEnabled}
+                  onChange={(e) => setFixedPaymentEnabled(e.target.checked)}
+                  className="rounded"
+                />
+                <label className="text-sm font-medium">Fijar Cuota</label>
               </div>
+              {fixedPaymentEnabled && (
+                <Input
+                  type="text"
+                  value={fixedPaymentAmount || ''}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                      setFixedPaymentAmount(value === '' ? '' : parseFloat(value) || '');
+                    }
+                  }}
+                  placeholder="0"
+                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+              )}
             </div>
           </div>
-                        type="number"
-                        step="0.01"
-                        min="0"
+        </div>
 
         {/* Table Controls */}
-        <div className="p-4 border-b flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm">Mostrar</span>
-              <Select value={recordsPerPage.toString()} onValueChange={(value) => setRecordsPerPage(parseInt(value))}>
-                <SelectTrigger className="w-20">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="25">25</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
-                </SelectContent>
-              </Select>
-              <span className="text-sm">registros</span>
+        <div className="p-3 sm:p-4 border-b flex-shrink-0">
+          {/* Mobile Layout */}
+          <div className="flex flex-col gap-3 sm:hidden">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">Mostrar</span>
+                <Select value={recordsPerPage.toString()} onValueChange={(value) => setRecordsPerPage(parseInt(value))}>
+                  <SelectTrigger className="w-16">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
             <div className="flex items-center gap-2">
               <Search className="h-4 w-4 text-gray-400" />
               <Input
                 placeholder="Buscar..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-48"
+                className="flex-1"
               />
             </div>
-            <Button variant="outline" onClick={copyToClipboard}>
-              <Copy className="h-4 w-4 mr-2" />
-              Copiar
-            </Button>
-            <Button variant="outline" onClick={exportToExcel}>
-              <Download className="h-4 w-4 mr-2" />
-              Excel
-            </Button>
-            <Button variant="outline" onClick={printTable}>
-              <Printer className="h-4 w-4 mr-2" />
-              Imprimir
-            </Button>
+            <div className="flex gap-2 overflow-x-auto">
+              <Button variant="outline" size="sm" onClick={copyToClipboard} className="whitespace-nowrap">
+                <Copy className="h-4 w-4 mr-1" />
+                Copiar
+              </Button>
+              <Button variant="outline" size="sm" onClick={exportToExcel} className="whitespace-nowrap">
+                <Download className="h-4 w-4 mr-1" />
+                Excel
+              </Button>
+              <Button variant="outline" size="sm" onClick={printTable} className="whitespace-nowrap">
+                <Printer className="h-4 w-4 mr-1" />
+                Imprimir
+              </Button>
+            </div>
+          </div>
+          
+          {/* Desktop Layout */}
+          <div className="hidden sm:flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">Mostrar</span>
+                <Select value={recordsPerPage.toString()} onValueChange={(value) => setRecordsPerPage(parseInt(value))}>
+                  <SelectTrigger className="w-20">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-sm">registros</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4 text-gray-400" />
+                <Input
+                  placeholder="Buscar..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-48"
+                />
+              </div>
+              <Button variant="outline" onClick={copyToClipboard}>
+                <Copy className="h-4 w-4 mr-2" />
+                Copiar
+              </Button>
+              <Button variant="outline" onClick={exportToExcel}>
+                <Download className="h-4 w-4 mr-2" />
+                Excel
+              </Button>
+              <Button variant="outline" onClick={printTable}>
+                <Printer className="h-4 w-4 mr-2" />
+                Imprimir
+              </Button>
+            </div>
           </div>
         </div>
 
         {/* Table */}
-        <div className="overflow-auto max-h-[60vh]">
-          <table className="w-full border-collapse">
-            <thead className="bg-gray-50 sticky top-0">
-              <tr>
-                <th className="border p-3 text-left font-medium">
-                  <button 
-                    className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
-                    onClick={() => handleSort('installment')}
-                  >
-                    CUOTA
-                    <ArrowUpDown className="h-3 w-3" />
-                  </button>
-                </th>
-                <th className="border p-3 text-left font-medium">
-                  <button 
-                    className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
-                    onClick={() => handleSort('date')}
-                  >
-                    FECHA
-                    <ArrowUpDown className="h-3 w-3" />
-                  </button>
-                </th>
-                <th className="border p-3 text-left font-medium">
-                  <button 
-                    className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
-                    onClick={() => handleSort('interest')}
-                  >
-                    INTERES
-                    <ArrowUpDown className="h-3 w-3" />
-                  </button>
-                </th>
-                <th className="border p-3 text-left font-medium">
-                  <button 
-                    className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
-                    onClick={() => handleSort('principal')}
-                  >
-                    CAPITAL
-                    <ArrowUpDown className="h-3 w-3" />
-                  </button>
-                </th>
-                <th className="border p-3 text-left font-medium">
-                  <button 
-                    className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
-                    onClick={() => handleSort('payment')}
-                  >
-                    A PAGAR
-                    <ArrowUpDown className="h-3 w-3" />
-                  </button>
-                </th>
-                <th className="border p-3 text-left font-medium">
-                  <button 
-                    className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
-                    onClick={() => handleSort('remainingBalance')}
-                  >
-                    CAPITAL RESTANTE
-                    <ArrowUpDown className="h-3 w-3" />
-                  </button>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedData.slice(0, recordsPerPage).map((row, index) => (
-                <tr key={index} className="hover:bg-gray-50">
-                  <td className="border p-3">{row.installment}/{term}</td>
-                  <td className="border p-3">{row.date}</td>
-                  <td className="border p-3">${row.interest.toLocaleString()}</td>
-                  <td className="border p-3">${row.principal.toLocaleString()}</td>
-                  <td className="border p-3">${row.payment.toLocaleString()}</td>
-                  <td className="border p-3">${row.remainingBalance.toLocaleString()}</td>
+        <div className="flex-1 overflow-auto">
+          {/* Mobile Cards Layout */}
+          <div className="block sm:hidden p-3 space-y-3">
+            {sortedData.slice(0, recordsPerPage).map((row, index) => (
+              <div key={index} className="bg-white border rounded-lg p-3 shadow-sm">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-gray-600 font-medium">Cuota:</span>
+                    <div className="font-semibold">{row.installment}/{term}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 font-medium">Fecha:</span>
+                    <div className="font-semibold">{row.date}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 font-medium">Interés:</span>
+                    <div className="font-semibold text-red-600">${row.interest.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 font-medium">Capital:</span>
+                    <div className="font-semibold text-blue-600">${row.principal.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 font-medium">A Pagar:</span>
+                    <div className="font-semibold text-green-600">${row.payment.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 font-medium">Restante:</span>
+                    <div className="font-semibold">${row.remainingBalance.toLocaleString()}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop Table Layout */}
+          <div className="hidden sm:block">
+            <table className="w-full border-collapse">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="border p-3 text-left font-medium text-xs lg:text-sm">
+                    <button 
+                      className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
+                      onClick={() => handleSort('installment')}
+                    >
+                      CUOTA
+                      <ArrowUpDown className="h-3 w-3" />
+                    </button>
+                  </th>
+                  <th className="border p-3 text-left font-medium text-xs lg:text-sm">
+                    <button 
+                      className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
+                      onClick={() => handleSort('date')}
+                    >
+                      FECHA
+                      <ArrowUpDown className="h-3 w-3" />
+                    </button>
+                  </th>
+                  <th className="border p-3 text-left font-medium text-xs lg:text-sm">
+                    <button 
+                      className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
+                      onClick={() => handleSort('interest')}
+                    >
+                      INTERES
+                      <ArrowUpDown className="h-3 w-3" />
+                    </button>
+                  </th>
+                  <th className="border p-3 text-left font-medium text-xs lg:text-sm">
+                    <button 
+                      className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
+                      onClick={() => handleSort('principal')}
+                    >
+                      CAPITAL
+                      <ArrowUpDown className="h-3 w-3" />
+                    </button>
+                  </th>
+                  <th className="border p-3 text-left font-medium text-xs lg:text-sm">
+                    <button 
+                      className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
+                      onClick={() => handleSort('payment')}
+                    >
+                      A PAGAR
+                      <ArrowUpDown className="h-3 w-3" />
+                    </button>
+                  </th>
+                  <th className="border p-3 text-left font-medium text-xs lg:text-sm">
+                    <button 
+                      className="flex items-center gap-1 hover:bg-gray-100 p-1 rounded"
+                      onClick={() => handleSort('remainingBalance')}
+                    >
+                      RESTANTE
+                      <ArrowUpDown className="h-3 w-3" />
+                    </button>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedData.slice(0, recordsPerPage).map((row, index) => (
+                  <tr key={index} className="hover:bg-gray-50">
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">{row.installment}/{term}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">{row.date}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.interest.toLocaleString()}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.principal.toLocaleString()}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.payment.toLocaleString()}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.remainingBalance.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Totals */}
-        <div className="p-4 border-t bg-gray-50">
-          <div className="grid grid-cols-3 gap-4 text-center">
+        <div className="p-3 sm:p-4 border-t bg-gray-50 flex-shrink-0">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-center">
             <div>
-              <span className="text-sm text-gray-600">INTERES:</span>
-              <div className="font-bold">${totalInterest.toLocaleString()}</div>
+              <span className="text-xs sm:text-sm text-gray-600">INTERES:</span>
+              <div className="font-bold text-sm sm:text-base text-red-600">${totalInterest.toLocaleString()}</div>
             </div>
             <div>
-              <span className="text-sm text-gray-600">CAPITAL:</span>
-              <div className="font-bold">${totalPrincipal.toLocaleString()}</div>
+              <span className="text-xs sm:text-sm text-gray-600">CAPITAL:</span>
+              <div className="font-bold text-sm sm:text-base text-blue-600">${totalPrincipal.toLocaleString()}</div>
             </div>
             <div>
-              <span className="text-sm text-gray-600">A PAGAR:</span>
-              <div className="font-bold">${totalPayment.toLocaleString()}</div>
+              <span className="text-xs sm:text-sm text-gray-600">A PAGAR:</span>
+              <div className="font-bold text-sm sm:text-base text-green-600">${totalPayment.toLocaleString()}</div>
             </div>
           </div>
         </div>
 
         {/* Pagination Info */}
-        <div className="p-4 border-t text-center text-sm text-gray-600">
-          Mostrando registros del 1 al {Math.min(recordsPerPage, sortedData.length)} de un total de {sortedData.length} registros
+        <div className="p-3 sm:p-4 border-t text-center text-xs sm:text-sm text-gray-600 flex-shrink-0">
+          Mostrando del 1 al {Math.min(recordsPerPage, sortedData.length)} de {sortedData.length} registros
         </div>
       </div>
     </div>
