@@ -649,27 +649,30 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months')]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="outline" onClick={onBack}>
+    <div className="space-y-4 md:space-y-6">
+      {/* Header responsive */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4">
+        <Button variant="outline" onClick={onBack} className="w-full sm:w-auto">
           <ArrowLeft className="h-4 w-4 mr-2" />
           VOLVER
         </Button>
-        <h2 className="text-2xl font-bold">CREAR PRÉSTAMO</h2>
-        <p className="text-blue-600 cursor-pointer">¿No sabes como crear un préstamo?</p>
+        <div className="flex-1 text-center sm:text-left">
+          <h2 className="text-xl md:text-2xl font-bold">CREAR PRÉSTAMO</h2>
+          <p className="text-blue-600 cursor-pointer text-sm md:text-base">¿No sabes como crear un préstamo?</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-6">
         <div className="space-y-6">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               {/* Información Principal */}
               <Card>
-                <CardHeader className="bg-blue-500 text-white">
-                  <CardTitle className="text-lg">INFORMACIÓN PRINCIPAL</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4 pt-6">
-                  {/* Búsqueda de Cliente */}
+                                 <CardHeader className="bg-blue-500 text-white">
+                   <CardTitle className="text-base sm:text-lg">INFORMACIÓN PRINCIPAL</CardTitle>
+                 </CardHeader>
+                                  <CardContent className="space-y-3 sm:space-y-4 pt-4 sm:pt-6">
+                    {/* Búsqueda de Cliente */}
                   <div className="space-y-2">
                     <FormLabel>Cliente:</FormLabel>
                     <div className="relative">
@@ -705,7 +708,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
                       <FormLabel>RD$</FormLabel>
                       <FormField
@@ -821,12 +824,12 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   </div>
 
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                                             <FormLabel className="flex items-center gap-2">
-                         Porcentaje interés:
-                         <span className="text-blue-500 cursor-pointer">Lista de interés</span>
-                       </FormLabel>
+                      <FormLabel className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                        <span>Porcentaje interés:</span>
+                        <span className="text-blue-500 cursor-pointer text-sm">Lista de interés</span>
+                      </FormLabel>
                       <FormField
                         control={form.control}
                         name="interest_rate"
@@ -884,7 +887,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
                       <FormLabel>Amortización:</FormLabel>
                       <FormField
@@ -958,7 +961,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   <div className="flex items-center justify-center">
                     <Button 
                       type="button" 
-                      className="bg-blue-500 hover:bg-blue-600 px-8 py-3 text-lg"
+                      className="bg-blue-500 hover:bg-blue-600 px-4 sm:px-8 py-2 sm:py-3 text-base sm:text-lg w-full sm:w-auto"
                       onClick={calculateAmortization}
                     >
                       📊 CALCULAR PRÉSTAMO
@@ -968,15 +971,15 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
               </Card>
 
               {/* Información Adicional */}
-              <Card>
-                <CardHeader className="bg-blue-500 text-white">
-                  <CardTitle className="text-lg">INFORMACIÓN ADICIONAL</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4 pt-6">
-                  {/* Días excluidos */}
+                             <Card>
+                 <CardHeader className="bg-blue-500 text-white">
+                   <CardTitle className="text-base sm:text-lg">INFORMACIÓN ADICIONAL</CardTitle>
+                 </CardHeader>
+                                  <CardContent className="space-y-3 sm:space-y-4 pt-4 sm:pt-6">
+                    {/* Días excluidos */}
                   <div>
                     <FormLabel>Días excluidos</FormLabel>
-                    <div className="flex flex-wrap gap-2 mt-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 gap-2 mt-2">
                       {['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'].map((day) => (
                         <label key={day} className="flex items-center space-x-2">
                           <input
@@ -985,13 +988,13 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                             onChange={(e) => handleExcludedDayChange(day, e.target.checked)}
                             className="rounded"
                           />
-                          <span className="text-sm">{day}</span>
+                          <span className="text-xs sm:text-sm">{day}</span>
                         </label>
                       ))}
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <FormLabel>Gastos de cierre: %</FormLabel>
                       <FormField
@@ -1108,7 +1111,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   </div>
 
                   {/* Configuraciones de pago mínimo */}
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div>
                       <FormLabel>Pago mínimo</FormLabel>
                       <FormField
@@ -1191,7 +1194,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   </div>
 
                   {/* Checkboxes */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-3">
                       <FormField
                         control={form.control}
@@ -1278,15 +1281,15 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                 </CardContent>
               </Card>
 
-              <div className="flex justify-center">
-                <Button 
-                  type="submit" 
-                  disabled={loading || !selectedClient || calculatedValues.monthlyPayment === 0}
-                  className="bg-blue-500 hover:bg-blue-600 px-12 py-3 text-lg"
-                >
-                  💰 CREAR PRÉSTAMO
-                </Button>
-              </div>
+                             <div className="flex justify-center">
+                 <Button 
+                   type="submit" 
+                   disabled={loading || !selectedClient || calculatedValues.monthlyPayment === 0}
+                   className="bg-blue-500 hover:bg-blue-600 px-6 sm:px-12 py-2 sm:py-3 text-base sm:text-lg w-full sm:w-auto"
+                 >
+                   💰 CREAR PRÉSTAMO
+                 </Button>
+               </div>
             </form>
           </Form>
         </div>
@@ -1296,57 +1299,57 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
           {showAmortizationTable ? (
             <Card>
               <CardHeader className="bg-blue-500 text-white">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">Tabla de Amortización</CardTitle>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={copyAmortizationTable} className="text-white border-white hover:bg-blue-600">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                  <CardTitle className="text-base sm:text-lg">Tabla de Amortización</CardTitle>
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <Button variant="outline" size="sm" onClick={copyAmortizationTable} className="text-white border-white hover:bg-blue-600 flex-1 sm:flex-none">
                       <Copy className="h-4 w-4 mr-1" />
-                      Copiar
+                      <span className="hidden sm:inline">Copiar</span>
                     </Button>
-                    <Button variant="outline" size="sm" onClick={printAmortizationTable} className="text-white border-white hover:bg-blue-600">
+                    <Button variant="outline" size="sm" onClick={printAmortizationTable} className="text-white border-white hover:bg-blue-600 flex-1 sm:flex-none">
                       <Printer className="h-4 w-4 mr-1" />
-                      Imprimir
+                      <span className="hidden sm:inline">Imprimir</span>
                     </Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                <div className="max-h-96 overflow-y-auto">
-                  <table className="w-full text-sm">
+                <div className="max-h-96 overflow-x-auto overflow-y-auto">
+                  <table className="w-full text-xs sm:text-sm min-w-[600px]">
                     <thead className="bg-gray-100 sticky top-0">
                       <tr>
-                        <th className="p-2 text-left border">CUOTA</th>
-                        <th className="p-2 text-left border">FECHA</th>
-                        <th className="p-2 text-right border">INTERÉS</th>
-                        <th className="p-2 text-right border">CAPITAL</th>
-                        <th className="p-2 text-right border">A PAGAR</th>
-                        <th className="p-2 text-right border">CAPITAL RESTANTE</th>
+                        <th className="p-1 sm:p-2 text-left border">CUOTA</th>
+                        <th className="p-1 sm:p-2 text-left border">FECHA</th>
+                        <th className="p-1 sm:p-2 text-right border">INTERÉS</th>
+                        <th className="p-1 sm:p-2 text-right border">CAPITAL</th>
+                        <th className="p-1 sm:p-2 text-right border">A PAGAR</th>
+                        <th className="p-1 sm:p-2 text-right border">CAPITAL RESTANTE</th>
                       </tr>
                     </thead>
                     <tbody>
                       {amortizationSchedule.map((row, index) => (
                         <tr key={index} className="hover:bg-gray-50">
-                          <td className="p-2 border">{row.payment}/{amortizationSchedule.length}</td>
-                          <td className="p-2 border">{row.date}</td>
-                          <td className="p-2 text-right border">RD${row.interest.toFixed(2)}</td>
-                          <td className="p-2 text-right border">RD${row.principal.toFixed(2)}</td>
-                          <td className="p-2 text-right border font-semibold">RD${row.totalPayment.toFixed(2)}</td>
-                          <td className="p-2 text-right border">RD${row.remainingBalance.toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 border">{row.payment}/{amortizationSchedule.length}</td>
+                          <td className="p-1 sm:p-2 border">{row.date}</td>
+                          <td className="p-1 sm:p-2 text-right border">RD${row.interest.toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 text-right border">RD${row.principal.toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 text-right border font-semibold">RD${row.totalPayment.toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 text-right border">RD${row.remainingBalance.toFixed(2)}</td>
                         </tr>
                       ))}
                       <tr className="bg-blue-50 font-bold">
-                        <td className="p-2 border" colSpan={2}>TOTALES</td>
-                        <td className="p-2 text-right border">RD${calculatedValues.totalInterest.toFixed(2)}</td>
-                        <td className="p-2 text-right border">RD${form.getValues('amount').toFixed(2)}</td>
-                        <td className="p-2 text-right border">RD${calculatedValues.totalAmount.toFixed(2)}</td>
-                        <td className="p-2 text-right border">RD$0.00</td>
+                        <td className="p-1 sm:p-2 border" colSpan={2}>TOTALES</td>
+                        <td className="p-1 sm:p-2 text-right border">RD${calculatedValues.totalInterest.toFixed(2)}</td>
+                        <td className="p-1 sm:p-2 text-right border">RD${form.getValues('amount').toFixed(2)}</td>
+                        <td className="p-1 sm:p-2 text-right border">RD${calculatedValues.totalAmount.toFixed(2)}</td>
+                        <td className="p-1 sm:p-2 text-right border">RD$0.00</td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
                 
-                <div className="p-4 bg-gray-50 border-t">
-                  <p className="text-sm text-gray-600">
+                <div className="p-2 sm:p-4 bg-gray-50 border-t">
+                  <p className="text-xs sm:text-sm text-gray-600">
                     Mostrando registros del 1 al {amortizationSchedule.length} de un total de {amortizationSchedule.length} registros
                   </p>
                 </div>
@@ -1357,13 +1360,13 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Calculator className="h-5 w-5" />
-                  Calculadora de Préstamo
+                  <span className="text-base sm:text-lg">Calculadora de Préstamo</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="text-center py-8 text-gray-500">
-                  <Calculator className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Haga clic en "CALCULAR PRÉSTAMO" para ver la tabla de amortización</p>
+                <div className="text-center py-4 sm:py-8 text-gray-500">
+                  <Calculator className="h-8 w-8 sm:h-12 sm:w-12 mx-auto mb-4 opacity-50" />
+                  <p className="text-sm sm:text-base">Haga clic en "CALCULAR PRÉSTAMO" para ver la tabla de amortización</p>
                 </div>
               </CardContent>
             </Card>
