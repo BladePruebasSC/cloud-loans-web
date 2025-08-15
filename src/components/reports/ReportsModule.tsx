@@ -276,35 +276,38 @@ export const ReportsModule = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-4 items-end">
-            <div>
-              <Label htmlFor="startDate">Fecha Inicio</Label>
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-end">
+            <div className="flex-1">
+              <Label htmlFor="startDate" className="text-sm">Fecha Inicio</Label>
               <Input
                 id="startDate"
                 type="date"
                 value={dateRange.startDate}
                 onChange={(e) => setDateRange(prev => ({ ...prev, startDate: e.target.value }))}
+                className="text-sm"
               />
             </div>
-            <div>
-              <Label htmlFor="endDate">Fecha Fin</Label>
+            <div className="flex-1">
+              <Label htmlFor="endDate" className="text-sm">Fecha Fin</Label>
               <Input
                 id="endDate"
                 type="date"
                 value={dateRange.endDate}
                 onChange={(e) => setDateRange(prev => ({ ...prev, endDate: e.target.value }))}
+                className="text-sm"
               />
             </div>
-            <Button onClick={fetchReportData}>
-              <Search className="h-4 w-4 mr-2" />
-              Actualizar
+            <Button onClick={fetchReportData} className="w-full sm:w-auto text-sm">
+              <Search className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+              <span className="sm:hidden">Actualizar</span>
+              <span className="hidden sm:inline">Actualizar</span>
             </Button>
           </div>
         </CardContent>
       </Card>
 
       {/* Resumen Ejecutivo */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+                <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Préstamos Totales</CardTitle>
@@ -423,11 +426,23 @@ export const ReportsModule = () => {
                                loan.status === 'paid' ? 'Pagado' : loan.status}
                             </Badge>
                           </div>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                            <div>Monto: ${loan.amount.toLocaleString()}</div>
-                            <div>Balance: ${loan.remaining_balance.toLocaleString()}</div>
-                            <div>Cuota: ${loan.monthly_payment.toLocaleString()}</div>
-                            <div>Tasa: {loan.interest_rate}%</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Monto:</span> 
+                              <span className="text-xs sm:text-sm">${loan.amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Balance:</span> 
+                              <span className="text-xs sm:text-sm">${loan.remaining_balance.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Cuota:</span> 
+                              <span className="text-xs sm:text-sm">${loan.monthly_payment.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Tasa:</span> 
+                              <span className="text-xs sm:text-sm">{loan.interest_rate}%</span>
+                            </div>
                           </div>
                         </div>
                         <Button variant="outline" size="sm">
@@ -449,16 +464,17 @@ export const ReportsModule = () => {
               <CardTitle>Filtros de Búsqueda</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-4">
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                 <div className="flex-1">
                   <Input
                     placeholder="Buscar por cliente, monto o fecha..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
+                    className="text-sm"
                   />
                 </div>
                 <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-                  <SelectTrigger className="w-48">
+                  <SelectTrigger className="w-full sm:w-48 text-sm">
                     <SelectValue placeholder="Filtrar por tipo" />
                   </SelectTrigger>
                   <SelectContent>
@@ -502,11 +518,23 @@ export const ReportsModule = () => {
                               <Badge variant="destructive">Con Mora</Badge>
                             )}
                           </div>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                            <div>Monto: ${payment.amount.toLocaleString()}</div>
-                            <div>Principal: ${payment.principal_amount.toLocaleString()}</div>
-                            <div>Interés: ${payment.interest_amount.toLocaleString()}</div>
-                            <div>Fecha: {new Date(payment.payment_date).toLocaleDateString()}</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Monto:</span> 
+                              <span className="text-xs sm:text-sm">${payment.amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Principal:</span> 
+                              <span className="text-xs sm:text-sm">${payment.principal_amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Interés:</span> 
+                              <span className="text-xs sm:text-sm">${payment.interest_amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Fecha:</span> 
+                              <span className="text-xs sm:text-sm">{new Date(payment.payment_date).toLocaleDateString()}</span>
+                            </div>
                           </div>
                           {payment.late_fee > 0 && (
                             <div className="text-sm text-red-600">
@@ -514,22 +542,26 @@ export const ReportsModule = () => {
                             </div>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 ml-4">
+                        <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0 sm:ml-4">
                           <Button 
                             variant="outline" 
                             size="sm"
                             onClick={() => showInvoiceDetails(payment)}
+                            className="w-full sm:w-auto text-xs"
                           >
-                            <Eye className="h-4 w-4 mr-1" />
-                            Detalle
+                            <Eye className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-1" />
+                            <span className="sm:hidden">Detalle</span>
+                            <span className="hidden sm:inline">Detalle</span>
                           </Button>
                           <Button 
                             variant="outline" 
                             size="sm"
                             onClick={() => printInvoice(payment)}
+                            className="w-full sm:w-auto text-xs"
                           >
-                            <Printer className="h-4 w-4 mr-1" />
-                            Imprimir
+                            <Printer className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-1" />
+                            <span className="sm:hidden">Imprimir</span>
+                            <span className="hidden sm:inline">Imprimir</span>
                           </Button>
                         </div>
                       </div>
@@ -554,6 +586,7 @@ export const ReportsModule = () => {
                     placeholder="Buscar por nombre, cédula o teléfono..."
                     value={clientSearchTerm}
                     onChange={(e) => setClientSearchTerm(e.target.value)}
+                    className="text-sm"
                   />
                 </div>
               </div>
@@ -572,7 +605,7 @@ export const ReportsModule = () => {
             </CardHeader>
             <CardContent>
               {/* Estadísticas de Clientes */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 mb-6">
                 <div className="text-center p-4 bg-blue-50 rounded-lg">
                   <div className="text-2xl font-bold text-blue-600">{filteredClients.length}</div>
                   <div className="text-sm text-gray-600">Total Clientes</div>
@@ -602,15 +635,28 @@ export const ReportsModule = () => {
                             {client.status === 'active' ? 'Activo' : 'Inactivo'}
                           </Badge>
                         </div>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                          <div>Cédula: {client.dni}</div>
-                          <div>Teléfono: {client.phone}</div>
-                          <div>Ciudad: {client.city || 'N/A'}</div>
-                          <div>Ingresos: ${(client.monthly_income || 0).toLocaleString()}</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
+                          <div className="flex flex-col sm:flex-row sm:items-center">
+                            <span className="font-medium text-xs sm:text-sm">Cédula:</span> 
+                            <span className="text-xs sm:text-sm">{client.dni}</span>
+                          </div>
+                          <div className="flex flex-col sm:flex-row sm:items-center">
+                            <span className="font-medium text-xs sm:text-sm">Teléfono:</span> 
+                            <span className="text-xs sm:text-sm">{client.phone}</span>
+                          </div>
+                          <div className="flex flex-col sm:flex-row sm:items-center">
+                            <span className="font-medium text-xs sm:text-sm">Ciudad:</span> 
+                            <span className="text-xs sm:text-sm">{client.city || 'N/A'}</span>
+                          </div>
+                          <div className="flex flex-col sm:flex-row sm:items-center">
+                            <span className="font-medium text-xs sm:text-sm">Ingresos:</span> 
+                            <span className="text-xs sm:text-sm">${(client.monthly_income || 0).toLocaleString()}</span>
+                          </div>
                         </div>
                       </div>
-                      <Button variant="outline" size="sm">
-                        <Eye className="h-4 w-4" />
+                      <Button variant="outline" size="sm" className="w-full sm:w-auto text-xs">
+                        <Eye className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                        <span className="sm:hidden">Ver</span>
                       </Button>
                     </div>
                   </div>

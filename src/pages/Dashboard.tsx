@@ -160,9 +160,9 @@ const Dashboard = () => {
   ];
 
   return (
-    <div className="pt-8 pb-4 px-4 sm:pt-12 sm:pb-6 sm:px-6 space-y-4 sm:space-y-6">
+    <div className="pt-4 pb-4 px-4 sm:pt-8 sm:pb-6 sm:px-6 space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 leading-tight pt-2">Bienvenido a PrestamosFácil</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 leading-tight">Bienvenido a PrestamosFácil</h1>
         <Button onClick={() => navigate('/mi-empresa')} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-2" />
           Configurar Empresa

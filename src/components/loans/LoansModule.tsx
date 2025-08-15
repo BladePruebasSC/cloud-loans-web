@@ -88,17 +88,17 @@ export const LoansModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 sm:gap-2">
-          <TabsTrigger value="mis-prestamos" className="text-xs sm:text-sm">Mis Préstamos</TabsTrigger>
-          <TabsTrigger value="nuevo-prestamo" className="text-xs sm:text-sm">Nuevo Préstamo</TabsTrigger>
-          <TabsTrigger value="buscar" className="text-xs sm:text-sm">Buscar</TabsTrigger>
-          <TabsTrigger value="pendientes" className="text-xs sm:text-sm">Pendientes</TabsTrigger>
-          <TabsTrigger value="agenda" className="text-xs sm:text-sm">Agenda</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 sm:gap-2 overflow-x-auto">
+          <TabsTrigger value="mis-prestamos" className="text-xs sm:text-sm whitespace-nowrap">Mis Préstamos</TabsTrigger>
+          <TabsTrigger value="nuevo-prestamo" className="text-xs sm:text-sm whitespace-nowrap">Nuevo Préstamo</TabsTrigger>
+          <TabsTrigger value="buscar" className="text-xs sm:text-sm whitespace-nowrap">Buscar</TabsTrigger>
+          <TabsTrigger value="pendientes" className="text-xs sm:text-sm whitespace-nowrap">Pendientes</TabsTrigger>
+          <TabsTrigger value="agenda" className="text-xs sm:text-sm whitespace-nowrap">Agenda</TabsTrigger>
         </TabsList>
 
         <TabsContent value="mis-prestamos" className="space-y-6">
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Total Préstamos</CardTitle>
@@ -150,15 +150,28 @@ export const LoansModule = () => {
               <CardTitle>Filtros de Búsqueda</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-4">
-                <Button variant="outline">
-                  <Filter className="h-4 w-4 mr-2" />
-                  Todos los Estados
+              <div className="flex flex-wrap gap-2 sm:gap-4">
+                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+                  <Filter className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                  <span className="hidden sm:inline">Todos los Estados</span>
+                  <span className="sm:hidden">Estados</span>
                 </Button>
-                <Button variant="outline">Por Cliente</Button>
-                <Button variant="outline">Por Fecha</Button>
-                <Button variant="outline">Por Monto</Button>
-                <Button variant="outline">Por Mora</Button>
+                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+                  <span className="hidden sm:inline">Por Cliente</span>
+                  <span className="sm:hidden">Cliente</span>
+                </Button>
+                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+                  <span className="hidden sm:inline">Por Fecha</span>
+                  <span className="sm:hidden">Fecha</span>
+                </Button>
+                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+                  <span className="hidden sm:inline">Por Monto</span>
+                  <span className="sm:hidden">Monto</span>
+                </Button>
+                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
+                  <span className="hidden sm:inline">Por Mora</span>
+                  <span className="sm:hidden">Mora</span>
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -203,42 +216,52 @@ export const LoansModule = () => {
                             </span>
                           </div>
                           
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                            <div>
-                              <span className="font-medium">Monto:</span> ${loan.amount.toLocaleString()}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Monto:</span> 
+                              <span className="text-xs sm:text-sm">${loan.amount.toLocaleString()}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Balance:</span> ${loan.remaining_balance.toLocaleString()}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Balance:</span> 
+                              <span className="text-xs sm:text-sm">${loan.remaining_balance.toLocaleString()}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Cuota:</span> ${loan.monthly_payment.toLocaleString()}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Cuota:</span> 
+                              <span className="text-xs sm:text-sm">${loan.monthly_payment.toLocaleString()}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Próximo Pago:</span> {new Date(loan.next_payment_date).toLocaleDateString()}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Próximo Pago:</span> 
+                              <span className="text-xs sm:text-sm">{new Date(loan.next_payment_date).toLocaleDateString()}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Plazo:</span> {loan.term_months} meses
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Plazo:</span> 
+                              <span className="text-xs sm:text-sm">{loan.term_months} meses</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Tasa:</span> {loan.interest_rate}%
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Tasa:</span> 
+                              <span className="text-xs sm:text-sm">{loan.interest_rate}%</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Tipo:</span> {loan.loan_type}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Tipo:</span> 
+                              <span className="text-xs sm:text-sm">{loan.loan_type}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Inicio:</span> {new Date(loan.start_date).toLocaleDateString()}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Inicio:</span> 
+                              <span className="text-xs sm:text-sm">{new Date(loan.start_date).toLocaleDateString()}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => setShowPaymentForm(true)}
                             disabled={loan.status === 'paid'}
+                            className="w-full sm:w-auto text-xs"
                           >
-                            <Receipt className="h-4 w-4" />
+                            <Receipt className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                            <span className="sm:hidden">Pagar</span>
                           </Button>
                           <Button
                             variant="outline"
@@ -248,8 +271,10 @@ export const LoansModule = () => {
                               setShowUpdateForm(true);
                             }}
                             disabled={loan.status === 'paid'}
+                            className="w-full sm:w-auto text-xs"
                           >
-                            <Edit className="h-4 w-4" />
+                            <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                            <span className="sm:hidden">Editar</span>
                           </Button>
                           <Button
                             variant="outline"
@@ -258,8 +283,10 @@ export const LoansModule = () => {
                               setSelectedLoan(loan);
                               setShowHistoryView(true);
                             }}
+                            className="w-full sm:w-auto text-xs"
                           >
-                            <History className="h-4 w-4" />
+                            <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                            <span className="sm:hidden">Historial</span>
                           </Button>
                         </div>
                       </div>

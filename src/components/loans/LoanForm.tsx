@@ -175,25 +175,33 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     }
     
     // Calcular períodos totales según la frecuencia
+    // El plazo ya está en la unidad correcta según la frecuencia seleccionada
     let totalPeriods = term_months;
-    let periodRate = interest_rate / 100;
+    let periodRate = interest_rate / 100; // Siempre tasa mensual
     
     switch (payment_frequency) {
       case 'daily':
-        totalPeriods = term_months * 30; // Convertir meses a días
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria efectiva
+        // Si el plazo es 12, son 12 días
+        totalPeriods = term_months;
+        // Para interés compuesto, convertir tasa mensual a diaria
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria basada en mensual
         break;
       case 'weekly':
-        totalPeriods = term_months * 4; // Convertir meses a semanas
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal efectiva
+        // Si el plazo es 12, son 12 semanas
+        totalPeriods = term_months;
+        // Para interés compuesto, convertir tasa mensual a semanal
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal basada en mensual
         break;
       case 'biweekly':
-        totalPeriods = term_months * 2; // Convertir meses a quincenas
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal efectiva
+        // Si el plazo es 12, son 12 quincenas
+        totalPeriods = term_months;
+        // Para interés compuesto, convertir tasa mensual a quincenal
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal basada en mensual
         break;
       case 'monthly':
       default:
-        totalPeriods = term_months; // Ya está en meses
+        // Si el plazo es 12, son 12 meses
+        totalPeriods = term_months;
         periodRate = interest_rate / 100; // Tasa mensual directa
         break;
     }
@@ -201,8 +209,30 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     let minimumPayment = 0;
 
     if (amortization_type === 'simple') {
-      // Interés simple - calcular basado en la frecuencia
-      const totalInterest = amount * (interest_rate / 100) * term_months;
+      // Interés simple - el interés es mensual, no convertir a años
+      // Si el plazo es 12 y la frecuencia es mensual, son 12 meses
+      // Si el plazo es 12 y la frecuencia es diaria, son 12 días (convertir a meses: 12/30)
+      // Si el plazo es 12 y la frecuencia es semanal, son 12 semanas (convertir a meses: 12/4)
+      // Si el plazo es 12 y la frecuencia es quincenal, son 12 quincenas (convertir a meses: 12/2)
+      
+      let monthsEquivalent = term_months;
+      switch (payment_frequency) {
+        case 'daily':
+          monthsEquivalent = term_months / 30; // Convertir días a meses
+          break;
+        case 'weekly':
+          monthsEquivalent = term_months / 4; // Convertir semanas a meses
+          break;
+        case 'biweekly':
+          monthsEquivalent = term_months / 2; // Convertir quincenas a meses
+          break;
+        case 'monthly':
+        default:
+          monthsEquivalent = term_months; // Ya está en meses
+          break;
+      }
+      
+      const totalInterest = amount * (interest_rate / 100) * monthsEquivalent;
       const totalAmount = amount + totalInterest;
       minimumPayment = totalAmount / totalPeriods;
     } else {
@@ -249,25 +279,33 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     }
 
     // Calcular períodos totales según la frecuencia
+    // El plazo ya está en la unidad correcta según la frecuencia seleccionada
     let totalPeriods = term_months;
-    let periodRate = interest_rate / 100;
+    let periodRate = interest_rate / 100; // Siempre tasa mensual
     
     switch (payment_frequency) {
       case 'daily':
-        totalPeriods = term_months * 30; // Convertir meses a días
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria efectiva
+        // Si el plazo es 12, son 12 días
+        totalPeriods = term_months;
+        // Para interés compuesto, convertir tasa mensual a diaria
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria basada en mensual
         break;
       case 'weekly':
-        totalPeriods = term_months * 4; // Convertir meses a semanas
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal efectiva
+        // Si el plazo es 12, son 12 semanas
+        totalPeriods = term_months;
+        // Para interés compuesto, convertir tasa mensual a semanal
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal basada en mensual
         break;
       case 'biweekly':
-        totalPeriods = term_months * 2; // Convertir meses a quincenas
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal efectiva
+        // Si el plazo es 12, son 12 quincenas
+        totalPeriods = term_months;
+        // Para interés compuesto, convertir tasa mensual a quincenal
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal basada en mensual
         break;
       case 'monthly':
       default:
-        totalPeriods = term_months; // Ya está en meses
+        // Si el plazo es 12, son 12 meses
+        totalPeriods = term_months;
         periodRate = interest_rate / 100; // Tasa mensual directa
         break;
     }
@@ -277,8 +315,30 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     let schedule: AmortizationRow[] = [];
 
     if (amortization_type === 'simple') {
-      // Interés simple - usar tasa mensual directamente
-      const totalInterest = amount * (interest_rate / 100) * term_months;
+      // Interés simple - el interés es mensual, no convertir a años
+      // Si el plazo es 12 y la frecuencia es mensual, son 12 meses
+      // Si el plazo es 12 y la frecuencia es diaria, son 12 días (convertir a meses: 12/30)
+      // Si el plazo es 12 y la frecuencia es semanal, son 12 semanas (convertir a meses: 12/4)
+      // Si el plazo es 12 y la frecuencia es quincenal, son 12 quincenas (convertir a meses: 12/2)
+      
+      let monthsEquivalent = term_months;
+      switch (payment_frequency) {
+        case 'daily':
+          monthsEquivalent = term_months / 30; // Convertir días a meses
+          break;
+        case 'weekly':
+          monthsEquivalent = term_months / 4; // Convertir semanas a meses
+          break;
+        case 'biweekly':
+          monthsEquivalent = term_months / 2; // Convertir quincenas a meses
+          break;
+        case 'monthly':
+        default:
+          monthsEquivalent = term_months; // Ya está en meses
+          break;
+      }
+      
+      const totalInterest = amount * (interest_rate / 100) * monthsEquivalent;
       totalAmount = amount + totalInterest;
       monthlyPayment = fixed_payment_enabled && fixed_payment_amount ? fixed_payment_amount : totalAmount / totalPeriods;
       

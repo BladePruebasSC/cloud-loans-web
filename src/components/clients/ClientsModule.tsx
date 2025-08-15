@@ -251,47 +251,47 @@ export const ClientsModule = () => {
                             </Badge>
                           </div>
                           
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 text-sm text-gray-600">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">Cédula:</span>
-                              <span>{client.dni}</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                              <span className="font-medium text-xs sm:text-sm">Cédula:</span>
+                              <span className="text-xs sm:text-sm">{client.dni}</span>
                             </div>
                             
-                            <div className="flex items-center gap-2">
-                              <Phone className="h-4 w-4" />
-                              <span>{client.phone}</span>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                              <Phone className="h-3 w-3 sm:h-4 sm:w-4" />
+                              <span className="text-xs sm:text-sm">{client.phone}</span>
                             </div>
                             
                             {client.email && (
-                              <div className="flex items-center gap-2">
-                                <Mail className="h-4 w-4" />
-                                <span>{client.email}</span>
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                                <Mail className="h-3 w-3 sm:h-4 sm:w-4" />
+                                <span className="text-xs sm:text-sm">{client.email}</span>
                               </div>
                             )}
                             
                             {client.city && (
-                              <div className="flex items-center gap-2">
-                                <MapPin className="h-4 w-4" />
-                                <span>{client.city}</span>
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                                <MapPin className="h-3 w-3 sm:h-4 sm:w-4" />
+                                <span className="text-xs sm:text-sm">{client.city}</span>
                               </div>
                             )}
                             
-                            <div className="flex items-center gap-2">
-                              <Calendar className="h-4 w-4" />
-                              <span>Desde: {new Date(client.created_at).toLocaleDateString()}</span>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                              <Calendar className="h-3 w-3 sm:h-4 sm:w-4" />
+                              <span className="text-xs sm:text-sm">Desde: {new Date(client.created_at).toLocaleDateString()}</span>
                             </div>
                             
                             {client.monthly_income && (
-                              <div className="flex items-center gap-2">
-                                <DollarSign className="h-4 w-4" />
-                                <span>${client.monthly_income.toLocaleString()}</span>
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                                <DollarSign className="h-3 w-3 sm:h-4 sm:w-4" />
+                                <span className="text-xs sm:text-sm">${client.monthly_income.toLocaleString()}</span>
                               </div>
                             )}
 
                             {client.credit_score && (
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium">Score:</span>
-                                <span className={client.credit_score >= 700 ? 'text-green-600' : client.credit_score >= 600 ? 'text-yellow-600' : 'text-red-600'}>
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                                <span className="font-medium text-xs sm:text-sm">Score:</span>
+                                <span className={`text-xs sm:text-sm ${client.credit_score >= 700 ? 'text-green-600' : client.credit_score >= 600 ? 'text-yellow-600' : 'text-red-600'}`}>
                                   {client.credit_score}
                                 </span>
                               </div>
@@ -299,26 +299,34 @@ export const ClientsModule = () => {
                           </div>
                         </div>
 
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-4 sm:mt-0">
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => toggleClientStatus(client.id, client.status)}
-                            className="flex-1 sm:flex-none"
+                            className="flex-1 sm:flex-none text-xs"
                           >
                             {client.status === 'active' ? (
-                              <UserX className="h-4 w-4" />
+                              <>
+                                <UserX className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Desactivar</span>
+                              </>
                             ) : (
-                              <UserCheck className="h-4 w-4" />
+                              <>
+                                <UserCheck className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Activar</span>
+                              </>
                             )}
                           </Button>
                           
-                          <Button variant="outline" size="sm" onClick={() => setSelectedClient(client)} className="flex-1 sm:flex-none">
-                            <Eye className="h-4 w-4" />
+                          <Button variant="outline" size="sm" onClick={() => setSelectedClient(client)} className="flex-1 sm:flex-none text-xs">
+                            <Eye className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                            <span className="sm:hidden">Ver</span>
                           </Button>
                           
-                          <Button variant="outline" size="sm" onClick={() => navigate(`/clientes/editar/${client.id}`)} className="flex-1 sm:flex-none">
-                            <Edit className="h-4 w-4" />
+                          <Button variant="outline" size="sm" onClick={() => navigate(`/clientes/editar/${client.id}`)} className="flex-1 sm:flex-none text-xs">
+                            <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                            <span className="sm:hidden">Editar</span>
                           </Button>
                         </div>
                       </div>

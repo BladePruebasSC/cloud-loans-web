@@ -372,7 +372,7 @@ export const PaymentAgreementsModule = () => {
 
         <TabsContent value="acuerdos" className="space-y-6">
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Total Acuerdos</CardTitle>
@@ -424,7 +424,7 @@ export const PaymentAgreementsModule = () => {
               <CardTitle>Filtros de Búsqueda</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-4">
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
                 <div className="flex-1">
                   <div className="relative">
                     <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
@@ -432,12 +432,12 @@ export const PaymentAgreementsModule = () => {
                       placeholder="Buscar por cliente o cédula..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10"
+                      className="pl-10 text-sm"
                     />
                   </div>
                 </div>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-48">
+                  <SelectTrigger className="w-full sm:w-48 text-sm">
                     <SelectValue placeholder="Todos los estados" />
                   </SelectTrigger>
                   <SelectContent>
@@ -479,32 +479,38 @@ export const PaymentAgreementsModule = () => {
                             {getStatusBadge(agreement.status)}
                           </div>
                           
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600 mb-3">
-                            <div>
-                              <span className="font-medium">Cédula:</span> {agreement.client_dni}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600 mb-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Cédula:</span> 
+                              <span className="text-xs sm:text-sm">{agreement.client_dni}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Teléfono:</span> {agreement.client_phone}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Teléfono:</span> 
+                              <span className="text-xs sm:text-sm">{agreement.client_phone}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Monto Préstamo:</span> ${agreement.loan_amount.toLocaleString()}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Monto Préstamo:</span> 
+                              <span className="text-xs sm:text-sm">${agreement.loan_amount.toLocaleString()}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Cuota Original:</span> ${agreement.original_payment.toLocaleString()}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Cuota Original:</span> 
+                              <span className="text-xs sm:text-sm">${agreement.original_payment.toLocaleString()}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Cuota Acordada:</span> 
-                              <span className="text-green-600 font-semibold"> ${agreement.agreed_payment_amount.toLocaleString()}</span>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Cuota Acordada:</span> 
+                              <span className="text-xs sm:text-sm text-green-600 font-semibold"> ${agreement.agreed_payment_amount.toLocaleString()}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Ahorro:</span> 
-                              <span className="text-purple-600 font-semibold"> ${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString()}</span>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Ahorro:</span> 
+                              <span className="text-xs sm:text-sm text-purple-600 font-semibold"> ${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString()}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Frecuencia:</span> {getFrequencyLabel(agreement.payment_frequency)}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Frecuencia:</span> 
+                              <span className="text-xs sm:text-sm">{getFrequencyLabel(agreement.payment_frequency)}</span>
                             </div>
-                            <div>
-                              <span className="font-medium">Vigencia:</span> {new Date(agreement.start_date).toLocaleDateString()} - {new Date(agreement.end_date).toLocaleDateString()}
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Vigencia:</span> 
+                              <span className="text-xs sm:text-sm">{new Date(agreement.start_date).toLocaleDateString()} - {new Date(agreement.end_date).toLocaleDateString()}</span>
                             </div>
                           </div>
 
@@ -525,24 +531,26 @@ export const PaymentAgreementsModule = () => {
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
                           {agreement.status === 'pending' && (
                             <>
                               <Button 
                                 variant="outline" 
                                 size="sm"
-                                className="text-green-600 hover:bg-green-50"
+                                className="text-green-600 hover:bg-green-50 w-full sm:w-auto text-xs"
                                 onClick={() => updateStatus(agreement.id, 'approved')}
                               >
-                                <CheckCircle className="h-4 w-4" />
+                                <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Aprobar</span>
                               </Button>
                               <Button 
                                 variant="outline" 
                                 size="sm"
-                                className="text-red-600 hover:bg-red-50"
+                                className="text-red-600 hover:bg-red-50 w-full sm:w-auto text-xs"
                                 onClick={() => updateStatus(agreement.id, 'rejected')}
                               >
-                                <XCircle className="h-4 w-4" />
+                                <XCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Rechazar</span>
                               </Button>
                             </>
                           )}
@@ -551,10 +559,11 @@ export const PaymentAgreementsModule = () => {
                             <Button 
                               variant="outline" 
                               size="sm"
-                              className="text-blue-600 hover:bg-blue-50"
+                              className="text-blue-600 hover:bg-blue-50 w-full sm:w-auto text-xs"
                               onClick={() => updateStatus(agreement.id, 'active')}
                             >
-                              Activar
+                              <span className="sm:hidden">Activar</span>
+                              <span className="hidden sm:inline">Activar</span>
                             </Button>
                           )}
 
@@ -562,19 +571,22 @@ export const PaymentAgreementsModule = () => {
                             <Button 
                               variant="outline" 
                               size="sm"
-                              className="text-purple-600 hover:bg-purple-50"
+                              className="text-purple-600 hover:bg-purple-50 w-full sm:w-auto text-xs"
                               onClick={() => updateStatus(agreement.id, 'completed')}
                             >
-                              Completar
+                              <span className="sm:hidden">Completar</span>
+                              <span className="hidden sm:inline">Completar</span>
                             </Button>
                           )}
                           
-                          <Button variant="outline" size="sm" onClick={() => handleEdit(agreement)}>
-                            <Edit className="h-4 w-4" />
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(agreement)} className="w-full sm:w-auto text-xs">
+                            <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                            <span className="sm:hidden">Editar</span>
                           </Button>
                           
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(agreement.id)}>
-                            <Trash2 className="h-4 w-4" />
+                          <Button variant="outline" size="sm" onClick={() => handleDelete(agreement.id)} className="w-full sm:w-auto text-xs">
+                            <Trash2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                            <span className="sm:hidden">Eliminar</span>
                           </Button>
                         </div>
                       </div>
@@ -607,20 +619,32 @@ export const PaymentAgreementsModule = () => {
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
                           <h3 className="font-semibold text-lg mb-2">{agreement.client_name}</h3>
-                          <div className="grid grid-cols-2 gap-4 text-sm text-gray-600 mb-2">
-                            <div>Cuota actual: ${agreement.original_payment.toLocaleString()}</div>
-                            <div>Cuota propuesta: ${agreement.agreed_payment_amount.toLocaleString()}</div>
-                            <div>Ahorro: ${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString()}</div>
-                            <div>Período: {new Date(agreement.start_date).toLocaleDateString()} - {new Date(agreement.end_date).toLocaleDateString()}</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4 text-sm text-gray-600 mb-2">
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Cuota actual:</span> 
+                              <span className="text-xs sm:text-sm">${agreement.original_payment.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Cuota propuesta:</span> 
+                              <span className="text-xs sm:text-sm">${agreement.agreed_payment_amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Ahorro:</span> 
+                              <span className="text-xs sm:text-sm">${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col sm:flex-row sm:items-center">
+                              <span className="font-medium text-xs sm:text-sm">Período:</span> 
+                              <span className="text-xs sm:text-sm">{new Date(agreement.start_date).toLocaleDateString()} - {new Date(agreement.end_date).toLocaleDateString()}</span>
+                            </div>
                           </div>
                           <div className="text-sm text-gray-600">
                             <span className="font-medium">Razón:</span> {agreement.reason}
                           </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-col sm:flex-row gap-1 sm:gap-2 mt-2 sm:mt-0">
                           <Button 
                             size="sm"
-                            className="bg-green-600 hover:bg-green-700"
+                            className="bg-green-600 hover:bg-green-700 w-full sm:w-auto text-xs"
                             onClick={() => updateStatus(agreement.id, 'approved')}
                           >
                             Aprobar
@@ -628,6 +652,7 @@ export const PaymentAgreementsModule = () => {
                           <Button 
                             variant="destructive"
                             size="sm"
+                            className="w-full sm:w-auto text-xs"
                             onClick={() => updateStatus(agreement.id, 'rejected')}
                           >
                             Rechazar
@@ -706,7 +731,7 @@ export const PaymentAgreementsModule = () => {
               <CardTitle>Configuración de Acuerdos</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                 <div>
                   <Label htmlFor="max_reduction">Reducción Máxima Permitida (%)</Label>
                   <Input 
@@ -714,6 +739,7 @@ export const PaymentAgreementsModule = () => {
                     type="number" 
                     defaultValue="50"
                     placeholder="Porcentaje máximo de reducción"
+                    className="text-sm"
                   />
                 </div>
                 <div>
@@ -723,6 +749,7 @@ export const PaymentAgreementsModule = () => {
                     type="number" 
                     defaultValue="12"
                     placeholder="Meses máximos para acuerdos"
+                    className="text-sm"
                   />
                 </div>
               </div>
@@ -738,21 +765,21 @@ export const PaymentAgreementsModule = () => {
                     'Emergencia familiar'
                   ].map((reason, index) => (
                     <div key={index} className="flex items-center justify-between p-2 border rounded">
-                      <span className="text-sm">{reason}</span>
-                      <Button size="sm" variant="outline">
+                      <span className="text-xs sm:text-sm">{reason}</span>
+                      <Button size="sm" variant="outline" className="text-xs">
                         <Edit className="h-3 w-3" />
                       </Button>
                     </div>
                   ))}
                 </div>
-                <Button variant="outline" size="sm" className="mt-2">
-                  <Plus className="h-3 w-3 mr-2" />
+                <Button variant="outline" size="sm" className="mt-2 text-xs">
+                  <Plus className="h-3 w-3 mr-1 sm:mr-2" />
                   Agregar Razón
                 </Button>
               </div>
 
               <div className="flex justify-end">
-                <Button>Guardar Configuración</Button>
+                <Button className="text-sm">Guardar Configuración</Button>
               </div>
             </CardContent>
           </Card>
@@ -769,9 +796,9 @@ export const PaymentAgreementsModule = () => {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <Label htmlFor="loan_id">Préstamo *</Label>
+              <Label htmlFor="loan_id" className="text-sm">Préstamo *</Label>
               <Select value={formData.loan_id} onValueChange={(value) => setFormData({...formData, loan_id: value})}>
-                <SelectTrigger>
+                <SelectTrigger className="text-sm">
                   <SelectValue placeholder="Seleccionar préstamo" />
                 </SelectTrigger>
                 <SelectContent>
@@ -784,9 +811,9 @@ export const PaymentAgreementsModule = () => {
               </Select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
-                <Label htmlFor="agreed_payment_amount">Nueva Cuota Acordada *</Label>
+                <Label htmlFor="agreed_payment_amount" className="text-sm">Nueva Cuota Acordada *</Label>
                 <Input
                   id="agreed_payment_amount"
                   type="number"
@@ -794,13 +821,14 @@ export const PaymentAgreementsModule = () => {
                   value={formData.agreed_payment_amount}
                   onChange={(e) => setFormData({...formData, agreed_payment_amount: Number(e.target.value)})}
                   required
+                  className="text-sm"
                 />
               </div>
 
               <div>
-                <Label htmlFor="payment_frequency">Frecuencia de Pago *</Label>
+                <Label htmlFor="payment_frequency" className="text-sm">Frecuencia de Pago *</Label>
                 <Select value={formData.payment_frequency} onValueChange={(value) => setFormData({...formData, payment_frequency: value})}>
-                  <SelectTrigger>
+                  <SelectTrigger className="text-sm">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -812,33 +840,35 @@ export const PaymentAgreementsModule = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
-                <Label htmlFor="start_date">Fecha de Inicio *</Label>
+                <Label htmlFor="start_date" className="text-sm">Fecha de Inicio *</Label>
                 <Input
                   id="start_date"
                   type="date"
                   value={formData.start_date}
                   onChange={(e) => setFormData({...formData, start_date: e.target.value})}
                   required
+                  className="text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="end_date">Fecha de Fin *</Label>
+                <Label htmlFor="end_date" className="text-sm">Fecha de Fin *</Label>
                 <Input
                   id="end_date"
                   type="date"
                   value={formData.end_date}
                   onChange={(e) => setFormData({...formData, end_date: e.target.value})}
                   required
+                  className="text-sm"
                 />
               </div>
             </div>
 
             <div>
-              <Label htmlFor="reason">Razón del Acuerdo *</Label>
+              <Label htmlFor="reason" className="text-sm">Razón del Acuerdo *</Label>
               <Select value={formData.reason} onValueChange={(value) => setFormData({...formData, reason: value})}>
-                <SelectTrigger>
+                <SelectTrigger className="text-sm">
                   <SelectValue placeholder="Seleccionar razón" />
                 </SelectTrigger>
                 <SelectContent>
@@ -853,20 +883,21 @@ export const PaymentAgreementsModule = () => {
             </div>
 
             <div>
-              <Label htmlFor="notes">Notas Adicionales</Label>
+              <Label htmlFor="notes" className="text-sm">Notas Adicionales</Label>
               <Textarea
                 id="notes"
                 value={formData.notes}
                 onChange={(e) => setFormData({...formData, notes: e.target.value})}
                 placeholder="Detalles adicionales sobre el acuerdo..."
+                className="text-sm"
               />
             </div>
 
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+            <div className="flex flex-col sm:flex-row justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)} className="w-full sm:w-auto text-sm">
                 Cancelar
               </Button>
-              <Button type="submit">
+              <Button type="submit" className="w-full sm:w-auto text-sm">
                 {editingAgreement ? 'Actualizar' : 'Crear'} Acuerdo
               </Button>
             </div>

@@ -105,21 +105,29 @@ All colors MUST be HSL.
     outline: none !important;
   }
   
-  /* Estilos específicos para el botón hamburguesa */
-  .hamburger-menu-button,
-  .hamburger-menu-button:focus,
-  .hamburger-menu-button:focus-visible,
-  .hamburger-menu-button:active,
-  .hamburger-menu-button:hover {
+  /* Eliminar cualquier outline o focus por defecto */
+  button:focus,
+  button:focus-visible {
     outline: none !important;
-    box-shadow: none !important;
+  }
+
+  /* Eliminar cualquier fondo azul del botón hamburguesa */
+  button[aria-label="Abrir menú"] {
+    background: transparent !important;
     background-color: transparent !important;
     border: none !important;
+    box-shadow: none !important;
   }
-  
-  /* Asegurar que no haya colores azules en ningún estado */
-  .hamburger-menu-button * {
-    color: rgb(55 65 81) !important; /* gray-700 */
+
+  button[aria-label="Abrir menú"]:focus,
+  button[aria-label="Abrir menú"]:focus-visible,
+  button[aria-label="Abrir menú"]:active,
+  button[aria-label="Abrir menú"]:hover {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
   }
 
   body {
