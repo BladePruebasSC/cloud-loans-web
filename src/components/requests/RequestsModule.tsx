@@ -208,17 +208,17 @@ const RequestsModule = () => {
   const rejectedRequests = requests.filter(r => r.status === 'rejected');
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Solicitudes de Préstamos</h1>
-        <Button onClick={() => setShowRequestForm(true)}>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Solicitudes de Préstamos</h1>
+        <Button onClick={() => setShowRequestForm(true)} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-2" />
           Nueva Solicitud
         </Button>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Solicitudes</CardTitle>
@@ -265,10 +265,10 @@ const RequestsModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="nueva-solicitud">Nueva Solicitud</TabsTrigger>
-          <TabsTrigger value="lista-solicitudes">Lista de Solicitudes</TabsTrigger>
-          <TabsTrigger value="configuracion">Configuración</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2">
+          <TabsTrigger value="nueva-solicitud" className="text-xs sm:text-sm">Nueva Solicitud</TabsTrigger>
+          <TabsTrigger value="lista-solicitudes" className="text-xs sm:text-sm">Lista de Solicitudes</TabsTrigger>
+          <TabsTrigger value="configuracion" className="text-xs sm:text-sm">Configuración</TabsTrigger>
         </TabsList>
 
         <TabsContent value="nueva-solicitud" className="space-y-6">
@@ -281,7 +281,7 @@ const RequestsModule = () => {
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="client_id">Cliente *</Label>
                     <Select value={formData.client_id} onValueChange={(value) => setFormData({...formData, client_id: value})}>

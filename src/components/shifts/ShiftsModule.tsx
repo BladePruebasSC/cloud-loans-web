@@ -234,20 +234,20 @@ const ShiftsModule = () => {
   const cancelledAppointments = todayAppointments.filter(apt => apt.status === 'cancelled');
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Gestión de Turnos</h1>
-        <Button onClick={() => setShowAppointmentForm(true)}>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Turnos</h1>
+        <Button onClick={() => setShowAppointmentForm(true)} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-2" />
           Nuevo Turno
         </Button>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="agenda">Agenda</TabsTrigger>
-          <TabsTrigger value="empleados">Empleados</TabsTrigger>
-          <TabsTrigger value="horarios">Horarios</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 gap-1 sm:gap-2">
+          <TabsTrigger value="agenda" className="text-xs sm:text-sm">Agenda</TabsTrigger>
+          <TabsTrigger value="empleados" className="text-xs sm:text-sm">Empleados</TabsTrigger>
+          <TabsTrigger value="horarios" className="text-xs sm:text-sm">Horarios</TabsTrigger>
           <TabsTrigger value="reportes">Reportes</TabsTrigger>
         </TabsList>
 

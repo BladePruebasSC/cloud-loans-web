@@ -193,17 +193,17 @@ const InventoryModule = () => {
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Gestión de Inventario</h1>
-        <Button onClick={() => setShowProductForm(true)}>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Inventario</h1>
+        <Button onClick={() => setShowProductForm(true)} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-2" />
           Agregar Producto
         </Button>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Productos</CardTitle>

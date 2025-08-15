@@ -139,15 +139,15 @@ const MapModule = () => {
   const activeRoutes = routes.filter(r => r.status === 'active');
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Mapa de Clientes</h1>
-        <div className="flex gap-2">
-          <Button variant="outline">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Mapa de Clientes</h1>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button variant="outline" className="w-full sm:w-auto">
             <Route className="h-4 w-4 mr-2" />
             Crear Ruta
           </Button>
-          <Button>
+          <Button className="w-full sm:w-auto">
             <Navigation className="h-4 w-4 mr-2" />
             Navegar
           </Button>
@@ -155,7 +155,7 @@ const MapModule = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Clientes con Dirección</CardTitle>
@@ -202,11 +202,11 @@ const MapModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="clientes">Clientes</TabsTrigger>
-          <TabsTrigger value="rutas">Rutas</TabsTrigger>
-          <TabsTrigger value="mapa">Mapa</TabsTrigger>
-          <TabsTrigger value="planificacion">Planificación</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 gap-1 sm:gap-2">
+          <TabsTrigger value="clientes" className="text-xs sm:text-sm">Clientes</TabsTrigger>
+          <TabsTrigger value="rutas" className="text-xs sm:text-sm">Rutas</TabsTrigger>
+          <TabsTrigger value="mapa" className="text-xs sm:text-sm">Mapa</TabsTrigger>
+          <TabsTrigger value="planificacion" className="text-xs sm:text-sm">Planificación</TabsTrigger>
         </TabsList>
 
         <TabsContent value="clientes" className="space-y-6">
@@ -216,7 +216,7 @@ const MapModule = () => {
               <CardTitle>Filtros de Búsqueda</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-4">
+              <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
                   <Input
                     placeholder="Buscar clientes por nombre, cédula o dirección..."
@@ -225,7 +225,7 @@ const MapModule = () => {
                   />
                 </div>
                 <Select value={selectedCity} onValueChange={setSelectedCity}>
-                  <SelectTrigger className="w-48">
+                  <SelectTrigger className="w-full sm:w-48">
                     <SelectValue placeholder="Todas las ciudades" />
                   </SelectTrigger>
                   <SelectContent>

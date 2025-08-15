@@ -20,18 +20,18 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
   };
 
   return (
-    <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-3 sm:py-4 shadow-sm">
+    <header className="bg-white border-b border-gray-200 px-4 sm:px-6 py-4 sm:py-5 shadow-sm">
       <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3 sm:space-x-4">
+        <div className="flex items-center space-x-4 sm:space-x-6">
           <button
             onClick={onToggleSidebar}
-            className="lg:hidden hamburger-menu-button p-2 rounded-md transition-colors duration-200"
+            className="lg:hidden hamburger-menu-button p-2 rounded-md transition-colors duration-200 flex-shrink-0"
           >
             <svg className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <h2 className="text-base sm:text-lg lg:text-xl font-semibold text-gray-800 leading-tight">
+          <h2 className="text-base sm:text-lg lg:text-xl font-semibold text-gray-800 leading-tight flex-shrink-0">
             {profile?.is_employee ? 'Panel de Empleado' : 'Panel de Control'}
           </h2>
         </div>

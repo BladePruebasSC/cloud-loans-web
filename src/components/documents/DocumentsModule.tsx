@@ -72,15 +72,15 @@ export const DocumentsModule = () => {
   ];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Gestión de Documentos</h1>
-        <div className="flex gap-2">
-          <Button variant="outline">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Documentos</h1>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button variant="outline" className="w-full sm:w-auto">
             <Download className="h-4 w-4 mr-2" />
             Descargar Todos
           </Button>
-          <Button onClick={handleUploadClick}>
+          <Button onClick={handleUploadClick} className="w-full sm:w-auto">
             <Upload className="h-4 w-4 mr-2" />
             Subir Documento
           </Button>
@@ -89,7 +89,7 @@ export const DocumentsModule = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Documentos</CardTitle>

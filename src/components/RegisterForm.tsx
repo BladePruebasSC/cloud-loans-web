@@ -55,12 +55,12 @@ const RegisterForm = ({ onRegister, onSwitchToLogin, error, loading }: RegisterF
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-50 to-primary-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
+        <div className="text-center mb-6 sm:mb-8">
           <div className="bg-primary-500 p-3 rounded-xl inline-block mb-4">
-            <DollarSign className="h-8 w-8 text-white" />
+            <DollarSign className="h-6 w-6 sm:h-8 sm:w-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">PrestamosFácil</h1>
-          <p className="text-gray-600 mt-2">Crea tu cuenta de préstamos</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">PrestamosFácil</h1>
+          <p className="text-sm sm:text-base text-gray-600 mt-2">Crea tu cuenta de préstamos</p>
         </div>
 
         <Card className="animate-fade-in">
@@ -80,7 +80,7 @@ const RegisterForm = ({ onRegister, onSwitchToLogin, error, loading }: RegisterF
                 </Alert>
               )}
               
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="name">Nombre Completo</Label>
                   <Input

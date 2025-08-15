@@ -342,16 +342,16 @@ export const EmployeesModule = () => {
   }, {} as Record<string, Array<{ key: string; label: string; description: string; category: string }>>);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Gestión de Empleados</h2>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h2 className="text-xl sm:text-2xl font-bold">Gestión de Empleados</h2>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button onClick={() => {
               setEditingEmployee(null);
               form.reset();
               setSelectedPermissions([]);
-            }}>
+            }} className="w-full sm:w-auto">
               <Plus className="h-4 w-4 mr-2" />
               Nuevo Empleado
             </Button>
@@ -365,13 +365,13 @@ export const EmployeesModule = () => {
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
                 <Tabs defaultValue="basic" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="basic">Información Básica</TabsTrigger>
-                    <TabsTrigger value="permissions">Permisos</TabsTrigger>
+                  <TabsList className="grid w-full grid-cols-2 gap-1 sm:gap-2">
+                    <TabsTrigger value="basic" className="text-xs sm:text-sm">Información Básica</TabsTrigger>
+                    <TabsTrigger value="permissions" className="text-xs sm:text-sm">Permisos</TabsTrigger>
                   </TabsList>
                   
                   <TabsContent value="basic" className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="full_name"

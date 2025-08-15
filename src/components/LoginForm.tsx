@@ -39,12 +39,12 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-50 to-primary-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
+        <div className="text-center mb-6 sm:mb-8">
           <div className="bg-primary-500 p-3 rounded-xl inline-block mb-4">
-            <DollarSign className="h-8 w-8 text-white" />
+            <DollarSign className="h-6 w-6 sm:h-8 sm:w-8 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">PrestamosFácil</h1>
-          <p className="text-gray-600 mt-2">Sistema de gestión de préstamos</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">PrestamosFácil</h1>
+          <p className="text-sm sm:text-base text-gray-600 mt-2">Sistema de gestión de préstamos</p>
         </div>
 
         <Card className="animate-fade-in">
@@ -57,14 +57,16 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
           
           <CardContent>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="owner" className="flex items-center gap-2">
-                  <Building className="h-4 w-4" />
-                  Dueño de Empresa
+              <TabsList className="grid w-full grid-cols-2 gap-1 sm:gap-2">
+                <TabsTrigger value="owner" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                  <Building className="h-3 w-3 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">Dueño de Empresa</span>
+                  <span className="sm:hidden">Dueño</span>
                 </TabsTrigger>
-                <TabsTrigger value="employee" className="flex items-center gap-2">
-                  <Users className="h-4 w-4" />
-                  Empleado
+                <TabsTrigger value="employee" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                  <Users className="h-3 w-3 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">Empleado</span>
+                  <span className="sm:hidden">Emp</span>
                 </TabsTrigger>
               </TabsList>
               
