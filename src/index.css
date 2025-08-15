@@ -98,6 +98,29 @@ All colors MUST be HSL.
   * {
     @apply border-border;
   }
+  
+  /* Eliminar outline azul por defecto del navegador */
+  button:focus,
+  button:focus-visible {
+    outline: none !important;
+  }
+  
+  /* Estilos específicos para el botón hamburguesa */
+  .hamburger-menu-button,
+  .hamburger-menu-button:focus,
+  .hamburger-menu-button:focus-visible,
+  .hamburger-menu-button:active,
+  .hamburger-menu-button:hover {
+    outline: none !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+    border: none !important;
+  }
+  
+  /* Asegurar que no haya colores azules en ningún estado */
+  .hamburger-menu-button * {
+    color: rgb(55 65 81) !important; /* gray-700 */
+  }
 
   body {
     @apply bg-background text-foreground;

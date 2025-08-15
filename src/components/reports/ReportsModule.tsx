@@ -252,15 +252,15 @@ export const ReportsModule = () => {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Reportes y Análisis</h1>
-        <div className="flex gap-2">
-          <Button variant="outline">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Reportes y Análisis</h1>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button variant="outline" className="w-full sm:w-auto">
             <Printer className="h-4 w-4 mr-2" />
             Imprimir
           </Button>
-          <Button variant="outline">
+          <Button variant="outline" className="w-full sm:w-auto">
             <Mail className="h-4 w-4 mr-2" />
             Enviar por Email
           </Button>
@@ -304,7 +304,7 @@ export const ReportsModule = () => {
       </Card>
 
       {/* Resumen Ejecutivo */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Préstamos Totales</CardTitle>
@@ -361,12 +361,12 @@ export const ReportsModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="prestamos">Préstamos</TabsTrigger>
-          <TabsTrigger value="pagos">Pagos</TabsTrigger>
-          <TabsTrigger value="clientes">Clientes</TabsTrigger>
-          <TabsTrigger value="financiero">Financiero</TabsTrigger>
-          <TabsTrigger value="operativo">Operativo</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 sm:gap-2">
+          <TabsTrigger value="prestamos" className="text-xs sm:text-sm">Préstamos</TabsTrigger>
+          <TabsTrigger value="pagos" className="text-xs sm:text-sm">Pagos</TabsTrigger>
+          <TabsTrigger value="clientes" className="text-xs sm:text-sm">Clientes</TabsTrigger>
+          <TabsTrigger value="financiero" className="text-xs sm:text-sm">Financiero</TabsTrigger>
+          <TabsTrigger value="operativo" className="text-xs sm:text-sm">Operativo</TabsTrigger>
         </TabsList>
 
         <TabsContent value="prestamos" className="space-y-6">
@@ -382,7 +382,7 @@ export const ReportsModule = () => {
             </CardHeader>
             <CardContent>
               {/* Estadísticas de Préstamos */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                 <div className="text-center p-4 bg-green-50 rounded-lg">
                   <div className="text-2xl font-bold text-green-600">{activeLoans}</div>
                   <div className="text-sm text-gray-600">Préstamos Activos</div>

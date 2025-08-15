@@ -140,7 +140,7 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       <div className={`
         fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-50 transition-all duration-300 shadow-lg
         ${isOpen ? 'w-64' : 'w-0 lg:w-16'}
-        lg:relative lg:z-auto
+        lg:relative lg:z-auto lg:shadow-none
       `}>
         {/* Toggle Button */}
         <button

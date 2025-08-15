@@ -1301,16 +1301,28 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
               <CardHeader className="bg-blue-500 text-white">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                   <CardTitle className="text-base sm:text-lg">Tabla de Amortización</CardTitle>
-                  <div className="flex gap-2 w-full sm:w-auto">
-                    <Button variant="outline" size="sm" onClick={copyAmortizationTable} className="text-white border-white hover:bg-blue-600 flex-1 sm:flex-none">
-                      <Copy className="h-4 w-4 mr-1" />
-                      <span className="hidden sm:inline">Copiar</span>
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={printAmortizationTable} className="text-white border-white hover:bg-blue-600 flex-1 sm:flex-none">
-                      <Printer className="h-4 w-4 mr-1" />
-                      <span className="hidden sm:inline">Imprimir</span>
-                    </Button>
-                  </div>
+                                     <div className="flex gap-2 w-full sm:w-auto">
+                     <Button 
+                       variant="outline" 
+                       size="sm" 
+                       onClick={copyAmortizationTable} 
+                       className="text-white border-white hover:bg-blue-600 active:bg-blue-700 flex-1 sm:flex-none bg-blue-500/30 shadow-sm transition-colors duration-200"
+                       title="Copiar tabla"
+                     >
+                       <Copy className="h-4 w-4 mr-1" />
+                       <span className="hidden sm:inline">Copiar</span>
+                     </Button>
+                     <Button 
+                       variant="outline" 
+                       size="sm" 
+                       onClick={printAmortizationTable} 
+                       className="text-white border-white hover:bg-blue-600 active:bg-blue-700 flex-1 sm:flex-none bg-blue-500/30 shadow-sm transition-colors duration-200"
+                       title="Imprimir tabla"
+                     >
+                       <Printer className="h-4 w-4 mr-1" />
+                       <span className="hidden sm:inline">Imprimir</span>
+                     </Button>
+                   </div>
                 </div>
               </CardHeader>
               <CardContent className="p-0">

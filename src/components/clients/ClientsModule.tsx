@@ -124,10 +124,10 @@ export const ClientsModule = () => {
     .reduce((sum, c) => sum + (c.monthly_income || 0), 0);
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Gestión de Clientes</h1>
-        <Button onClick={() => navigate('/clientes/nuevo')}>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Clientes</h1>
+        <Button onClick={() => navigate('/clientes/nuevo')} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-2" />
           Nuevo Cliente
         </Button>
@@ -251,7 +251,7 @@ export const ClientsModule = () => {
                             </Badge>
                           </div>
                           
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-gray-600">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 text-sm text-gray-600">
                             <div className="flex items-center gap-2">
                               <span className="font-medium">Cédula:</span>
                               <span>{client.dni}</span>
@@ -299,11 +299,12 @@ export const ClientsModule = () => {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-4 sm:mt-0">
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => toggleClientStatus(client.id, client.status)}
+                            className="flex-1 sm:flex-none"
                           >
                             {client.status === 'active' ? (
                               <UserX className="h-4 w-4" />
@@ -312,11 +313,11 @@ export const ClientsModule = () => {
                             )}
                           </Button>
                           
-                          <Button variant="outline" size="sm" onClick={() => setSelectedClient(client)}>
+                          <Button variant="outline" size="sm" onClick={() => setSelectedClient(client)} className="flex-1 sm:flex-none">
                             <Eye className="h-4 w-4" />
                           </Button>
                           
-                          <Button variant="outline" size="sm" onClick={() => navigate(`/clientes/editar/${client.id}`)}>
+                          <Button variant="outline" size="sm" onClick={() => navigate(`/clientes/editar/${client.id}`)} className="flex-1 sm:flex-none">
                             <Edit className="h-4 w-4" />
                           </Button>
                         </div>
@@ -352,7 +353,7 @@ export const ClientsModule = () => {
               <DialogTitle>Detalles del Cliente</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-gray-500">Nombre Completo</label>
                   <p className="text-lg font-semibold">{selectedClient.full_name}</p>

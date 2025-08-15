@@ -72,15 +72,15 @@ export const LoansModule = () => {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Gestión de Préstamos</h1>
-        <div className="flex gap-2">
-          <Button onClick={() => setShowPaymentForm(true)}>
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Préstamos</h1>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button onClick={() => setShowPaymentForm(true)} className="w-full sm:w-auto">
             <Receipt className="h-4 w-4 mr-2" />
             Registrar Pago
           </Button>
-          <Button onClick={() => setShowLoanForm(true)}>
+          <Button onClick={() => setShowLoanForm(true)} className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" />
             Nuevo Préstamo
           </Button>
@@ -88,12 +88,12 @@ export const LoansModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="mis-prestamos">Mis Préstamos</TabsTrigger>
-          <TabsTrigger value="nuevo-prestamo">Nuevo Préstamo</TabsTrigger>
-          <TabsTrigger value="buscar">Buscar</TabsTrigger>
-          <TabsTrigger value="pendientes">Pendientes</TabsTrigger>
-          <TabsTrigger value="agenda">Agenda</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 sm:gap-2">
+          <TabsTrigger value="mis-prestamos" className="text-xs sm:text-sm">Mis Préstamos</TabsTrigger>
+          <TabsTrigger value="nuevo-prestamo" className="text-xs sm:text-sm">Nuevo Préstamo</TabsTrigger>
+          <TabsTrigger value="buscar" className="text-xs sm:text-sm">Buscar</TabsTrigger>
+          <TabsTrigger value="pendientes" className="text-xs sm:text-sm">Pendientes</TabsTrigger>
+          <TabsTrigger value="agenda" className="text-xs sm:text-sm">Agenda</TabsTrigger>
         </TabsList>
 
         <TabsContent value="mis-prestamos" className="space-y-6">

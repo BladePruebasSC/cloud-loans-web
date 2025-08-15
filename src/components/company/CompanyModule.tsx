@@ -7,24 +7,24 @@ import { RoutesModule } from './RoutesModule';
 import { Building2, Users, Calendar, Route, Settings, UserCog } from 'lucide-react';
 export const CompanyModule = () => {
   const [activeTab, setActiveTab] = useState('general');
-  return <div className="p-6">
+  return <div className="p-4 sm:p-6">
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-6">
-          <TabsTrigger value="general" className="flex items-center gap-2">
-            <Building2 className="h-4 w-4" />
-            General
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-1 sm:gap-2">
+          <TabsTrigger value="general" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+            <Building2 className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span className="hidden sm:inline">General</span>
           </TabsTrigger>
-          <TabsTrigger value="empleados" className="flex items-center gap-2">
-            <UserCog className="h-4 w-4" />
-            Empleados
+          <TabsTrigger value="empleados" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+            <UserCog className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span className="hidden sm:inline">Empleados</span>
           </TabsTrigger>
-          <TabsTrigger value="feriados" className="flex items-center gap-2">
-            <Calendar className="h-4 w-4" />
-            Días Feriados
+          <TabsTrigger value="feriados" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+            <Calendar className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span className="hidden sm:inline">Feriados</span>
           </TabsTrigger>
-          <TabsTrigger value="rutas" className="flex items-center gap-2">
-            <Route className="h-4 w-4" />
-            Rutas
+          <TabsTrigger value="rutas" className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+            <Route className="h-3 w-3 sm:h-4 sm:w-4" />
+            <span className="hidden sm:inline">Rutas</span>
           </TabsTrigger>
           
         </TabsList>

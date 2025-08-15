@@ -160,17 +160,17 @@ const Dashboard = () => {
   ];
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Bienvenido a PrestamosFácil</h1>
-        <Button onClick={() => navigate('/mi-empresa')}>
+    <div className="pt-6 pb-4 px-4 sm:pt-8 sm:pb-6 sm:px-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 leading-tight">Bienvenido a PrestamosFácil</h1>
+        <Button onClick={() => navigate('/mi-empresa')} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-2" />
           Configurar Empresa
         </Button>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         {stats.map((stat, index) => (
           <Card key={index}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -192,7 +192,7 @@ const Dashboard = () => {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
         {quickActions.map((action, index) => (
           <Card key={index} className="cursor-pointer hover:shadow-lg transition-shadow">
             <CardHeader>
@@ -225,28 +225,28 @@ const Dashboard = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center space-x-4 p-4 bg-gray-50 rounded-lg">
-            <div className="bg-primary-600 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 p-4 bg-gray-50 rounded-lg">
+            <div className="bg-primary-600 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">
               1
             </div>
-            <div>
+            <div className="flex-1">
               <h3 className="font-medium">Configurar tu empresa</h3>
               <p className="text-sm text-gray-600">Añade información de tu empresa, logo y datos de contacto</p>
             </div>
-            <Button variant="outline" onClick={() => navigate('/mi-empresa')}>
+            <Button variant="outline" onClick={() => navigate('/mi-empresa')} className="w-full sm:w-auto">
               Configurar
             </Button>
           </div>
           
-          <div className="flex items-center space-x-4 p-4 bg-gray-50 rounded-lg">
-            <div className="bg-primary-600 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 p-4 bg-gray-50 rounded-lg">
+            <div className="bg-primary-600 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">
               2
             </div>
-            <div>
+            <div className="flex-1">
               <h3 className="font-medium">Crear tu primer cliente</h3>
               <p className="text-sm text-gray-600">Registra la información de tu primer cliente</p>
             </div>
-            <Button variant="outline" onClick={() => navigate('/clientes/nuevo')}>
+            <Button variant="outline" onClick={() => navigate('/clientes/nuevo')} className="w-full sm:w-auto">
               Crear Cliente
             </Button>
           </div>

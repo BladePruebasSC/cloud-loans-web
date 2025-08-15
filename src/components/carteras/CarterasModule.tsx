@@ -24,15 +24,15 @@ export const CarterasModule = () => {
   ];
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Gestión de Carteras</h1>
-        <div className="flex gap-2">
-          <Button variant="outline">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Carteras</h1>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button variant="outline" className="w-full sm:w-auto">
             <BarChart3 className="h-4 w-4 mr-2" />
             Ver Reportes
           </Button>
-          <Button>
+          <Button className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" />
             Nueva Cartera
           </Button>
@@ -40,7 +40,7 @@ export const CarterasModule = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Carteras</CardTitle>
@@ -87,11 +87,11 @@ export const CarterasModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="resumen">Resumen</TabsTrigger>
-          <TabsTrigger value="carteras">Mis Carteras</TabsTrigger>
-          <TabsTrigger value="analisis">Análisis</TabsTrigger>
-          <TabsTrigger value="configuracion">Configuración</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 gap-1 sm:gap-2">
+          <TabsTrigger value="resumen" className="text-xs sm:text-sm">Resumen</TabsTrigger>
+          <TabsTrigger value="carteras" className="text-xs sm:text-sm">Mis Carteras</TabsTrigger>
+          <TabsTrigger value="analisis" className="text-xs sm:text-sm">Análisis</TabsTrigger>
+          <TabsTrigger value="configuracion" className="text-xs sm:text-sm">Configuración</TabsTrigger>
         </TabsList>
 
         <TabsContent value="resumen" className="space-y-6">

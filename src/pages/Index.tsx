@@ -53,7 +53,7 @@ const RestrictedAccess = ({ module }: { module: string }) => {
 };
 
 const Index = () => {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false); // Cambiar a false para móviles
   const location = useLocation();
   const { profile } = useAuth();
 
@@ -156,6 +156,14 @@ const Index = () => {
 
   return (
     <div className="flex h-screen bg-gray-50">
+      {/* Overlay para móviles */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
       <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
