@@ -174,40 +174,44 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       return Math.ceil(amount / term_months);
     }
     
-    // Calculate periods based on frequency
-    let periods = term_months;
+    // Calcular períodos totales según la frecuencia
+    let totalPeriods = term_months;
     let periodRate = interest_rate / 100;
     
     switch (payment_frequency) {
       case 'daily':
-        periodRate = periodRate / 30; // Tasa diaria basada en mes de 30 días
+        totalPeriods = term_months * 30; // Convertir meses a días
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria efectiva
         break;
       case 'weekly':
-        periodRate = periodRate / 4; // Tasa semanal (mes/4)
+        totalPeriods = term_months * 4; // Convertir meses a semanas
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal efectiva
         break;
       case 'biweekly':
-        periodRate = periodRate / 2; // Tasa quincenal (mes/2)
+        totalPeriods = term_months * 2; // Convertir meses a quincenas
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal efectiva
         break;
       case 'monthly':
       default:
-        periodRate = periodRate; // Tasa mensual directa
+        totalPeriods = term_months; // Ya está en meses
+        periodRate = interest_rate / 100; // Tasa mensual directa
         break;
     }
 
     let minimumPayment = 0;
 
     if (amortization_type === 'simple') {
-      // Simple interest calculation - usar tasa mensual directamente
+      // Interés simple - calcular basado en la frecuencia
       const totalInterest = amount * (interest_rate / 100) * term_months;
       const totalAmount = amount + totalInterest;
-      minimumPayment = totalAmount / periods;
+      minimumPayment = totalAmount / totalPeriods;
     } else {
-      // Compound interest calculation
+      // Interés compuesto - usar la fórmula de amortización
       if (periodRate === 0) {
-        minimumPayment = amount / periods;
+        minimumPayment = amount / totalPeriods;
       } else {
-        minimumPayment = (amount * periodRate * Math.pow(1 + periodRate, periods)) / 
-                       (Math.pow(1 + periodRate, periods) - 1);
+        minimumPayment = (amount * periodRate * Math.pow(1 + periodRate, totalPeriods)) / 
+                       (Math.pow(1 + periodRate, totalPeriods) - 1);
       }
     }
     
@@ -244,23 +248,27 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       }
     }
 
-    // Calcular períodos según frecuencia - ahora term_months representa períodos, no meses
-    let periods = term_months; // El término ya está en la unidad correcta según la frecuencia
+    // Calcular períodos totales según la frecuencia
+    let totalPeriods = term_months;
     let periodRate = interest_rate / 100;
     
     switch (payment_frequency) {
       case 'daily':
-        periodRate = periodRate / 30; // Tasa diaria basada en mes de 30 días
+        totalPeriods = term_months * 30; // Convertir meses a días
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria efectiva
         break;
       case 'weekly':
-        periodRate = periodRate / 4; // Tasa semanal (mes/4)
+        totalPeriods = term_months * 4; // Convertir meses a semanas
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal efectiva
         break;
       case 'biweekly':
-        periodRate = periodRate / 2; // Tasa quincenal (mes/2)
+        totalPeriods = term_months * 2; // Convertir meses a quincenas
+        periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal efectiva
         break;
       case 'monthly':
       default:
-        periodRate = periodRate; // Tasa mensual directa
+        totalPeriods = term_months; // Ya está en meses
+        periodRate = interest_rate / 100; // Tasa mensual directa
         break;
     }
 
@@ -272,18 +280,18 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       // Interés simple - usar tasa mensual directamente
       const totalInterest = amount * (interest_rate / 100) * term_months;
       totalAmount = amount + totalInterest;
-      monthlyPayment = fixed_payment_enabled && fixed_payment_amount ? fixed_payment_amount : totalAmount / periods;
+      monthlyPayment = fixed_payment_enabled && fixed_payment_amount ? fixed_payment_amount : totalAmount / totalPeriods;
       
       // Si hay cuota fija, recalcular el interés total basado en la cuota
       if (fixed_payment_enabled && fixed_payment_amount) {
-        totalAmount = fixed_payment_amount * periods;
+        totalAmount = fixed_payment_amount * totalPeriods;
         const newTotalInterest = totalAmount - amount;
         
         // Generar tabla con interés distribuido
         let remainingBalance = amount;
-        const interestPerPayment = newTotalInterest / periods;
+        const interestPerPayment = newTotalInterest / totalPeriods;
         
-        for (let i = 1; i <= periods; i++) {
+        for (let i = 1; i <= totalPeriods; i++) {
           const paymentDate = new Date(first_payment_date);
           
           switch (payment_frequency) {
@@ -317,10 +325,10 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       } else {
         // Generar tabla de amortización normal para interés simple
         let remainingBalance = totalAmount;
-        const interestPerPayment = totalInterest / periods;
-        const principalPerPayment = amount / periods;
+        const interestPerPayment = totalInterest / totalPeriods;
+        const principalPerPayment = amount / totalPeriods;
         
-        for (let i = 1; i <= periods; i++) {
+        for (let i = 1; i <= totalPeriods; i++) {
           const paymentDate = new Date(first_payment_date);
           
           switch (payment_frequency) {
@@ -358,19 +366,19 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         // Para cuota fija en interés compuesto, calcular el total basado en la cuota
         totalAmount = 0; // Se calculará en el loop
       } else if (periodRate === 0) {
-        monthlyPayment = amount / periods;
+        monthlyPayment = amount / totalPeriods;
         totalAmount = amount;
       } else {
-        monthlyPayment = (amount * periodRate * Math.pow(1 + periodRate, periods)) / 
-                       (Math.pow(1 + periodRate, periods) - 1);
-        totalAmount = monthlyPayment * periods;
+        monthlyPayment = (amount * periodRate * Math.pow(1 + periodRate, totalPeriods)) / 
+                       (Math.pow(1 + periodRate, totalPeriods) - 1);
+        totalAmount = monthlyPayment * totalPeriods;
       }
       
       // Generar tabla de amortización para interés compuesto
       let remainingBalance = amount;
       let totalPaid = 0;
       
-      for (let i = 1; i <= periods; i++) {
+      for (let i = 1; i <= totalPeriods; i++) {
         const paymentDate = new Date(first_payment_date);
         
         switch (payment_frequency) {

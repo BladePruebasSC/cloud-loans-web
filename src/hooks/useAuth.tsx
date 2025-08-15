@@ -40,6 +40,57 @@ interface RegisterData {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Función para guardar datos en localStorage
+const saveToLocalStorage = (key: string, data: any) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+    // También guardar timestamp para verificar validez
+    localStorage.setItem(`${key}_timestamp`, Date.now().toString());
+  } catch (error) {
+    console.error('Error saving to localStorage:', error);
+  }
+};
+
+// Función para obtener datos de localStorage
+const getFromLocalStorage = (key: string) => {
+  try {
+    const item = localStorage.getItem(key);
+    const timestamp = localStorage.getItem(`${key}_timestamp`);
+    
+    if (!item || !timestamp) {
+      return null;
+    }
+    
+    // Verificar si los datos no son muy antiguos (más de 24 horas)
+    const dataAge = Date.now() - parseInt(timestamp);
+    const maxAge = 24 * 60 * 60 * 1000; // 24 horas en milisegundos
+    
+    if (dataAge > maxAge) {
+      console.log(`LocalStorage data for ${key} is too old, clearing...`);
+      localStorage.removeItem(key);
+      localStorage.removeItem(`${key}_timestamp`);
+      return null;
+    }
+    
+    return JSON.parse(item);
+  } catch (error) {
+    console.error('Error reading from localStorage:', error);
+    return null;
+  }
+};
+
+// Función para limpiar datos de localStorage
+const clearLocalStorage = () => {
+  try {
+    localStorage.removeItem('user_profile');
+    localStorage.removeItem('user_profile_timestamp');
+    localStorage.removeItem('company_id');
+    localStorage.removeItem('company_id_timestamp');
+  } catch (error) {
+    console.error('Error clearing localStorage:', error);
+  }
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<EmployeeProfile | null>(null);
@@ -93,6 +144,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         company_name: companyData?.company_name || 'Empresa'
       };
 
+      // Guardar en localStorage
+      saveToLocalStorage('user_profile', employeeProfile);
+      saveToLocalStorage('company_id', employeeData.company_owner_id);
+
       return employeeProfile;
     } catch (error) {
       console.error('Error in loadEmployeeProfile:', error);
@@ -123,6 +178,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setProfile(ownerProfile);
     setCompanyId(authUser.id);
+    
+    // Guardar en localStorage
+    saveToLocalStorage('user_profile', ownerProfile);
+    saveToLocalStorage('company_id', authUser.id);
+    
     console.log('Owner logged in:', ownerProfile);
   };
 
@@ -230,6 +290,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setProfile(null);
       setCompanyId(null);
+      
+      // Limpiar localStorage
+      clearLocalStorage();
+      
       toast.success('Sesión cerrada exitosamente');
     } catch (err: any) {
       // If it's a session not found error, treat it as successful logout
@@ -237,6 +301,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         setProfile(null);
         setCompanyId(null);
+        clearLocalStorage();
         toast.success('Sesión cerrada exitosamente');
       } else {
         setError(err);
@@ -249,22 +314,149 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    // Función para cargar el perfil del usuario
+    const loadUserProfile = async (authUser: User) => {
+      try {
+        console.log('Loading profile for user:', authUser.id);
+        
+        // Primero verificar si es empleado
+        const { data: employeeData, error: employeeError } = await supabase
+          .from('employees')
+          .select('id,full_name,email,role,permissions,company_owner_id,status')
+          .eq('auth_user_id', authUser.id)
+          .eq('status', 'active')
+          .maybeSingle();
+
+        if (employeeError) {
+          console.error('Error checking employee status:', employeeError);
+        }
+
+        if (employeeData) {
+          // Es un empleado
+          console.log('User is an employee, loading employee profile');
+          const employeeProfile = await loadEmployeeProfile(authUser.id);
+          if (employeeProfile) {
+            setProfile(employeeProfile);
+            setCompanyId(employeeProfile.company_owner_id);
+            console.log('Employee profile restored:', employeeProfile);
+          }
+        } else {
+          // Es un dueño de empresa
+          console.log('User is an owner, loading owner profile');
+          await loadOwnerProfile(authUser);
+        }
+      } catch (error) {
+        console.error('Error loading user profile:', error);
+      }
+    };
+
+    // Verificar sesión inicial
+    const checkInitialSession = async () => {
+      try {
+        console.log('Checking initial session...');
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          console.log('Initial session found:', session.user.id);
+          setUser(session.user);
+          
+          // Intentar cargar perfil desde localStorage primero para respuesta inmediata
+          const savedProfile = getFromLocalStorage('user_profile');
+          const savedCompanyId = getFromLocalStorage('company_id');
+          
+          if (savedProfile && savedCompanyId) {
+            console.log('Restoring profile from localStorage for immediate response');
+            setProfile(savedProfile);
+            setCompanyId(savedCompanyId);
+          }
+          
+          // Luego cargar desde la base de datos para asegurar datos actualizados
+          console.log('Loading fresh profile from database...');
+          await loadUserProfile(session.user);
+        } else {
+          console.log('No initial session found');
+          // Si no hay sesión, intentar restaurar desde localStorage como fallback
+          const savedProfile = getFromLocalStorage('user_profile');
+          const savedCompanyId = getFromLocalStorage('company_id');
+          
+          if (savedProfile && savedCompanyId) {
+            console.log('Attempting to restore from localStorage as fallback');
+            // Verificar si el token aún es válido
+            const { data: { session: currentSession } } = await supabase.auth.getSession();
+            if (currentSession?.user) {
+              setUser(currentSession.user);
+              setProfile(savedProfile);
+              setCompanyId(savedCompanyId);
+            } else {
+              // Si no hay sesión válida, limpiar localStorage
+              clearLocalStorage();
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error checking initial session:', error);
+        // En caso de error, intentar restaurar desde localStorage
+        const savedProfile = getFromLocalStorage('user_profile');
+        const savedCompanyId = getFromLocalStorage('company_id');
+        
+        if (savedProfile && savedCompanyId) {
+          console.log('Restoring from localStorage after error');
+          setProfile(savedProfile);
+          setCompanyId(savedCompanyId);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // Verificar sesión inicial al cargar
+    checkInitialSession();
+
+    // Escuchar cambios en el estado de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('Auth state changed:', event, session?.user?.id);
       
       if (event === 'SIGNED_IN' && session?.user) {
+        console.log('User signed in, loading profile...');
         setUser(session.user);
+        await loadUserProfile(session.user);
         setLoading(false);
       } else if (event === 'SIGNED_OUT') {
+        console.log('User signed out, clearing state...');
         setUser(null);
         setProfile(null);
         setCompanyId(null);
+        clearLocalStorage();
         setLoading(false);
+      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+        console.log('Token refreshed, updating user...');
+        setUser(session.user);
+        if (!profile) {
+          await loadUserProfile(session.user);
+        }
+      } else if (event === 'USER_UPDATED' && session?.user) {
+        console.log('User updated, refreshing profile...');
+        setUser(session.user);
+        await loadUserProfile(session.user);
       }
     });
 
-    return () => subscription.unsubscribe();
-  }, []);
+    // Listener para guardar datos antes de que se recargue la página
+    const handleBeforeUnload = () => {
+      if (user && profile && companyId) {
+        console.log('Saving session data before page unload...');
+        saveToLocalStorage('user_profile', profile);
+        saveToLocalStorage('company_id', companyId);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [user, profile, companyId]);
 
   const value = {
     user,
