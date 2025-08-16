@@ -20,7 +20,9 @@ const loanSchema = z.object({
   interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0'),
   term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes'),
   loan_type: z.string().min(1, 'Debe seleccionar un tipo de préstamo'),
-  amortization_type: z.string().default('simple'),
+  amortization_type: z.string().default('simple').refine((val) => ['simple', 'german', 'american', 'indefinite'].includes(val), {
+    message: 'Tipo de amortización no válido'
+  }),
   payment_frequency: z.string().default('monthly'),
   first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
   closing_costs: z.number().default(0),
@@ -52,7 +54,7 @@ interface Client {
 }
 
 interface AmortizationRow {
-  payment: number;
+  payment: number | string;
   date: string;
   interest: number;
   principal: number;
@@ -163,20 +165,23 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     form.setValue('client_id', client.id);
   };
 
-  const getMinimumPayment = () => {
+       const getMinimumPayment = () => {
     const formValues = form.getValues();
     const { amount, interest_rate, term_months, amortization_type, payment_frequency } = formValues;
     
-    if (!amount || amount <= 0 || !term_months || term_months <= 0) return 0;
+    if (!amount || amount <= 0) return 0;
     
-    // Si no hay tasa de interés, el mínimo es solo el capital dividido por períodos
-    if (!interest_rate || interest_rate <= 0) {
-      return Math.ceil(amount / term_months);
-    }
+    // Para plazo indefinido no necesitamos term_months
+    if (amortization_type !== 'indefinite' && (!term_months || term_months <= 0)) return 0;
+    
+         // Si no hay tasa de interés, el mínimo es solo el capital dividido por períodos
+     if (!interest_rate || interest_rate <= 0) {
+       return Math.ceil(amount / (amortization_type === 'indefinite' ? 1 : term_months));
+     }
     
     // Calcular períodos totales según la frecuencia
     // El plazo ya está en la unidad correcta según la frecuencia seleccionada
-    let totalPeriods = term_months;
+    let totalPeriods = amortization_type === 'indefinite' ? 12 : term_months; // Para plazo indefinido usar 12 períodos como ejemplo
     let periodRate = interest_rate / 100; // Siempre tasa mensual
     
     switch (payment_frequency) {
@@ -208,42 +213,40 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
 
     let minimumPayment = 0;
 
-    if (amortization_type === 'simple') {
-      // Interés simple - el interés es mensual, no convertir a años
-      // Si el plazo es 12 y la frecuencia es mensual, son 12 meses
-      // Si el plazo es 12 y la frecuencia es diaria, son 12 días (convertir a meses: 12/30)
-      // Si el plazo es 12 y la frecuencia es semanal, son 12 semanas (convertir a meses: 12/4)
-      // Si el plazo es 12 y la frecuencia es quincenal, son 12 quincenas (convertir a meses: 12/2)
-      
-      let monthsEquivalent = term_months;
-      switch (payment_frequency) {
-        case 'daily':
-          monthsEquivalent = term_months / 30; // Convertir días a meses
-          break;
-        case 'weekly':
-          monthsEquivalent = term_months / 4; // Convertir semanas a meses
-          break;
-        case 'biweekly':
-          monthsEquivalent = term_months / 2; // Convertir quincenas a meses
-          break;
-        case 'monthly':
-        default:
-          monthsEquivalent = term_months; // Ya está en meses
-          break;
-      }
-      
-      const totalInterest = amount * (interest_rate / 100) * monthsEquivalent;
-      const totalAmount = amount + totalInterest;
-      minimumPayment = totalAmount / totalPeriods;
-    } else {
-      // Interés compuesto - usar la fórmula de amortización
-      if (periodRate === 0) {
-        minimumPayment = amount / totalPeriods;
-      } else {
-        minimumPayment = (amount * periodRate * Math.pow(1 + periodRate, totalPeriods)) / 
-                       (Math.pow(1 + periodRate, totalPeriods) - 1);
-      }
-    }
+         if (amortization_type === 'simple') {
+       // Interés simple - el interés es mensual, no convertir a años
+       let monthsEquivalent = term_months;
+       switch (payment_frequency) {
+         case 'daily':
+           monthsEquivalent = term_months / 30; // Convertir días a meses
+           break;
+         case 'weekly':
+           monthsEquivalent = term_months / 4; // Convertir semanas a meses
+           break;
+         case 'biweekly':
+           monthsEquivalent = term_months / 2; // Convertir quincenas a meses
+           break;
+         case 'monthly':
+         default:
+           monthsEquivalent = term_months; // Ya está en meses
+           break;
+       }
+       
+       const totalInterest = amount * (interest_rate / 100) * monthsEquivalent;
+       const totalAmount = amount + totalInterest;
+       minimumPayment = totalAmount / totalPeriods;
+     } else if (amortization_type === 'german') {
+       // Amortización alemana - Cuota decreciente, usar la primera cuota como mínimo
+       const principalPerPayment = amount / totalPeriods;
+       const interestPayment = amount * periodRate;
+       minimumPayment = principalPerPayment + interestPayment;
+     } else if (amortization_type === 'american') {
+       // Amortización americana - Solo intereses
+       minimumPayment = amount * periodRate;
+     } else if (amortization_type === 'indefinite') {
+       // Plazo indefinido - Solo intereses
+       minimumPayment = amount * periodRate;
+     }
     
     // Redondear hacia arriba para evitar problemas con decimales muy pequeños
     return Math.ceil(minimumPayment);
@@ -253,10 +256,16 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     const formValues = form.getValues();
     const { amount, interest_rate, term_months, amortization_type, payment_frequency, first_payment_date, fixed_payment_enabled, fixed_payment_amount } = formValues;
     
-    if (!amount || !interest_rate || !term_months) {
-      toast.error('Complete todos los campos requeridos para calcular');
-      return;
-    }
+         if (!amount || !interest_rate) {
+       toast.error('Complete todos los campos requeridos para calcular');
+       return;
+     }
+
+     // Para plazo indefinido no necesitamos term_months
+     if (amortization_type !== 'indefinite' && !term_months) {
+       toast.error('Complete todos los campos requeridos para calcular');
+       return;
+     }
 
     if (!selectedClient) {
       toast.error('Debe seleccionar un cliente');
@@ -280,32 +289,32 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
 
     // Calcular períodos totales según la frecuencia
     // El plazo ya está en la unidad correcta según la frecuencia seleccionada
-    let totalPeriods = term_months;
+    let totalPeriods = amortization_type === 'indefinite' ? 1 : term_months; // Para plazo indefinido usar 1 período ya que no tiene plazo real
     let periodRate = interest_rate / 100; // Siempre tasa mensual
     
     switch (payment_frequency) {
       case 'daily':
         // Si el plazo es 12, son 12 días
-        totalPeriods = term_months;
+        totalPeriods = amortization_type === 'indefinite' ? 1 : term_months;
         // Para interés compuesto, convertir tasa mensual a diaria
         periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria basada en mensual
         break;
       case 'weekly':
         // Si el plazo es 12, son 12 semanas
-        totalPeriods = term_months;
+        totalPeriods = amortization_type === 'indefinite' ? 1 : term_months;
         // Para interés compuesto, convertir tasa mensual a semanal
         periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal basada en mensual
         break;
       case 'biweekly':
         // Si el plazo es 12, son 12 quincenas
-        totalPeriods = term_months;
+        totalPeriods = amortization_type === 'indefinite' ? 1 : term_months;
         // Para interés compuesto, convertir tasa mensual a quincenal
         periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal basada en mensual
         break;
       case 'monthly':
       default:
         // Si el plazo es 12, son 12 meses
-        totalPeriods = term_months;
+        totalPeriods = amortization_type === 'indefinite' ? 1 : term_months;
         periodRate = interest_rate / 100; // Tasa mensual directa
         break;
     }
@@ -314,176 +323,216 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     let totalAmount = 0;
     let schedule: AmortizationRow[] = [];
 
-    if (amortization_type === 'simple') {
-      // Interés simple - el interés es mensual, no convertir a años
-      // Si el plazo es 12 y la frecuencia es mensual, son 12 meses
-      // Si el plazo es 12 y la frecuencia es diaria, son 12 días (convertir a meses: 12/30)
-      // Si el plazo es 12 y la frecuencia es semanal, son 12 semanas (convertir a meses: 12/4)
-      // Si el plazo es 12 y la frecuencia es quincenal, son 12 quincenas (convertir a meses: 12/2)
-      
-      let monthsEquivalent = term_months;
-      switch (payment_frequency) {
-        case 'daily':
-          monthsEquivalent = term_months / 30; // Convertir días a meses
-          break;
-        case 'weekly':
-          monthsEquivalent = term_months / 4; // Convertir semanas a meses
-          break;
-        case 'biweekly':
-          monthsEquivalent = term_months / 2; // Convertir quincenas a meses
-          break;
-        case 'monthly':
-        default:
-          monthsEquivalent = term_months; // Ya está en meses
-          break;
-      }
-      
-      const totalInterest = amount * (interest_rate / 100) * monthsEquivalent;
-      totalAmount = amount + totalInterest;
-      monthlyPayment = fixed_payment_enabled && fixed_payment_amount ? fixed_payment_amount : totalAmount / totalPeriods;
-      
-      // Si hay cuota fija, recalcular el interés total basado en la cuota
-      if (fixed_payment_enabled && fixed_payment_amount) {
-        totalAmount = fixed_payment_amount * totalPeriods;
-        const newTotalInterest = totalAmount - amount;
-        
-        // Generar tabla con interés distribuido
-        let remainingBalance = amount;
-        const interestPerPayment = newTotalInterest / totalPeriods;
-        
-        for (let i = 1; i <= totalPeriods; i++) {
-          const paymentDate = new Date(first_payment_date);
-          
-          switch (payment_frequency) {
-            case 'daily':
-              paymentDate.setDate(paymentDate.getDate() + (i - 1));
-              break;
-            case 'weekly':
-              paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-              break;
-            case 'biweekly':
-              paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-              break;
-            case 'monthly':
-            default:
-              paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-              break;
-          }
-          
-          const principalPayment = fixed_payment_amount - interestPerPayment;
-          remainingBalance -= principalPayment;
-          
-          schedule.push({
-            payment: i,
-            date: paymentDate.toISOString().split('T')[0],
-            interest: interestPerPayment,
-            principal: principalPayment,
-            totalPayment: fixed_payment_amount,
-            remainingBalance: Math.max(0, remainingBalance)
-          });
-        }
-      } else {
-        // Generar tabla de amortización normal para interés simple
-        let remainingBalance = totalAmount;
-        const interestPerPayment = totalInterest / totalPeriods;
-        const principalPerPayment = amount / totalPeriods;
-        
-        for (let i = 1; i <= totalPeriods; i++) {
-          const paymentDate = new Date(first_payment_date);
-          
-          switch (payment_frequency) {
-            case 'daily':
-              paymentDate.setDate(paymentDate.getDate() + (i - 1));
-              break;
-            case 'weekly':
-              paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-              break;
-            case 'biweekly':
-              paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-              break;
-            case 'monthly':
-            default:
-              paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-              break;
-          }
-          
-          remainingBalance -= monthlyPayment;
-          
-          schedule.push({
-            payment: i,
-            date: paymentDate.toISOString().split('T')[0],
-            interest: interestPerPayment,
-            principal: principalPerPayment,
-            totalPayment: monthlyPayment,
-            remainingBalance: Math.max(0, remainingBalance)
-          });
-        }
-      }
-    } else {
-      // Interés compuesto (amortización francesa)
-      if (fixed_payment_enabled && fixed_payment_amount) {
-        monthlyPayment = fixed_payment_amount;
-        // Para cuota fija en interés compuesto, calcular el total basado en la cuota
-        totalAmount = 0; // Se calculará en el loop
-      } else if (periodRate === 0) {
-        monthlyPayment = amount / totalPeriods;
-        totalAmount = amount;
-      } else {
-        monthlyPayment = (amount * periodRate * Math.pow(1 + periodRate, totalPeriods)) / 
-                       (Math.pow(1 + periodRate, totalPeriods) - 1);
-        totalAmount = monthlyPayment * totalPeriods;
-      }
-      
-      // Generar tabla de amortización para interés compuesto
-      let remainingBalance = amount;
-      let totalPaid = 0;
-      
-      for (let i = 1; i <= totalPeriods; i++) {
-        const paymentDate = new Date(first_payment_date);
-        
-        switch (payment_frequency) {
-          case 'daily':
-            paymentDate.setDate(paymentDate.getDate() + (i - 1));
-            break;
-          case 'weekly':
-            paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-            break;
-          case 'biweekly':
-            paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-            break;
-          case 'monthly':
-          default:
-            paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-            break;
-        }
-        
-        const interestPayment = remainingBalance * periodRate;
-        let actualPayment = monthlyPayment;
-        
-        // Si es cuota fija, usar esa cuota
-        if (fixed_payment_enabled && fixed_payment_amount) {
-          actualPayment = fixed_payment_amount;
-        }
-        
-        const principalPayment = actualPayment - interestPayment;
-        remainingBalance -= principalPayment;
-        totalPaid += actualPayment;
-        
-        schedule.push({
-          payment: i,
-          date: paymentDate.toISOString().split('T')[0],
-          interest: interestPayment,
-          principal: principalPayment,
-          totalPayment: actualPayment,
-          remainingBalance: Math.max(0, remainingBalance)
-        });
-      }
-      
-      // Si era cuota fija, actualizar el total
-      if (fixed_payment_enabled && fixed_payment_amount) {
-        totalAmount = totalPaid;
-      }
-    }
+         if (amortization_type === 'simple') {
+       // Interés simple - el interés es mensual, no convertir a años
+       let monthsEquivalent = term_months;
+       switch (payment_frequency) {
+         case 'daily':
+           monthsEquivalent = term_months / 30; // Convertir días a meses
+           break;
+         case 'weekly':
+           monthsEquivalent = term_months / 4; // Convertir semanas a meses
+           break;
+         case 'biweekly':
+           monthsEquivalent = term_months / 2; // Convertir quincenas a meses
+           break;
+         case 'monthly':
+         default:
+           monthsEquivalent = term_months; // Ya está en meses
+           break;
+       }
+       
+       const totalInterest = amount * (interest_rate / 100) * monthsEquivalent;
+       totalAmount = amount + totalInterest;
+       monthlyPayment = fixed_payment_enabled && fixed_payment_amount ? fixed_payment_amount : totalAmount / totalPeriods;
+       
+       // Si hay cuota fija, recalcular el interés total basado en la cuota
+       if (fixed_payment_enabled && fixed_payment_amount) {
+         totalAmount = fixed_payment_amount * totalPeriods;
+         const newTotalInterest = totalAmount - amount;
+         
+         // Generar tabla con interés distribuido
+         let remainingBalance = amount;
+         const interestPerPayment = newTotalInterest / totalPeriods;
+         
+         for (let i = 1; i <= totalPeriods; i++) {
+           const paymentDate = new Date(first_payment_date);
+           
+           switch (payment_frequency) {
+             case 'daily':
+               paymentDate.setDate(paymentDate.getDate() + (i - 1));
+               break;
+             case 'weekly':
+               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
+               break;
+             case 'biweekly':
+               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
+               break;
+             case 'monthly':
+             default:
+               paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
+               break;
+           }
+           
+           const principalPayment = fixed_payment_amount - interestPerPayment;
+           
+           schedule.push({
+             payment: i,
+             date: paymentDate.toISOString().split('T')[0],
+             interest: interestPerPayment,
+             principal: principalPayment,
+             totalPayment: fixed_payment_amount,
+             remainingBalance: Math.max(0, remainingBalance - principalPayment)
+           });
+           
+           remainingBalance -= principalPayment;
+         }
+       } else {
+         // Generar tabla de amortización normal para interés simple
+         let remainingBalance = amount;
+         const interestPerPayment = totalInterest / totalPeriods;
+         const principalPerPayment = amount / totalPeriods;
+         
+         for (let i = 1; i <= totalPeriods; i++) {
+           const paymentDate = new Date(first_payment_date);
+           
+           switch (payment_frequency) {
+             case 'daily':
+               paymentDate.setDate(paymentDate.getDate() + (i - 1));
+               break;
+             case 'weekly':
+               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
+               break;
+             case 'biweekly':
+               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
+               break;
+             case 'monthly':
+             default:
+               paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
+               break;
+           }
+           
+           schedule.push({
+             payment: i,
+             date: paymentDate.toISOString().split('T')[0],
+             interest: interestPerPayment,
+             principal: principalPerPayment,
+             totalPayment: monthlyPayment,
+             remainingBalance: Math.max(0, remainingBalance - principalPerPayment)
+           });
+           
+           remainingBalance -= principalPerPayment;
+         }
+       }
+     } else if (amortization_type === 'german') {
+       // Amortización alemana (insoluto) - Cuota decreciente
+       // El capital se paga en partes iguales, el interés se calcula sobre el saldo insoluto
+       const principalPerPayment = amount / totalPeriods;
+       let remainingBalance = amount;
+       let totalPaid = 0;
+       
+       for (let i = 1; i <= totalPeriods; i++) {
+         const paymentDate = new Date(first_payment_date);
+         
+         switch (payment_frequency) {
+           case 'daily':
+             paymentDate.setDate(paymentDate.getDate() + (i - 1));
+             break;
+           case 'weekly':
+             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
+             break;
+           case 'biweekly':
+             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
+             break;
+           case 'monthly':
+           default:
+             paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
+             break;
+         }
+         
+         const interestPayment = remainingBalance * periodRate;
+         const actualPayment = principalPerPayment + interestPayment;
+         totalPaid += actualPayment;
+         
+         schedule.push({
+           payment: i,
+           date: paymentDate.toISOString().split('T')[0],
+           interest: interestPayment,
+           principal: principalPerPayment,
+           totalPayment: actualPayment,
+           remainingBalance: Math.max(0, remainingBalance - principalPerPayment)
+         });
+         
+         remainingBalance -= principalPerPayment;
+       }
+       
+       totalAmount = totalPaid;
+       monthlyPayment = totalAmount / totalPeriods; // Promedio de cuotas
+       
+     } else if (amortization_type === 'american') {
+       // Amortización americana (línea de crédito) - Solo intereses, capital al final
+       const interestPerPayment = amount * periodRate;
+       let remainingBalance = amount;
+       let totalPaid = 0;
+       
+       for (let i = 1; i <= totalPeriods; i++) {
+         const paymentDate = new Date(first_payment_date);
+         
+         switch (payment_frequency) {
+           case 'daily':
+             paymentDate.setDate(paymentDate.getDate() + (i - 1));
+             break;
+           case 'weekly':
+             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
+             break;
+           case 'biweekly':
+             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
+             break;
+           case 'monthly':
+           default:
+             paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
+             break;
+         }
+         
+         const actualPayment = i === totalPeriods ? interestPerPayment + amount : interestPerPayment;
+         const principalPayment = i === totalPeriods ? amount : 0;
+         totalPaid += actualPayment;
+         
+         schedule.push({
+           payment: i,
+           date: paymentDate.toISOString().split('T')[0],
+           interest: interestPerPayment,
+           principal: principalPayment,
+           totalPayment: actualPayment,
+           remainingBalance: i === totalPeriods ? 0 : remainingBalance
+         });
+         
+         if (i === totalPeriods) {
+           remainingBalance = 0;
+         }
+       }
+       
+       totalAmount = totalPaid;
+       monthlyPayment = interestPerPayment; // Cuota fija de intereses
+       
+     } else if (amortization_type === 'indefinite') {
+       // Plazo indefinido - Solo intereses, sin fecha de vencimiento
+       const interestPerPayment = amount * periodRate;
+       const paymentDate = new Date(first_payment_date);
+       
+       // Para plazo indefinido, mostrar solo 1 período con "1/X"
+       schedule.push({
+         payment: '1/X', // Mostrar 1/X para indicar que es indefinido
+         date: paymentDate.toISOString().split('T')[0],
+         interest: interestPerPayment,
+         principal: 0,
+         totalPayment: interestPerPayment,
+         remainingBalance: amount
+       });
+       
+       totalAmount = amount + interestPerPayment;
+       monthlyPayment = interestPerPayment;
+     }
 
     const totalInterest = totalAmount - amount;
     const usdAmount = amount / 58.5; // Conversión a USD
@@ -602,7 +651,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const copyAmortizationTable = () => {
     const headers = ['CUOTA', 'FECHA', 'INTERÉS', 'CAPITAL', 'A PAGAR', 'CAPITAL RESTANTE'];
     const rows = amortizationSchedule.map(row => [
-      `${row.payment}/${amortizationSchedule.length}`,
+      typeof row.payment === 'string' ? row.payment : `${row.payment}/${amortizationSchedule.length}`,
       row.date,
       `RD$${row.interest.toFixed(2)}`,
       `RD$${row.principal.toFixed(2)}`,
@@ -652,7 +701,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
               <tbody>
                 ${amortizationSchedule.map(row => `
                   <tr>
-                    <td>${row.payment}/${amortizationSchedule.length}</td>
+                    <td>${typeof row.payment === 'string' ? row.payment : `${row.payment}/${amortizationSchedule.length}`}</td>
                     <td>${row.date}</td>
                     <td>RD$${row.interest.toFixed(2)}</td>
                     <td>RD$${row.principal.toFixed(2)}</td>
@@ -660,6 +709,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     <td>RD$${row.remainingBalance.toFixed(2)}</td>
                   </tr>
                 `).join('')}
+                ${form.getValues('amortization_type') !== 'indefinite' ? `
                 <tr class="totals">
                   <td colspan="2">TOTALES</td>
                   <td>RD$${calculatedValues.totalInterest.toFixed(2)}</td>
@@ -667,6 +717,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   <td>RD$${calculatedValues.totalAmount.toFixed(2)}</td>
                   <td>RD$0.00</td>
                 </tr>
+                ` : ''}
               </tbody>
             </table>
           </body>
@@ -918,59 +969,69 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                       />
                     </div>
 
-                    <div>
-                      <FormLabel>Plazo:</FormLabel>
-                      <FormField
-                        control={form.control}
-                        name="term_months"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormControl>
-                                                             <Input
-                                 type="number"
-                                 placeholder="0"
-                                 {...field}
-                                 value={field.value || ''}
-                                 onChange={(e) => {
-                                   const value = e.target.value;
-                                   if (value === '' || /^\d*$/.test(value)) {
-                                     field.onChange(value === '' ? 0 : parseInt(value) || 0);
-                                   }
-                                 }}
-                                 className=""
-                               />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
+                                         {form.watch('amortization_type') !== 'indefinite' && (
+                       <div>
+                         <FormLabel>Plazo:</FormLabel>
+                         <FormField
+                           control={form.control}
+                           name="term_months"
+                           render={({ field }) => (
+                             <FormItem>
+                               <FormControl>
+                                 <Input
+                                   type="number"
+                                   placeholder="0"
+                                   {...field}
+                                   value={field.value || ''}
+                                   onChange={(e) => {
+                                     const value = e.target.value;
+                                     if (value === '' || /^\d*$/.test(value)) {
+                                       field.onChange(value === '' ? 0 : parseInt(value) || 0);
+                                     }
+                                   }}
+                                   className=""
+                                 />
+                               </FormControl>
+                               <FormMessage />
+                             </FormItem>
+                           )}
+                         />
+                       </div>
+                     )}
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <FormLabel>Amortización:</FormLabel>
-                      <FormField
-                        control={form.control}
-                        name="amortization_type"
-                        render={({ field }) => (
-                          <FormItem>
-                            <Select onValueChange={field.onChange} defaultValue={field.value}>
-                              <FormControl>
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="simple">SIMPLE | ABSOLUTO</SelectItem>
-                                <SelectItem value="compound">COMPUESTO | FRANCÉS</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
+                                         <div>
+                       <FormLabel>Amortización:</FormLabel>
+                       <FormField
+                         control={form.control}
+                         name="amortization_type"
+                         render={({ field }) => (
+                           <FormItem>
+                             <Select onValueChange={field.onChange} defaultValue={field.value}>
+                               <FormControl>
+                                 <SelectTrigger>
+                                   <SelectValue />
+                                 </SelectTrigger>
+                               </FormControl>
+                               <SelectContent>
+                                 <SelectItem value="simple">SIMPLE | ABSOLUTO</SelectItem>
+                                 <SelectItem value="german">ALEMÁN | INSOLUTO</SelectItem>
+                                 <SelectItem value="american">AMERICANO | LÍNEA DE CRÉDITO</SelectItem>
+                                 <SelectItem value="indefinite">PLAZO INDEFINIDO</SelectItem>
+                               </SelectContent>
+                             </Select>
+                             <FormMessage />
+                             <div className="text-xs text-gray-500 mt-1">
+                               <p><strong>Simple:</strong> Cuota fija, interés y capital distribuidos</p>
+                               <p><strong>Alemán:</strong> Cuota decreciente, capital fijo</p>
+                               <p><strong>Americano:</strong> Solo intereses, capital al final</p>
+                               <p><strong>Indefinido:</strong> Solo intereses, sin vencimiento</p>
+                             </div>
+                           </FormItem>
+                         )}
+                       />
+                     </div>
 
                     <div>
                       <FormLabel>Frecuencia:</FormLabel>
@@ -1401,7 +1462,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     <tbody>
                       {amortizationSchedule.map((row, index) => (
                         <tr key={index} className="hover:bg-gray-50">
-                          <td className="p-1 sm:p-2 border">{row.payment}/{amortizationSchedule.length}</td>
+                          <td className="p-1 sm:p-2 border">{typeof row.payment === 'string' ? row.payment : `${row.payment}/${amortizationSchedule.length}`}</td>
                           <td className="p-1 sm:p-2 border">{row.date}</td>
                           <td className="p-1 sm:p-2 text-right border">RD${row.interest.toFixed(2)}</td>
                           <td className="p-1 sm:p-2 text-right border">RD${row.principal.toFixed(2)}</td>
@@ -1409,13 +1470,15 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                           <td className="p-1 sm:p-2 text-right border">RD${row.remainingBalance.toFixed(2)}</td>
                         </tr>
                       ))}
-                      <tr className="bg-blue-50 font-bold">
-                        <td className="p-1 sm:p-2 border" colSpan={2}>TOTALES</td>
-                        <td className="p-1 sm:p-2 text-right border">RD${calculatedValues.totalInterest.toFixed(2)}</td>
-                        <td className="p-1 sm:p-2 text-right border">RD${form.getValues('amount').toFixed(2)}</td>
-                        <td className="p-1 sm:p-2 text-right border">RD${calculatedValues.totalAmount.toFixed(2)}</td>
-                        <td className="p-1 sm:p-2 text-right border">RD$0.00</td>
-                      </tr>
+                      {form.getValues('amortization_type') !== 'indefinite' && (
+                        <tr className="bg-blue-50 font-bold">
+                          <td className="p-1 sm:p-2 border" colSpan={2}>TOTALES</td>
+                          <td className="p-1 sm:p-2 text-right border">RD${calculatedValues.totalInterest.toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 text-right border">RD${form.getValues('amount').toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 text-right border">RD${calculatedValues.totalAmount.toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 text-right border">RD$0.00</td>
+                        </tr>
+                      )}
                     </tbody>
                   </table>
                 </div>

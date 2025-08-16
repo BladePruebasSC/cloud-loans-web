@@ -15,7 +15,7 @@ import {
 import { toast } from 'sonner';
 
 interface AmortizationRow {
-  installment: number;
+  installment: number | string;
   date: string;
   interest: number;
   principal: number;
@@ -32,6 +32,7 @@ interface AmortizationTableProps {
     frequency: string;
     term: number;
     startDate: string;
+    amortizationType?: string;
   };
 }
 
@@ -42,6 +43,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
   const [frequency, setFrequency] = useState(loanData?.frequency || 'monthly');
   const [term, setTerm] = useState(loanData?.term || 12);
   const [startDate, setStartDate] = useState(loanData?.startDate || new Date().toISOString().split('T')[0]);
+  const [amortizationType, setAmortizationType] = useState(loanData?.amortizationType || 'simple');
   const [amortizationData, setAmortizationData] = useState<AmortizationRow[]>([]);
   const [recordsPerPage, setRecordsPerPage] = useState(50);
   const [searchTerm, setSearchTerm] = useState('');
@@ -133,42 +135,111 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
     
     let periodPayment: number;
     
-    if (fixedPaymentEnabled && fixedPaymentAmount && typeof fixedPaymentAmount === 'number') {
-      // Usar cuota fija
-      periodPayment = fixedPaymentAmount;
-    } else {
-      // Calcular cuota normal
-      if (periodRate === 0) {
-        periodPayment = amount / term;
-      } else {
-        periodPayment = (amount * periodRate * Math.pow(1 + periodRate, term)) / 
-                       (Math.pow(1 + periodRate, term) - 1);
-      }
-    }
+         if (fixedPaymentEnabled && fixedPaymentAmount && typeof fixedPaymentAmount === 'number') {
+       // Usar cuota fija
+       periodPayment = fixedPaymentAmount;
+     } else {
+       // Calcular cuota normal según el tipo de amortización
+       if (periodRate === 0) {
+         periodPayment = amount / term;
+       } else {
+         // Por defecto usar fórmula de amortización francesa
+         periodPayment = (amount * periodRate * Math.pow(1 + periodRate, term)) / 
+                        (Math.pow(1 + periodRate, term) - 1);
+       }
+     }
 
     const rows: AmortizationRow[] = [];
     let remainingBalance = amount;
     const startDateObj = new Date(startDate);
 
-    for (let i = 1; i <= term; i++) {
-      const interest = remainingBalance * periodRate;
-      const principal = periodPayment - interest;
-      const payment = periodPayment;
+    if (amortizationType === 'simple') {
+      // Amortización simple - Cuota fija
+      for (let i = 1; i <= term; i++) {
+        const interest = remainingBalance * periodRate;
+        const principal = periodPayment - interest;
+        const payment = periodPayment;
+        
+        // Calcular fecha de pago según la frecuencia
+        const paymentDate = new Date(startDateObj);
+        paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
+
+        rows.push({
+          installment: i,
+          date: paymentDate.toISOString().split('T')[0],
+          interest: Math.round(interest * 100) / 100,
+          principal: Math.round(principal * 100) / 100,
+          payment: Math.round(payment * 100) / 100,
+          remainingBalance: Math.round((remainingBalance - principal) * 100) / 100
+        });
+
+        remainingBalance = Math.round((remainingBalance - principal) * 100) / 100;
+      }
+    } else if (amortizationType === 'german') {
+      // Amortización alemana - Cuota decreciente
+      const principalPerPayment = amount / term;
       
-      // Calcular fecha de pago según la frecuencia
+      for (let i = 1; i <= term; i++) {
+        const interest = remainingBalance * periodRate;
+        const principal = principalPerPayment;
+        const payment = principal + interest;
+        
+        // Calcular fecha de pago según la frecuencia
+        const paymentDate = new Date(startDateObj);
+        paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
+
+        rows.push({
+          installment: i,
+          date: paymentDate.toISOString().split('T')[0],
+          interest: Math.round(interest * 100) / 100,
+          principal: Math.round(principal * 100) / 100,
+          payment: Math.round(payment * 100) / 100,
+          remainingBalance: Math.round((remainingBalance - principal) * 100) / 100
+        });
+
+        remainingBalance = Math.round((remainingBalance - principal) * 100) / 100;
+      }
+    } else if (amortizationType === 'american') {
+      // Amortización americana - Solo intereses, capital al final
+      const interestPerPayment = amount * periodRate;
+      
+      for (let i = 1; i <= term; i++) {
+        const interest = interestPerPayment;
+        const principal = i === term ? amount : 0;
+        const payment = i === term ? interest + amount : interest;
+        
+        // Calcular fecha de pago según la frecuencia
+        const paymentDate = new Date(startDateObj);
+        paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
+
+        rows.push({
+          installment: i,
+          date: paymentDate.toISOString().split('T')[0],
+          interest: Math.round(interest * 100) / 100,
+          principal: Math.round(principal * 100) / 100,
+          payment: Math.round(payment * 100) / 100,
+          remainingBalance: i === term ? 0 : Math.round(remainingBalance * 100) / 100
+        });
+
+        if (i === term) {
+          remainingBalance = 0;
+        }
+      }
+    } else if (amortizationType === 'indefinite') {
+      // Plazo indefinido - Solo intereses, sin vencimiento
+      const interestPerPayment = amount * periodRate;
+      
+      // Solo mostrar 1 período para plazo indefinido
       const paymentDate = new Date(startDateObj);
-      paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
 
       rows.push({
-        installment: i,
+        installment: '1/X', // Mostrar 1/X para indicar que es indefinido
         date: paymentDate.toISOString().split('T')[0],
-        interest: Math.round(interest * 100) / 100,
-        principal: Math.round(principal * 100) / 100,
-        payment: Math.round(payment * 100) / 100,
-        remainingBalance: Math.round((remainingBalance - principal) * 100) / 100
+        interest: Math.round(interestPerPayment * 100) / 100,
+        principal: 0,
+        payment: Math.round(interestPerPayment * 100) / 100,
+        remainingBalance: Math.round(amount * 100) / 100
       });
-
-      remainingBalance -= principal;
     }
 
     setAmortizationData(rows);
@@ -178,7 +249,14 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
     if (isOpen) {
       calculateAmortization();
     }
-  }, [isOpen, amount, interestRate, term, frequency, startDate, fixedPaymentEnabled, fixedPaymentAmount]);
+  }, [isOpen, amount, interestRate, term, frequency, startDate, amortizationType, fixedPaymentEnabled, fixedPaymentAmount]);
+
+  // Actualizar el plazo cuando cambie el tipo de amortización
+  useEffect(() => {
+    if (amortizationType === 'indefinite' && term !== 1) {
+      setTerm(1); // Para plazo indefinido, usar 1 período ya que no tiene plazo real
+    }
+  }, [amortizationType]);
 
   // Actualizar automáticamente la tasa de interés cuando cambie la cuota fija
   useEffect(() => {
@@ -210,6 +288,11 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
     if (sortColumn === 'date') {
       aValue = new Date(aValue).getTime();
       bValue = new Date(bValue).getTime();
+    } else if (sortColumn === 'installment') {
+      // Para installment, si es string (como "1/X"), mantener como string
+      // Si es número, convertir a string para comparación consistente
+      aValue = typeof aValue === 'string' ? aValue : aValue.toString();
+      bValue = typeof bValue === 'string' ? bValue : bValue.toString();
     }
 
     if (sortDirection === 'asc') {
@@ -229,9 +312,10 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
   };
 
   const copyToClipboard = () => {
-    const tableData = sortedData.map(row => 
-      `${row.installment}/${term}\t${row.date}\t${row.interest}\t${row.principal}\t${row.payment}\t${row.remainingBalance}`
-    ).join('\n');
+    const tableData = sortedData.map(row => {
+      const installmentText = typeof row.installment === 'string' ? row.installment : `${row.installment}/${term}`;
+      return `${installmentText}\t${row.date}\t${row.interest}\t${row.principal}\t${row.payment}\t${row.remainingBalance}`;
+    }).join('\n');
     
     navigator.clipboard.writeText(tableData);
     toast.success('Tabla copiada al portapapeles');
@@ -241,11 +325,21 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
     const csvContent = [
       'CUOTA,FECHA,INTERES,CAPITAL,A PAGAR,CAPITAL RESTANTE',
       ...sortedData.map(row => 
-        `${row.installment}/${term},${row.date},${row.interest},${row.principal},${row.payment},${row.remainingBalance}`
+        `${typeof row.installment === 'string' ? row.installment : `${row.installment}/${term}`},${row.date},${row.interest},${row.principal},${row.payment},${row.remainingBalance}`
       )
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Solo agregar totales si no es plazo indefinido
+    let finalContent = csvContent;
+    if (amortizationType !== 'indefinite') {
+      const totalInterest = sortedData.reduce((sum, row) => sum + row.interest, 0);
+      const totalPrincipal = sortedData.reduce((sum, row) => sum + row.principal, 0);
+      const totalPayment = sortedData.reduce((sum, row) => sum + row.payment, 0);
+      const totalsRow = `TOTALES,,${totalInterest},${totalPrincipal},${totalPayment},0`;
+      finalContent = csvContent + '\n' + totalsRow;
+    }
+
+    const blob = new Blob([finalContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
@@ -276,7 +370,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
           <body>
             <div class="header">
               <h1>Tabla de Amortización</h1>
-              <p>Monto: $${amount.toLocaleString()} | Tasa: ${calculateAdjustedInterestRate().toFixed(2)}% | Plazo: ${term} {getFrequencyInfo().label}</p>
+              <p>Monto: $${amount.toLocaleString()} | Tasa: ${calculateAdjustedInterestRate().toFixed(2)}% | Plazo: ${term} {getFrequencyInfo().label} | Tipo: ${amortizationType === 'simple' ? 'Simple' : amortizationType === 'german' ? 'Alemán' : amortizationType === 'american' ? 'Americano' : 'Indefinido'}</p>
               ${fixedPaymentEnabled ? `<p>Cuota Fija: $${fixedPaymentAmount}</p>` : ''}
             </div>
             <table>
@@ -293,7 +387,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
               <tbody>
                 ${sortedData.map(row => `
                   <tr>
-                    <td>${row.installment}/${term}</td>
+                    <td>${typeof row.installment === 'string' ? row.installment : `${row.installment}/${term}`}</td>
                     <td>${row.date}</td>
                     <td>$${row.interest.toLocaleString()}</td>
                     <td>$${row.principal.toLocaleString()}</td>
@@ -303,11 +397,13 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                 `).join('')}
               </tbody>
             </table>
+            ${amortizationType !== 'indefinite' ? `
             <div class="totals">
               <p>Total Intereses: $${sortedData.reduce((sum, row) => sum + row.interest, 0).toLocaleString()}</p>
               <p>Total Capital: $${sortedData.reduce((sum, row) => sum + row.principal, 0).toLocaleString()}</p>
               <p>Total a Pagar: $${sortedData.reduce((sum, row) => sum + row.payment, 0).toLocaleString()}</p>
             </div>
+            ` : ''}
           </body>
         </html>
       `);
@@ -419,6 +515,20 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Tipo de Amortización</label>
+              <Select value={amortizationType} onValueChange={setAmortizationType}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="simple">Simple | Absoluto</SelectItem>
+                  <SelectItem value="german">Alemán | Insoluto</SelectItem>
+                  <SelectItem value="american">Americano | Línea de Crédito</SelectItem>
+                  <SelectItem value="indefinite">Plazo Indefinido</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             
             {/* Cuota Fija */}
@@ -549,7 +659,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>
                     <span className="text-gray-600 font-medium">Cuota:</span>
-                    <div className="font-semibold">{row.installment}/{term}</div>
+                    <div className="font-semibold">{typeof row.installment === 'string' ? row.installment : `${row.installment}/${term}`}</div>
                   </div>
                   <div>
                     <span className="text-gray-600 font-medium">Fecha:</span>
@@ -640,7 +750,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
               <tbody>
                 {sortedData.slice(0, recordsPerPage).map((row, index) => (
                   <tr key={index} className="hover:bg-gray-50">
-                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">{row.installment}/{term}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">{typeof row.installment === 'string' ? row.installment : `${row.installment}/${term}`}</td>
                     <td className="border p-2 lg:p-3 text-xs lg:text-sm">{row.date}</td>
                     <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.interest.toLocaleString()}</td>
                     <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.principal.toLocaleString()}</td>
@@ -653,23 +763,25 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
           </div>
         </div>
 
-        {/* Totals */}
-        <div className="p-3 sm:p-4 border-t bg-gray-50 flex-shrink-0">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-center">
-            <div>
-              <span className="text-xs sm:text-sm text-gray-600">INTERES:</span>
-              <div className="font-bold text-sm sm:text-base text-red-600">${totalInterest.toLocaleString()}</div>
-            </div>
-            <div>
-              <span className="text-xs sm:text-sm text-gray-600">CAPITAL:</span>
-              <div className="font-bold text-sm sm:text-base text-blue-600">${totalPrincipal.toLocaleString()}</div>
-            </div>
-            <div>
-              <span className="text-xs sm:text-sm text-gray-600">A PAGAR:</span>
-              <div className="font-bold text-sm sm:text-base text-green-600">${totalPayment.toLocaleString()}</div>
+        {/* Totals - Solo mostrar si no es plazo indefinido */}
+        {amortizationType !== 'indefinite' && (
+          <div className="p-3 sm:p-4 border-t bg-gray-50 flex-shrink-0">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-center">
+              <div>
+                <span className="text-xs sm:text-sm text-gray-600">INTERES:</span>
+                <div className="font-bold text-sm sm:text-base text-red-600">${totalInterest.toLocaleString()}</div>
+              </div>
+              <div>
+                <span className="text-xs sm:text-sm text-gray-600">CAPITAL:</span>
+                <div className="font-bold text-sm sm:text-base text-blue-600">${totalPrincipal.toLocaleString()}</div>
+              </div>
+              <div>
+                <span className="text-xs sm:text-sm text-gray-600">A PAGAR:</span>
+                <div className="font-bold text-sm sm:text-base text-green-600">${totalPayment.toLocaleString()}</div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Pagination Info */}
         <div className="p-3 sm:p-4 border-t text-center text-xs sm:text-sm text-gray-600 flex-shrink-0">
