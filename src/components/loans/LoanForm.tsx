@@ -355,24 +355,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
          let remainingBalance = amount;
          const interestPerPayment = newTotalInterest / totalPeriods;
          
-         for (let i = 1; i <= totalPeriods; i++) {
-           const paymentDate = new Date(first_payment_date);
-           
-           switch (payment_frequency) {
-             case 'daily':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1));
-               break;
-             case 'weekly':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-               break;
-             case 'biweekly':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-               break;
-             case 'monthly':
-             default:
-               paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-               break;
-           }
+          for (let i = 1; i <= totalPeriods; i++) {
+            // Calcular fecha del pago considerando días excluidos
+            const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
            
            const principalPayment = fixed_payment_amount - interestPerPayment;
            
@@ -393,24 +378,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
          const interestPerPayment = totalInterest / totalPeriods;
          const principalPerPayment = amount / totalPeriods;
          
-         for (let i = 1; i <= totalPeriods; i++) {
-           const paymentDate = new Date(first_payment_date);
-           
-           switch (payment_frequency) {
-             case 'daily':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1));
-               break;
-             case 'weekly':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-               break;
-             case 'biweekly':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-               break;
-             case 'monthly':
-             default:
-               paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-               break;
-           }
+          for (let i = 1; i <= totalPeriods; i++) {
+            // Calcular fecha del pago considerando días excluidos
+            const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
            
            schedule.push({
              payment: i,
@@ -431,24 +401,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
        let remainingBalance = amount;
        let totalPaid = 0;
        
-       for (let i = 1; i <= totalPeriods; i++) {
-         const paymentDate = new Date(first_payment_date);
-         
-         switch (payment_frequency) {
-           case 'daily':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1));
-             break;
-           case 'weekly':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-             break;
-           case 'biweekly':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-             break;
-           case 'monthly':
-           default:
-             paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-             break;
-         }
+        for (let i = 1; i <= totalPeriods; i++) {
+          // Calcular fecha del pago considerando días excluidos
+          const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
          
          const interestPayment = remainingBalance * periodRate;
          const actualPayment = principalPerPayment + interestPayment;
@@ -475,24 +430,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
        let remainingBalance = amount;
        let totalPaid = 0;
        
-       for (let i = 1; i <= totalPeriods; i++) {
-         const paymentDate = new Date(first_payment_date);
-         
-         switch (payment_frequency) {
-           case 'daily':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1));
-             break;
-           case 'weekly':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-             break;
-           case 'biweekly':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-             break;
-           case 'monthly':
-           default:
-             paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-             break;
-         }
+        for (let i = 1; i <= totalPeriods; i++) {
+          // Calcular fecha del pago considerando días excluidos
+          const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
          
          const actualPayment = i === totalPeriods ? interestPerPayment + amount : interestPerPayment;
          const principalPayment = i === totalPeriods ? amount : 0;
@@ -556,6 +496,43 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     } else {
       setExcludedDays(prev => prev.filter(d => d !== day));
     }
+  };
+
+  // Función para obtener el siguiente día hábil (que no esté excluido)
+  const getNextBusinessDay = (date: Date, excludedDays: string[]): Date => {
+    const daysOfWeek = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    let nextDate = new Date(date);
+    
+    while (excludedDays.includes(daysOfWeek[nextDate.getDay()])) {
+      nextDate.setDate(nextDate.getDate() + 1);
+    }
+    
+    return nextDate;
+  };
+
+  // Función para calcular la fecha del siguiente pago considerando días excluidos
+  const calculateNextPaymentDate = (startDate: Date, periods: number, frequency: string, excludedDays: string[]): Date => {
+    let currentDate = new Date(startDate);
+    
+    // Aplicar incremento según frecuencia
+    switch (frequency) {
+      case 'daily':
+        currentDate.setDate(currentDate.getDate() + periods);
+        break;
+      case 'weekly':
+        currentDate.setDate(currentDate.getDate() + (periods * 7));
+        break;
+      case 'biweekly':
+        currentDate.setDate(currentDate.getDate() + (periods * 15));
+        break;
+      case 'monthly':
+      default:
+        currentDate.setMonth(currentDate.getMonth() + periods);
+        break;
+    }
+    
+    // Ajustar si cae en día excluido
+    return getNextBusinessDay(currentDate, excludedDays);
   };
 
   const handleFixQuota = () => {
@@ -1059,24 +1036,36 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                       />
                     </div>
 
-                    <div>
-                      <FormLabel>Primera cuota:</FormLabel>
-                      <FormField
-                        control={form.control}
-                        name="first_payment_date"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormControl>
-                              <Input
-                                type="date"
-                                {...field}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
+                     <div>
+                       <FormLabel>Primera cuota:</FormLabel>
+                       <FormField
+                         control={form.control}
+                         name="first_payment_date"
+                         render={({ field }) => (
+                           <FormItem>
+                             <FormControl>
+                               <Input
+                                 type="date"
+                                 {...field}
+                                 onChange={(e) => {
+                                   const selectedDate = new Date(e.target.value);
+                                   // Ajustar si cae en día excluido
+                                   const adjustedDate = getNextBusinessDay(selectedDate, excludedDays);
+                                   const dateString = adjustedDate.toISOString().split('T')[0];
+                                   field.onChange(dateString);
+                                   
+                                   // Mostrar mensaje si la fecha fue ajustada
+                                   if (dateString !== e.target.value) {
+                                     toast.info(`Fecha ajustada al próximo día hábil: ${adjustedDate.toLocaleDateString()}`);
+                                   }
+                                 }}
+                               />
+                             </FormControl>
+                             <FormMessage />
+                           </FormItem>
+                         )}
+                       />
+                     </div>
                   </div>
 
                   <div className="flex items-center justify-center">
@@ -1098,22 +1087,34 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                  </CardHeader>
                                   <CardContent className="space-y-3 sm:space-y-4 pt-4 sm:pt-6">
                     {/* Días excluidos */}
-                  <div>
-                    <FormLabel>Días excluidos</FormLabel>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 gap-2 mt-2">
-                      {['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'].map((day) => (
-                        <label key={day} className="flex items-center space-x-2">
-                          <input
-                            type="checkbox"
-                            checked={excludedDays.includes(day)}
-                            onChange={(e) => handleExcludedDayChange(day, e.target.checked)}
-                            className="rounded"
-                          />
-                          <span className="text-xs sm:text-sm">{day}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
+                   <div>
+                     <FormLabel>Días excluidos</FormLabel>
+                     <p className="text-xs text-gray-600 mb-2">Selecciona los días que no se considerarán para pagos</p>
+                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 gap-2 mt-2">
+                       {['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'].map((day) => (
+                         <label key={day} className={`flex items-center space-x-2 p-2 rounded-md border cursor-pointer transition-colors ${
+                           excludedDays.includes(day) 
+                             ? 'bg-red-50 border-red-200 text-red-700' 
+                             : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                         }`}>
+                           <input
+                             type="checkbox"
+                             checked={excludedDays.includes(day)}
+                             onChange={(e) => handleExcludedDayChange(day, e.target.checked)}
+                             className="rounded text-red-600 focus:ring-red-500"
+                           />
+                           <span className="text-xs sm:text-sm font-medium">{day}</span>
+                         </label>
+                       ))}
+                     </div>
+                     {excludedDays.length > 0 && (
+                       <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
+                         <p className="text-xs text-yellow-700">
+                           ⚠️ Días excluidos: {excludedDays.join(', ')}. Los pagos que caigan en estos días se moverán al siguiente día hábil.
+                         </p>
+                       </div>
+                     )}
+                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
