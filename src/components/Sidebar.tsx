@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { 
@@ -30,6 +30,7 @@ interface SidebarProps {
 export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
   const location = useLocation();
   const { profile } = useAuth();
+  const [isHovered, setIsHovered] = useState(false);
 
   // Function to check if user has permission
   const hasPermission = (permission: string) => {
@@ -137,16 +138,23 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       )}
       
       {/* Sidebar */}
-      <div className={`
-        fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-50 transition-all duration-300 shadow-lg
-        ${isOpen ? 'w-64' : 'w-0 lg:w-16'}
-        lg:relative lg:z-auto lg:shadow-none
-        ${!isOpen ? 'lg:block hidden' : ''}
-      `}>
+      <div 
+        className={`
+          fixed left-0 top-0 h-full bg-white border-r border-gray-200 z-50 transition-all duration-300 shadow-lg
+          ${isOpen ? 'w-64' : 'w-0 lg:w-16'}
+          ${isHovered && !isOpen ? 'lg:w-64' : ''}
+          lg:relative lg:z-auto lg:shadow-none
+          ${!isOpen ? 'lg:block hidden' : ''}
+        `}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
         {/* Toggle Button */}
         <button
           onClick={onToggle}
-          className="absolute -right-3 top-6 bg-white border border-gray-200 rounded-full p-1 shadow-md hover:shadow-lg transition-shadow z-10"
+          className={`absolute -right-3 top-6 bg-white border border-gray-200 rounded-full p-1 shadow-md hover:shadow-lg transition-shadow z-10 ${
+            isHovered && !isOpen ? 'lg:hidden' : ''
+          }`}
         >
           {isOpen ? (
             <ChevronLeft className="h-4 w-4 text-gray-600" />
@@ -158,7 +166,7 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
         <div className="p-4 h-full overflow-y-auto">
           {/* Logo/Title */}
           <div className="mb-8">
-            {isOpen ? (
+            {(isOpen || isHovered) ? (
               <div>
                 <h1 className="text-xl font-bold text-gray-800">PrestamosPro</h1>
                 {profile?.is_employee && (
@@ -192,13 +200,13 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
                 >
                   {shouldBlock ? (
                     <div className={`flex items-center px-3 py-2 rounded-lg text-gray-400 cursor-not-allowed ${
-                      isOpen ? 'space-x-3' : 'justify-center'
+                      (isOpen || isHovered) ? 'space-x-3' : 'justify-center'
                     }`}>
-                      <item.icon className="h-5 w-5" />
-                      {isOpen && (
+                      <item.icon className="h-6 w-6" />
+                      {(isOpen || isHovered) && (
                         <>
                           <span className="flex-1">{item.name}</span>
-                          <Lock className="h-4 w-4" />
+                          <Lock className="h-5 w-5" />
                         </>
                       )}
                     </div>
@@ -206,16 +214,16 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
                     <Link
                       to={item.path}
                       className={`flex items-center px-3 py-2 rounded-lg transition-colors ${
-                        isOpen ? 'space-x-3' : 'justify-center'
+                        (isOpen || isHovered) ? 'space-x-3' : 'justify-center'
                       } ${
                         isActive
                           ? 'bg-blue-100 text-blue-700'
                           : 'text-gray-600 hover:bg-gray-100'
                       }`}
-                      title={!isOpen ? item.name : undefined}
+                      title={!(isOpen || isHovered) ? item.name : undefined}
                     >
-                      <item.icon className="h-5 w-5" />
-                      {isOpen && <span>{item.name}</span>}
+                      <item.icon className="h-6 w-6" />
+                      {(isOpen || isHovered) && <span>{item.name}</span>}
                     </Link>
                   )}
                 </div>

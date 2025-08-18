@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
-import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer } from 'lucide-react';
+import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer, Plus } from 'lucide-react';
 
 const loanSchema = z.object({
   client_id: z.string().min(1, 'Debe seleccionar un cliente'),
@@ -41,6 +41,7 @@ const loanSchema = z.object({
   notes: z.string().optional(),
   fixed_payment_enabled: z.boolean().default(false),
   fixed_payment_amount: z.number().optional(),
+  excluded_days: z.array(z.string()).default([]),
 });
 
 type LoanFormData = z.infer<typeof loanSchema>;
@@ -80,6 +81,46 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const [excludedDays, setExcludedDays] = useState<string[]>([]);
   const [isFixingQuota, setIsFixingQuota] = useState(false);
   const { user, companyId } = useAuth();
+
+
+
+  // Función para verificar si una fecha cae en día excluido y ajustarla
+  const adjustDateForExcludedDays = (date: Date) => {
+    if (excludedDays.length === 0) return date;
+    
+    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const adjustedDate = new Date(date);
+    const dayIndex = adjustedDate.getDay();
+    const dayName = dayNames[dayIndex];
+    
+    // Si la fecha no está excluida, devolverla tal como está
+    if (!excludedDays.includes(dayName)) {
+      return adjustedDate;
+    }
+    
+    // Si está excluida, buscar el siguiente día hábil
+    let attempts = 0;
+    const maxAttempts = 30;
+    
+    while (attempts < maxAttempts) {
+      adjustedDate.setDate(adjustedDate.getDate() + 1);
+      const nextDayIndex = adjustedDate.getDay();
+      const nextDayName = dayNames[nextDayIndex];
+      
+      if (!excludedDays.includes(nextDayName)) {
+        break;
+      }
+      attempts++;
+    }
+    
+    return adjustedDate;
+  };
+
+  // Función auxiliar para crear fechas en zona horaria local
+  const createLocalDate = (dateString: string): Date => {
+    const [year, month, day] = dateString.split('-').map(Number);
+    return new Date(year, month - 1, day); // month - 1 porque los meses van de 0-11
+  };
 
   const form = useForm<LoanFormData>({
     resolver: zodResolver(loanSchema),
@@ -254,18 +295,21 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
 
   const calculateAmortization = () => {
     const formValues = form.getValues();
-    const { amount, interest_rate, term_months, amortization_type, payment_frequency, first_payment_date, fixed_payment_enabled, fixed_payment_amount } = formValues;
+    const { amount, interest_rate, term_months, amortization_type, payment_frequency, first_payment_date, fixed_payment_enabled, fixed_payment_amount, closing_costs } = formValues;
     
-         if (!amount || !interest_rate) {
-       toast.error('Complete todos los campos requeridos para calcular');
-       return;
-     }
+    // Extraer el día original del mes de la primera fecha de pago
+    const originalDay = parseInt(first_payment_date.split('-')[2]);
+    
+    if (!amount || !interest_rate) {
+      toast.error('Complete todos los campos requeridos para calcular');
+      return;
+    }
 
-     // Para plazo indefinido no necesitamos term_months
-     if (amortization_type !== 'indefinite' && !term_months) {
-       toast.error('Complete todos los campos requeridos para calcular');
-       return;
-     }
+    // Para plazo indefinido no necesitamos term_months
+    if (amortization_type !== 'indefinite' && !term_months) {
+      toast.error('Complete todos los campos requeridos para calcular');
+      return;
+    }
 
     if (!selectedClient) {
       toast.error('Debe seleccionar un cliente');
@@ -286,6 +330,62 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         return;
       }
     }
+
+
+
+    // Función para obtener el siguiente día hábil considerando días excluidos
+    const getNextBusinessDay = (currentDate: Date, frequency: string, originalDay?: number) => {
+      let nextDate = new Date(currentDate);
+      
+      // Primero calcular la fecha base según la frecuencia
+      switch (frequency) {
+        case 'daily':
+          nextDate.setDate(nextDate.getDate() + 1);
+          break;
+        case 'weekly':
+          nextDate.setDate(nextDate.getDate() + 7);
+          break;
+        case 'biweekly':
+          nextDate.setDate(nextDate.getDate() + 15);
+          break;
+        case 'monthly':
+        default:
+          // Para frecuencia mensual, usar el día original del mes si está disponible
+          if (originalDay !== undefined) {
+            // Usar el día original (ej: 18) en lugar del día actual
+            nextDate.setMonth(nextDate.getMonth() + 1);
+            nextDate.setDate(originalDay);
+            
+            // Si el día del mes no existe en el siguiente mes, usar el último día del mes
+            const nextMonthDay = nextDate.getDate();
+            if (nextMonthDay !== originalDay) {
+              // El día cambió, significa que no existe en el siguiente mes
+              // Volver al mes anterior y usar el último día
+              nextDate.setMonth(nextDate.getMonth() - 1);
+              nextDate.setDate(0); // Esto establece el último día del mes anterior
+              nextDate.setMonth(nextDate.getMonth() + 1);
+            }
+          } else {
+            // Fallback: mantener el mismo día del mes
+            const currentDay = nextDate.getDate();
+            nextDate.setMonth(nextDate.getMonth() + 1);
+            
+            // Si el día del mes no existe en el siguiente mes, usar el último día del mes
+            const nextMonthDay = nextDate.getDate();
+            if (nextMonthDay !== currentDay) {
+              // El día cambió, significa que no existe en el siguiente mes
+              // Volver al mes anterior y usar el último día
+              nextDate.setMonth(nextDate.getMonth() - 1);
+              nextDate.setDate(0); // Esto establece el último día del mes anterior
+              nextDate.setMonth(nextDate.getMonth() + 1);
+            }
+          }
+          break;
+      }
+      
+      // Aplicar ajuste de días excluidos usando la función existente
+      return adjustDateForExcludedDays(nextDate);
+    };
 
     // Calcular períodos totales según la frecuencia
     // El plazo ya está en la unidad correcta según la frecuencia seleccionada
@@ -356,32 +456,28 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
          const interestPerPayment = newTotalInterest / totalPeriods;
          
          for (let i = 1; i <= totalPeriods; i++) {
-           const paymentDate = new Date(first_payment_date);
+           let paymentDate: Date;
            
-           switch (payment_frequency) {
-             case 'daily':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1));
-               break;
-             case 'weekly':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-               break;
-             case 'biweekly':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-               break;
-             case 'monthly':
-             default:
-               paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-               break;
+           if (i === 1) {
+             // Para la primera fecha, verificar si cae en día excluido
+             const firstDate = createLocalDate(first_payment_date);
+             paymentDate = adjustDateForExcludedDays(firstDate);
+           } else {
+             // Usar la función para calcular el siguiente día hábil
+             const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
+             paymentDate = getNextBusinessDay(previousDate, payment_frequency);
            }
            
            const principalPayment = fixed_payment_amount - interestPerPayment;
+           const isLastPayment = i === totalPeriods;
+           const totalPaymentWithClosingCosts = isLastPayment ? fixed_payment_amount + (closing_costs || 0) : fixed_payment_amount;
            
            schedule.push({
              payment: i,
              date: paymentDate.toISOString().split('T')[0],
              interest: interestPerPayment,
              principal: principalPayment,
-             totalPayment: fixed_payment_amount,
+             totalPayment: totalPaymentWithClosingCosts,
              remainingBalance: Math.max(0, remainingBalance - principalPayment)
            });
            
@@ -394,30 +490,27 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
          const principalPerPayment = amount / totalPeriods;
          
          for (let i = 1; i <= totalPeriods; i++) {
-           const paymentDate = new Date(first_payment_date);
+           let paymentDate: Date;
            
-           switch (payment_frequency) {
-             case 'daily':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1));
-               break;
-             case 'weekly':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-               break;
-             case 'biweekly':
-               paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-               break;
-             case 'monthly':
-             default:
-               paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-               break;
+           if (i === 1) {
+             // Para la primera fecha, verificar si cae en día excluido
+             const firstDate = createLocalDate(first_payment_date);
+             paymentDate = adjustDateForExcludedDays(firstDate);
+           } else {
+             // Usar la función para calcular el siguiente día hábil
+             const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
+             paymentDate = getNextBusinessDay(previousDate, payment_frequency, originalDay);
            }
+           
+           const isLastPayment = i === totalPeriods;
+           const totalPaymentWithClosingCosts = isLastPayment ? monthlyPayment + (closing_costs || 0) : monthlyPayment;
            
            schedule.push({
              payment: i,
              date: paymentDate.toISOString().split('T')[0],
              interest: interestPerPayment,
              principal: principalPerPayment,
-             totalPayment: monthlyPayment,
+             totalPayment: totalPaymentWithClosingCosts,
              remainingBalance: Math.max(0, remainingBalance - principalPerPayment)
            });
            
@@ -432,26 +525,22 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
        let totalPaid = 0;
        
        for (let i = 1; i <= totalPeriods; i++) {
-         const paymentDate = new Date(first_payment_date);
+         let paymentDate: Date;
          
-         switch (payment_frequency) {
-           case 'daily':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1));
-             break;
-           case 'weekly':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-             break;
-           case 'biweekly':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-             break;
-           case 'monthly':
-           default:
-             paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-             break;
+         if (i === 1) {
+           // Para la primera fecha, verificar si cae en día excluido
+           const firstDate = createLocalDate(first_payment_date);
+           paymentDate = adjustDateForExcludedDays(firstDate);
+         } else {
+           // Usar la función para calcular el siguiente día hábil
+           const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
+           paymentDate = getNextBusinessDay(previousDate, payment_frequency);
          }
          
          const interestPayment = remainingBalance * periodRate;
          const actualPayment = principalPerPayment + interestPayment;
+         const isLastPayment = i === totalPeriods;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
          totalPaid += actualPayment;
          
          schedule.push({
@@ -459,7 +548,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
            date: paymentDate.toISOString().split('T')[0],
            interest: interestPayment,
            principal: principalPerPayment,
-           totalPayment: actualPayment,
+           totalPayment: totalPaymentWithClosingCosts,
            remainingBalance: Math.max(0, remainingBalance - principalPerPayment)
          });
          
@@ -476,26 +565,22 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
        let totalPaid = 0;
        
        for (let i = 1; i <= totalPeriods; i++) {
-         const paymentDate = new Date(first_payment_date);
+         let paymentDate: Date;
          
-         switch (payment_frequency) {
-           case 'daily':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1));
-             break;
-           case 'weekly':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 7);
-             break;
-           case 'biweekly':
-             paymentDate.setDate(paymentDate.getDate() + (i - 1) * 15);
-             break;
-           case 'monthly':
-           default:
-             paymentDate.setMonth(paymentDate.getMonth() + (i - 1));
-             break;
+         if (i === 1) {
+           // Para la primera fecha, verificar si cae en día excluido
+           const firstDate = createLocalDate(first_payment_date);
+           paymentDate = adjustDateForExcludedDays(firstDate);
+         } else {
+           // Usar la función para calcular el siguiente día hábil
+           const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
+           paymentDate = getNextBusinessDay(previousDate, payment_frequency, originalDay);
          }
          
          const actualPayment = i === totalPeriods ? interestPerPayment + amount : interestPerPayment;
          const principalPayment = i === totalPeriods ? amount : 0;
+         const isLastPayment = i === totalPeriods;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
          totalPaid += actualPayment;
          
          schedule.push({
@@ -503,7 +588,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
            date: paymentDate.toISOString().split('T')[0],
            interest: interestPerPayment,
            principal: principalPayment,
-           totalPayment: actualPayment,
+           totalPayment: totalPaymentWithClosingCosts,
            remainingBalance: i === totalPeriods ? 0 : remainingBalance
          });
          
@@ -518,15 +603,16 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
      } else if (amortization_type === 'indefinite') {
        // Plazo indefinido - Solo intereses, sin fecha de vencimiento
        const interestPerPayment = amount * periodRate;
-       const paymentDate = new Date(first_payment_date);
+       const paymentDate = adjustDateForExcludedDays(createLocalDate(first_payment_date));
        
        // Para plazo indefinido, mostrar solo 1 período con "1/X"
+       const totalPaymentWithClosingCosts = interestPerPayment + (closing_costs || 0);
        schedule.push({
          payment: '1/X', // Mostrar 1/X para indicar que es indefinido
          date: paymentDate.toISOString().split('T')[0],
          interest: interestPerPayment,
          principal: 0,
-         totalPayment: interestPerPayment,
+         totalPayment: totalPaymentWithClosingCosts,
          remainingBalance: amount
        });
        
@@ -547,7 +633,12 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     setAmortizationSchedule(schedule);
     setShowAmortizationTable(true);
     
-    toast.success('Préstamo calculado exitosamente');
+    // Mostrar mensaje informativo sobre días excluidos si los hay
+    if (excludedDays.length > 0) {
+      toast.success(`Préstamo calculado exitosamente. Días excluidos: ${excludedDays.join(', ')}`);
+    } else {
+      toast.success('Préstamo calculado exitosamente');
+    }
   };
 
   const handleExcludedDayChange = (day: string, checked: boolean) => {
@@ -602,6 +693,22 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       return;
     }
 
+    // Validaciones adicionales para información adicional
+    if (data.guarantor_required && !data.guarantor_name) {
+      toast.error('Debe ingresar el nombre del codeudor cuando se requiere garantía');
+      return;
+    }
+
+    if (data.closing_costs < 0) {
+      toast.error('Los gastos de cierre no pueden ser negativos');
+      return;
+    }
+
+    if (data.minimum_payment_percentage < 0 || data.minimum_payment_percentage > 100) {
+      toast.error('El porcentaje de pago mínimo debe estar entre 0% y 100%');
+      return;
+    }
+
     setLoading(true);
     try {
       const startDate = new Date();
@@ -630,6 +737,19 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         guarantor_phone: data.guarantor_phone || null,
         guarantor_dni: data.guarantor_dni || null,
         notes: data.notes || null,
+        // Campos de información adicional
+        excluded_days: excludedDays,
+        closing_costs_percentage: data.closing_costs,
+        portfolio_id: data.portfolio === 'none' ? null : data.portfolio,
+        amortization_type: data.amortization_type,
+        payment_frequency: data.payment_frequency,
+        minimum_payment_enabled: data.minimum_payment,
+        minimum_payment_type: data.minimum_payment_type,
+        minimum_payment_percentage: data.minimum_payment_percentage,
+        late_fee_enabled: data.late_fee,
+        add_expense_enabled: data.add_expense,
+        fixed_payment_enabled: data.fixed_payment_enabled,
+        fixed_payment_amount: data.fixed_payment_amount || 0,
       };
 
       const { error } = await supabase
@@ -759,6 +879,11 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
     }
   }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months')]);
 
+  // Actualizar el esquema cuando cambien los días excluidos
+  useEffect(() => {
+    form.setValue('excluded_days', excludedDays);
+  }, [excludedDays, form]);
+
   return (
     <div className="space-y-4 md:space-y-6">
       {/* Header responsive */}
@@ -785,7 +910,19 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                   <CardContent className="space-y-3 sm:space-y-4 pt-4 sm:pt-6">
                     {/* Búsqueda de Cliente */}
                   <div className="space-y-2">
-                    <FormLabel>Cliente:</FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel>Cliente:</FormLabel>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.location.href = '/clientes/nuevo'}
+                        className="flex items-center gap-1 text-xs"
+                      >
+                        <Plus className="h-3 w-3" />
+                        Crear Cliente
+                      </Button>
+                    </div>
                     <div className="relative">
                       <Input
                         placeholder="Buscar cliente por nombre..."
@@ -1079,7 +1216,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-center">
+                  <div className="flex items-center justify-center gap-2">
                     <Button 
                       type="button" 
                       className="bg-blue-500 hover:bg-blue-600 px-4 sm:px-8 py-2 sm:py-3 text-base sm:text-lg w-full sm:w-auto"
@@ -1087,6 +1224,8 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                     >
                       📊 CALCULAR PRÉSTAMO
                     </Button>
+                    
+
                   </div>
                 </CardContent>
               </Card>
@@ -1113,11 +1252,19 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                         </label>
                       ))}
                     </div>
+                    {excludedDays.length > 0 && (
+                      <div className="mt-2 p-2 bg-blue-50 rounded text-xs text-blue-700">
+                        <strong>Días excluidos:</strong> {excludedDays.join(', ')}. 
+                        Los pagos se moverán al siguiente día hábil disponible.
+                      </div>
+                    )}
+                    
+
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <FormLabel>Gastos de cierre: %</FormLabel>
+                      <FormLabel>Gastos de cierre: RD$</FormLabel>
                       <FormField
                         control={form.control}
                         name="closing_costs"
@@ -1127,19 +1274,26 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                               <Input
                                 type="number"
                                 placeholder="0"
+                                min="0"
+                                step="0.01"
                                 value={field.value || ''}
                                 onChange={(e) => {
                                   const value = e.target.value;
                                   // Permitir decimales con hasta 2 decimales
                                   if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
                                     const numValue = value === '' ? 0 : parseFloat(value) || 0;
-                                    field.onChange(numValue);
+                                    field.onChange(Math.max(0, numValue));
                                   }
                                 }}
                                 className=""
                               />
                             </FormControl>
                             <FormMessage />
+                            {field.value > 0 && (
+                              <div className="text-xs text-gray-500">
+                                Los gastos de cierre se agregarán al último pago
+                              </div>
+                            )}
                           </FormItem>
                         )}
                       />
@@ -1180,9 +1334,18 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                       render={({ field }) => (
                         <FormItem>
                           <FormControl>
-                            <Input placeholder="Nombre del codeudor (opcional)" {...field} />
+                            <Input 
+                              placeholder="Nombre del codeudor (opcional)" 
+                              {...field}
+                              className={form.watch('guarantor_required') && !field.value ? 'border-red-500' : ''}
+                            />
                           </FormControl>
                           <FormMessage />
+                          {form.watch('guarantor_required') && !field.value && (
+                            <div className="text-xs text-red-500">
+                              Nombre del codeudor es requerido cuando se solicita garantía
+                            </div>
+                          )}
                         </FormItem>
                       )}
                     />
@@ -1293,19 +1456,28 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                                 <Input
                                   type="number"
                                   placeholder="0"
+                                  min="0"
+                                  max="100"
+                                  step="0.01"
                                   value={field.value || ''}
                                   onChange={(e) => {
                                     const value = e.target.value;
                                     // Permitir decimales con hasta 2 decimales
                                     if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
                                       const numValue = value === '' ? 0 : parseFloat(value) || 0;
-                                      field.onChange(numValue);
+                                      // Validar que no exceda 100%
+                                      field.onChange(Math.min(numValue, 100));
                                     }
                                   }}
                                   className=""
                                 />
                               </FormControl>
                               <FormMessage />
+                              {field.value > 0 && calculatedValues.monthlyPayment > 0 && (
+                                <div className="text-xs text-gray-500">
+                                  Pago mínimo: RD${((field.value / 100) * calculatedValues.monthlyPayment).toFixed(2)}
+                                </div>
+                              )}
                             </FormItem>
                           )}
                         />
@@ -1487,6 +1659,16 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   <p className="text-xs sm:text-sm text-gray-600">
                     Mostrando registros del 1 al {amortizationSchedule.length} de un total de {amortizationSchedule.length} registros
                   </p>
+                  {excludedDays.length > 0 && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      <strong>Días excluidos:</strong> {excludedDays.join(', ')}
+                    </p>
+                  )}
+                  {form.getValues('closing_costs') > 0 && (
+                    <p className="text-xs text-orange-600 mt-1">
+                      <strong>Gastos de cierre:</strong> {form.getValues('closing_costs')}% (RD${((form.getValues('closing_costs') / 100) * form.getValues('amount')).toFixed(2)})
+                    </p>
+                  )}
                 </div>
               </CardContent>
             </Card>
