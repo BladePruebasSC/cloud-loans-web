@@ -25,7 +25,7 @@ const loanSchema = z.object({
   }),
   payment_frequency: z.string().default('monthly'),
   first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
-  closing_costs: z.number().default(0),
+  closing_costs: z.number().min(0).default(0),
   portfolio: z.string().optional(),
   comments: z.string().optional(),
   guarantor_required: z.boolean().default(false),
@@ -541,7 +541,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
          const actualPayment = principalPerPayment + interestPayment;
          const isLastPayment = i === totalPeriods;
          const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
-         totalPaid += actualPayment;
+         totalPaid += totalPaymentWithClosingCosts;
          
          schedule.push({
            payment: i,
@@ -581,7 +581,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
          const principalPayment = i === totalPeriods ? amount : 0;
          const isLastPayment = i === totalPeriods;
          const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
-         totalPaid += actualPayment;
+         totalPaid += totalPaymentWithClosingCosts;
          
          schedule.push({
            payment: i,
@@ -1252,13 +1252,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                         </label>
                       ))}
                     </div>
-                    {excludedDays.length > 0 && (
-                      <div className="mt-2 p-2 bg-blue-50 rounded text-xs text-blue-700">
-                        <strong>Días excluidos:</strong> {excludedDays.join(', ')}. 
-                        Los pagos se moverán al siguiente día hábil disponible.
-                      </div>
-                    )}
-                    
 
                   </div>
 
@@ -1289,11 +1282,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                               />
                             </FormControl>
                             <FormMessage />
-                            {field.value > 0 && (
-                              <div className="text-xs text-gray-500">
-                                Los gastos de cierre se agregarán al último pago
-                              </div>
-                            )}
                           </FormItem>
                         )}
                       />
@@ -1666,7 +1654,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
                   )}
                   {form.getValues('closing_costs') > 0 && (
                     <p className="text-xs text-orange-600 mt-1">
-                      <strong>Gastos de cierre:</strong> {form.getValues('closing_costs')}% (RD${((form.getValues('closing_costs') / 100) * form.getValues('amount')).toFixed(2)})
+                      <strong>Gastos de cierre:</strong> RD${form.getValues('closing_costs').toFixed(2)} (aplicado al último pago)
                     </p>
                   )}
                 </div>
