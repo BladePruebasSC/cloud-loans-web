@@ -356,7 +356,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
          const interestPerPayment = newTotalInterest / totalPeriods;
          
           for (let i = 1; i <= totalPeriods; i++) {
-            // Calcular fecha del pago considerando días excluidos
+            // Calcular fecha del pago considerando días excluidos (cada pago basado en el anterior)
             const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
            
            const principalPayment = fixed_payment_amount - interestPerPayment;
@@ -378,9 +378,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
          const interestPerPayment = totalInterest / totalPeriods;
          const principalPerPayment = amount / totalPeriods;
          
-          for (let i = 1; i <= totalPeriods; i++) {
-            // Calcular fecha del pago considerando días excluidos
-            const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
+           for (let i = 1; i <= totalPeriods; i++) {
+             // Calcular fecha del pago considerando días excluidos (cada pago basado en el anterior)
+             const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
            
            schedule.push({
              payment: i,
@@ -401,9 +401,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
        let remainingBalance = amount;
        let totalPaid = 0;
        
-        for (let i = 1; i <= totalPeriods; i++) {
-          // Calcular fecha del pago considerando días excluidos
-          const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
+         for (let i = 1; i <= totalPeriods; i++) {
+           // Calcular fecha del pago considerando días excluidos (cada pago basado en el anterior)
+           const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
          
          const interestPayment = remainingBalance * periodRate;
          const actualPayment = principalPerPayment + interestPayment;
@@ -430,9 +430,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
        let remainingBalance = amount;
        let totalPaid = 0;
        
-        for (let i = 1; i <= totalPeriods; i++) {
-          // Calcular fecha del pago considerando días excluidos
-          const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
+         for (let i = 1; i <= totalPeriods; i++) {
+           // Calcular fecha del pago considerando días excluidos (cada pago basado en el anterior)
+           const paymentDate = calculateNextPaymentDate(new Date(first_payment_date), i - 1, payment_frequency, excludedDays);
          
          const actualPayment = i === totalPeriods ? interestPerPayment + amount : interestPerPayment;
          const principalPayment = i === totalPeriods ? amount : 0;
@@ -514,25 +514,35 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
   const calculateNextPaymentDate = (startDate: Date, periods: number, frequency: string, excludedDays: string[]): Date => {
     let currentDate = new Date(startDate);
     
-    // Aplicar incremento según frecuencia
-    switch (frequency) {
-      case 'daily':
-        currentDate.setDate(currentDate.getDate() + periods);
-        break;
-      case 'weekly':
-        currentDate.setDate(currentDate.getDate() + (periods * 7));
-        break;
-      case 'biweekly':
-        currentDate.setDate(currentDate.getDate() + (periods * 15));
-        break;
-      case 'monthly':
-      default:
-        currentDate.setMonth(currentDate.getMonth() + periods);
-        break;
+    // Si es el primer período (período 0), asegurar que la fecha inicial no esté excluida
+    if (periods === 0) {
+      return getNextBusinessDay(currentDate, excludedDays);
     }
     
-    // Ajustar si cae en día excluido
-    return getNextBusinessDay(currentDate, excludedDays);
+    // Para períodos posteriores, calcular la fecha y luego ajustar
+    for (let i = 0; i < periods; i++) {
+      // Aplicar incremento según frecuencia
+      switch (frequency) {
+        case 'daily':
+          currentDate.setDate(currentDate.getDate() + 1);
+          break;
+        case 'weekly':
+          currentDate.setDate(currentDate.getDate() + 7);
+          break;
+        case 'biweekly':
+          currentDate.setDate(currentDate.getDate() + 15);
+          break;
+        case 'monthly':
+        default:
+          currentDate.setMonth(currentDate.getMonth() + 1);
+          break;
+      }
+      
+      // Ajustar si cae en día excluido después de cada incremento
+      currentDate = getNextBusinessDay(currentDate, excludedDays);
+    }
+    
+    return currentDate;
   };
 
   const handleFixQuota = () => {
