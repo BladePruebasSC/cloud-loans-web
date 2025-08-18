@@ -38,7 +38,7 @@ interface Loan {
   };
 }
 
-export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
+export const PaymentForm = ({ onBack, preselectedLoan }: { onBack: () => void; preselectedLoan?: Loan }) => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [filteredLoans, setFilteredLoans] = useState<Loan[]>([]);
   const [loanSearch, setLoanSearch] = useState('');
@@ -57,6 +57,15 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
   React.useEffect(() => {
     fetchActiveLoans();
   }, []);
+
+  // Si hay un préstamo predefinido, seleccionarlo automáticamente
+  React.useEffect(() => {
+    if (preselectedLoan) {
+      setSelectedLoan(preselectedLoan);
+      form.setValue('loan_id', preselectedLoan.id);
+      form.setValue('amount', preselectedLoan.monthly_payment);
+    }
+  }, [preselectedLoan, form]);
 
   const fetchActiveLoans = async () => {
     if (!user || !companyId) return;
@@ -236,10 +245,28 @@ export const PaymentForm = ({ onBack }: { onBack: () => void }) => {
                     </div>
                     
                     {selectedLoan && (
-                      <div className="flex items-center gap-2 p-2 bg-blue-50 rounded">
-                        <User className="h-4 w-4 text-blue-600" />
-                        <span className="font-medium">{selectedLoan.client?.full_name}</span>
-                        <Badge variant="outline">{selectedLoan.client?.dni}</Badge>
+                      <div className="space-y-3 p-3 bg-blue-50 rounded">
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 text-blue-600" />
+                          <span className="font-medium">{selectedLoan.client?.full_name}</span>
+                          <Badge variant="outline">{selectedLoan.client?.dni}</Badge>
+                        </div>
+                        {preselectedLoan && (
+                          <div className="grid grid-cols-2 gap-2 text-sm">
+                            <div>
+                              <span className="font-medium text-gray-600">Balance Restante:</span>
+                              <div className="text-lg font-bold text-green-600">
+                                ${selectedLoan.remaining_balance.toLocaleString()}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="font-medium text-gray-600">Próximo Pago:</span>
+                              <div className="text-sm">
+                                {new Date(selectedLoan.next_payment_date).toLocaleDateString()}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

@@ -32,6 +32,7 @@ export const LoansModule = () => {
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [showHistoryView, setShowHistoryView] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
+  const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
   const { loans, loading } = useLoans();
   const { profile, companyId } = useAuth();
 
@@ -49,7 +50,15 @@ export const LoansModule = () => {
   }
 
   if (showPaymentForm) {
-    return <PaymentForm onBack={() => setShowPaymentForm(false)} />;
+    return (
+      <PaymentForm 
+        onBack={() => {
+          setShowPaymentForm(false);
+          setSelectedLoanForPayment(null);
+        }} 
+        preselectedLoan={selectedLoanForPayment}
+      />
+    );
   }
 
   if (showUpdateForm && selectedLoan) {
@@ -76,7 +85,10 @@ export const LoansModule = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Préstamos</h1>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          <Button onClick={() => setShowPaymentForm(true)} className="w-full sm:w-auto">
+          <Button onClick={() => {
+            setSelectedLoanForPayment(null);
+            setShowPaymentForm(true);
+          }} className="w-full sm:w-auto">
             <Receipt className="h-4 w-4 mr-2" />
             Registrar Pago
           </Button>
@@ -256,7 +268,10 @@ export const LoansModule = () => {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => setShowPaymentForm(true)}
+                            onClick={() => {
+                              setSelectedLoanForPayment(loan);
+                              setShowPaymentForm(true);
+                            }}
                             disabled={loan.status === 'paid'}
                             className="w-full sm:w-auto text-xs"
                           >
