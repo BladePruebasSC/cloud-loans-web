@@ -184,6 +184,8 @@ export const PaymentForm = ({ onBack, preselectedLoan }: { onBack: () => void; p
 
       toast.success('Pago registrado exitosamente');
       onBack();
+      // Recargar la página para mostrar los datos actualizados
+      window.location.reload();
     } catch (error) {
       console.error('Error registering payment:', error);
       toast.error('Error al registrar el pago');

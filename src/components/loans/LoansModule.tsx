@@ -2,6 +2,8 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LoanForm } from './LoanForm';
 import { PaymentForm } from './PaymentForm';
@@ -22,7 +24,8 @@ import {
   Filter,
   Receipt,
   Edit,
-  History
+  History,
+  X
 } from 'lucide-react';
 
 export const LoansModule = () => {
@@ -33,17 +36,82 @@ export const LoansModule = () => {
   const [showHistoryView, setShowHistoryView] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
+  
+  // Estados para filtros y búsqueda
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [dateFilter, setDateFilter] = useState('all');
+  const [amountFilter, setAmountFilter] = useState('all');
+  const [overdueFilter, setOverdueFilter] = useState(false);
+  
   const { loans, loading } = useLoans();
   const { profile, companyId } = useAuth();
 
   console.log('LoansModule - Profile:', profile);
   console.log('LoansModule - CompanyId:', companyId);
 
-  // Calcular estadísticas
-  const activeLoans = loans.filter(loan => loan.status === 'active');
-  const overdueLoans = loans.filter(loan => loan.status === 'overdue');
-  const totalAmount = loans.reduce((sum, loan) => sum + loan.amount, 0);
-  const totalBalance = loans.reduce((sum, loan) => sum + loan.remaining_balance, 0);
+  // Función para filtrar préstamos
+  const filteredLoans = loans.filter(loan => {
+    // Filtro por término de búsqueda
+    const matchesSearch = searchTerm === '' || 
+      loan.client?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      loan.client?.dni?.includes(searchTerm) ||
+      loan.id.toLowerCase().includes(searchTerm.toLowerCase());
+
+    // Filtro por estado
+    const matchesStatus = statusFilter === 'all' || loan.status === statusFilter;
+
+    // Filtro por fecha
+    let matchesDate = true;
+    if (dateFilter !== 'all') {
+      const loanDate = new Date(loan.start_date);
+      const today = new Date();
+      const diffTime = Math.abs(today.getTime() - loanDate.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      switch (dateFilter) {
+        case 'today':
+          matchesDate = diffDays === 0;
+          break;
+        case 'week':
+          matchesDate = diffDays <= 7;
+          break;
+        case 'month':
+          matchesDate = diffDays <= 30;
+          break;
+        case 'quarter':
+          matchesDate = diffDays <= 90;
+          break;
+      }
+    }
+
+    // Filtro por monto
+    let matchesAmount = true;
+    if (amountFilter !== 'all') {
+      switch (amountFilter) {
+        case 'low':
+          matchesAmount = loan.amount <= 50000;
+          break;
+        case 'medium':
+          matchesAmount = loan.amount > 50000 && loan.amount <= 200000;
+          break;
+        case 'high':
+          matchesAmount = loan.amount > 200000;
+          break;
+      }
+    }
+
+    // Filtro por mora
+    const matchesOverdue = !overdueFilter || loan.status === 'overdue';
+
+    return matchesSearch && matchesStatus && matchesDate && matchesAmount && matchesOverdue;
+  });
+
+  // Calcular estadísticas basadas en préstamos filtrados
+  const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
+  const overdueLoans = filteredLoans.filter(loan => loan.status === 'overdue');
+  const totalAmount = filteredLoans.reduce((sum, loan) => sum + loan.amount, 0);
+  const totalBalance = filteredLoans.reduce((sum, loan) => sum + loan.remaining_balance, 0);
 
   if (showLoanForm) {
     return <LoanForm onBack={() => setShowLoanForm(false)} />;
@@ -161,30 +229,115 @@ export const LoansModule = () => {
             <CardHeader>
               <CardTitle>Filtros de Búsqueda</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-2 sm:gap-4">
-                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                  <Filter className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-                  <span className="hidden sm:inline">Todos los Estados</span>
-                  <span className="sm:hidden">Estados</span>
-                </Button>
-                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                  <span className="hidden sm:inline">Por Cliente</span>
-                  <span className="sm:hidden">Cliente</span>
-                </Button>
-                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                  <span className="hidden sm:inline">Por Fecha</span>
-                  <span className="sm:hidden">Fecha</span>
-                </Button>
-                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                  <span className="hidden sm:inline">Por Monto</span>
-                  <span className="sm:hidden">Monto</span>
-                </Button>
-                <Button variant="outline" size="sm" className="text-xs sm:text-sm">
-                  <span className="hidden sm:inline">Por Mora</span>
-                  <span className="sm:hidden">Mora</span>
-                </Button>
+            <CardContent className="space-y-4">
+              {/* Campo de búsqueda */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                <Input
+                  placeholder="Buscar por cliente, DNI o ID de préstamo..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
+                {searchTerm && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
               </div>
+
+              {/* Filtros */}
+              <div className="flex flex-wrap gap-2 sm:gap-4">
+                {/* Filtro por Estado */}
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-auto min-w-[140px]">
+                    <SelectValue placeholder="Estado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los Estados</SelectItem>
+                    <SelectItem value="active">Activos</SelectItem>
+                    <SelectItem value="overdue">Vencidos</SelectItem>
+                    <SelectItem value="paid">Pagados</SelectItem>
+                    <SelectItem value="pending">Pendientes</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Filtro por Fecha */}
+                <Select value={dateFilter} onValueChange={setDateFilter}>
+                  <SelectTrigger className="w-auto min-w-[140px]">
+                    <SelectValue placeholder="Fecha" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las Fechas</SelectItem>
+                    <SelectItem value="today">Hoy</SelectItem>
+                    <SelectItem value="week">Última Semana</SelectItem>
+                    <SelectItem value="month">Último Mes</SelectItem>
+                    <SelectItem value="quarter">Último Trimestre</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Filtro por Monto */}
+                <Select value={amountFilter} onValueChange={setAmountFilter}>
+                  <SelectTrigger className="w-auto min-w-[140px]">
+                    <SelectValue placeholder="Monto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los Montos</SelectItem>
+                    <SelectItem value="low">Bajo (≤ $50,000)</SelectItem>
+                    <SelectItem value="medium">Medio ($50,001 - $200,000)</SelectItem>
+                    <SelectItem value="high">Alto (&gt; $200,000)</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Filtro por Mora */}
+                <Button
+                  variant={overdueFilter ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setOverdueFilter(!overdueFilter)}
+                  className="text-xs sm:text-sm"
+                >
+                  <AlertCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                  <span className="hidden sm:inline">Solo Vencidos</span>
+                  <span className="sm:hidden">Vencidos</span>
+                </Button>
+
+                {/* Limpiar Filtros */}
+                {(searchTerm || statusFilter !== 'all' || dateFilter !== 'all' || amountFilter !== 'all' || overdueFilter) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setSearchTerm('');
+                      setStatusFilter('all');
+                      setDateFilter('all');
+                      setAmountFilter('all');
+                      setOverdueFilter(false);
+                    }}
+                    className="text-xs sm:text-sm"
+                  >
+                    <X className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                    <span className="hidden sm:inline">Limpiar Filtros</span>
+                    <span className="sm:hidden">Limpiar</span>
+                  </Button>
+                )}
+              </div>
+
+              {/* Resumen de filtros aplicados */}
+              {(searchTerm || statusFilter !== 'all' || dateFilter !== 'all' || amountFilter !== 'all' || overdueFilter) && (
+                <div className="text-sm text-gray-600">
+                  Mostrando {filteredLoans.length} de {loans.length} préstamos
+                  {searchTerm && ` • Búsqueda: "${searchTerm}"`}
+                  {statusFilter !== 'all' && ` • Estado: ${statusFilter}`}
+                  {dateFilter !== 'all' && ` • Fecha: ${dateFilter}`}
+                  {amountFilter !== 'all' && ` • Monto: ${amountFilter}`}
+                  {overdueFilter && ` • Solo vencidos`}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -196,18 +349,31 @@ export const LoansModule = () => {
             <CardContent>
               {loading ? (
                 <div className="text-center py-8 text-gray-500">Cargando préstamos...</div>
-              ) : loans.length === 0 ? (
+              ) : filteredLoans.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No hay préstamos registrados</p>
-                  <Button className="mt-4" onClick={() => setShowLoanForm(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Crear Primer Préstamo
-                  </Button>
+                  <p>{loans.length === 0 ? 'No hay préstamos registrados' : 'No se encontraron préstamos con los filtros aplicados'}</p>
+                  {loans.length === 0 ? (
+                    <Button className="mt-4" onClick={() => setShowLoanForm(true)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Crear Primer Préstamo
+                    </Button>
+                  ) : (
+                    <Button className="mt-4" variant="outline" onClick={() => {
+                      setSearchTerm('');
+                      setStatusFilter('all');
+                      setDateFilter('all');
+                      setAmountFilter('all');
+                      setOverdueFilter(false);
+                    }}>
+                      <X className="h-4 w-4 mr-2" />
+                      Limpiar Filtros
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {loans.map((loan) => (
+                  {filteredLoans.map((loan) => (
                     <div key={loan.id} className="border rounded-lg p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex-1">

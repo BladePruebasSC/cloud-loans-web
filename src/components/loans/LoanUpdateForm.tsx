@@ -286,6 +286,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       toast.success(actionMessages[updateType] || 'Préstamo actualizado exitosamente');
       onUpdate();
       onClose();
+      // Recargar la página para mostrar los datos actualizados
+      window.location.reload();
     } catch (error) {
       console.error('Error updating loan:', error);
       toast.error('Error al actualizar el préstamo');

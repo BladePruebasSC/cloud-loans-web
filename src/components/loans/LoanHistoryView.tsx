@@ -75,8 +75,15 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
         .eq('loan_id', loanId)
         .order('created_at', { ascending: false });
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error fetching loan history:', error);
+      if (error) {
+        // Si la tabla no existe (42P01) o no hay permisos, simplemente no mostrar historial
+        if (error.code === '42P01' || error.code === 'PGRST116') {
+          console.log('Loan history table not available');
+          setHistory([]);
+        } else {
+          console.error('Error fetching loan history:', error);
+          setHistory([]);
+        }
       } else {
         setHistory(data || []);
       }

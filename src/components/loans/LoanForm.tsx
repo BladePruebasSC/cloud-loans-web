@@ -739,7 +739,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
         notes: data.notes || null,
         // Campos de información adicional
         excluded_days: excludedDays,
-        closing_costs_percentage: data.closing_costs,
+        closing_costs: data.closing_costs,
         portfolio_id: data.portfolio === 'none' ? null : data.portfolio,
         amortization_type: data.amortization_type,
         payment_frequency: data.payment_frequency,
@@ -760,6 +760,8 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
 
       toast.success('Préstamo creado exitosamente');
       onBack();
+      // Recargar la página para mostrar los datos actualizados
+      window.location.reload();
     } catch (error) {
       console.error('Error creating loan:', error);
       toast.error('Error al crear el préstamo');
