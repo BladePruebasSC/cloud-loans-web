@@ -11,6 +11,8 @@ import { LoanUpdateForm } from './LoanUpdateForm';
 import { LoanHistoryView } from './LoanHistoryView';
 import { useLoans } from '@/hooks/useLoans';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 import { 
   CreditCard, 
   Plus, 
@@ -27,7 +29,9 @@ import {
   History,
   X,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Trash2,
+  RotateCcw
 } from 'lucide-react';
 
 export const LoansModule = () => {
@@ -46,6 +50,7 @@ export const LoansModule = () => {
    const [dateFilter, setDateFilter] = useState('all');
    const [amountFilter, setAmountFilter] = useState('all');
    const [overdueFilter, setOverdueFilter] = useState(false);
+   const [showDeleted, setShowDeleted] = useState(false);
   
   const { loans, loading } = useLoans();
   const { profile, companyId } = useAuth();
@@ -65,11 +70,69 @@ export const LoansModule = () => {
     setCurrentViewMonth(new Date());
   };
 
+  // Función para aprobar préstamos pendientes
+  const handleApproveLoan = async (loanId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('loans')
+        .update({ status: 'active' })
+        .eq('id', loanId);
+
+      if (error) {
+        console.error('Error al aprobar préstamo:', error);
+        toast.error('Error al aprobar el préstamo');
+        return;
+      }
+
+      toast.success('Préstamo aprobado exitosamente');
+      window.location.reload(); // Recargar para mostrar cambios
+    } catch (error) {
+      console.error('Error al aprobar préstamo:', error);
+      toast.error('Error al aprobar el préstamo');
+    }
+  };
+
+  // Función para recuperar préstamos eliminados
+  const handleRecoverLoan = async (loanId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('loans')
+        .update({ 
+          status: 'active',
+          deleted_at: null,
+          deleted_reason: null
+        })
+        .eq('id', loanId);
+
+      if (error) {
+        console.error('Error al recuperar préstamo:', error);
+        toast.error('Error al recuperar el préstamo');
+        return;
+      }
+
+      toast.success('Préstamo recuperado exitosamente');
+      window.location.reload(); // Recargar para mostrar cambios
+    } catch (error) {
+      console.error('Error al recuperar préstamo:', error);
+      toast.error('Error al recuperar el préstamo');
+    }
+  };
+
   console.log('LoansModule - Profile:', profile);
   console.log('LoansModule - CompanyId:', companyId);
 
      // Función para filtrar préstamos
    const filteredLoans = loans.filter(loan => {
+     // Si se está mostrando solo eliminados, filtrar solo por eliminados
+     if (showDeleted) {
+       return loan.status === 'deleted';
+     }
+     
+     // Por defecto, excluir préstamos eliminados
+     if (loan.status === 'deleted') {
+       return false;
+     }
+
      // Filtro por término de búsqueda
      const matchesSearch = searchTerm === '' || 
        loan.client?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -125,11 +188,11 @@ export const LoansModule = () => {
      return matchesSearch && matchesStatus && matchesDate && matchesAmount && matchesOverdue;
   });
 
-  // Calcular estadísticas basadas en préstamos filtrados
+  // Calcular estadísticas basadas en préstamos filtrados (excluyendo eliminados)
   const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
   const overdueLoans = filteredLoans.filter(loan => loan.status === 'overdue');
-  const totalAmount = filteredLoans.reduce((sum, loan) => sum + loan.amount, 0);
-  const totalBalance = filteredLoans.reduce((sum, loan) => sum + loan.remaining_balance, 0);
+  const totalAmount = filteredLoans.filter(loan => loan.status !== 'deleted').reduce((sum, loan) => sum + loan.amount, 0);
+  const totalBalance = filteredLoans.filter(loan => loan.status !== 'deleted').reduce((sum, loan) => sum + loan.remaining_balance, 0);
 
   if (showLoanForm) {
     return <LoanForm onBack={() => setShowLoanForm(false)} />;
@@ -261,6 +324,7 @@ export const LoansModule = () => {
                     <SelectItem value="overdue">Vencidos</SelectItem>
                     <SelectItem value="paid">Pagados</SelectItem>
                     <SelectItem value="pending">Pendientes</SelectItem>
+                    <SelectItem value="deleted">Eliminados</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -301,6 +365,18 @@ export const LoansModule = () => {
                   <AlertCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
                   <span className="hidden sm:inline">Solo Vencidos</span>
                   <span className="sm:hidden">Vencidos</span>
+                </Button>
+
+                {/* Filtro para Préstamos Eliminados */}
+                <Button
+                  variant={showDeleted ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowDeleted(!showDeleted)}
+                  className="text-xs sm:text-sm"
+                >
+                  <Trash2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                  <span className="hidden sm:inline">{showDeleted ? 'Ocultar Eliminados' : 'Solo Eliminados'}</span>
+                  <span className="sm:hidden">Eliminados</span>
                 </Button>
 
                                  {/* Limpiar Filtros */}
@@ -379,11 +455,15 @@ export const LoansModule = () => {
                               loan.status === 'active' ? 'bg-green-100 text-green-800' :
                               loan.status === 'overdue' ? 'bg-red-100 text-red-800' :
                               loan.status === 'paid' ? 'bg-blue-100 text-blue-800' :
+                              loan.status === 'pending' ? 'bg-blue-100 text-blue-800' :
+                              loan.status === 'deleted' ? 'bg-gray-100 text-gray-800' :
                               'bg-gray-100 text-gray-800'
                             }`}>
                               {loan.status === 'active' ? 'Activo' :
                                loan.status === 'overdue' ? 'Vencido' :
                                loan.status === 'paid' ? 'Pagado' :
+                               loan.status === 'pending' ? 'Pendiente' :
+                               loan.status === 'deleted' ? 'Eliminado' :
                                loan.status}
                             </span>
                           </div>
@@ -425,44 +505,70 @@ export const LoansModule = () => {
                         </div>
 
                         <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedLoanForPayment(loan);
-                              setShowPaymentForm(true);
-                            }}
-                            disabled={loan.status === 'paid'}
-                            className="w-full sm:w-auto text-xs"
-                          >
-                            <Receipt className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                            <span className="sm:hidden">Pagar</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedLoan(loan);
-                              setShowUpdateForm(true);
-                            }}
-                            disabled={loan.status === 'paid'}
-                            className="w-full sm:w-auto text-xs"
-                          >
-                            <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                            <span className="sm:hidden">Editar</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedLoan(loan);
-                              setShowHistoryView(true);
-                            }}
-                            className="w-full sm:w-auto text-xs"
-                          >
-                            <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                            <span className="sm:hidden">Historial</span>
-                          </Button>
+                          {loan.status === 'pending' ? (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => handleApproveLoan(loan.id)}
+                              className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
+                            >
+                              <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                              <span className="sm:hidden">Aprobar</span>
+                              <span className="hidden sm:inline">Aprobar Préstamo</span>
+                            </Button>
+                          ) : loan.status === 'deleted' ? (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => handleRecoverLoan(loan.id)}
+                              className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700"
+                            >
+                              <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                              <span className="sm:hidden">Recuperar</span>
+                              <span className="hidden sm:inline">Recuperar Préstamo</span>
+                            </Button>
+                          ) : (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedLoanForPayment(loan);
+                                  setShowPaymentForm(true);
+                                }}
+                                disabled={loan.status === 'paid'}
+                                className="w-full sm:w-auto text-xs"
+                              >
+                                <Receipt className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Pagar</span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowUpdateForm(true);
+                                }}
+                                disabled={loan.status === 'paid'}
+                                className="w-full sm:w-auto text-xs"
+                              >
+                                <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Editar</span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowHistoryView(true);
+                                }}
+                                className="w-full sm:w-auto text-xs"
+                              >
+                                <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Historial</span>
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -520,7 +626,7 @@ export const LoansModule = () => {
                </div>
                
                {/* Filtros avanzados */}
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                  <Select value={statusFilter} onValueChange={setStatusFilter}>
                    <SelectTrigger>
                      <SelectValue placeholder="Estado del préstamo" />
@@ -531,6 +637,7 @@ export const LoansModule = () => {
                      <SelectItem value="overdue">Vencidos</SelectItem>
                      <SelectItem value="paid">Pagados</SelectItem>
                      <SelectItem value="pending">Pendientes</SelectItem>
+                     <SelectItem value="deleted">Eliminados</SelectItem>
                    </SelectContent>
                  </Select>
 
@@ -567,10 +674,19 @@ export const LoansModule = () => {
                    <AlertCircle className="h-4 w-4 mr-2" />
                    Solo Vencidos
                  </Button>
+
+                 <Button
+                   variant={showDeleted ? "default" : "outline"}
+                   onClick={() => setShowDeleted(!showDeleted)}
+                   className="w-full"
+                 >
+                   <Trash2 className="h-4 w-4 mr-2" />
+                   {showDeleted ? 'Ocultar Eliminados' : 'Solo Eliminados'}
+                 </Button>
                </div>
 
                {/* Botón limpiar filtros */}
-               {(searchTerm || statusFilter !== 'all' || dateFilter !== 'all' || amountFilter !== 'all' || overdueFilter) && (
+               {(searchTerm || statusFilter !== 'all' || dateFilter !== 'all' || amountFilter !== 'all' || overdueFilter || showDeleted) && (
                  <div className="flex justify-center">
                    <Button
                      variant="outline"
@@ -580,6 +696,7 @@ export const LoansModule = () => {
                        setDateFilter('all');
                        setAmountFilter('all');
                        setOverdueFilter(false);
+                       setShowDeleted(false);
                      }}
                    >
                      <X className="h-4 w-4 mr-2" />
@@ -594,7 +711,7 @@ export const LoansModule = () => {
            <Card>
              <CardHeader>
                <CardTitle>Resultados de Búsqueda</CardTitle>
-               {(searchTerm || statusFilter !== 'all' || dateFilter !== 'all' || amountFilter !== 'all' || overdueFilter) && (
+               {(searchTerm || statusFilter !== 'all' || dateFilter !== 'all' || amountFilter !== 'all' || overdueFilter || showDeleted) && (
                  <div className="text-sm text-gray-600">
                    Mostrando {filteredLoans.length} de {loans.length} préstamos
                    {searchTerm && ` • Búsqueda: "${searchTerm}"`}
@@ -602,6 +719,7 @@ export const LoansModule = () => {
                    {dateFilter !== 'all' && ` • Fecha: ${dateFilter}`}
                    {amountFilter !== 'all' && ` • Monto: ${amountFilter}`}
                    {overdueFilter && ` • Solo vencidos`}
+                   {showDeleted && ` • Mostrando eliminados`}
                  </div>
                )}
             </CardHeader>
@@ -624,6 +742,7 @@ export const LoansModule = () => {
                        setDateFilter('all');
                        setAmountFilter('all');
                        setOverdueFilter(false);
+                       setShowDeleted(false);
                      }}>
                        <X className="h-4 w-4 mr-2" />
                        Limpiar Búsqueda
@@ -644,11 +763,15 @@ export const LoansModule = () => {
                                loan.status === 'active' ? 'bg-green-100 text-green-800' :
                                loan.status === 'overdue' ? 'bg-red-100 text-red-800' :
                                loan.status === 'paid' ? 'bg-blue-100 text-blue-800' :
+                               loan.status === 'pending' ? 'bg-blue-100 text-blue-800' :
+                               loan.status === 'deleted' ? 'bg-gray-100 text-gray-800' :
                                'bg-gray-100 text-gray-800'
                              }`}>
                                {loan.status === 'active' ? 'Activo' :
                                 loan.status === 'overdue' ? 'Vencido' :
                                 loan.status === 'paid' ? 'Pagado' :
+                                loan.status === 'pending' ? 'Pendiente' :
+                                loan.status === 'deleted' ? 'Eliminado' :
                                 loan.status}
                              </span>
                            </div>
@@ -690,44 +813,70 @@ export const LoansModule = () => {
                          </div>
 
                          <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
-                           <Button
-                             variant="outline"
-                             size="sm"
-                             onClick={() => {
-                               setSelectedLoanForPayment(loan);
-                               setShowPaymentForm(true);
-                             }}
-                             disabled={loan.status === 'paid'}
-                             className="w-full sm:w-auto text-xs"
-                           >
-                             <Receipt className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                             <span className="sm:hidden">Pagar</span>
-                           </Button>
-                           <Button
-                             variant="outline"
-                             size="sm"
-                             onClick={() => {
-                               setSelectedLoan(loan);
-                               setShowUpdateForm(true);
-                             }}
-                             disabled={loan.status === 'paid'}
-                             className="w-full sm:w-auto text-xs"
-                           >
-                             <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                             <span className="sm:hidden">Editar</span>
-                           </Button>
-                           <Button
-                             variant="outline"
-                             size="sm"
-                             onClick={() => {
-                               setSelectedLoan(loan);
-                               setShowHistoryView(true);
-                             }}
-                             className="w-full sm:w-auto text-xs"
-                           >
-                             <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                             <span className="sm:hidden">Historial</span>
-                           </Button>
+                           {loan.status === 'pending' ? (
+                             <Button
+                               variant="default"
+                               size="sm"
+                               onClick={() => handleApproveLoan(loan.id)}
+                               className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
+                             >
+                               <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                               <span className="sm:hidden">Aprobar</span>
+                               <span className="hidden sm:inline">Aprobar Préstamo</span>
+                             </Button>
+                           ) : loan.status === 'deleted' ? (
+                             <Button
+                               variant="default"
+                               size="sm"
+                               onClick={() => handleRecoverLoan(loan.id)}
+                               className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700"
+                             >
+                               <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                               <span className="sm:hidden">Recuperar</span>
+                               <span className="hidden sm:inline">Recuperar Préstamo</span>
+                             </Button>
+                           ) : (
+                             <>
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 onClick={() => {
+                                   setSelectedLoanForPayment(loan);
+                                   setShowPaymentForm(true);
+                                 }}
+                                 disabled={loan.status === 'paid'}
+                                 className="w-full sm:w-auto text-xs"
+                               >
+                                 <Receipt className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                 <span className="sm:hidden">Pagar</span>
+                               </Button>
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 onClick={() => {
+                                   setSelectedLoan(loan);
+                                   setShowUpdateForm(true);
+                                 }}
+                                 disabled={loan.status === 'paid'}
+                                 className="w-full sm:w-auto text-xs"
+                               >
+                                 <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                 <span className="sm:hidden">Editar</span>
+                               </Button>
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 onClick={() => {
+                                   setSelectedLoan(loan);
+                                   setShowHistoryView(true);
+                                 }}
+                                 className="w-full sm:w-auto text-xs"
+                               >
+                                 <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                 <span className="sm:hidden">Historial</span>
+                               </Button>
+                             </>
+                           )}
                          </div>
                        </div>
                      </div>
@@ -910,31 +1059,57 @@ export const LoansModule = () => {
                              </div>
 
                              <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
-                               <Button
-                                 variant="default"
-                                 size="sm"
-                                 onClick={() => {
-                                   setSelectedLoanForPayment(loan);
-                                   setShowPaymentForm(true);
-                                 }}
-                                 className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
-                               >
-                                 <Receipt className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                 <span className="sm:hidden">Pagar</span>
-                                 <span className="hidden sm:inline">Registrar Pago</span>
-                               </Button>
-                               <Button
-                                 variant="outline"
-                                 size="sm"
-                                 onClick={() => {
-                                   setSelectedLoan(loan);
-                                   setShowUpdateForm(true);
-                                 }}
-                                 className="w-full sm:w-auto text-xs"
-                               >
-                                 <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                 <span className="sm:hidden">Editar</span>
-                               </Button>
+                               {loan.status === 'pending' ? (
+                                 <Button
+                                   variant="default"
+                                   size="sm"
+                                   onClick={() => handleApproveLoan(loan.id)}
+                                   className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
+                                 >
+                                   <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                   <span className="sm:hidden">Aprobar</span>
+                                   <span className="hidden sm:inline">Aprobar Préstamo</span>
+                                 </Button>
+                               ) : loan.status === 'deleted' ? (
+                                 <Button
+                                   variant="default"
+                                   size="sm"
+                                   onClick={() => handleRecoverLoan(loan.id)}
+                                   className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700"
+                                 >
+                                   <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                   <span className="sm:hidden">Recuperar</span>
+                                   <span className="hidden sm:inline">Recuperar Préstamo</span>
+                                 </Button>
+                               ) : (
+                                 <>
+                                   <Button
+                                     variant="default"
+                                     size="sm"
+                                     onClick={() => {
+                                       setSelectedLoanForPayment(loan);
+                                       setShowPaymentForm(true);
+                                     }}
+                                     className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
+                                   >
+                                     <Receipt className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                     <span className="sm:hidden">Pagar</span>
+                                     <span className="hidden sm:inline">Registrar Pago</span>
+                                   </Button>
+                                   <Button
+                                     variant="outline"
+                                     size="sm"
+                                     onClick={() => {
+                                       setSelectedLoan(loan);
+                                       setShowUpdateForm(true);
+                                     }}
+                                     className="w-full sm:w-auto text-xs"
+                                   >
+                                     <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                     <span className="sm:hidden">Editar</span>
+                                   </Button>
+                                 </>
+                               )}
                              </div>
                            </div>
                          </div>
@@ -1017,8 +1192,10 @@ export const LoansModule = () => {
                return payments;
              };
 
-             // Generar todos los pagos futuros de todos los préstamos
-             const allPayments = loans.flatMap(loan => generateAllPayments(loan));
+             // Generar todos los pagos futuros de todos los préstamos (excluyendo préstamos pagados)
+             const allPayments = loans
+               .filter(loan => loan.status !== 'paid' && loan.remaining_balance > 0)
+               .flatMap(loan => generateAllPayments(loan));
 
              return (
                <>
@@ -1033,7 +1210,9 @@ export const LoansModule = () => {
                  <div className="text-2xl font-bold text-blue-600">{loans.filter(loan => {
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
-                   return nextPayment.toDateString() === today.toDateString();
+                   return loan.status !== 'paid' && 
+                          loan.remaining_balance > 0 &&
+                          nextPayment.toDateString() === today.toDateString();
                  }).length}</div>
                  <p className="text-xs text-muted-foreground">Pagos programados</p>
                </CardContent>
@@ -1050,7 +1229,9 @@ export const LoansModule = () => {
                    const today = new Date();
                    const endOfWeek = new Date(today);
                    endOfWeek.setDate(today.getDate() + 7);
-                   return nextPayment >= today && nextPayment <= endOfWeek;
+                   return loan.status !== 'paid' && 
+                          loan.remaining_balance > 0 &&
+                          nextPayment >= today && nextPayment <= endOfWeek;
                  }).length}</div>
                  <p className="text-xs text-muted-foreground">Próximos 7 días</p>
                </CardContent>
@@ -1066,7 +1247,9 @@ export const LoansModule = () => {
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
                    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                   return nextPayment >= today && nextPayment <= endOfMonth;
+                   return loan.status !== 'paid' && 
+                          loan.remaining_balance > 0 &&
+                          nextPayment >= today && nextPayment <= endOfMonth;
                  }).length}</div>
                  <p className="text-xs text-muted-foreground">Próximos 30 días</p>
                </CardContent>
@@ -1082,7 +1265,9 @@ export const LoansModule = () => {
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
                    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                   return nextPayment >= today && nextPayment <= endOfMonth;
+                   return loan.status !== 'paid' && 
+                          loan.remaining_balance > 0 &&
+                          nextPayment >= today && nextPayment <= endOfMonth;
                  }).reduce((sum, loan) => sum + loan.monthly_payment, 0).toLocaleString()}</div>
                  <p className="text-xs text-muted-foreground">Este mes</p>
                </CardContent>

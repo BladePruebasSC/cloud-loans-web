@@ -18,21 +18,18 @@ import {
   Edit, 
   DollarSign, 
   Calendar, 
-  Percent, 
   Calculator,
   AlertCircle,
   CheckCircle,
   Clock,
   CreditCard,
   Receipt,
-  TrendingUp,
-  TrendingDown
+  Trash2
 } from 'lucide-react';
 
 const updateSchema = z.object({
-  update_type: z.enum(['payment', 'partial_payment', 'interest_adjustment', 'term_extension', 'rate_change', 'balance_adjustment']),
+  update_type: z.enum(['payment', 'partial_payment', 'term_extension', 'balance_adjustment', 'delete_loan']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
-  new_interest_rate: z.number().min(0, 'La tasa debe ser mayor o igual a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
   adjustment_reason: z.string().min(1, 'Debe especificar la razón del ajuste'),
   payment_method: z.string().optional(),
@@ -88,14 +85,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     },
   });
 
-  const watchedValues = form.watch(['update_type', 'amount', 'new_interest_rate', 'additional_months']);
+  const watchedValues = form.watch(['update_type', 'amount', 'additional_months']);
 
   useEffect(() => {
     calculateUpdatedValues();
   }, [watchedValues]);
 
   const calculateUpdatedValues = () => {
-    const [updateType, amount, newRate, additionalMonths] = watchedValues;
+    const [updateType, amount, additionalMonths] = watchedValues;
     
     let newBalance = loan.remaining_balance;
     let newPayment = loan.monthly_payment;
@@ -121,27 +118,21 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         }
         break;
         
-      case 'interest_adjustment':
-        if (newRate !== undefined) {
-          // Recalcular cuota con nueva tasa
-          const monthlyRate = (newRate / 100) / 12;
-          const remainingMonths = Math.ceil(loan.remaining_balance / loan.monthly_payment);
-          
-          if (monthlyRate === 0) {
-            newPayment = loan.remaining_balance / remainingMonths;
-          } else {
-            newPayment = (loan.remaining_balance * monthlyRate * Math.pow(1 + monthlyRate, remainingMonths)) / 
-                        (Math.pow(1 + monthlyRate, remainingMonths) - 1);
-          }
-        }
-        break;
+
         
       case 'term_extension':
         if (additionalMonths) {
-          // Recalcular cuota con plazo extendido
-          const currentMonths = Math.ceil(loan.remaining_balance / loan.monthly_payment);
-          const newTotalMonths = currentMonths + additionalMonths;
-          newPayment = loan.remaining_balance / newTotalMonths;
+          // Calcular meses restantes actuales
+          const totalPayments = loan.term_months;
+          const paidPayments = Math.floor((loan.amount - loan.remaining_balance) / loan.monthly_payment);
+          const currentRemainingMonths = Math.max(1, totalPayments - paidPayments);
+          const newTotalMonths = currentRemainingMonths + additionalMonths;
+          const newTotalPayments = totalPayments + additionalMonths;
+          
+          // Fórmula correcta: (Monto Original × Tasa × Plazo + Monto Original) ÷ Plazo
+          const totalInterest = (loan.amount * loan.interest_rate * newTotalPayments) / 100;
+          const totalAmount = totalInterest + loan.amount;
+          newPayment = totalAmount / newTotalPayments;
           
           // Calcular nueva fecha de fin
           const currentEndDate = new Date(loan.next_payment_date);
@@ -154,6 +145,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         if (amount) {
           newBalance = amount;
         }
+        break;
+        
+      case 'delete_loan':
+        // Para eliminar préstamos, no necesitamos calcular nuevos valores
+        // Solo marcamos como eliminado
         break;
     }
 
@@ -214,12 +210,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           }
           break;
           
-        case 'interest_adjustment':
-          loanUpdates = {
-            interest_rate: data.new_interest_rate,
-            monthly_payment: calculatedValues.newPayment,
-          };
-          break;
+
           
         case 'term_extension':
           loanUpdates = {
@@ -232,6 +223,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         case 'balance_adjustment':
           loanUpdates = {
             remaining_balance: calculatedValues.newBalance,
+          };
+          break;
+          
+        case 'delete_loan':
+          loanUpdates = {
+            status: 'deleted',
+            deleted_at: new Date().toISOString(),
+            deleted_reason: data.adjustment_reason,
           };
           break;
       }
@@ -263,7 +262,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             new_values: {
               balance: calculatedValues.newBalance,
               payment: calculatedValues.newPayment,
-              rate: data.new_interest_rate || loan.interest_rate
+              rate: loan.interest_rate
             },
             reason: data.adjustment_reason,
             amount: data.amount,
@@ -277,10 +276,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       const actionMessages = {
         payment: 'Pago registrado exitosamente',
         partial_payment: 'Abono parcial registrado exitosamente',
-        interest_adjustment: 'Tasa de interés actualizada exitosamente',
         term_extension: 'Plazo extendido exitosamente',
-        rate_change: 'Tasa de interés modificada exitosamente',
-        balance_adjustment: 'Balance ajustado exitosamente'
+        balance_adjustment: 'Balance ajustado exitosamente',
+        delete_loan: 'Préstamo eliminado exitosamente (recuperable por 2 meses)'
       };
 
       toast.success(actionMessages[updateType] || 'Préstamo actualizado exitosamente');
@@ -300,10 +298,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     switch (type) {
       case 'payment': return <Receipt className="h-4 w-4" />;
       case 'partial_payment': return <DollarSign className="h-4 w-4" />;
-      case 'interest_adjustment': return <Percent className="h-4 w-4" />;
       case 'term_extension': return <Calendar className="h-4 w-4" />;
-      case 'rate_change': return <TrendingUp className="h-4 w-4" />;
       case 'balance_adjustment': return <Calculator className="h-4 w-4" />;
+      case 'delete_loan': return <Trash2 className="h-4 w-4" />;
       default: return <Edit className="h-4 w-4" />;
     }
   };
@@ -312,10 +309,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     const labels = {
       payment: 'Pago Completo',
       partial_payment: 'Abono Parcial',
-      interest_adjustment: 'Ajuste de Tasa',
       term_extension: 'Extensión de Plazo',
-      rate_change: 'Cambio de Tasa',
-      balance_adjustment: 'Ajuste de Balance'
+      balance_adjustment: 'Ajuste de Balance',
+      delete_loan: 'Eliminar Préstamo'
     };
     return labels[type as keyof typeof labels] || type;
   };
@@ -364,12 +360,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   Abono Parcial
                                 </div>
                               </SelectItem>
-                              <SelectItem value="interest_adjustment">
-                                <div className="flex items-center gap-2">
-                                  <Percent className="h-4 w-4" />
-                                  Ajuste de Tasa de Interés
-                                </div>
-                              </SelectItem>
+
                               <SelectItem value="term_extension">
                                 <div className="flex items-center gap-2">
                                   <Calendar className="h-4 w-4" />
@@ -380,6 +371,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                 <div className="flex items-center gap-2">
                                   <Calculator className="h-4 w-4" />
                                   Ajuste de Balance
+                                </div>
+                              </SelectItem>
+                              <SelectItem value="delete_loan">
+                                <div className="flex items-center gap-2">
+                                  <Trash2 className="h-4 w-4" />
+                                  Eliminar Préstamo
                                 </div>
                               </SelectItem>
                             </SelectContent>
@@ -422,33 +419,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       />
                     )}
 
-                    {form.watch('update_type') === 'interest_adjustment' && (
-                      <FormField
-                        control={form.control}
-                        name="new_interest_rate"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Nueva Tasa de Interés (%)</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="text"
-                                placeholder="0"
-                                {...field}
-                                value={field.value || ''}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                    field.onChange(value === '' ? 0 : parseFloat(value) || 0);
-                                  }
-                                }}
-                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    )}
+
 
                     {form.watch('update_type') === 'term_extension' && (
                       <FormField
@@ -631,22 +602,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       </span>
                     </div>
 
-                    {form.watch('update_type') === 'interest_adjustment' && (
-                      <>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Tasa Actual:</span>
-                          <span className="font-semibold">{loan.interest_rate}%</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Nueva Tasa:</span>
-                          <span className="font-semibold text-blue-600">{form.watch('new_interest_rate')}%</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Nueva Cuota:</span>
-                          <span className="font-bold text-green-600">${calculatedValues.newPayment.toLocaleString()}</span>
-                        </div>
-                      </>
-                    )}
+
 
                     {form.watch('update_type') === 'term_extension' && (
                       <>
@@ -672,14 +628,30 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     )}
                   </div>
 
-                  {calculatedValues.newBalance <= 0 && (
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 mt-4">
-                      <div className="flex items-center gap-2 text-green-800">
-                        <CheckCircle className="h-4 w-4" />
-                        <span className="font-semibold">Préstamo será marcado como PAGADO</span>
+                                      {calculatedValues.newBalance <= 0 && (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-3 mt-4">
+                        <div className="flex items-center gap-2 text-green-800">
+                          <CheckCircle className="h-4 w-4" />
+                          <span className="font-semibold">Préstamo será marcado como PAGADO</span>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+
+                    {form.watch('update_type') === 'delete_loan' && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-4">
+                        <div className="flex items-center gap-2 text-red-800">
+                          <AlertCircle className="h-4 w-4" />
+                          <div>
+                            <span className="font-semibold">⚠️ ADVERTENCIA: Eliminación de Préstamo</span>
+                            <p className="text-sm mt-1">
+                              • El préstamo será marcado como eliminado<br/>
+                              • Se puede recuperar durante 2 meses<br/>
+                              • Después de 2 meses se eliminará permanentemente
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                 </div>
               </CardContent>
             </Card>
