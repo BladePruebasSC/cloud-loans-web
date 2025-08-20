@@ -161,6 +161,8 @@ const RegisterForm = ({ onRegister, onSwitchToLogin, error, loading }: RegisterF
                   </Button>
                 </div>
               </div>
+              
+
             </CardContent>
             <CardFooter className="flex flex-col space-y-4">
               <Button 

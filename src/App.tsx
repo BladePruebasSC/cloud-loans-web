@@ -1,14 +1,33 @@
 
 import { Routes, Route, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import { useEffect } from 'react'
 import LoginForm from '@/components/LoginForm'
 import RegisterForm from '@/components/RegisterForm'
 import Index from '@/pages/Index'
 import NotFound from '@/pages/NotFound'
+import AdminCodesPanel from '@/components/admin/AdminCodesPanel'
 
 function App() {
   const { user, loading, signIn, signUp } = useAuth()
   const navigate = useNavigate()
+
+  // Efecto global para detectar Ctrl + Alt + A desde cualquier lugar
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Ctrl + Alt + A (mayúscula o minúscula) para acceso directo al panel de códigos
+      if (event.ctrlKey && event.altKey && (event.key === 'A' || event.key === 'a')) {
+        event.preventDefault();
+        // Redirigir directamente al panel de códigos
+        navigate('/admin/codigos-registro');
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [navigate]);
 
   // Mostrar pantalla de carga mientras se verifica la sesión
   if (loading) {
@@ -37,6 +56,7 @@ function App() {
             onSwitchToLogin={() => navigate('/')}
           />
         } />
+        <Route path="/admin/codigos-registro" element={<AdminCodesPanel />} />
         <Route path="*" element={
           <LoginForm 
             onLogin={signIn}
@@ -67,6 +87,7 @@ function App() {
       <Route path="/acuerdos" element={<Index />} />
       <Route path="/reportes" element={<Index />} />
       <Route path="/mapa" element={<Index />} />
+      <Route path="/admin/codigos-registro" element={<Index />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   )

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,13 +9,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Eye, EyeOff, DollarSign, Building, Users } from 'lucide-react';
 
 interface LoginFormProps {
-  onLogin: (email: string, password: string, role: 'owner' | 'employee') => Promise<void>;
+  onLogin: (email: string, password: string, role: 'owner' | 'employee', adminCode?: string) => Promise<void>;
   onSwitchToRegister: () => void;
   error?: string;
   loading?: boolean;
 }
 
 const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormProps) => {
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -138,6 +140,8 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
                   </Button>
                 </div>
               </div>
+              
+
               
               <Button 
                 type="submit" 

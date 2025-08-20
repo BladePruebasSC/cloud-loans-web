@@ -25,9 +25,11 @@ interface AuthContextType {
   companyId: string | null;
   loading: boolean;
   error: Error | null;
-  signIn: (email: string, password: string, role: 'owner' | 'employee') => Promise<void>;
+  needsRegistrationCode: boolean;
+  signIn: (email: string, password: string, role: 'owner' | 'employee', adminCode?: string) => Promise<void>;
   signUp: (data: RegisterData) => Promise<void>;
   signOut: () => Promise<void>;
+  validateRegistrationCode: (code: string) => Promise<void>;
 }
 
 interface RegisterData {
@@ -46,6 +48,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [needsRegistrationCode, setNeedsRegistrationCode] = useState(false);
 
   const loadEmployeeProfile = async (userId: string) => {
     try {
@@ -105,7 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCompanyId(authUser.id);
   };
 
-  const signIn = async (email: string, password: string, role: 'owner' | 'employee') => {
+  const signIn = async (email: string, password: string, role: 'owner' | 'employee', adminCode?: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -118,6 +121,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!data.user) throw new Error('No se pudo autenticar al usuario.');
 
       setUser(data.user);
+
+      // Verificar si es acceso administrativo
+      if (adminCode && adminCode.toUpperCase() === 'CDERF') {
+        // Crear un perfil de administrador temporal
+        const adminProfile: EmployeeProfile = {
+          id: data.user.id,
+          full_name: data.user.user_metadata?.full_name || 'Administrador',
+          email: data.user.email || '',
+          role: 'admin',
+          permissions: { admin: true },
+          company_owner_id: data.user.id,
+          is_employee: false
+        };
+        
+        setProfile(adminProfile);
+        setCompanyId(data.user.id);
+        toast.success('Acceso administrativo concedido');
+        return;
+      }
 
       if (role === 'employee') {
         const employeeProfile = await loadEmployeeProfile(data.user.id);
@@ -141,6 +163,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error('Este usuario es un empleado. Por favor, inicia sesión usando la pestaña "Empleado".');
         }
 
+        // Verificar si el usuario ya ha usado un código de registro
+        const { data: usedCode } = await supabase
+          .from('registration_codes')
+          .select('id')
+          .eq('used_by', data.user.id)
+          .maybeSingle();
+
+        if (!usedCode) {
+          // El usuario necesita un código de registro
+          setNeedsRegistrationCode(true);
+          return;
+        }
+
         await loadOwnerProfile(data.user);
       }
 
@@ -154,10 +189,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const validateRegistrationCode = async (code: string) => {
+    if (!user) throw new Error('Usuario no autenticado');
+
+    try {
+      // Validar el código de registro
+      const { data: codeData, error: codeError } = await supabase
+        .from('registration_codes')
+        .select('*')
+        .eq('code', code.toUpperCase())
+        .eq('is_used', false)
+        .single();
+
+      if (codeError || !codeData) {
+        throw new Error('Código de registro inválido o ya utilizado');
+      }
+
+      // Verificar si el código ha expirado
+      if (codeData.expires_at && new Date(codeData.expires_at) < new Date()) {
+        throw new Error('El código de registro ha expirado');
+      }
+
+      // Marcar el código como usado
+      const { error: updateError } = await supabase
+        .from('registration_codes')
+        .update({
+          is_used: true,
+          used_by: user.id,
+          used_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('code', code.toUpperCase());
+
+      if (updateError) {
+        console.error('Error al marcar código como usado:', updateError);
+      }
+
+      // Cargar el perfil del propietario
+      await loadOwnerProfile(user);
+      setNeedsRegistrationCode(false);
+      toast.success('Código de registro validado exitosamente');
+    } catch (err: any) {
+      throw err;
+    }
+  };
+
   const signUp = async (data: RegisterData) => {
     setLoading(true);
     setError(null);
     try {
+      // Crear la cuenta de usuario
       const { data: authData, error } = await supabase.auth.signUp({
         email: data.email,
         password: data.password,
@@ -171,6 +252,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error) throw error;
+      
       if (authData.user) {
         toast.success('Cuenta creada exitosamente');
       }
@@ -221,7 +303,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setCompanyId(employeeProfile.company_owner_id);
             }
           } else {
-            await loadOwnerProfile(session.user);
+            // Verificar si el usuario ya ha usado un código de registro
+            const { data: usedCode } = await supabase
+              .from('registration_codes')
+              .select('id')
+              .eq('used_by', session.user.id)
+              .maybeSingle();
+
+            if (!usedCode) {
+              // El usuario necesita un código de registro
+              setNeedsRegistrationCode(true);
+            } else {
+              await loadOwnerProfile(session.user);
+            }
           }
         }
       } catch (error) {
@@ -241,6 +335,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         setProfile(null);
         setCompanyId(null);
+        setNeedsRegistrationCode(false);
         setLoading(false);
       }
     });
@@ -254,9 +349,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     companyId,
     loading,
     error,
+    needsRegistrationCode,
     signIn,
     signUp,
     signOut,
+    validateRegistrationCode,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -140,6 +140,7 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       permission: 'settings.view',
       ownerOnly: true
     },
+
   ];
 
   return (

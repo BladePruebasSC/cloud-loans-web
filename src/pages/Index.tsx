@@ -18,7 +18,9 @@ import { MapModule } from '@/components/map/MapModule';
 import { PaymentAgreementsModule } from '@/components/agreements/PaymentAgreementsModule';
 import { ReportsModule } from '@/components/reports/ReportsModule';
 import { CompanyModule } from '@/components/company/CompanyModule';
-import { Building, CreditCard, Package, Users, BarChart3 } from 'lucide-react';
+import RegistrationCodesModule from '@/components/admin/RegistrationCodesModule';
+import RegistrationCodeModal from '@/components/RegistrationCodeModal';
+import { Building, CreditCard, Package, Users, BarChart3, Key } from 'lucide-react';
 
 // Componente para mostrar acceso restringido
 const RestrictedAccess = ({ module }: { module: string }) => {
@@ -27,7 +29,8 @@ const RestrictedAccess = ({ module }: { module: string }) => {
     clients: 'Clientes', 
     inventory: 'Inventario',
     reports: 'Reportes',
-    company: 'Configuración de Empresa'
+    company: 'Configuración de Empresa',
+    admin: 'Administración'
   };
 
   return (
@@ -39,6 +42,7 @@ const RestrictedAccess = ({ module }: { module: string }) => {
           {module === 'inventory' && <Package className="h-12 w-12" />}
           {module === 'reports' && <BarChart3 className="h-12 w-12" />}
           {module === 'company' && <Building className="h-12 w-12" />}
+          {module === 'admin' && <Key className="h-12 w-12" />}
         </div>
         <h3 className="text-lg font-medium mb-2 text-gray-900">Acceso Restringido</h3>
         <p className="text-gray-600 mb-4">
@@ -55,7 +59,7 @@ const RestrictedAccess = ({ module }: { module: string }) => {
 const Index = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false); // Cambiar a false para móviles
   const location = useLocation();
-  const { profile } = useAuth();
+  const { profile, user, needsRegistrationCode, validateRegistrationCode } = useAuth();
 
   // Función para verificar permisos
   const hasPermission = (permission: string) => {
@@ -149,31 +153,40 @@ const Index = () => {
         }
         return <CompanyModule />;
       
+      case '/admin/codigos-registro':
+        // Acceso directo al panel de códigos (sin autenticación requerida)
+        return <RegistrationCodesModule />;
+      
       default:
         return <Dashboard />;
     }
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Overlay para móviles */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-      
-      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
-      
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+    <>
+      <div className="flex h-screen bg-gray-50">
+        {/* Overlay para móviles */}
+        {sidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
         
-        <main className="flex-1 overflow-y-auto">
-          {renderContent()}
-        </main>
+        <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+        
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <Header onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+          
+          <main className="flex-1 overflow-y-auto">
+            {renderContent()}
+          </main>
+        </div>
       </div>
-    </div>
+
+      {/* Modal de código de registro */}
+      {needsRegistrationCode && user && <RegistrationCodeModal />}
+    </>
   );
 };
 
