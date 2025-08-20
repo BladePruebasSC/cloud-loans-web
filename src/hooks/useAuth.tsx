@@ -27,7 +27,7 @@ interface AuthContextType {
   error: Error | null;
   needsRegistrationCode: boolean;
   signIn: (email: string, password: string, role: 'owner' | 'employee', adminCode?: string) => Promise<void>;
-  signUp: (data: RegisterData) => Promise<void>;
+  signUp: (data: RegisterData) => Promise<boolean>;
   signOut: () => Promise<void>;
   validateRegistrationCode: (code: string) => Promise<void>;
 }
@@ -254,8 +254,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error) throw error;
       
       if (authData.user) {
-        toast.success('Cuenta creada exitosamente');
+        toast.success('¡Bienvenido! Tu cuenta ha sido creada exitosamente. Ahora puedes iniciar sesión.');
+        // Cerrar sesión automáticamente para que el usuario tenga que hacer login
+        await supabase.auth.signOut();
+        setUser(null);
+        setProfile(null);
+        setCompanyId(null);
+        setNeedsRegistrationCode(false);
+        
+        // Retornar true para indicar que el registro fue exitoso
+        return true;
       }
+      return false;
     } catch (err: any) {
       setError(err);
       throw err;
@@ -281,55 +291,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session?.user) {
-          setUser(session.user);
-          
-          // Verificar si es empleado
-          const { data: employeeData } = await supabase
-            .from('employees')
-            .select('id,full_name,email,role,permissions,company_owner_id,status')
-            .eq('auth_user_id', session.user.id)
-            .eq('status', 'active')
-            .maybeSingle();
-
-          if (employeeData) {
-            const employeeProfile = await loadEmployeeProfile(session.user.id);
-            if (employeeProfile) {
-              setProfile(employeeProfile);
-              setCompanyId(employeeProfile.company_owner_id);
-            }
-          } else {
-            // Verificar si el usuario ya ha usado un código de registro
-            const { data: usedCode } = await supabase
-              .from('registration_codes')
-              .select('id')
-              .eq('used_by', session.user.id)
-              .maybeSingle();
-
-            if (!usedCode) {
-              // El usuario necesita un código de registro
-              setNeedsRegistrationCode(true);
-            } else {
-              await loadOwnerProfile(session.user);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error checking session:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const handleAuthStateChange = async (event: string, session: any) => {
       if (event === 'SIGNED_IN' && session?.user) {
         setUser(session.user);
+        
+        // Verificar si es empleado
+        const { data: employeeData } = await supabase
+          .from('employees')
+          .select('id,full_name,email,role,permissions,company_owner_id,status')
+          .eq('auth_user_id', session.user.id)
+          .eq('status', 'active')
+          .maybeSingle();
+
+        if (employeeData) {
+          const employeeProfile = await loadEmployeeProfile(session.user.id);
+          if (employeeProfile) {
+            setProfile(employeeProfile);
+            setCompanyId(employeeProfile.company_owner_id);
+          }
+        } else {
+          // Para propietarios, verificar si necesitan código de registro
+          const { data: usedCode } = await supabase
+            .from('registration_codes')
+            .select('id')
+            .eq('used_by', session.user.id)
+            .maybeSingle();
+
+          if (!usedCode) {
+            setNeedsRegistrationCode(true);
+            setProfile(null);
+            setCompanyId(null);
+          } else {
+            await loadOwnerProfile(session.user);
+          }
+        }
+        
         setLoading(false);
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
@@ -338,7 +334,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setNeedsRegistrationCode(false);
         setLoading(false);
       }
-    });
+    };
+
+    // Verificar sesión inicial
+    const checkInitialSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          await handleAuthStateChange('SIGNED_IN', session);
+        } else {
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('Error checking initial session:', error);
+        setLoading(false);
+      }
+    };
+
+    checkInitialSession();
+
+    // Suscribirse a cambios de autenticación
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthStateChange);
 
     return () => subscription.unsubscribe();
   }, []);

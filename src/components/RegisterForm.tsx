@@ -45,6 +45,7 @@ const RegisterForm = ({ onRegister, onSwitchToLogin, error, loading }: RegisterF
     
     try {
       await onRegister(formData);
+      // El registro fue exitoso, el hook se encargará de la redirección
     } catch (error: any) {
       setRegisterError(error.message || 'Error al crear la cuenta');
     } finally {

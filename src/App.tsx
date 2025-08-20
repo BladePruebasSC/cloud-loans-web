@@ -29,6 +29,8 @@ function App() {
     };
   }, [navigate]);
 
+
+
   // Mostrar pantalla de carga mientras se verifica la sesión
   if (loading) {
     return (
@@ -41,6 +43,18 @@ function App() {
     )
   }
 
+  const handleSignUp = async (data: any) => {
+    try {
+      const success = await signUp(data);
+      if (success) {
+        // Redirigir inmediatamente después del registro exitoso
+        navigate('/');
+      }
+    } catch (error) {
+      // El error ya se maneja en el hook
+    }
+  };
+
   if (!user) {
     return (
       <Routes>
@@ -52,7 +66,7 @@ function App() {
         } />
         <Route path="/register" element={
           <RegisterForm 
-            onRegister={signUp}
+            onRegister={handleSignUp}
             onSwitchToLogin={() => navigate('/')}
           />
         } />

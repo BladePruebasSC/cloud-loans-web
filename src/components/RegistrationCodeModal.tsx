@@ -7,12 +7,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { Key } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useNavigate } from 'react-router-dom';
 
 const RegistrationCodeModal = () => {
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const { validateRegistrationCode } = useAuth();
+  const { validateRegistrationCode, signOut } = useAuth();
+  const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,6 +34,15 @@ const RegistrationCodeModal = () => {
       toast.error(err.message || 'Error al validar el código');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      navigate('/');
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error);
     }
   };
 
@@ -80,11 +91,20 @@ const RegistrationCodeModal = () => {
             </div>
           </form>
 
-          <div className="mt-4 text-center">
-            <p className="text-xs text-gray-500">
-              Contacta al administrador para obtener tu código de registro
-            </p>
-          </div>
+                                <div className="mt-4 text-center space-y-2">
+                        <p className="text-xs text-gray-500">
+                          Contacta al administrador para obtener tu código de registro
+                        </p>
+                        <Button 
+                          type="button" 
+                          variant="outline" 
+                          size="sm"
+                          onClick={handleSignOut}
+                          className="text-xs"
+                        >
+                          Cerrar Sesión
+                        </Button>
+                      </div>
         </CardContent>
       </Card>
     </div>
