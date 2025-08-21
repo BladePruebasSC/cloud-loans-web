@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { LoanForm } from './LoanForm';
 import { PaymentForm } from './PaymentForm';
 import { LoanUpdateForm } from './LoanUpdateForm';
@@ -46,6 +47,9 @@ export const LoansModule = () => {
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
   const [currentViewMonth, setCurrentViewMonth] = useState(new Date());
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [loanToCancel, setLoanToCancel] = useState(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   
      // Estados para filtros y búsqueda
    const [searchTerm, setSearchTerm] = useState('');
@@ -92,6 +96,52 @@ export const LoansModule = () => {
     } catch (error) {
       console.error('Error al aprobar préstamo:', error);
       toast.error('Error al aprobar el préstamo');
+    }
+  };
+
+  // Función para mostrar diálogo de confirmación de cancelación
+  const handleCancelLoanClick = (loan: any) => {
+    setLoanToCancel(loan);
+    setShowCancelDialog(true);
+  };
+
+  // Función para cancelar préstamos pendientes
+  const handleCancelLoan = async () => {
+    console.log('handleCancelLoan ejecutándose...', loanToCancel);
+    if (!loanToCancel || isCancelling) {
+      console.log('No hay préstamo para cancelar o ya se está cancelando');
+      return;
+    }
+    
+    setIsCancelling(true);
+    
+    try {
+      console.log('Intentando cancelar préstamo:', loanToCancel.id);
+      const { data, error } = await supabase
+        .from('loans')
+        .update({ 
+          status: 'deleted',
+          deleted_at: new Date().toISOString(),
+          deleted_reason: 'Cancelado por administrador'
+        })
+        .eq('id', loanToCancel.id);
+
+      if (error) {
+        console.error('Error al cancelar préstamo:', error);
+        toast.error('Error al cancelar el préstamo');
+        return;
+      }
+
+      console.log('Préstamo cancelado exitosamente');
+      toast.success('Préstamo cancelado exitosamente');
+      refetch(); // Actualizar los datos de préstamos
+      setShowCancelDialog(false);
+      setLoanToCancel(null);
+    } catch (error) {
+      console.error('Error al cancelar préstamo:', error);
+      toast.error('Error al cancelar el préstamo');
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -512,16 +562,41 @@ export const LoansModule = () => {
 
                         <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
                           {loan.status === 'pending' ? (
-                            <Button
-                              variant="default"
-                              size="sm"
-                              onClick={() => handleApproveLoan(loan.id)}
-                              className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
-                            >
-                              <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                              <span className="sm:hidden">Aprobar</span>
-                              <span className="hidden sm:inline">Aprobar Préstamo</span>
-                            </Button>
+                            <div className="flex flex-col sm:flex-row gap-1 sm:gap-2 w-full sm:w-auto">
+                              <Button
+                                variant="default"
+                                size="sm"
+                                onClick={() => handleApproveLoan(loan.id)}
+                                className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
+                              >
+                                <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Aprobar</span>
+                                <span className="hidden sm:inline">Aprobar</span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowUpdateForm(true);
+                                }}
+                                className="w-full sm:w-auto text-xs"
+                              >
+                                <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Editar</span>
+                                <span className="hidden sm:inline">Editar</span>
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => handleCancelLoanClick(loan)}
+                                className="w-full sm:w-auto text-xs"
+                              >
+                                <X className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Cancelar</span>
+                                <span className="hidden sm:inline">Cancelar</span>
+                              </Button>
+                            </div>
                           ) : loan.status === 'deleted' ? (
                             <Button
                               variant="default"
@@ -832,16 +907,41 @@ export const LoansModule = () => {
 
                          <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
                            {loan.status === 'pending' ? (
-                             <Button
-                               variant="default"
-                               size="sm"
-                               onClick={() => handleApproveLoan(loan.id)}
-                               className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
-                             >
-                               <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                               <span className="sm:hidden">Aprobar</span>
-                               <span className="hidden sm:inline">Aprobar Préstamo</span>
-                             </Button>
+                             <div className="flex flex-col sm:flex-row gap-1 sm:gap-2 w-full sm:w-auto">
+                               <Button
+                                 variant="default"
+                                 size="sm"
+                                 onClick={() => handleApproveLoan(loan.id)}
+                                 className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
+                               >
+                                 <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                 <span className="sm:hidden">Aprobar</span>
+                                 <span className="hidden sm:inline">Aprobar</span>
+                               </Button>
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 onClick={() => {
+                                   setSelectedLoan(loan);
+                                   setShowUpdateForm(true);
+                                 }}
+                                 className="w-full sm:w-auto text-xs"
+                               >
+                                 <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                 <span className="sm:hidden">Editar</span>
+                                 <span className="hidden sm:inline">Editar</span>
+                               </Button>
+                               <Button
+                                 variant="destructive"
+                                 size="sm"
+                                 onClick={() => handleCancelLoanClick(loan)}
+                                 className="w-full sm:w-auto text-xs"
+                               >
+                                 <X className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                 <span className="sm:hidden">Cancelar</span>
+                                 <span className="hidden sm:inline">Cancelar</span>
+                               </Button>
+                             </div>
                            ) : loan.status === 'deleted' ? (
                              <Button
                                variant="default"
@@ -1090,16 +1190,41 @@ export const LoansModule = () => {
 
                              <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
                                {loan.status === 'pending' ? (
-                                 <Button
-                                   variant="default"
-                                   size="sm"
-                                   onClick={() => handleApproveLoan(loan.id)}
-                                   className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
-                                 >
-                                   <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                   <span className="sm:hidden">Aprobar</span>
-                                   <span className="hidden sm:inline">Aprobar Préstamo</span>
-                                 </Button>
+                                 <div className="flex flex-col sm:flex-row gap-1 sm:gap-2 w-full sm:w-auto">
+                                   <Button
+                                     variant="default"
+                                     size="sm"
+                                     onClick={() => handleApproveLoan(loan.id)}
+                                     className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
+                                   >
+                                     <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                     <span className="sm:hidden">Aprobar</span>
+                                     <span className="hidden sm:inline">Aprobar</span>
+                                   </Button>
+                                   <Button
+                                     variant="outline"
+                                     size="sm"
+                                     onClick={() => {
+                                       setSelectedLoan(loan);
+                                       setShowUpdateForm(true);
+                                     }}
+                                     className="w-full sm:w-auto text-xs"
+                                   >
+                                     <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                     <span className="sm:hidden">Editar</span>
+                                     <span className="hidden sm:inline">Editar</span>
+                                   </Button>
+                                   <Button
+                                     variant="destructive"
+                                     size="sm"
+                                     onClick={() => handleCancelLoanClick(loan)}
+                                     className="w-full sm:w-auto text-xs"
+                                   >
+                                     <X className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                     <span className="sm:hidden">Cancelar</span>
+                                     <span className="hidden sm:inline">Cancelar</span>
+                                   </Button>
+                                 </div>
                                ) : loan.status === 'deleted' ? (
                                  <Button
                                    variant="default"
@@ -1666,6 +1791,66 @@ export const LoansModule = () => {
          }}
        />
      )}
+
+     {/* Dialog de Confirmación de Cancelación */}
+     <Dialog 
+       open={showCancelDialog} 
+       onOpenChange={(open) => {
+         if (!open) {
+           setShowCancelDialog(false);
+           setLoanToCancel(null);
+           setIsCancelling(false);
+         }
+       }}
+     >
+       <DialogContent>
+         <DialogHeader>
+           <DialogTitle className="flex items-center gap-2">
+             <AlertCircle className="h-5 w-5 text-red-600" />
+             Confirmar Cancelación
+           </DialogTitle>
+         </DialogHeader>
+         <div className="space-y-4">
+           <p className="text-gray-600">
+             ¿Estás seguro de que deseas cancelar el préstamo de{' '}
+             <span className="font-semibold">{loanToCancel?.client?.full_name}</span>?
+           </p>
+           <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+             <div className="flex items-center gap-2 text-red-800">
+               <AlertCircle className="h-4 w-4" />
+               <div>
+                 <span className="font-semibold">⚠️ ADVERTENCIA</span>
+                 <p className="text-sm mt-1">
+                   • El préstamo será marcado como cancelado<br/>
+                   • Se puede recuperar durante 2 meses<br/>
+                   • Después de 2 meses se eliminará permanentemente
+                 </p>
+               </div>
+             </div>
+           </div>
+           <div className="flex justify-end gap-2">
+             <Button 
+               variant="outline" 
+               onClick={() => {
+                 setShowCancelDialog(false);
+                 setLoanToCancel(null);
+                 setIsCancelling(false);
+               }}
+               disabled={isCancelling}
+             >
+               Cancelar
+             </Button>
+             <Button 
+               variant="destructive" 
+               onClick={handleCancelLoan}
+               disabled={isCancelling}
+             >
+               {isCancelling ? 'Cancelando...' : 'Confirmar Cancelación'}
+             </Button>
+           </div>
+         </div>
+       </DialogContent>
+     </Dialog>
    </div>
  );
 };
