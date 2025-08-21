@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { StatisticsModule } from './StatisticsModule';
+import { PaymentActions } from '../loans/PaymentActions';
 import { 
   BarChart3, 
   Download, 
@@ -26,7 +28,10 @@ import {
   Printer,
   Mail,
   Receipt,
-  X
+  X,
+  PieChart,
+  LineChart,
+  Activity
 } from 'lucide-react';
 
 interface ReportData {
@@ -37,7 +42,7 @@ interface ReportData {
 }
 
 export const ReportsModule = () => {
-  const [activeTab, setActiveTab] = useState('prestamos');
+  const [activeTab, setActiveTab] = useState('estadisticas');
   const [loading, setLoading] = useState(true);
   const [reportData, setReportData] = useState<ReportData>({
     clients: [],
@@ -54,13 +59,13 @@ export const ReportsModule = () => {
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
 
   useEffect(() => {
-    if (user) {
+    if (user && companyId) {
       fetchReportData();
     }
-  }, [user, dateRange]);
+  }, [user, companyId, dateRange]);
 
   const fetchReportData = async () => {
     try {
@@ -85,6 +90,7 @@ export const ReportsModule = () => {
             phone
           )
         `)
+                  .eq('loan_officer_id', companyId)
         .gte('created_at', dateRange.startDate)
         .lte('created_at', dateRange.endDate + 'T23:59:59')
         .order('created_at', { ascending: false });
@@ -104,6 +110,7 @@ export const ReportsModule = () => {
             )
           )
         `)
+                  .eq('created_by', companyId)
         .gte('payment_date', dateRange.startDate)
         .lte('payment_date', dateRange.endDate)
         .order('payment_date', { ascending: false });
@@ -364,13 +371,18 @@ export const ReportsModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 sm:gap-2">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1 sm:gap-2">
+          <TabsTrigger value="estadisticas" className="text-xs sm:text-sm">Estadísticas</TabsTrigger>
           <TabsTrigger value="prestamos" className="text-xs sm:text-sm">Préstamos</TabsTrigger>
           <TabsTrigger value="pagos" className="text-xs sm:text-sm">Pagos</TabsTrigger>
           <TabsTrigger value="clientes" className="text-xs sm:text-sm">Clientes</TabsTrigger>
           <TabsTrigger value="financiero" className="text-xs sm:text-sm">Financiero</TabsTrigger>
           <TabsTrigger value="operativo" className="text-xs sm:text-sm">Operativo</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="estadisticas" className="space-y-6">
+          <StatisticsModule />
+        </TabsContent>
 
         <TabsContent value="prestamos" className="space-y-6">
           <Card>
@@ -542,27 +554,11 @@ export const ReportsModule = () => {
                             </div>
                           )}
                         </div>
-                        <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0 sm:ml-4">
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => showInvoiceDetails(payment)}
-                            className="w-full sm:w-auto text-xs"
-                          >
-                            <Eye className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-1" />
-                            <span className="sm:hidden">Detalle</span>
-                            <span className="hidden sm:inline">Detalle</span>
-                          </Button>
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={() => printInvoice(payment)}
-                            className="w-full sm:w-auto text-xs"
-                          >
-                            <Printer className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-1" />
-                            <span className="sm:hidden">Imprimir</span>
-                            <span className="hidden sm:inline">Imprimir</span>
-                          </Button>
+                        <div className="flex items-center gap-2 mt-2 sm:mt-0 sm:ml-4">
+                          <PaymentActions 
+                            payment={payment} 
+                            onPaymentUpdated={fetchReportData}
+                          />
                         </div>
                       </div>
                     </div>

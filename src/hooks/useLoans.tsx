@@ -74,11 +74,11 @@ export const useLoans = () => {
   };
 
   useEffect(() => {
-    if (user && profile !== undefined) {
+    if (user && companyId) {
       fetchLoans();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, profile, companyId]);
+  }, [user, companyId]);
 
   return {
     loans,

@@ -9,6 +9,7 @@ import { LoanForm } from './LoanForm';
 import { PaymentForm } from './PaymentForm';
 import { LoanUpdateForm } from './LoanUpdateForm';
 import { LoanHistoryView } from './LoanHistoryView';
+import { LoanStatistics } from './LoanStatistics';
 import { useLoans } from '@/hooks/useLoans';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -31,7 +32,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Trash2,
-  RotateCcw
+  RotateCcw,
+  BarChart3
 } from 'lucide-react';
 
 export const LoansModule = () => {
@@ -40,6 +42,7 @@ export const LoansModule = () => {
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [showHistoryView, setShowHistoryView] = useState(false);
+  const [showStatistics, setShowStatistics] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
   const [currentViewMonth, setCurrentViewMonth] = useState(new Date());
@@ -52,7 +55,7 @@ export const LoansModule = () => {
    const [overdueFilter, setOverdueFilter] = useState(false);
    const [showDeleted, setShowDeleted] = useState(false);
   
-  const { loans, loading } = useLoans();
+  const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
 
   // Funciones para navegación del calendario
@@ -85,7 +88,7 @@ export const LoansModule = () => {
       }
 
       toast.success('Préstamo aprobado exitosamente');
-      window.location.reload(); // Recargar para mostrar cambios
+      refetch(); // Actualizar los datos de préstamos
     } catch (error) {
       console.error('Error al aprobar préstamo:', error);
       toast.error('Error al aprobar el préstamo');
@@ -111,7 +114,7 @@ export const LoansModule = () => {
       }
 
       toast.success('Préstamo recuperado exitosamente');
-      window.location.reload(); // Recargar para mostrar cambios
+      refetch(); // Actualizar los datos de préstamos
     } catch (error) {
       console.error('Error al recuperar préstamo:', error);
       toast.error('Error al recuperar el préstamo');
@@ -206,6 +209,9 @@ export const LoansModule = () => {
           setSelectedLoanForPayment(null);
         }} 
         preselectedLoan={selectedLoanForPayment}
+        onPaymentSuccess={() => {
+          refetch(); // Actualizar los datos de préstamos
+        }}
       />
     );
   }
@@ -223,7 +229,7 @@ export const LoansModule = () => {
           setShowUpdateForm(false);
           setSelectedLoan(null);
           // Refresh loans data
-          window.location.reload();
+          refetch();
         }}
       />
     );
@@ -567,6 +573,18 @@ export const LoansModule = () => {
                                 <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
                                 <span className="sm:hidden">Historial</span>
                               </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowStatistics(true);
+                                }}
+                                className="w-full sm:w-auto text-xs"
+                              >
+                                <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Stats</span>
+                              </Button>
                             </>
                           )}
                         </div>
@@ -863,20 +881,32 @@ export const LoansModule = () => {
                                  <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
                                  <span className="sm:hidden">Editar</span>
                                </Button>
-                               <Button
-                                 variant="outline"
-                                 size="sm"
-                                 onClick={() => {
-                                   setSelectedLoan(loan);
-                                   setShowHistoryView(true);
-                                 }}
-                                 className="w-full sm:w-auto text-xs"
-                               >
-                                 <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                 <span className="sm:hidden">Historial</span>
-                               </Button>
-                             </>
-                           )}
+                                                             <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowHistoryView(true);
+                                }}
+                                className="w-full sm:w-auto text-xs"
+                              >
+                                <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Historial</span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowStatistics(true);
+                                }}
+                                className="w-full sm:w-auto text-xs"
+                              >
+                                <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                <span className="sm:hidden">Stats</span>
+                              </Button>
+                            </>
+                          )}
                          </div>
                        </div>
                      </div>
@@ -1613,17 +1643,29 @@ export const LoansModule = () => {
          </TabsContent>
        </Tabs>
 
-      {/* Loan History View */}
-      {selectedLoan && (
-        <LoanHistoryView
-          loanId={selectedLoan.id}
-          isOpen={showHistoryView}
-          onClose={() => {
-            setShowHistoryView(false);
-            setSelectedLoan(null);
-          }}
-        />
-      )}
-    </div>
-  );
+           {/* Loan History View */}
+     {selectedLoan && (
+       <LoanHistoryView
+         loanId={selectedLoan.id}
+         isOpen={showHistoryView}
+         onClose={() => {
+           setShowHistoryView(false);
+           setSelectedLoan(null);
+         }}
+       />
+     )}
+
+     {/* Loan Statistics */}
+     {selectedLoan && (
+       <LoanStatistics
+         loanId={selectedLoan.id}
+         isOpen={showStatistics}
+         onClose={() => {
+           setShowStatistics(false);
+           setSelectedLoan(null);
+         }}
+       />
+     )}
+   </div>
+ );
 };

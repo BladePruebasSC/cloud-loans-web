@@ -16,8 +16,12 @@ import {
   TrendingDown,
   Clock,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Printer,
+  Download,
+  X
 } from 'lucide-react';
+import { PaymentActions } from './PaymentActions';
 
 interface LoanHistoryEntry {
   id: string;
@@ -38,10 +42,26 @@ interface Payment {
   interest_amount: number;
   late_fee: number;
   payment_date: string;
+  due_date: string;
   payment_method: string;
   reference_number?: string;
   notes?: string;
   status: string;
+  created_at: string;
+  loan_id: string;
+}
+
+interface Loan {
+  id: string;
+  amount: number;
+  interest_rate: number;
+  term_months: number;
+  client: {
+    full_name: string;
+    dni: string;
+    phone?: string;
+    address?: string;
+  };
 }
 
 interface LoanHistoryViewProps {
@@ -50,6 +70,10 @@ interface LoanHistoryViewProps {
   onClose: () => void;
 }
 
+
+
+
+
 export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({ 
   loanId, 
   isOpen, 
@@ -57,14 +81,53 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 }) => {
   const [history, setHistory] = useState<LoanHistoryEntry[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [loan, setLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(true);
+
 
   useEffect(() => {
     if (isOpen && loanId) {
       fetchLoanHistory();
       fetchPayments();
+      fetchLoanDetails();
     }
   }, [isOpen, loanId]);
+
+  const fetchLoanDetails = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('loans')
+        .select(`
+          id,
+          amount,
+          interest_rate,
+          term_months,
+          client:client_id (
+            full_name,
+            dni,
+            phone,
+            address
+          )
+        `)
+        .eq('id', loanId)
+        .single();
+
+      if (error) throw error;
+      // Transformar los datos para que coincidan con la interfaz Loan
+      const transformedData = {
+        ...data,
+        client: {
+          full_name: (data.client as any)?.full_name || '',
+          dni: (data.client as any)?.dni || '',
+          phone: (data.client as any)?.phone || '',
+          address: (data.client as any)?.address || ''
+        }
+      };
+      setLoan(transformedData);
+    } catch (error) {
+      console.error('Error fetching loan details:', error);
+    }
+  };
 
   const fetchLoanHistory = async () => {
     try {
@@ -112,6 +175,8 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     }
   };
 
+
+
   const getChangeTypeIcon = (type: string) => {
     switch (type) {
       case 'payment': return <Receipt className="h-4 w-4 text-green-600" />;
@@ -147,161 +212,174 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <History className="h-5 w-5" />
-            Historial del Préstamo
-          </DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Historial del Préstamo
+            </DialogTitle>
+          </DialogHeader>
 
-        <div className="space-y-6">
-          {/* Historial de Pagos */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5" />
-                Historial de Pagos ({payments.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="text-center py-8">Cargando historial...</div>
-              ) : payments.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <Receipt className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No hay pagos registrados</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {payments.map((payment) => (
-                    <div key={payment.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <Receipt className="h-4 w-4 text-green-600" />
-                            <span className="font-semibold">Pago de ${payment.amount.toLocaleString()}</span>
-                            <Badge variant="default">Completado</Badge>
-                            {payment.late_fee > 0 && (
-                              <Badge variant="destructive">Con Mora</Badge>
-                            )}
-                          </div>
-                          
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                            <div>
-                              <span className="font-medium">Fecha:</span> {new Date(payment.payment_date).toLocaleDateString()}
-                            </div>
-                            <div>
-                              <span className="font-medium">Principal:</span> ${payment.principal_amount.toLocaleString()}
-                            </div>
-                            <div>
-                              <span className="font-medium">Interés:</span> ${payment.interest_amount.toLocaleString()}
-                            </div>
-                            <div>
-                              <span className="font-medium">Método:</span> {getPaymentMethodLabel(payment.payment_method)}
-                            </div>
-                          </div>
-
-                          {payment.late_fee > 0 && (
-                            <div className="text-sm text-red-600 mt-2">
-                              <span className="font-medium">Mora:</span> ${payment.late_fee.toLocaleString()}
-                            </div>
-                          )}
-
-                          {payment.reference_number && (
-                            <div className="text-sm text-gray-600 mt-2">
-                              <span className="font-medium">Referencia:</span> {payment.reference_number}
-                            </div>
-                          )}
-
-                          {payment.notes && (
-                            <div className="text-sm text-gray-600 mt-2">
-                              <span className="font-medium">Notas:</span> {payment.notes}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Historial de Cambios */}
-          {history.length > 0 && (
+          <div className="space-y-6">
+            {/* Historial de Pagos */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Edit className="h-5 w-5" />
-                  Historial de Modificaciones ({history.length})
+                  <Receipt className="h-5 w-5" />
+                  Historial de Pagos ({payments.length})
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {history.map((entry) => (
-                    <div key={entry.id} className="border rounded-lg p-4">
-                      <div className="flex items-center gap-3 mb-2">
-                        {getChangeTypeIcon(entry.change_type)}
-                        <span className="font-semibold">{getChangeTypeLabel(entry.change_type)}</span>
-                        <span className="text-sm text-gray-500">
-                          {new Date(entry.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                      
-                      <div className="text-sm text-gray-600 mb-2">
-                        <span className="font-medium">Razón:</span> {entry.reason}
-                      </div>
+                {loading ? (
+                  <div className="text-center py-8">Cargando historial...</div>
+                ) : payments.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Receipt className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>No hay pagos registrados</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                                         {payments.map((payment) => (
+                       <div 
+                         key={payment.id} 
+                         className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                       >
+                         <div className="flex items-center justify-between">
+                           <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <Receipt className="h-4 w-4 text-green-600" />
+                              <span className="font-semibold">Pago de ${payment.amount.toLocaleString()}</span>
+                              <Badge variant="default">Completado</Badge>
+                              {payment.late_fee > 0 && (
+                                <Badge variant="destructive">Con Mora</Badge>
+                              )}
+                            </div>
+                            
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                              <div>
+                                <span className="font-medium">Fecha:</span> {new Date(payment.payment_date).toLocaleDateString()}
+                              </div>
+                              <div>
+                                <span className="font-medium">Principal:</span> ${payment.principal_amount.toLocaleString()}
+                              </div>
+                              <div>
+                                <span className="font-medium">Interés:</span> ${payment.interest_amount.toLocaleString()}
+                              </div>
+                              <div>
+                                <span className="font-medium">Método:</span> {getPaymentMethodLabel(payment.payment_method)}
+                              </div>
+                            </div>
 
-                      {entry.amount && (
-                        <div className="text-sm text-gray-600 mb-2">
-                          <span className="font-medium">Monto:</span> ${entry.amount.toLocaleString()}
-                        </div>
-                      )}
+                            {payment.late_fee > 0 && (
+                              <div className="text-sm text-red-600 mt-2">
+                                <span className="font-medium">Mora:</span> ${payment.late_fee.toLocaleString()}
+                              </div>
+                            )}
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="font-medium">Valores Anteriores:</span>
-                          <ul className="list-disc list-inside ml-4 text-gray-600">
-                            {entry.old_values.balance && (
-                              <li>Balance: ${entry.old_values.balance.toLocaleString()}</li>
+                            {payment.reference_number && (
+                              <div className="text-sm text-gray-600 mt-2">
+                                <span className="font-medium">Referencia:</span> {payment.reference_number}
+                              </div>
                             )}
-                            {entry.old_values.payment && (
-                              <li>Cuota: ${entry.old_values.payment.toLocaleString()}</li>
-                            )}
-                            {entry.old_values.rate && (
-                              <li>Tasa: {entry.old_values.rate}%</li>
-                            )}
-                          </ul>
-                        </div>
-                        <div>
-                          <span className="font-medium">Valores Nuevos:</span>
-                          <ul className="list-disc list-inside ml-4 text-gray-600">
-                            {entry.new_values.balance && (
-                              <li>Balance: ${entry.new_values.balance.toLocaleString()}</li>
-                            )}
-                            {entry.new_values.payment && (
-                              <li>Cuota: ${entry.new_values.payment.toLocaleString()}</li>
-                            )}
-                            {entry.new_values.rate && (
-                              <li>Tasa: {entry.new_values.rate}%</li>
-                            )}
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+
+                                                         {payment.notes && (
+                               <div className="text-sm text-gray-600 mt-2">
+                                 <span className="font-medium">Notas:</span> {payment.notes}
+                               </div>
+                             )}
+                           </div>
+                           <div className="flex items-center gap-2 ml-4">
+                             <PaymentActions 
+                               payment={payment} 
+                               onPaymentUpdated={fetchPayments}
+                             />
+                           </div>
+                         </div>
+                       </div>
+                     ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
-          )}
 
-          <div className="flex justify-end">
-            <Button onClick={onClose}>Cerrar</Button>
+            {/* Historial de Cambios */}
+            {history.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Edit className="h-5 w-5" />
+                    Historial de Modificaciones ({history.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {history.map((entry) => (
+                      <div key={entry.id} className="border rounded-lg p-4">
+                        <div className="flex items-center gap-3 mb-2">
+                          {getChangeTypeIcon(entry.change_type)}
+                          <span className="font-semibold">{getChangeTypeLabel(entry.change_type)}</span>
+                          <span className="text-sm text-gray-500">
+                            {new Date(entry.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        
+                        <div className="text-sm text-gray-600 mb-2">
+                          <span className="font-medium">Razón:</span> {entry.reason}
+                        </div>
+
+                        {entry.amount && (
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Monto:</span> ${entry.amount.toLocaleString()}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="font-medium">Valores Anteriores:</span>
+                            <ul className="list-disc list-inside ml-4 text-gray-600">
+                              {entry.old_values.balance && (
+                                <li>Balance: ${entry.old_values.balance.toLocaleString()}</li>
+                              )}
+                              {entry.old_values.payment && (
+                                <li>Cuota: ${entry.old_values.payment.toLocaleString()}</li>
+                              )}
+                              {entry.old_values.rate && (
+                                <li>Tasa: {entry.old_values.rate}%</li>
+                              )}
+                            </ul>
+                          </div>
+                          <div>
+                            <span className="font-medium">Valores Nuevos:</span>
+                            <ul className="list-disc list-inside ml-4 text-gray-600">
+                              {entry.new_values.balance && (
+                                <li>Balance: ${entry.new_values.balance.toLocaleString()}</li>
+                              )}
+                              {entry.new_values.payment && (
+                                <li>Cuota: ${entry.new_values.payment.toLocaleString()}</li>
+                              )}
+                              {entry.new_values.rate && (
+                                <li>Tasa: {entry.new_values.rate}%</li>
+                              )}
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="flex justify-end">
+              <Button onClick={onClose}>Cerrar</Button>
+            </div>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+
+      
+    </>
   );
 };

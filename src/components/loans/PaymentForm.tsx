@@ -38,7 +38,11 @@ interface Loan {
   };
 }
 
-export const PaymentForm = ({ onBack, preselectedLoan }: { onBack: () => void; preselectedLoan?: Loan }) => {
+export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: { 
+  onBack: () => void; 
+  preselectedLoan?: Loan;
+  onPaymentSuccess?: () => void;
+}) => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [filteredLoans, setFilteredLoans] = useState<Loan[]>([]);
   const [loanSearch, setLoanSearch] = useState('');
@@ -183,9 +187,13 @@ export const PaymentForm = ({ onBack, preselectedLoan }: { onBack: () => void; p
       if (loanError) throw loanError;
 
       toast.success('Pago registrado exitosamente');
+      
+      // Llamar al callback para actualizar los datos del padre
+      if (onPaymentSuccess) {
+        onPaymentSuccess();
+      }
+      
       onBack();
-      // Recargar la página para mostrar los datos actualizados
-      window.location.reload();
     } catch (error) {
       console.error('Error registering payment:', error);
       toast.error('Error al registrar el pago');
