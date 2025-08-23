@@ -49,7 +49,21 @@ const employeeSchema = z.object({
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
 });
 
+const employeeEditSchema = z.object({
+  full_name: z.string().min(1, 'El nombre es requerido'),
+  email: z.string().email('Email inválido'),
+  phone: z.string().optional(),
+  dni: z.string().optional(),
+  position: z.string().min(1, 'El cargo es requerido'),
+  department: z.string().optional(),
+  salary: z.number().min(0, 'El salario debe ser mayor o igual a 0').optional(),
+  hire_date: z.string().optional(),
+  role: z.enum(['admin', 'manager', 'employee', 'collector', 'accountant']).default('employee'),
+  password: z.string().optional(), // Opcional para edición
+});
+
 type EmployeeFormData = z.infer<typeof employeeSchema>;
+type EmployeeEditFormData = z.infer<typeof employeeEditSchema>;
 
 interface Employee {
   id: string;
@@ -152,10 +166,11 @@ export const EmployeesModule = () => {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
-  const { user } = useAuth();
+  const [diagnosticEmail, setDiagnosticEmail] = useState('');
+  const { user, companyId } = useAuth();
 
-  const form = useForm<EmployeeFormData>({
-    resolver: zodResolver(employeeSchema),
+  const form = useForm<EmployeeFormData | EmployeeEditFormData>({
+    resolver: zodResolver(editingEmployee ? employeeEditSchema : employeeSchema),
     defaultValues: {
       hire_date: new Date().toISOString().split('T')[0],
       role: 'employee',
@@ -168,14 +183,43 @@ export const EmployeesModule = () => {
     }
   }, [user]);
 
+  // Actualizar el resolver del formulario cuando cambie editingEmployee
+  useEffect(() => {
+    form.clearErrors();
+    if (editingEmployee) {
+      form.reset({
+        full_name: editingEmployee.full_name,
+        email: editingEmployee.email || '',
+        phone: editingEmployee.phone || '',
+        dni: editingEmployee.dni || '',
+        position: editingEmployee.position || '',
+        department: editingEmployee.department || '',
+        salary: editingEmployee.salary || undefined,
+        hire_date: editingEmployee.hire_date || '',
+        role: editingEmployee.role as 'admin' | 'manager' | 'employee' | 'collector' | 'accountant',
+        password: '', // No pre-llenar contraseña para edición
+      });
+      
+      // Set permissions
+      const permissions = Object.keys(editingEmployee.permissions || {}).filter(key => editingEmployee.permissions[key]);
+      setSelectedPermissions(permissions);
+    } else {
+      form.reset({
+        hire_date: new Date().toISOString().split('T')[0],
+        role: 'employee',
+      });
+      setSelectedPermissions([]);
+    }
+  }, [editingEmployee, form]);
+
   const fetchEmployees = async () => {
-    if (!user) return;
+    if (!companyId) return;
 
     try {
       const { data, error } = await (supabase as any)
         .from('employees')
         .select('*')
-        .eq('company_owner_id', user.id)
+        .eq('company_owner_id', companyId)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -194,52 +238,72 @@ export const EmployeesModule = () => {
   };
 
   const onSubmit = async (data: EmployeeFormData) => {
-    if (!user) return;
+    if (!companyId) return;
+
+    console.log('🔍 onSubmit ejecutándose...');
+    console.log('🔍 editingEmployee:', editingEmployee);
+    console.log('🔍 data:', data);
+    console.log('🔍 selectedPermissions:', selectedPermissions);
 
     setLoading(true);
     try {
       if (editingEmployee) {
+        console.log('🔍 Actualizando empleado existente...');
         // Update existing employee
+        const updateData = {
+          full_name: data.full_name,
+          email: data.email,
+          phone: data.phone,
+          dni: data.dni,
+          position: data.position,
+          department: data.department,
+          salary: data.salary || null,
+          hire_date: data.hire_date,
+          role: data.role,
+          permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
+        };
+
+        console.log('🔍 Datos a actualizar:', updateData);
+        console.log('🔍 ID del empleado:', editingEmployee.id);
+
         const { error: updateError } = await (supabase as any)
           .from('employees')
-          .update({
-            full_name: data.full_name,
-            email: data.email,
-            phone: data.phone,
-            dni: data.dni,
-            position: data.position,
-            department: data.department,
-            salary: data.salary || null,
-            hire_date: data.hire_date,
-            role: data.role,
-            permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
-          })
+          .update(updateData)
           .eq('id', editingEmployee.id);
 
         if (updateError) {
-          console.error('Error updating employee:', updateError);
-          throw new Error(`Error al actualizar empleado: ${updateError.message}`);
+          console.error('❌ Error updating employee:', updateError);
           throw new Error(`Error al actualizar empleado: ${updateError.message}`);
         }
 
-        // Also update the auth user if the email has changed
-        if (data.email && data.email !== editingEmployee.email) {
-          const { error: authError } = await supabase.auth.admin.updateUserById(
-            editingEmployee.auth_user_id!,
-            { email: data.email }
-          );
-          if (authError) {
-            toast.error(`Error al actualizar el email del empleado: ${authError.message}`);
-          }
-        }
+        console.log('✅ Empleado actualizado exitosamente en la base de datos');
 
+                 // Also update the auth user if the email has changed
+         if (data.email && data.email !== editingEmployee.email && editingEmployee.auth_user_id) {
+           try {
+             const { error: authError } = await supabase.auth.admin.updateUserById(
+               editingEmployee.auth_user_id,
+               { email: data.email }
+             );
+             if (authError) {
+               console.error('Error updating auth user email:', authError);
+               // No lanzar error aquí, solo mostrar advertencia
+               toast.warning(`Empleado actualizado pero no se pudo actualizar el email de autenticación: ${authError.message}`);
+             }
+           } catch (error) {
+             console.error('Error updating auth user:', error);
+             toast.warning('Empleado actualizado pero hubo un problema con la autenticación');
+           }
+         }
+
+        console.log('✅ Toast de éxito mostrado');
         toast.success('Empleado actualizado exitosamente');
       } else {
         // Create new employee using Edge Function
         const employeeData = {
           ...data,
           permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
-          company_owner_id: user.id,
+          company_owner_id: companyId,
         };
 
         const { data: session } = await supabase.auth.getSession();
@@ -261,6 +325,52 @@ export const EmployeesModule = () => {
           try {
             const errorJson = JSON.parse(errorText);
             errorMessage = errorJson.error || errorText;
+            
+                         // Si el error es sobre email ya registrado, intentar crear empleado directamente
+             if (errorMessage.includes('already registered') || errorMessage.includes('ya existe') || errorMessage.includes('duplicate key')) {
+               console.log('Email ya existe, intentando crear empleado directamente...');
+               
+                               // Verificar si ya existe un empleado con este email en esta empresa
+                const { data: existingEmployee, error: checkError } = await supabase
+                  .from('employees')
+                  .select('id, email')
+                  .eq('email', data.email)
+                  .eq('company_owner_id', companyId)
+                  .single();
+
+               if (existingEmployee) {
+                 throw new Error('Ya existe un empleado con este email en tu empresa');
+               }
+               
+                               // Intentar crear el empleado directamente sin crear usuario de auth
+                const { error: directError } = await supabase
+                  .from('employees')
+                  .insert({
+                    company_owner_id: companyId,
+                   full_name: data.full_name,
+                   email: data.email,
+                   phone: data.phone,
+                   dni: data.dni,
+                   position: data.position,
+                   department: data.department,
+                   salary: data.salary || null,
+                   hire_date: data.hire_date,
+                   role: data.role,
+                   status: 'active',
+                   permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
+                 });
+
+                               if (directError) {
+                  // Si falla por restricción única, mostrar mensaje más claro
+                  if (directError.message.includes('duplicate key') || directError.message.includes('employees_email_key')) {
+                    throw new Error('Ya existe un empleado con este email en tu empresa. El sistema necesita ser actualizado para permitir emails duplicados entre empresas.');
+                  }
+                  throw new Error(`Error al crear empleado: ${directError.message}`);
+                }
+
+               toast.success('Empleado creado exitosamente (reutilizando cuenta existente)');
+               return;
+             }
           } catch (e) {
             errorMessage = errorText || 'Error desconocido';
           }
@@ -269,13 +379,15 @@ export const EmployeesModule = () => {
         }
 
         const result = await response.json();
-        toast.success('Empleado creado exitosamente');
+        toast.success(result.message || 'Empleado creado exitosamente');
       }
 
+      console.log('🔍 Cerrando modal y limpiando estado...');
       setIsDialogOpen(false);
       setEditingEmployee(null);
       form.reset();
       setSelectedPermissions([]);
+      console.log('🔍 Actualizando lista de empleados...');
       fetchEmployees();
     } catch (error: any) {
       console.error('Error saving employee:', error);
@@ -288,22 +400,6 @@ export const EmployeesModule = () => {
 
   const handleEdit = (employee: Employee) => {
     setEditingEmployee(employee);
-    form.reset({
-      full_name: employee.full_name,
-      email: employee.email || '',
-      phone: employee.phone || '',
-      dni: employee.dni || '',
-      position: employee.position || '',
-      department: employee.department || '',
-      salary: employee.salary || undefined,
-      hire_date: employee.hire_date || '',
-      role: employee.role as 'admin' | 'manager' | 'employee' | 'collector' | 'accountant',
-      password: '', // Don't pre-fill password for editing
-    });
-    
-    // Set permissions
-    const permissions = Object.keys(employee.permissions || {}).filter(key => employee.permissions[key]);
-    setSelectedPermissions(permissions);
     setIsDialogOpen(true);
   };
 
@@ -346,6 +442,49 @@ export const EmployeesModule = () => {
     } catch (error) {
       console.error('Error updating employee status:', error);
       toast.error('Error al actualizar estado del empleado');
+    }
+  };
+
+  // Función de diagnóstico para empleados
+  const diagnoseEmployee = async (email: string) => {
+    if (!email) {
+      toast.error('Por favor ingresa un email');
+      return;
+    }
+
+    try {
+      console.log('🔍 Diagnóstico para email:', email);
+      
+      // Buscar todos los registros de empleado con este email
+      const { data: employees, error: employeesError } = await supabase
+        .from('employees')
+        .select('*')
+        .eq('email', email);
+
+      if (employeesError) {
+        console.error('Error buscando empleados:', employeesError);
+        toast.error('Error al buscar empleados');
+        return;
+      }
+
+      console.log('📋 Empleados encontrados:', employees);
+
+             // Buscar configuraciones de empresa
+       const { data: companySettings, error: companyError } = await supabase
+         .from('company_settings')
+         .select('*')
+         .eq('user_id', companyId);
+
+      if (companyError) {
+        console.error('Error buscando configuraciones de empresa:', companyError);
+      } else {
+        console.log('🏢 Configuración de empresa:', companySettings);
+      }
+
+      toast.success('Diagnóstico completado. Revisa la consola del navegador.');
+    } catch (error) {
+      console.error('Error en diagnóstico:', error);
+      toast.error('Error al realizar diagnóstico');
     }
   };
 
@@ -432,6 +571,15 @@ export const EmployeesModule = () => {
                               <Input type="email" placeholder="email@ejemplo.com" {...field} />
                             </FormControl>
                             <FormMessage />
+                                                         <p className="text-xs text-gray-500 mt-1">
+                               💡 Puedes usar un email que ya exista en otra empresa. El sistema identificará al empleado por el código de empresa.
+                             </p>
+                             <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mt-2">
+                               <p className="text-xs text-blue-700">
+                                 🔧 <strong>Nota:</strong> Si recibes un error sobre "duplicate key", es porque la base de datos aún no ha sido actualizada. 
+                                 El administrador está trabajando en aplicar la migración necesaria.
+                               </p>
+                             </div>
                           </FormItem>
                         )}
                       />
@@ -632,8 +780,9 @@ export const EmployeesModule = () => {
                   <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                     Cancelar
                   </Button>
+
                   <Button type="submit" disabled={loading}>
-                    {loading ? 'Guardando...'  : editingEmployee ? 'Actualizar' : 'Crear'}
+                    {loading ? 'Guardando...'  : editingEmployee ? 'Guardar Cambios' : 'Crear Empleado'}
                   </Button>
                 </div>
               </form>
@@ -643,7 +792,7 @@ export const EmployeesModule = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Empleados</CardTitle>
@@ -679,6 +828,30 @@ export const EmployeesModule = () => {
           <CardContent>
             <div className="text-2xl font-bold">${totalSalary.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">Salarios mensuales</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Diagnóstico</CardTitle>
+            <Search className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Input
+                placeholder="Email del empleado"
+                value={diagnosticEmail}
+                onChange={(e) => setDiagnosticEmail(e.target.value)}
+                className="text-sm"
+              />
+              <Button 
+                size="sm" 
+                onClick={() => diagnoseEmployee(diagnosticEmail)}
+                className="w-full"
+              >
+                Diagnosticar
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

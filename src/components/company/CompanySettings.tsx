@@ -6,15 +6,16 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, Save, Building, Globe, Phone, Mail, MapPin, CreditCard, Settings, Shield, Bell, FileText, TrendingUp, Clock } from 'lucide-react';
+import { Upload, Save, Building, Globe, Phone, Mail, MapPin, CreditCard, Settings, Shield, Bell, FileText, TrendingUp, Clock, Copy, Check } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 const CompanySettings = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
+  const [copied, setCopied] = useState(false);
   const [formData, setFormData] = useState({
     company_name: '',
     business_type: '',
@@ -34,7 +35,8 @@ const CompanySettings = () => {
     late_fee_percentage: 5.0,
     grace_period_days: 3,
     min_loan_amount: 1000,
-    max_loan_amount: 500000
+    max_loan_amount: 500000,
+    company_code: ''
   });
 
   useEffect(() => {
@@ -58,9 +60,60 @@ const CompanySettings = () => {
 
       if (data) {
         setFormData(data);
+      } else {
+        // Solo crear configuración si es el dueño de la empresa, no empleados
+        if (user && !profile?.is_employee) {
+          await createNewCompanySettings();
+        } else {
+          // Para empleados, mostrar mensaje de que no hay configuración
+          toast.error('No se encontró configuración de empresa. Contacta al administrador.');
+        }
       }
     } catch (error) {
       console.error('Error in fetchCompanySettings:', error);
+    }
+  };
+
+  const createNewCompanySettings = async () => {
+    if (!user) return;
+
+    setLoading(true);
+    try {
+      // Generar código automáticamente
+      const { data: codeData, error: codeError } = await supabase
+        .rpc('generate_company_code');
+
+      if (codeError) {
+        toast.error('Error al generar el código de empresa');
+        console.error('Error generating company code:', codeError);
+        return;
+      }
+
+      // Crear nueva configuración con el código generado
+      const { data, error } = await supabase
+        .from('company_settings')
+        .insert({
+          user_id: user.id,
+          company_code: codeData,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) {
+        toast.error('Error al crear la configuración de empresa');
+        console.error('Error creating company settings:', error);
+        return;
+      }
+
+      setFormData(data);
+      toast.success('Configuración de empresa creada con código automático');
+    } catch (error) {
+      console.error('Error in createNewCompanySettings:', error);
+      toast.error('Error al crear la configuración de empresa');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -70,6 +123,8 @@ const CompanySettings = () => {
       [field]: value
     }));
   };
+
+
 
   const handleSave = async () => {
     if (!user) return;
@@ -99,6 +154,61 @@ const CompanySettings = () => {
     }
   };
 
+  const copyToClipboard = async () => {
+    if (!formData.company_code) {
+      toast.error('No hay código para copiar');
+      return;
+    }
+
+    try {
+      // Intentar usar la API moderna del portapapeles
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(formData.company_code);
+        setCopied(true);
+        toast.success('Código copiado al portapapeles');
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        // Fallback para navegadores más antiguos o contextos no seguros
+        const textArea = document.createElement('textarea');
+        textArea.value = formData.company_code;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (successful) {
+          setCopied(true);
+          toast.success('Código copiado al portapapeles');
+          setTimeout(() => setCopied(false), 2000);
+        } else {
+          toast.error('No se pudo copiar el código automáticamente');
+        }
+      }
+    } catch (error) {
+      console.error('Error al copiar:', error);
+      toast.error('Error al copiar el código. Intenta seleccionar y copiar manualmente.');
+    }
+  };
+
+  // Si es empleado, no mostrar la configuración de empresa
+  if (profile?.is_employee) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold">Configuración de Empresa</h2>
+        </div>
+        <div className="text-center py-8">
+          <p className="text-gray-500">Los empleados no pueden acceder a la configuración de empresa.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -121,16 +231,111 @@ const CompanySettings = () => {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="general" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Información General */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Building className="h-5 w-5 mr-2" />
-                  Información de la Empresa
-                </CardTitle>
-              </CardHeader>
+                                   <TabsContent value="general" className="space-y-6">
+            {/* Código de Empresa - Visible en la parte superior */}
+            {formData.company_code ? (
+             <Card className="border-blue-200 bg-blue-50">
+               <CardHeader>
+                 <CardTitle className="flex items-center text-blue-800">
+                   <Building className="h-5 w-5 mr-2" />
+                   Código de Empresa
+                 </CardTitle>
+               </CardHeader>
+               <CardContent>
+                 <div className="flex items-center justify-between">
+                   <div>
+                     <p className="text-sm text-blue-700 mb-2">
+                       Este es el código que tus empleados deben usar para iniciar sesión:
+                     </p>
+                     <div className="flex items-center gap-3">
+                       <div 
+                         className="bg-white border-2 border-blue-300 rounded-lg p-3 inline-block select-all cursor-pointer hover:bg-blue-50 transition-colors"
+                         onClick={() => {
+                           const range = document.createRange();
+                           const selection = window.getSelection();
+                           const element = document.querySelector('.select-all span');
+                           if (element) {
+                             range.selectNodeContents(element);
+                             selection?.removeAllRanges();
+                             selection?.addRange(range);
+                           }
+                         }}
+                         title="Haz clic para seleccionar el código"
+                       >
+                         <span className="font-mono text-2xl font-bold text-blue-800 tracking-wider">
+                           {formData.company_code}
+                         </span>
+                       </div>
+                       <Button
+                         variant="outline"
+                         size="sm"
+                         onClick={copyToClipboard}
+                         className="h-10"
+                       >
+                         {copied ? (
+                           <>
+                             <Check className="h-4 w-4 mr-2 text-green-600" />
+                             Copiado
+                           </>
+                         ) : (
+                           <>
+                             <Copy className="h-4 w-4 mr-2" />
+                             Copiar
+                           </>
+                         )}
+                       </Button>
+                     </div>
+                     <p className="text-xs text-blue-600 mt-2">
+                       💡 También puedes hacer clic en el código para seleccionarlo y copiarlo manualmente
+                     </p>
+                   </div>
+                   <div className="text-right">
+                     <p className="text-xs text-blue-600 mb-1">Estado:</p>
+                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                       Activo
+                     </span>
+                   </div>
+                 </div>
+                 <div className="mt-4 p-3 bg-blue-100 rounded-lg">
+                   <p className="text-sm text-blue-800">
+                     <strong>Instrucciones para empleados:</strong> Al iniciar sesión, los empleados deben ingresar:
+                   </p>
+                   <ul className="text-sm text-blue-700 mt-2 space-y-1">
+                     <li>• Su correo electrónico</li>
+                     <li>• Su contraseña</li>
+                     <li>• Este código de empresa: <strong>{formData.company_code}</strong></li>
+                   </ul>
+                 </div>
+               </CardContent>
+             </Card>
+                       ) : (
+              <Card className="border-orange-200 bg-orange-50">
+                <CardHeader>
+                  <CardTitle className="flex items-center text-orange-800">
+                    <Building className="h-5 w-5 mr-2" />
+                    Código de Empresa
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-4">
+                    <p className="text-sm text-orange-700 mb-3">
+                      Generando código de empresa...
+                    </p>
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-orange-600 mx-auto"></div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+             {/* Información General */}
+             <Card>
+               <CardHeader>
+                 <CardTitle className="flex items-center">
+                   <Building className="h-5 w-5 mr-2" />
+                   Información de la Empresa
+                 </CardTitle>
+               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
                   <Label htmlFor="company_name">Nombre de la Empresa *</Label>
@@ -473,6 +678,71 @@ const CompanySettings = () => {
                 </div>
               </CardContent>
             </Card>
+
+                         {/* Código de Empresa */}
+             <Card>
+               <CardHeader>
+                 <CardTitle className="flex items-center">
+                   <Building className="h-5 w-5 mr-2" />
+                   Código de Empresa
+                 </CardTitle>
+               </CardHeader>
+               <CardContent className="space-y-4">
+                 <div className="space-y-3">
+                   <Label className="text-sm font-medium">Código de Acceso para Empleados</Label>
+                   <p className="text-sm text-gray-600">
+                     Cada empresa tiene automáticamente un código único que permite que tus empleados inicien sesión 
+                     especificando a qué empresa pertenecen. Esto evita conflictos cuando diferentes empresas tienen 
+                     empleados con el mismo correo electrónico.
+                   </p>
+                   <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                     <div className="flex items-center gap-2 text-green-800">
+                       <span className="text-sm">
+                         <strong>✅ Automático:</strong> Tu empresa ya tiene un código único asignado automáticamente.
+                         Este código es permanente y no se puede cambiar.
+                       </span>
+                     </div>
+                   </div>
+                 </div>
+
+                 {formData.company_code && (
+                   <div className="space-y-4">
+                     <div>
+                       <Label htmlFor="company_code">Código de Empresa</Label>
+                       <div className="flex space-x-2">
+                         <Input
+                           id="company_code"
+                           type="text"
+                           value={formData.company_code}
+                           readOnly
+                           placeholder="ABC123"
+                           maxLength={6}
+                           className="font-mono text-lg bg-gray-50"
+                         />
+                       </div>
+                       <p className="text-xs text-gray-500 mt-1">
+                         Código único de 6 caracteres que tus empleados usarán para iniciar sesión. 
+                         Este código es permanente y no se puede cambiar.
+                       </p>
+                     </div>
+
+                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                       <div className="flex items-center gap-2 text-blue-800">
+                         <Building className="h-4 w-4" />
+                         <div>
+                           <span className="font-semibold">Código de Empresa: {formData.company_code}</span>
+                           <p className="text-sm mt-1">
+                             Comparte este código con tus empleados para que puedan iniciar sesión.
+                             Los empleados deberán ingresar: su correo, contraseña y este código.
+                             <strong>Este código es permanente y no se puede cambiar.</strong>
+                           </p>
+                         </div>
+                       </div>
+                     </div>
+                   </div>
+                 )}
+               </CardContent>
+             </Card>
 
             {/* Configuraciones de Notificaciones */}
             <Card>

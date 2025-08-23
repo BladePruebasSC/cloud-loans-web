@@ -7,9 +7,10 @@ import RegisterForm from '@/components/RegisterForm'
 import Index from '@/pages/Index'
 import NotFound from '@/pages/NotFound'
 import AdminCodesPanel from '@/components/admin/AdminCodesPanel'
+import RegistrationCodeModal from '@/components/RegistrationCodeModal'
 
 function App() {
-  const { user, loading, signIn, signUp } = useAuth()
+  const { user, loading, signIn, signUp, signOut, needsRegistrationCode, validateRegistrationCode } = useAuth()
   const navigate = useNavigate()
 
   // Efecto global para detectar Ctrl + Alt + A desde cualquier lugar
@@ -81,6 +82,23 @@ function App() {
     )
   }
 
+  // Si el usuario está autenticado pero necesita código de registro
+  if (user && needsRegistrationCode) {
+    console.log('🔍 App.tsx: Mostrando modal de código de registro');
+    console.log('🔍 App.tsx: user =', user?.email);
+    console.log('🔍 App.tsx: needsRegistrationCode =', needsRegistrationCode);
+    return (
+      <RegistrationCodeModal 
+        onValidate={validateRegistrationCode}
+        onCancel={() => {
+          // Cerrar sesión si el usuario cancela
+          signOut();
+        }}
+      />
+    );
+  }
+
+  console.log('🔍 App.tsx: No se muestra modal, continuando con rutas normales');
   return (
     <Routes>
       <Route path="/" element={<Index />} />

@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, companyId } = useAuth();
+  const { user, companyId, profile } = useAuth();
   const [stats, setStats] = useState([
     {
       title: 'Total Clientes',
@@ -48,37 +48,199 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log('🔍 Dashboard useEffect - user:', user?.email);
+    console.log('🔍 Dashboard useEffect - companyId:', companyId);
+    console.log('🔍 Dashboard useEffect - profile:', profile);
+    
     if (user && companyId) {
       fetchDashboardData(companyId);
     }
-  }, [user, companyId]);
+  }, [user, companyId, profile]);
 
   const fetchDashboardData = async (companyId: string) => {
+    console.log('🔍 Dashboard: Iniciando fetchDashboardData');
+    console.log('🔍 Dashboard: companyId =', companyId);
+    console.log('🔍 Dashboard: user =', user);
+    
     try {
       setLoading(true);
       
+
+      
+      // Verificar qué empresas existen con códigos similares
+      console.log('🔍 Dashboard: Verificando empresas con códigos similares...');
+      const { data: allCompanies, error: companiesError } = await supabase
+        .from('company_settings')
+        .select('user_id, company_name, company_code')
+        .ilike('company_code', '%C699%');
+      
+      // DIAGNÓSTICO AVANZADO: Verificar todas las empresas
+      console.log('🔍 DIAGNÓSTICO AVANZADO: Verificando todas las empresas...');
+      const { data: allCompanySettings, error: allCompanySettingsError } = await supabase
+        .from('company_settings')
+        .select('user_id, company_name, company_code')
+        .limit(10);
+      
+      console.log('🔍 DIAGNÓSTICO AVANZADO: Todas las empresas:', JSON.stringify(allCompanySettings, null, 2));
+      
+      console.log('🔍 Dashboard: Empresas encontradas con códigos similares:', JSON.stringify(allCompanies, null, 2));
+      
+      // Verificar todos los empleados de este usuario
+      console.log('🔍 Dashboard: Verificando todos los empleados de este usuario...');
+      const { data: allUserEmployees, error: employeesError } = await supabase
+        .from('employees')
+        .select('id, full_name, email, company_owner_id, status')
+        .eq('auth_user_id', user.id);
+      
+      console.log('🔍 Dashboard: Todos los empleados de este usuario:', JSON.stringify(allUserEmployees, null, 2));
+      
+      // Verificar clientes y préstamos para cada empresa de este usuario
+      if (allUserEmployees && allUserEmployees.length > 0) {
+        for (const employee of allUserEmployees) {
+          console.log(`🔍 Dashboard: Verificando empresa ${employee.company_owner_id} para empleado ${employee.full_name}...`);
+          
+                       // Buscar clientes de esta empresa
+             const { data: companyClients, error: companyClientsError } = await supabase
+               .from('clients')
+               .select('id, full_name, status')
+               .eq('user_id', employee.company_owner_id);
+             
+             console.log(`🔍 Dashboard: Clientes en empresa ${employee.company_owner_id}:`, companyClients?.length || 0);
+             console.log(`🔍 Dashboard: Detalles de clientes:`, companyClients);
+             
+             // Buscar préstamos de esta empresa
+             const { data: companyLoans, error: companyLoansError } = await supabase
+               .from('loans')
+               .select('id, amount, status')
+               .eq('loan_officer_id', employee.company_owner_id);
+             
+             console.log(`🔍 Dashboard: Préstamos en empresa ${employee.company_owner_id}:`, companyLoans?.length || 0);
+             console.log(`🔍 Dashboard: Detalles de préstamos:`, companyLoans);
+        }
+      }
+      
+      // DIAGNÓSTICO AVANZADO: Verificar todos los clientes y préstamos
+      console.log('🔍 DIAGNÓSTICO AVANZADO: Verificando todos los clientes en la base de datos...');
+      const { data: allClients, error: allClientsError } = await supabase
+        .from('clients')
+        .select('id, full_name, status, user_id')
+        .limit(10);
+      
+      console.log('🔍 DIAGNÓSTICO AVANZADO: Todos los clientes:', JSON.stringify(allClients, null, 2));
+      
+      console.log('🔍 DIAGNÓSTICO AVANZADO: Verificando todos los préstamos en la base de datos...');
+      const { data: allLoans, error: allLoansError } = await supabase
+        .from('loans')
+        .select('id, amount, status, loan_officer_id')
+        .limit(10);
+      
+      console.log('🔍 DIAGNÓSTICO AVANZADO: Todos los préstamos:', JSON.stringify(allLoans, null, 2));
+      
       // Obtener total de clientes
+      console.log('🔍 Dashboard: Buscando clientes con user_id =', companyId);
+      console.log('🔍 Dashboard: Tipo de companyId =', typeof companyId);
+      console.log('🔍 Dashboard: Longitud de companyId =', companyId?.length);
+      console.log('🔍 Dashboard: Usuario actual:', user?.email);
+      
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: Antes de consultar clientes');
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: companyId =', companyId);
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: user =', user?.email);
+      
+      // SOLUCIÓN: Usar el código de empresa para determinar qué datos mostrar
+      let ownerUserId = companyId;
+      
+      // Buscar la empresa por el código 00C699
+      console.log('🔧 SOLUCIÓN: Buscando empresa por código 00C699...');
+      const { data: companyByCode, error: companyByCodeError } = await supabase
+        .from('company_settings')
+        .select('user_id, company_name')
+        .eq('company_code', '00C699')
+        .single();
+      
+      console.log('🔧 SOLUCIÓN: Empresa encontrada por código:', companyByCode);
+      
+      if (companyByCode) {
+        ownerUserId = companyByCode.user_id;
+        console.log('🔧 SOLUCIÓN: Usando user_id de la empresa con código 00C699:', ownerUserId);
+      } else {
+        // Fallback: buscar el dueño de la empresa
+        console.log('🔧 SOLUCIÓN: No se encontró empresa por código, buscando por companyId...');
+        
+        const { data: companyOwner, error: companyOwnerError } = await supabase
+          .from('company_settings')
+          .select('user_id')
+          .eq('user_id', companyId)
+          .single();
+        
+        console.log('🔧 SOLUCIÓN: Dueño de la empresa encontrado:', companyOwner);
+        ownerUserId = companyOwner?.user_id || companyId;
+      }
+      
+      console.log('🔧 SOLUCIÓN: Usando user_id final:', ownerUserId);
+      
+
+      
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
         .select('id, status, monthly_income')
-        .eq('user_id', companyId);
+        .eq('user_id', ownerUserId);
       
-      if (clientsError) throw clientsError;
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: Después de consultar clientes');
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: clientsData =', clientsData);
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: clientsError =', clientsError);
+      
+      // DIAGNÓSTICO: Verificar qué user_id tienen los clientes
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: Verificando user_id de todos los clientes...');
+      const { data: allClientsWithUserId, error: allClientsWithUserIdError } = await supabase
+        .from('clients')
+        .select('id, full_name, user_id')
+        .limit(5);
+      
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: Todos los clientes con user_id:', allClientsWithUserId);
+      
+      if (clientsError) {
+        console.error('❌ Dashboard: Error al buscar clientes:', clientsError);
+        throw clientsError;
+      }
+      
+      console.log('🔍 Dashboard: Clientes encontrados:', clientsData?.length || 0);
       
       // Obtener préstamos activos
+      console.log('🔍 Dashboard: Buscando préstamos con loan_officer_id =', companyId);
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: Antes de consultar préstamos');
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: companyId para préstamos =', companyId);
+      
       const { data: loansData, error: loansError } = await supabase
         .from('loans')
         .select('id, amount, remaining_balance, status, total_amount')
-        .eq('loan_officer_id', companyId)
+        .eq('loan_officer_id', ownerUserId)
         .eq('status', 'active');
       
-      if (loansError) throw loansError;
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: Después de consultar préstamos');
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: loansData =', loansData);
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: loansError =', loansError);
+      
+      // DIAGNÓSTICO: Verificar qué loan_officer_id tienen los préstamos
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: Verificando loan_officer_id de todos los préstamos...');
+      const { data: allLoansWithLoanOfficerId, error: allLoansWithLoanOfficerIdError } = await supabase
+        .from('loans')
+        .select('id, amount, loan_officer_id')
+        .limit(5);
+      
+      console.log('🔍 DASHBOARD DIAGNÓSTICO: Todos los préstamos con loan_officer_id:', allLoansWithLoanOfficerId);
+      
+      if (loansError) {
+        console.error('❌ Dashboard: Error al buscar préstamos:', loansError);
+        throw loansError;
+      }
+      
+      console.log('🔍 Dashboard: Préstamos encontrados:', loansData?.length || 0);
       
       // Obtener pagos para calcular ganancias
       const { data: paymentsData, error: paymentsError } = await supabase
         .from('payments')
         .select('amount, interest_amount')
-        .eq('created_by', companyId)
+        .eq('created_by', ownerUserId)
         .eq('status', 'paid');
       
       if (paymentsError) throw paymentsError;

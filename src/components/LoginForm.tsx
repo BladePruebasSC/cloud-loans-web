@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Eye, EyeOff, DollarSign, Building, Users } from 'lucide-react';
 
 interface LoginFormProps {
-  onLogin: (email: string, password: string, role: 'owner' | 'employee', adminCode?: string) => Promise<void>;
+  onLogin: (email: string, password: string, role: 'owner' | 'employee', companyCode?: string, adminCode?: string) => Promise<void>;
   onSwitchToRegister: () => void;
   error?: string;
   loading?: boolean;
@@ -19,6 +19,7 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [companyCode, setCompanyCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loginError, setLoginError] = useState('');
@@ -30,7 +31,7 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
     setLoginError('');
     
     try {
-      await onLogin(email, password, activeTab as 'owner' | 'employee');
+      await onLogin(email, password, activeTab as 'owner' | 'employee', companyCode);
     } catch (error: any) {
       setLoginError(error.message || 'Error al iniciar sesión');
     } finally {
@@ -85,7 +86,7 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
                 <Alert>
                   <Users className="h-4 w-4" />
                   <AlertDescription>
-                    <strong>Empleados:</strong> Usa el email y contraseña que te proporcionó tu empresa. Al iniciar sesión trabajarás con los datos de la empresa, no tendrás tu propia empresa.
+                    <strong>Empleados:</strong> Usa el email, contraseña y código de empresa que te proporcionó tu empresa. El código de empresa es obligatorio para identificar a qué empresa perteneces.
                   </AlertDescription>
                 </Alert>
               </TabsContent>
@@ -140,6 +141,25 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
                   </Button>
                 </div>
               </div>
+
+                     {activeTab === 'employee' && (
+         <div className="space-y-2">
+           <Label htmlFor="companyCode">Código de Empresa *</Label>
+           <Input
+             id="companyCode"
+             type="text"
+             value={companyCode}
+             onChange={(e) => setCompanyCode(e.target.value.toUpperCase())}
+             placeholder="ABC123"
+             required
+             className="h-11"
+             maxLength={6}
+           />
+           <p className="text-xs text-gray-500">
+             Ingresa el código de 6 caracteres que te proporcionó tu empresa
+           </p>
+         </div>
+       )}
               
 
               

@@ -58,26 +58,65 @@ serve(async (req) => {
       )
     }
 
-    // Create the auth user for the employee
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: employeeData.email,
-      password: employeeData.password,
-      email_confirm: true, // Skip email confirmation
-      user_metadata: {
-        full_name: employeeData.full_name,
-        role: employeeData.role,
-        company_owner_id: employeeData.company_owner_id,
-      }
-    })
+    // Check if employee already exists in this company
+    const { data: existingEmployee, error: checkError } = await supabaseAdmin
+      .from('employees')
+      .select('id, email')
+      .eq('email', employeeData.email)
+      .eq('company_owner_id', user.id)
+      .single();
 
-    if (authError) {
+    if (existingEmployee) {
       return new Response(
-        JSON.stringify({ error: authError.message }),
+        JSON.stringify({ error: 'Ya existe un empleado con este email en tu empresa' }),
         { 
           status: 400, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
         }
-      )
+      );
+    }
+
+    // Try to find existing auth user first
+    let authUser = null;
+    const { data: existingUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+    
+    if (!listError && existingUsers) {
+      authUser = existingUsers.users.find(u => u.email === employeeData.email);
+    }
+
+    let authData;
+    let isReusedUser = false;
+
+    if (authUser) {
+      // User already exists, reuse it
+      console.log('Reusing existing user:', authUser.id);
+      authData = { user: authUser };
+      isReusedUser = true;
+    } else {
+      // Create new user
+      console.log('Creating new user for email:', employeeData.email);
+      const result = await supabaseAdmin.auth.admin.createUser({
+        email: employeeData.email,
+        password: employeeData.password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: employeeData.full_name,
+          role: employeeData.role,
+          company_owner_id: employeeData.company_owner_id,
+        }
+      });
+
+      if (result.error) {
+        return new Response(
+          JSON.stringify({ error: result.error.message }),
+          { 
+            status: 400, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        );
+      }
+
+      authData = result.data;
     }
 
     // Create the employee record
@@ -100,8 +139,10 @@ serve(async (req) => {
       })
 
     if (employeeError) {
-      // If employee creation fails, clean up the auth user
-      await supabaseAdmin.auth.admin.deleteUser(authData.user!.id)
+      // If employee creation fails and we created a new auth user, clean it up
+      if (!isReusedUser && authData.user?.id) {
+        await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
+      }
       
       return new Response(
         JSON.stringify({ error: employeeError.message }),
@@ -113,13 +154,20 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, user: authData.user }),
+      JSON.stringify({ 
+        success: true, 
+        user: authData.user,
+        message: isReusedUser ? 
+          'Empleado creado exitosamente (reutilizando cuenta existente)' : 
+          'Empleado creado exitosamente'
+      }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     )
 
   } catch (error) {
+    console.error('Function error:', error);
     return new Response(
       JSON.stringify({ error: error.message }),
       { 
