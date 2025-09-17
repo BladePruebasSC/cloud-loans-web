@@ -282,14 +282,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="amount"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Monto del Pago</FormLabel>
-                        <FormControl>
-                          <div className="relative">
+                    <FormField
+                      control={form.control}
+                      name="amount"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Monto del Pago</FormLabel>
+                          <FormControl>
                             <Input
                               type="text"
                               placeholder="0"
@@ -298,29 +297,16 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               onChange={(e) => {
                                 const value = e.target.value;
                                 if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                  const numValue = value === '' ? 0 : parseFloat(value) || 0;
-                                  field.onChange(numValue);
+                                  field.onChange(value === '' ? 0 : parseFloat(value) || 0);
                                 }
                               }}
                               className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
-                            {selectedLoan && field.value > selectedLoan.remaining_balance && (
-                              <div className="absolute -bottom-6 left-0 text-sm text-red-600">
-                                Máximo: RD$${selectedLoan.remaining_balance.toLocaleString()}
-                              </div>
-                            )}
-                          </div>
-                        </FormControl>
-                        <FormMessage />
-                        {selectedLoan && (
-                          <div className="text-sm text-gray-600 mt-2">
-                            <div>Cuota mensual: RD$${selectedLoan.monthly_payment.toLocaleString()}</div>
-                            <div>Balance restante: RD$${selectedLoan.remaining_balance.toLocaleString()}</div>
-                          </div>
-                        )}
-                      </FormItem>
-                    )}
-                  />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
                     <FormField
                       control={form.control}

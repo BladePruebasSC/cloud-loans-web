@@ -9,12 +9,7 @@ import { Key } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 
-interface RegistrationCodeModalProps {
-  onValidate?: (code: string) => Promise<void>;
-  onCancel?: () => void;
-}
-
-const RegistrationCodeModal = ({ onValidate, onCancel }: RegistrationCodeModalProps = {}) => {
+const RegistrationCodeModal = () => {
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -32,11 +27,7 @@ const RegistrationCodeModal = ({ onValidate, onCancel }: RegistrationCodeModalPr
     setError('');
 
     try {
-      if (onValidate) {
-        await onValidate(code);
-      } else {
-        await validateRegistrationCode(code);
-      }
+      await validateRegistrationCode(code);
       setCode('');
     } catch (err: any) {
       setError(err.message || 'Error al validar el código');
