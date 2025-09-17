@@ -498,7 +498,9 @@ export const ReportsModule = () => {
                         <div className="space-y-2 flex-1">
                           <div className="flex items-center gap-3">
                             <h3 className="font-medium">{payment.loans?.clients?.full_name}</h3>
-                            <Badge variant="default">Pagado</Badge>
+                            <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
+                              {payment.status === 'completed' ? 'Completado' : 'Pendiente'}
+                            </Badge>
                             {payment.late_fee > 0 && (
                               <Badge variant="destructive">Con Mora</Badge>
                             )}

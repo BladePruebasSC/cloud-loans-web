@@ -12,6 +12,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useLoanPaymentStatusSimple } from '@/hooks/useLoanPaymentStatusSimple';
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign } from 'lucide-react';
 import { Search, User } from 'lucide-react';
@@ -22,6 +23,11 @@ const paymentSchema = z.object({
   payment_method: z.string().min(1, 'Debe seleccionar un método de pago'),
   reference_number: z.string().optional(),
   notes: z.string().optional(),
+}).refine((data) => {
+  // Esta validación se manejará en el onSubmit para tener acceso al selectedLoan
+  return true;
+}, {
+  message: "Validación de monto máximo se maneja en el formulario"
 });
 
 type PaymentFormData = z.infer<typeof paymentSchema>;
@@ -50,6 +56,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [showLoanDropdown, setShowLoanDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
   const { user, companyId } = useAuth();
+  const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
 
   const form = useForm<PaymentFormData>({
     resolver: zodResolver(paymentSchema),
@@ -57,6 +64,19 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       payment_method: 'cash',
     },
   });
+
+  // Actualizar automáticamente el monto del pago cuando cambie el estado
+  React.useEffect(() => {
+    if (selectedLoan && paymentStatus.currentPaymentRemaining > 0) {
+      // Si hay un saldo pendiente menor a la cuota mensual, pre-llenar con ese monto
+      if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
+        form.setValue('amount', paymentStatus.currentPaymentRemaining);
+      } else {
+        // Si no hay pagos previos, usar la cuota mensual completa
+        form.setValue('amount', selectedLoan.monthly_payment);
+      }
+    }
+  }, [paymentStatus.currentPaymentRemaining, selectedLoan, form]);
 
   React.useEffect(() => {
     fetchActiveLoans();
@@ -67,7 +87,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     if (preselectedLoan) {
       setSelectedLoan(preselectedLoan);
       form.setValue('loan_id', preselectedLoan.id);
-      form.setValue('amount', preselectedLoan.monthly_payment);
+      // El monto se establecerá automáticamente cuando se actualice el paymentStatus
     }
   }, [preselectedLoan, form]);
 
@@ -131,14 +151,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     setLoanSearch(`${loan.client?.full_name} - ${loan.client?.dni}`);
     setShowLoanDropdown(false);
     form.setValue('loan_id', loan.id);
-    form.setValue('amount', loan.monthly_payment);
+    // El monto se establecerá cuando se actualice el paymentStatus
   };
 
   const handleLoanSelect = (loanId: string) => {
     const loan = loans.find(l => l.id === loanId);
     setSelectedLoan(loan || null);
     if (loan) {
-      form.setValue('amount', loan.monthly_payment);
+      form.setValue('loan_id', loan.id);
+      // El monto se establecerá cuando se actualice el paymentStatus
     }
   };
 
@@ -147,10 +168,44 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 
     setLoading(true);
     try {
-      // Calcular principal e intereses (simplificado)
+      // Validaciones antes de procesar el pago
       const monthlyPayment = selectedLoan.monthly_payment;
-      const interestAmount = (selectedLoan.remaining_balance * 0.15) / 12; // Aproximado
+      const remainingBalance = selectedLoan.remaining_balance;
+      const currentPaymentRemaining = paymentStatus.currentPaymentRemaining;
+      
+      // Validación 1: No permitir pagos que excedan el balance restante
+      if (data.amount > remainingBalance) {
+        toast.error(`El pago no puede exceder el balance restante de RD$${remainingBalance.toLocaleString()}`);
+        return;
+      }
+      
+      // Validación 2: No permitir pagos negativos o cero
+      if (data.amount <= 0) {
+        toast.error('El monto del pago debe ser mayor a 0');
+        return;
+      }
+
+      // Validación 3: No permitir pagos que excedan lo que falta de la cuota actual
+      // Si currentPaymentRemaining es 0, usar la cuota mensual completa
+      const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
+      if (data.amount > maxAllowedPayment) {
+        toast.error(`El pago no puede exceder lo que falta de la cuota actual: RD$${maxAllowedPayment.toLocaleString()}`);
+        return;
+      }
+
+      // Calcular principal e intereses (simplificado)
+      const interestAmount = (remainingBalance * 0.15) / 12; // Aproximado
       const principalAmount = data.amount - interestAmount;
+      
+      // Determinar si es un pago completo o parcial
+      const isFullPayment = data.amount >= maxAllowedPayment;
+      const paymentStatusValue = isFullPayment ? 'completed' : 'pending';
+      
+      // Si es pago parcial, mostrar advertencia
+      if (!isFullPayment) {
+        const remainingAmount = maxAllowedPayment - data.amount;
+        toast.warning(`Pago parcial registrado. Queda pendiente RD$${remainingAmount.toLocaleString()} de la cuota mensual.`);
+      }
 
       const paymentData = {
         loan_id: data.loan_id,
@@ -161,6 +216,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         payment_method: data.payment_method,
         reference_number: data.reference_number,
         notes: data.notes,
+        status: paymentStatusValue, // Agregar el status del pago
         created_by: companyId,
       };
 
@@ -171,22 +227,34 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       if (paymentError) throw paymentError;
 
       // Actualizar el balance restante del préstamo
-      const newBalance = Math.max(0, selectedLoan.remaining_balance - principalAmount);
-      const nextPaymentDate = new Date(selectedLoan.next_payment_date);
-      nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
+      const newBalance = Math.max(0, remainingBalance - principalAmount);
+      
+      // Solo actualizar la fecha del próximo pago si es un pago completo
+      let nextPaymentDate = selectedLoan.next_payment_date;
+      if (isFullPayment) {
+        const nextDate = new Date(selectedLoan.next_payment_date);
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        nextPaymentDate = nextDate.toISOString().split('T')[0];
+      }
 
       const { error: loanError } = await supabase
         .from('loans')
         .update({
           remaining_balance: newBalance,
-          next_payment_date: nextPaymentDate.toISOString().split('T')[0],
+          next_payment_date: nextPaymentDate,
           status: newBalance <= 0 ? 'paid' : 'active',
         })
         .eq('id', data.loan_id);
 
       if (loanError) throw loanError;
 
-      toast.success('Pago registrado exitosamente');
+      const successMessage = isFullPayment 
+        ? 'Pago completo registrado exitosamente' 
+        : 'Pago parcial registrado exitosamente';
+      toast.success(successMessage);
+      
+      // Actualizar el estado del pago
+      await refetchPaymentStatus();
       
       // Llamar al callback para actualizar los datos del padre
       if (onPaymentSuccess) {
@@ -303,6 +371,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                           </FormControl>
+                          {paymentStatus.currentPaymentRemaining < selectedLoan?.monthly_payment && paymentStatus.currentPaymentRemaining > 0 && (
+                            <div className="text-xs text-blue-600 mt-1">
+                              💡 Monto pre-llenado para completar la cuota actual
+                            </div>
+                          )}
                           <FormMessage />
                         </FormItem>
                       )}
@@ -412,6 +485,40 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     <span className="font-semibold">
                       {new Date(selectedLoan.next_payment_date).toLocaleDateString()}
                     </span>
+                  </div>
+                  
+                  {/* Estado de la cuota actual */}
+                  {paymentStatus.hasPartialPayments && (
+                    <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="text-sm text-blue-800">
+                        <div className="font-medium mb-2">📊 Estado de la cuota actual:</div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between">
+                            <span>Pagado:</span>
+                            <span className="font-semibold text-green-600">
+                              ${paymentStatus.currentPaymentPaid.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Falta por pagar:</span>
+                            <span className="font-semibold text-red-600">
+                              ${paymentStatus.currentPaymentRemaining.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <div className="text-sm text-yellow-800">
+                      <div className="font-medium mb-1">💡 Información importante:</div>
+                      <ul className="text-xs space-y-1">
+                        <li>• Pago completo: ${(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment).toLocaleString()} o más</li>
+                        <li>• Pago parcial: Menos de ${(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment).toLocaleString()}</li>
+                        <li>• Máximo permitido: ${selectedLoan.remaining_balance.toLocaleString()}</li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
               </CardContent>

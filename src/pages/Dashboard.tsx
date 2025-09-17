@@ -146,37 +146,9 @@ const Dashboard = () => {
       console.log('🔍 DASHBOARD DIAGNÓSTICO: companyId =', companyId);
       console.log('🔍 DASHBOARD DIAGNÓSTICO: user =', user?.email);
       
-      // SOLUCIÓN: Usar el código de empresa para determinar qué datos mostrar
-      let ownerUserId = companyId;
-      
-      // Buscar la empresa por el código 00C699
-      console.log('🔧 SOLUCIÓN: Buscando empresa por código 00C699...');
-      const { data: companyByCode, error: companyByCodeError } = await supabase
-        .from('company_settings')
-        .select('user_id, company_name')
-        .eq('company_code', '00C699')
-        .single();
-      
-      console.log('🔧 SOLUCIÓN: Empresa encontrada por código:', companyByCode);
-      
-      if (companyByCode) {
-        ownerUserId = companyByCode.user_id;
-        console.log('🔧 SOLUCIÓN: Usando user_id de la empresa con código 00C699:', ownerUserId);
-      } else {
-        // Fallback: buscar el dueño de la empresa
-        console.log('🔧 SOLUCIÓN: No se encontró empresa por código, buscando por companyId...');
-        
-        const { data: companyOwner, error: companyOwnerError } = await supabase
-          .from('company_settings')
-          .select('user_id')
-          .eq('user_id', companyId)
-          .single();
-        
-        console.log('🔧 SOLUCIÓN: Dueño de la empresa encontrado:', companyOwner);
-        ownerUserId = companyOwner?.user_id || companyId;
-      }
-      
-      console.log('🔧 SOLUCIÓN: Usando user_id final:', ownerUserId);
+      // SOLUCIÓN SIMPLE: Usar el companyId directamente
+      const ownerUserId = companyId;
+      console.log('🔧 SOLUCIÓN SIMPLE: Usando companyId como ownerUserId:', ownerUserId);
       
 
       
@@ -213,7 +185,7 @@ const Dashboard = () => {
       const { data: loansData, error: loansError } = await supabase
         .from('loans')
         .select('id, amount, remaining_balance, status, total_amount')
-        .eq('loan_officer_id', ownerUserId)
+        .eq('loan_officer_id', companyId)
         .eq('status', 'active');
       
       console.log('🔍 DASHBOARD DIAGNÓSTICO: Después de consultar préstamos');

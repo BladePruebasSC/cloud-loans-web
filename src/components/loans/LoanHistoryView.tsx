@@ -249,9 +249,11 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                          <div className="flex items-center justify-between">
                            <div className="flex-1">
                             <div className="flex items-center gap-3 mb-2">
-                              <Receipt className="h-4 w-4 text-green-600" />
+                              <Receipt className={`h-4 w-4 ${payment.status === 'completed' ? 'text-green-600' : 'text-yellow-600'}`} />
                               <span className="font-semibold">Pago de ${payment.amount.toLocaleString()}</span>
-                              <Badge variant="default">Completado</Badge>
+                              <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
+                                {payment.status === 'completed' ? 'Completado' : 'Pendiente'}
+                              </Badge>
                               {payment.late_fee > 0 && (
                                 <Badge variant="destructive">Con Mora</Badge>
                               )}

@@ -171,6 +171,27 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       
       // Registrar la transacción en la tabla de pagos si es un pago o abono
       if (['payment', 'partial_payment'].includes(updateType) && data.amount) {
+        // Validaciones para pagos
+        if (data.amount > loan.remaining_balance) {
+          toast.error(`El pago no puede exceder el balance restante de RD$${loan.remaining_balance.toLocaleString()}`);
+          return;
+        }
+        
+        if (data.amount <= 0) {
+          toast.error('El monto del pago debe ser mayor a 0');
+          return;
+        }
+
+        // Determinar si es pago completo o parcial
+        const isFullPayment = data.amount >= loan.monthly_payment;
+        const paymentStatus = isFullPayment ? 'completed' : 'pending';
+        
+        // Mostrar advertencia para pagos parciales
+        if (!isFullPayment && updateType === 'payment') {
+          const remainingAmount = loan.monthly_payment - data.amount;
+          toast.warning(`Pago parcial registrado. Queda pendiente RD$${remainingAmount.toLocaleString()} de la cuota mensual.`);
+        }
+
         const paymentData = {
           loan_id: loan.id,
           amount: data.amount,
@@ -181,6 +202,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           payment_method: data.payment_method || 'cash',
           reference_number: data.reference_number,
           notes: `${updateType === 'partial_payment' ? 'Abono parcial' : 'Pago'}: ${data.notes || ''}`,
+          status: paymentStatus, // Agregar el status del pago
           created_by: companyId,
         };
 

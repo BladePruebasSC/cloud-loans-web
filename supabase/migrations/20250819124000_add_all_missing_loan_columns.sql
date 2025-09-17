@@ -1,4 +1,4 @@
--- Agregar todas las columnas faltantes en la tabla loans
+    -- Agregar todas las columnas faltantes en la tabla loans
 -- Columnas básicas del préstamo
 ALTER TABLE public.loans ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES public.clients(id);
 ALTER TABLE public.loans ADD COLUMN IF NOT EXISTS amount DECIMAL(10,2) NOT NULL DEFAULT 0;

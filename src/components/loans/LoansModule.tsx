@@ -11,6 +11,7 @@ import { PaymentForm } from './PaymentForm';
 import { LoanUpdateForm } from './LoanUpdateForm';
 import { LoanHistoryView } from './LoanHistoryView';
 import { LoanStatistics } from './LoanStatistics';
+import { PaymentStatusBadge } from './PaymentStatusBadge';
 import { useLoans } from '@/hooks/useLoans';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -1168,9 +1169,9 @@ export const LoansModule = () => {
                                   )}
                                </div>
                                
-                               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
+                               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 sm:gap-4 text-sm text-gray-600">
                                  <div className="flex flex-col sm:flex-row sm:items-center">
-                                   <span className="font-medium text-xs sm:text-sm">Monto Pendiente:</span> 
+                                   <span className="font-medium text-xs sm:text-sm">Balance Total:</span> 
                                    <span className="text-xs sm:text-sm font-semibold text-red-600">${loan.remaining_balance.toLocaleString()}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
@@ -1178,7 +1179,16 @@ export const LoansModule = () => {
                                    <span className="text-xs sm:text-sm">${loan.monthly_payment.toLocaleString()}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
-                                   <span className="font-medium text-xs sm:text-sm">Fecha de Pago:</span> 
+                                   <span className="font-medium text-xs sm:text-sm">Estado Cuota:</span> 
+                                   <PaymentStatusBadge 
+                                     loanId={loan.id}
+                                     monthlyPayment={loan.monthly_payment}
+                                     nextPaymentDate={loan.next_payment_date}
+                                     remainingBalance={loan.remaining_balance}
+                                   />
+                                 </div>
+                                 <div className="flex flex-col sm:flex-row sm:items-center">
+                                   <span className="font-medium text-xs sm:text-sm">Vence:</span> 
                                    <span className="text-xs sm:text-sm font-semibold">{new Date(loan.next_payment_date).toLocaleDateString()}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
