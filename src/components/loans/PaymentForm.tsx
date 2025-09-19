@@ -470,8 +470,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 
       if (paymentError) throw paymentError;
 
-      // Actualizar el balance restante del préstamo (solo se reduce con el pago al capital)
-      const newBalance = Math.max(0, remainingBalance - principalPayment);
+      // Actualizar el balance restante del préstamo (se reduce con el monto total pagado)
+      const newBalance = Math.max(0, remainingBalance - data.amount);
       
       // Solo actualizar la fecha del próximo pago si es un pago completo
       let nextPaymentDate = selectedLoan.next_payment_date;
