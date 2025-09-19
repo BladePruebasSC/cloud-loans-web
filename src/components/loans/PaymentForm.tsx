@@ -67,14 +67,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     
     try {
       // Obtener todos los pagos del préstamo ordenados por fecha
+      console.log('🔍 Consultando pagos para préstamo ID:', loanId);
       const { data: payments, error } = await supabase
         .from('payments')
-        .select('interest_amount, payment_date, amount')
+        .select('interest_amount, payment_date, amount, principal_amount')
         .eq('loan_id', loanId)
         .order('payment_date', { ascending: true });
 
       if (error) {
-        console.error('Error al obtener pagos:', error);
+        console.error('❌ Error al obtener pagos:', error);
         return 0;
       }
 
@@ -83,7 +84,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         return 0;
       }
 
-      console.log('🔍 Todos los pagos del préstamo:', payments);
+      console.log('🔍 TODOS LOS PAGOS ENCONTRADOS:', payments);
+      console.log('🔍 Número de pagos:', payments.length);
+      
+      // Verificar si los pagos tienen interest_amount
+      const paymentsWithInterest = payments.filter(p => p.interest_amount > 0);
+      console.log('🔍 Pagos con interés > 0:', paymentsWithInterest.length);
+      console.log('🔍 Total interés en BD:', payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0));
 
       // Calcular el interés fijo por cuota
       const { data: loan } = await supabase
@@ -97,34 +104,109 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
       console.log('🔍 Interés fijo por cuota:', fixedInterestPerPayment);
 
-      // Calcular cuántas cuotas se han completado y cuánto interés se ha pagado en la cuota actual
+      // Calcular cuántas cuotas se han completado y el estado actual de la cuota en progreso
       let totalInterestPaid = 0;
+      let totalPrincipalPaid = 0;
+      let completedInstallments = 0;
       let currentInstallmentInterestPaid = 0;
-      let currentInstallmentStart = 0;
+      let currentInstallmentPrincipalPaid = 0;
 
-      // Simular el proceso de pagos para determinar el interés de la cuota actual
+      // Obtener el capital fijo por cuota
+      const { data: loanDetails } = await supabase
+        .from('loans')
+        .select('monthly_payment')
+        .eq('id', loanId)
+        .single();
+      
+      const monthlyPayment = loanDetails?.monthly_payment || 0;
+      const fixedPrincipalPerPayment = monthlyPayment - fixedInterestPerPayment;
+      
+      console.log('🔍 Datos del préstamo obtenidos:', {
+        monthlyPayment,
+        fixedInterestPerPayment,
+        fixedPrincipalPerPayment
+      });
+      
+      console.log('🔍 Capital fijo por cuota:', fixedPrincipalPerPayment);
+      console.log('🔍 Cuota mensual total:', monthlyPayment);
+
+      // Simular el proceso de pagos para determinar el estado de la cuota actual
       for (let i = 0; i < payments.length; i++) {
         const payment = payments[i];
         const paymentInterest = payment.interest_amount || 0;
+        const paymentPrincipal = payment.principal_amount || 0;
+        
+        console.log(`🔍 Procesando pago ${i + 1}:`, {
+          fecha: payment.payment_date,
+          monto_total: payment.amount,
+          interes_pagado: paymentInterest,
+          capital_pagado: paymentPrincipal
+        });
         
         totalInterestPaid += paymentInterest;
+        totalPrincipalPaid += paymentPrincipal;
         
-        // Si este pago completa una cuota (alcanza o excede el interés fijo)
-        if (currentInstallmentInterestPaid + paymentInterest >= fixedInterestPerPayment) {
-          // Esta cuota está completa, empezar la siguiente
-          const remainingInterestForThisInstallment = fixedInterestPerPayment - currentInstallmentInterestPaid;
-          currentInstallmentInterestPaid = paymentInterest - remainingInterestForThisInstallment;
-          currentInstallmentStart = i + 1;
-          console.log('🔍 Cuota completada en pago', i, 'Interés restante para siguiente cuota:', currentInstallmentInterestPaid);
+        console.log(`🔍 ANTES del pago ${i + 1}:`);
+        console.log(`🔍 - currentInstallmentInterestPaid: ${currentInstallmentInterestPaid}`);
+        console.log(`🔍 - currentInstallmentPrincipalPaid: ${currentInstallmentPrincipalPaid}`);
+        console.log(`🔍 - paymentInterest: ${paymentInterest}`);
+        console.log(`🔍 - paymentPrincipal: ${paymentPrincipal}`);
+        
+        // Verificar si este pago completa la cuota actual
+        const newInterestPaid = currentInstallmentInterestPaid + paymentInterest;
+        const newPrincipalPaid = currentInstallmentPrincipalPaid + paymentPrincipal;
+        
+        if (newInterestPaid >= fixedInterestPerPayment && newPrincipalPaid >= fixedPrincipalPerPayment) {
+          // Esta cuota está completamente pagada
+          completedInstallments++;
+          currentInstallmentInterestPaid = 0;
+          currentInstallmentPrincipalPaid = 0;
+          
+          console.log('🔍 ✅ Cuota completamente pagada en pago', i + 1, 'Cuotas completadas:', completedInstallments);
         } else {
-          // Esta cuota aún no está completa
-          currentInstallmentInterestPaid += paymentInterest;
+          // Esta cuota aún no está completa, actualizar contadores
+          currentInstallmentInterestPaid = Math.min(newInterestPaid, fixedInterestPerPayment);
+          currentInstallmentPrincipalPaid = Math.min(newPrincipalPaid, fixedPrincipalPerPayment);
+          
+          console.log('🔍 ➕ Cuota aún no completa:');
+          console.log(`🔍 - Interés pagado: ${currentInstallmentInterestPaid}/${fixedInterestPerPayment}`);
+          console.log(`🔍 - Capital pagado: ${currentInstallmentPrincipalPaid}/${fixedPrincipalPerPayment}`);
         }
+        
+        console.log(`🔍 DESPUÉS del pago ${i + 1}:`);
+        console.log(`🔍 - currentInstallmentInterestPaid: ${currentInstallmentInterestPaid}`);
+        console.log(`🔍 - currentInstallmentPrincipalPaid: ${currentInstallmentPrincipalPaid}`);
+        console.log(`🔍 - completedInstallments: ${completedInstallments}`);
+        console.log('---');
       }
 
+      console.log('🔍 RESUMEN FINAL:');
+      console.log('🔍 Cuotas completadas:', completedInstallments);
       console.log('🔍 Interés pagado en cuota actual:', currentInstallmentInterestPaid);
+      console.log('🔍 Capital pagado en cuota actual:', currentInstallmentPrincipalPaid);
       console.log('🔍 Total interés pagado:', totalInterestPaid);
-      console.log('🔍 Cuota actual empezó en pago:', currentInstallmentStart);
+      console.log('🔍 Total capital pagado:', totalPrincipalPaid);
+      console.log('🔍 Interés fijo por cuota:', fixedInterestPerPayment);
+      console.log('🔍 Capital fijo por cuota:', fixedPrincipalPerPayment);
+      
+      const remainingInterest = Math.max(0, fixedInterestPerPayment - currentInstallmentInterestPaid);
+      const remainingPrincipal = Math.max(0, fixedPrincipalPerPayment - currentInstallmentPrincipalPaid);
+      
+      console.log('🔍 INTERPRETACIÓN:');
+      console.log(`🔍 - Estamos en la cuota número: ${completedInstallments + 1}`);
+      console.log(`🔍 - Interés pagado en esta cuota: RD$${currentInstallmentInterestPaid}/${fixedInterestPerPayment}`);
+      console.log(`🔍 - Capital pagado en esta cuota: RD$${currentInstallmentPrincipalPaid}/${fixedPrincipalPerPayment}`);
+      console.log(`🔍 - Interés pendiente en esta cuota: RD$${remainingInterest}`);
+      console.log(`🔍 - Capital pendiente en esta cuota: RD$${remainingPrincipal}`);
+      
+      // Determinar qué se debe pagar primero
+      if (remainingInterest > 0) {
+        console.log(`🔍 🎯 SIGUIENTE PAGO: Debe ir al interés (RD$${remainingInterest} pendiente)`);
+      } else if (remainingPrincipal > 0) {
+        console.log(`🔍 🎯 SIGUIENTE PAGO: Debe ir al capital (RD$${remainingPrincipal} pendiente)`);
+      } else {
+        console.log(`🔍 🎯 SIGUIENTE PAGO: Esta cuota está completa, se pasa a la siguiente`);
+      }
       
       return currentInstallmentInterestPaid;
     } catch (error) {
@@ -271,13 +353,17 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     console.log('🔍 Interés fijo por cuota:', fixedInterestPerPayment);
     
     // Calcular cuánto interés ya se ha pagado en esta cuota
+    console.log('🔍 Llamando a calculatePaidInterestForCurrentPayment para préstamo:', selectedLoan.id);
     const alreadyPaidInterest = await calculatePaidInterestForCurrentPayment(selectedLoan.id);
     
     // Calcular cuánto interés queda por pagar
     const remainingInterest = Math.max(0, fixedInterestPerPayment - alreadyPaidInterest);
     
-    console.log('🔍 Interés ya pagado:', alreadyPaidInterest);
-    console.log('🔍 Interés pendiente:', remainingInterest);
+    console.log('🔍 RESULTADO DE calculatePaidInterestForCurrentPayment:');
+    console.log('🔍 Interés ya pagado (valor devuelto):', alreadyPaidInterest);
+    console.log('🔍 Interés fijo por cuota:', fixedInterestPerPayment);
+    console.log('🔍 Interés pendiente calculado:', remainingInterest);
+    console.log('🔍 ¿El interés está completo?', alreadyPaidInterest >= fixedInterestPerPayment ? 'SÍ ✅' : 'NO ❌');
     
     let interestPayment = 0;
     let principalPayment = 0;

@@ -65,6 +65,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showPrintFormatModal, setShowPrintFormatModal] = useState(false);
   const [loan, setLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -255,312 +256,161 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
     }
   };
 
-  const printReceipt = () => {
-    if (!loan) return;
-    
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      const receiptHTML = `
-        <html>
-          <head>
-            <title>Recibo de Pago - ${loan.client.full_name}</title>
-            <style>
-              body { 
-                font-family: Arial, sans-serif; 
-                margin: 20px; 
-                line-height: 1.6;
-                color: #333;
-              }
-              .header { 
-                text-align: center; 
-                margin-bottom: 30px; 
-                border-bottom: 2px solid #333;
-                padding-bottom: 20px;
-              }
-              .receipt-container {
-                max-width: 600px;
-                margin: 0 auto;
-                border: 1px solid #ddd;
-                padding: 30px;
-                border-radius: 8px;
-              }
-              .receipt-title {
-                font-size: 24px;
-                font-weight: bold;
-                margin-bottom: 10px;
-              }
-              .receipt-number {
-                font-size: 14px;
-                color: #666;
-              }
-              .section {
-                margin-bottom: 25px;
-              }
-              .section-title {
-                font-weight: bold;
-                font-size: 16px;
-                margin-bottom: 10px;
-                border-bottom: 1px solid #eee;
-                padding-bottom: 5px;
-              }
-              .info-row {
-                display: flex;
-                justify-content: space-between;
-                margin-bottom: 8px;
-              }
-              .info-label {
-                font-weight: 500;
-                color: #555;
-              }
-              .info-value {
-                font-weight: bold;
-              }
-              .amount-section {
-                background-color: #f8f9fa;
-                padding: 15px;
-                border-radius: 5px;
-                margin: 20px 0;
-              }
-              .total-amount {
-                font-size: 20px;
-                font-weight: bold;
-                color: #28a745;
-                text-align: center;
-                margin-top: 10px;
-              }
-              .footer {
-                margin-top: 30px;
-                text-align: center;
-                font-size: 12px;
-                color: #666;
-                border-top: 1px solid #eee;
-                padding-top: 20px;
-              }
-              @media print {
-                body { margin: 0; }
-                .receipt-container { border: none; }
-              }
-            </style>
-          </head>
-          <body>
-            <div class="receipt-container">
-              <div class="header">
-                <div class="receipt-title">RECIBO DE PAGO</div>
-                <div class="receipt-number">Recibo #${payment.id.slice(0, 8).toUpperCase()}</div>
-                <div style="margin-top: 10px; font-size: 14px;">
-                  ${new Date(payment.created_at).toLocaleDateString('es-ES', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </div>
-              </div>
+  // Función para generar el HTML del recibo según el formato
+  const generateReceiptHTML = (format: string) => {
+    if (!loan) return '';
 
-              <div class="section">
-                <div class="section-title">INFORMACIÓN DEL CLIENTE</div>
-                <div class="info-row">
-                  <span class="info-label">Nombre:</span>
-                  <span class="info-value">${loan.client.full_name}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Cédula:</span>
-                  <span class="info-value">${loan.client.dni}</span>
-                </div>
-                ${loan.client.phone ? `
-                <div class="info-row">
-                  <span class="info-label">Teléfono:</span>
-                  <span class="info-value">${loan.client.phone}</span>
-                </div>
-                ` : ''}
-                ${loan.client.address ? `
-                <div class="info-row">
-                  <span class="info-label">Dirección:</span>
-                  <span class="info-value">${loan.client.address}</span>
-                </div>
-                ` : ''}
-              </div>
-
-              <div class="section">
-                <div class="section-title">DETALLES DEL PRÉSTAMO</div>
-                <div class="info-row">
-                  <span class="info-label">Préstamo ID:</span>
-                  <span class="info-value">${loan.id.slice(0, 8).toUpperCase()}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Monto Original:</span>
-                  <span class="info-value">RD$${loan.amount.toLocaleString()}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Tasa de Interés:</span>
-                  <span class="info-value">${loan.interest_rate}%</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Plazo:</span>
-                  <span class="info-value">${loan.term_months} meses</span>
-                </div>
-              </div>
-
-              <div class="section">
-                <div class="section-title">DETALLES DEL PAGO</div>
-                <div class="info-row">
-                  <span class="info-label">Fecha de Pago:</span>
-                  <span class="info-value">${new Date(payment.payment_date).toLocaleDateString()}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Fecha de Vencimiento:</span>
-                  <span class="info-value">${new Date(payment.due_date).toLocaleDateString()}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Método de Pago:</span>
-                  <span class="info-value">${getPaymentMethodLabel(payment.payment_method)}</span>
-                </div>
-                ${payment.reference_number ? `
-                <div class="info-row">
-                  <span class="info-label">Número de Referencia:</span>
-                  <span class="info-value">${payment.reference_number}</span>
-                </div>
-                ` : ''}
-              </div>
-
-              <div class="amount-section">
-                <div class="section-title">DESGLOSE DEL PAGO</div>
-                <div class="info-row">
-                  <span class="info-label">Pago a Principal:</span>
-                  <span class="info-value">RD$${payment.principal_amount.toLocaleString()}</span>
-                </div>
-                <div class="info-row">
-                  <span class="info-label">Pago a Intereses:</span>
-                  <span class="info-value">RD$${payment.interest_amount.toLocaleString()}</span>
-                </div>
-                ${payment.late_fee > 0 ? `
-                <div class="info-row">
-                  <span class="info-label">Cargo por Mora:</span>
-                  <span class="info-value" style="color: #dc3545;">RD$${payment.late_fee.toLocaleString()}</span>
-                </div>
-                ` : ''}
-                <div class="total-amount">
-                  TOTAL: RD$${payment.amount.toLocaleString()}
-                </div>
-              </div>
-
-              ${payment.notes ? `
-              <div class="section">
-                <div class="section-title">NOTAS</div>
-                <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px;">
-                  ${payment.notes}
-                </div>
-              </div>
-              ` : ''}
-
-              <div class="footer">
-                <p>Este documento es un comprobante oficial de pago.</p>
-                <p>Para cualquier consulta, contacte a nuestro departamento de atención al cliente.</p>
-                <p style="margin-top: 20px;">
-                  <strong>Firma del Cliente:</strong> _________________________
-                </p>
-                <p style="margin-top: 10px;">
-                  <strong>Firma del Representante:</strong> _________________________
-                </p>
-              </div>
-            </div>
-          </body>
-        </html>
-      `;
-      printWindow.document.write(receiptHTML);
-      printWindow.document.close();
-      printWindow.print();
-    }
-  };
-
-  const downloadReceipt = () => {
-    if (!loan) return;
-    
-    const receiptHTML = `
-      <html>
-        <head>
-          <title>Recibo de Pago - ${loan.client.full_name}</title>
-          <style>
+    const getFormatStyles = (format: string) => {
+      switch (format) {
+        case 'POS58':
+          return `
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0; 
+              padding: 5px;
+              font-size: 12px;
+              line-height: 1.2;
+              color: #000;
+            }
+            .receipt-container {
+              max-width: 58mm;
+              margin: 0 auto;
+              padding: 5px;
+            }
+            .header { text-align: center; margin-bottom: 10px; }
+            .receipt-title { font-size: 14px; font-weight: bold; margin-bottom: 5px; }
+            .receipt-number { font-size: 10px; }
+            .section { margin-bottom: 10px; }
+            .section-title { font-weight: bold; font-size: 11px; margin-bottom: 5px; text-decoration: underline; }
+            .info-row { margin-bottom: 3px; font-size: 10px; }
+            .amount-section { margin: 10px 0; }
+            .total-amount { font-size: 14px; font-weight: bold; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 15px; text-align: center; font-size: 9px; }
+            @media print { 
+              body { margin: 0; padding: 2px; }
+              .receipt-container { border: none; max-width: 58mm; }
+            }
+          `;
+        
+        case 'POS80':
+          return `
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0; 
+              padding: 8px;
+              font-size: 14px;
+              line-height: 1.3;
+              color: #000;
+            }
+            .receipt-container {
+              max-width: 80mm;
+              margin: 0 auto;
+              padding: 8px;
+            }
+            .header { text-align: center; margin-bottom: 15px; }
+            .receipt-title { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
+            .receipt-number { font-size: 12px; }
+            .section { margin-bottom: 15px; }
+            .section-title { font-weight: bold; font-size: 13px; margin-bottom: 8px; text-decoration: underline; }
+            .info-row { margin-bottom: 4px; font-size: 12px; }
+            .amount-section { margin: 15px 0; }
+            .total-amount { font-size: 16px; font-weight: bold; text-align: center; margin-top: 15px; }
+            .footer { margin-top: 20px; text-align: center; font-size: 10px; }
+            @media print { 
+              body { margin: 0; padding: 4px; }
+              .receipt-container { border: none; max-width: 80mm; }
+            }
+          `;
+        
+        case 'LETTER':
+          return `
             body { 
               font-family: Arial, sans-serif; 
               margin: 20px; 
               line-height: 1.6;
               color: #333;
             }
-            .header { 
-              text-align: center; 
-              margin-bottom: 30px; 
-              border-bottom: 2px solid #333;
-              padding-bottom: 20px;
-            }
             .receipt-container {
-              max-width: 600px;
+              max-width: 8.5in;
               margin: 0 auto;
-              border: 1px solid #ddd;
               padding: 30px;
+              border: 1px solid #ddd;
               border-radius: 8px;
             }
-            .receipt-title {
-              font-size: 24px;
-              font-weight: bold;
-              margin-bottom: 10px;
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+            @media print { 
+              body { margin: 0; }
+              .receipt-container { border: none; max-width: 8.5in; }
             }
-            .receipt-number {
-              font-size: 14px;
-              color: #666;
+          `;
+        
+        case 'A4':
+          return `
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              line-height: 1.6;
+              color: #333;
             }
-            .section {
-              margin-bottom: 25px;
+            .receipt-container {
+              max-width: 210mm;
+              margin: 0 auto;
+              padding: 30px;
+              border: 1px solid #ddd;
+              border-radius: 8px;
             }
-            .section-title {
-              font-weight: bold;
-              font-size: 16px;
-              margin-bottom: 10px;
-              border-bottom: 1px solid #eee;
-              padding-bottom: 5px;
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+            @media print { 
+              body { margin: 0; }
+              .receipt-container { border: none; max-width: 210mm; }
             }
-            .info-row {
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 8px;
-            }
-            .info-label {
-              font-weight: 500;
-              color: #555;
-            }
-            .info-value {
-              font-weight: bold;
-            }
-            .amount-section {
-              background-color: #f8f9fa;
-              padding: 15px;
-              border-radius: 5px;
-              margin: 20px 0;
-            }
-            .total-amount {
-              font-size: 20px;
-              font-weight: bold;
-              color: #28a745;
-              text-align: center;
-              margin-top: 10px;
-            }
-            .footer {
-              margin-top: 30px;
-              text-align: center;
-              font-size: 12px;
-              color: #666;
-              border-top: 1px solid #eee;
-              padding-top: 20px;
-            }
+          `;
+        
+        default:
+          return '';
+      }
+    };
+
+    const getFormatTitle = (format: string) => {
+      switch (format) {
+        case 'POS58': return 'RECIBO DE PAGO - POS58';
+        case 'POS80': return 'RECIBO DE PAGO - POS80';
+        case 'LETTER': return 'RECIBO DE PAGO';
+        case 'A4': return 'RECIBO DE PAGO';
+        default: return 'RECIBO DE PAGO';
+      }
+    };
+
+    return `
+      <html>
+        <head>
+          <title>${getFormatTitle(format)} - ${loan.client.full_name}</title>
+          <style>
+            ${getFormatStyles(format)}
           </style>
         </head>
         <body>
           <div class="receipt-container">
             <div class="header">
-              <div class="receipt-title">RECIBO DE PAGO</div>
+              <div class="receipt-title">${getFormatTitle(format)}</div>
               <div class="receipt-number">Recibo #${payment.id.slice(0, 8).toUpperCase()}</div>
-              <div style="margin-top: 10px; font-size: 14px;">
+              <div style="margin-top: 10px; font-size: ${format.includes('POS') ? '10px' : '14px'};">
                 ${new Date(payment.created_at).toLocaleDateString('es-ES', {
                   year: 'numeric',
                   month: 'long',
@@ -574,85 +424,54 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <div class="section">
               <div class="section-title">INFORMACIÓN DEL CLIENTE</div>
               <div class="info-row">
-                <span class="info-label">Nombre:</span>
-                <span class="info-value">${loan.client.full_name}</span>
+                <span>Nombre: ${loan.client.full_name}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">Cédula:</span>
-                <span class="info-value">${loan.client.dni}</span>
+                <span>Cédula: ${loan.client.dni}</span>
               </div>
-              ${loan.client.phone ? `
-              <div class="info-row">
-                <span class="info-label">Teléfono:</span>
-                <span class="info-value">${loan.client.phone}</span>
-              </div>
-              ` : ''}
-              ${loan.client.address ? `
-              <div class="info-row">
-                <span class="info-label">Dirección:</span>
-                <span class="info-value">${loan.client.address}</span>
-              </div>
-              ` : ''}
+              ${loan.client.phone ? `<div class="info-row"><span>Teléfono: ${loan.client.phone}</span></div>` : ''}
+              ${loan.client.address ? `<div class="info-row"><span>Dirección: ${loan.client.address}</span></div>` : ''}
             </div>
 
             <div class="section">
               <div class="section-title">DETALLES DEL PRÉSTAMO</div>
               <div class="info-row">
-                <span class="info-label">Préstamo ID:</span>
-                <span class="info-value">${loan.id.slice(0, 8).toUpperCase()}</span>
+                <span>Préstamo ID: ${loan.id.slice(0, 8).toUpperCase()}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">Monto Original:</span>
-                <span class="info-value">RD$${loan.amount.toLocaleString()}</span>
+                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">Tasa de Interés:</span>
-                <span class="info-value">${loan.interest_rate}%</span>
+                <span>Tasa de Interés: ${loan.interest_rate}%</span>
               </div>
               <div class="info-row">
-                <span class="info-label">Plazo:</span>
-                <span class="info-value">${loan.term_months} meses</span>
+                <span>Plazo: ${loan.term_months} meses</span>
               </div>
             </div>
 
             <div class="section">
               <div class="section-title">DETALLES DEL PAGO</div>
               <div class="info-row">
-                <span class="info-label">Fecha de Pago:</span>
-                <span class="info-value">${new Date(payment.payment_date).toLocaleDateString()}</span>
+                <span>Fecha de Pago: ${new Date(payment.payment_date).toLocaleDateString()}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">Fecha de Vencimiento:</span>
-                <span class="info-value">${new Date(payment.due_date).toLocaleDateString()}</span>
+                <span>Fecha de Vencimiento: ${new Date(payment.due_date).toLocaleDateString()}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">Método de Pago:</span>
-                <span class="info-value">${getPaymentMethodLabel(payment.payment_method)}</span>
+                <span>Método de Pago: ${getPaymentMethodLabel(payment.payment_method)}</span>
               </div>
-              ${payment.reference_number ? `
-              <div class="info-row">
-                <span class="info-label">Número de Referencia:</span>
-                <span class="info-value">${payment.reference_number}</span>
-              </div>
-              ` : ''}
+              ${payment.reference_number ? `<div class="info-row"><span>Referencia: ${payment.reference_number}</span></div>` : ''}
             </div>
 
             <div class="amount-section">
               <div class="section-title">DESGLOSE DEL PAGO</div>
               <div class="info-row">
-                <span class="info-label">Pago a Principal:</span>
-                <span class="info-value">RD$${payment.principal_amount.toLocaleString()}</span>
+                <span>Pago a Principal: RD$${payment.principal_amount.toLocaleString()}</span>
               </div>
               <div class="info-row">
-                <span class="info-label">Pago a Intereses:</span>
-                <span class="info-value">RD$${payment.interest_amount.toLocaleString()}</span>
+                <span>Pago a Intereses: RD$${payment.interest_amount.toLocaleString()}</span>
               </div>
-              ${payment.late_fee > 0 ? `
-              <div class="info-row">
-                <span class="info-label">Cargo por Mora:</span>
-                <span class="info-value" style="color: #dc3545;">RD$${payment.late_fee.toLocaleString()}</span>
-              </div>
-              ` : ''}
+              ${payment.late_fee > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${payment.late_fee.toLocaleString()}</span></div>` : ''}
               <div class="total-amount">
                 TOTAL: RD$${payment.amount.toLocaleString()}
               </div>
@@ -681,12 +500,30 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         </body>
       </html>
     `;
+  };
+
+  const printReceipt = (format: string = 'LETTER') => {
+    if (!loan) return;
+    
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      const receiptHTML = generateReceiptHTML(format);
+      printWindow.document.write(receiptHTML);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
+  const downloadReceipt = (format: string = 'LETTER') => {
+    if (!loan) return;
+    
+    const receiptHTML = generateReceiptHTML(format);
 
     const blob = new Blob([receiptHTML], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `recibo_${loan.client.full_name.replace(/\s+/g, '_')}_${new Date(payment.payment_date).toISOString().split('T')[0]}.html`;
+    a.download = `recibo_${loan.client.full_name.replace(/\s+/g, '_')}_${new Date(payment.payment_date).toISOString().split('T')[0]}_${format}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -722,11 +559,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <Edit className="mr-2 h-4 w-4" />
             Editar
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={printReceipt}>
+          <DropdownMenuItem onClick={() => setShowPrintFormatModal(true)}>
             <Printer className="mr-2 h-4 w-4" />
             Imprimir
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={downloadReceipt}>
+          <DropdownMenuItem onClick={() => setShowPrintFormatModal(true)}>
             <Download className="mr-2 h-4 w-4" />
             Descargar
           </DropdownMenuItem>
@@ -750,11 +587,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                 Recibo de Pago - {loan?.client.full_name}
               </div>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={printReceipt}>
+                <Button size="sm" variant="outline" onClick={() => setShowPrintFormatModal(true)}>
                   <Printer className="h-4 w-4 mr-2" />
                   Imprimir
                 </Button>
-                <Button size="sm" variant="outline" onClick={downloadReceipt}>
+                <Button size="sm" variant="outline" onClick={() => setShowPrintFormatModal(true)}>
                   <Download className="h-4 w-4 mr-2" />
                   Descargar
                 </Button>
@@ -1080,6 +917,154 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                  {loading ? 'Actualizando...' : 'Actualizar Pago'}
                </Button>
              </div>
+           </div>
+         </DialogContent>
+       </Dialog>
+
+       {/* Modal de Selección de Formato de Impresión */}
+       <Dialog open={showPrintFormatModal} onOpenChange={setShowPrintFormatModal}>
+         <DialogContent className="max-w-md">
+           <DialogHeader>
+             <DialogTitle className="flex items-center gap-2">
+               <Printer className="h-5 w-5" />
+               Seleccionar Formato de Impresión
+             </DialogTitle>
+           </DialogHeader>
+           
+           <div className="space-y-4">
+             <p className="text-sm text-gray-600">
+               Selecciona el formato de impresión según tu impresora:
+             </p>
+             
+             <div className="grid grid-cols-1 gap-3">
+               {/* POS58 - Impresoras portátiles Verifone */}
+               <Button 
+                 variant="outline" 
+                 className="h-auto p-4 flex flex-col items-start"
+                 onClick={() => {
+                   printReceipt('POS58');
+                   setShowPrintFormatModal(false);
+                 }}
+               >
+                 <div className="flex items-center gap-2 mb-2">
+                   <div className="w-8 h-8 bg-blue-100 rounded flex items-center justify-center">
+                     <span className="text-xs font-bold">58</span>
+                   </div>
+                   <div className="text-left">
+                     <div className="font-medium">POS58</div>
+                     <div className="text-xs text-gray-500">Verifone / Impresoras Portátiles</div>
+                   </div>
+                 </div>
+                 <div className="text-xs text-gray-400">
+                   Ancho: 58mm - Ideal para impresoras portátiles
+                 </div>
+               </Button>
+
+               {/* POS80 - Punto de venta */}
+               <Button 
+                 variant="outline" 
+                 className="h-auto p-4 flex flex-col items-start"
+                 onClick={() => {
+                   printReceipt('POS80');
+                   setShowPrintFormatModal(false);
+                 }}
+               >
+                 <div className="flex items-center gap-2 mb-2">
+                   <div className="w-8 h-8 bg-green-100 rounded flex items-center justify-center">
+                     <span className="text-xs font-bold">80</span>
+                   </div>
+                   <div className="text-left">
+                     <div className="font-medium">POS80</div>
+                     <div className="text-xs text-gray-500">Punto de Venta</div>
+                   </div>
+                 </div>
+                 <div className="text-xs text-gray-400">
+                   Ancho: 80mm - Para impresoras de punto de venta
+                 </div>
+               </Button>
+
+               {/* Carta 8½ x 11 */}
+               <Button 
+                 variant="outline" 
+                 className="h-auto p-4 flex flex-col items-start"
+                 onClick={() => {
+                   printReceipt('LETTER');
+                   setShowPrintFormatModal(false);
+                 }}
+               >
+                 <div className="flex items-center gap-2 mb-2">
+                   <div className="w-8 h-8 bg-purple-100 rounded flex items-center justify-center">
+                     <span className="text-xs font-bold">8½</span>
+                   </div>
+                   <div className="text-left">
+                     <div className="font-medium">Carta (8½ x 11)</div>
+                     <div className="text-xs text-gray-500">Impresoras de Escritorio</div>
+                   </div>
+                 </div>
+                 <div className="text-xs text-gray-400">
+                   Formato: 8.5 x 11 pulgadas - Estándar americano
+                 </div>
+               </Button>
+
+               {/* A4 */}
+               <Button 
+                 variant="outline" 
+                 className="h-auto p-4 flex flex-col items-start"
+                 onClick={() => {
+                   printReceipt('A4');
+                   setShowPrintFormatModal(false);
+                 }}
+               >
+                 <div className="flex items-center gap-2 mb-2">
+                   <div className="w-8 h-8 bg-orange-100 rounded flex items-center justify-center">
+                     <span className="text-xs font-bold">A4</span>
+                   </div>
+                   <div className="text-left">
+                     <div className="font-medium">A4</div>
+                     <div className="text-xs text-gray-500">Impresoras de Escritorio</div>
+                   </div>
+                 </div>
+                 <div className="text-xs text-gray-400">
+                   Formato: 210 x 297mm - Estándar internacional
+                 </div>
+               </Button>
+             </div>
+
+             <div className="pt-4 border-t">
+               <p className="text-xs text-gray-500 mb-3">
+                 También puedes descargar el recibo en formato HTML:
+               </p>
+               <div className="grid grid-cols-2 gap-2">
+                 <Button 
+                   size="sm" 
+                   variant="secondary"
+                   onClick={() => {
+                     downloadReceipt('POS58');
+                     setShowPrintFormatModal(false);
+                   }}
+                 >
+                   <Download className="h-3 w-3 mr-1" />
+                   POS58
+                 </Button>
+                 <Button 
+                   size="sm" 
+                   variant="secondary"
+                   onClick={() => {
+                     downloadReceipt('LETTER');
+                     setShowPrintFormatModal(false);
+                   }}
+                 >
+                   <Download className="h-3 w-3 mr-1" />
+                   Carta
+                 </Button>
+               </div>
+             </div>
+           </div>
+
+           <div className="flex justify-end gap-2 pt-4">
+             <Button variant="outline" onClick={() => setShowPrintFormatModal(false)}>
+               Cancelar
+             </Button>
            </div>
          </DialogContent>
        </Dialog>
