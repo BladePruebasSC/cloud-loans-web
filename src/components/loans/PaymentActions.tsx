@@ -137,34 +137,103 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const handleDelete = async () => {
     try {
       setLoading(true);
-      const { error } = await supabase
+      
+      console.log('🗑️ Iniciando eliminación del pago:', payment.id);
+      console.log('🗑️ Monto del pago a eliminar:', payment.amount);
+      console.log('🗑️ ID del préstamo:', payment.loan_id);
+      
+      // Primero, obtener el préstamo para recalcular el balance
+      console.log('🗑️ Obteniendo datos del préstamo...');
+      const { data: loanData, error: loanError } = await supabase
+        .from('loans')
+        .select('id, remaining_balance')
+        .eq('id', payment.loan_id)
+        .single();
+
+      if (loanError) {
+        console.error('🗑️ Error obteniendo préstamo:', loanError);
+        throw loanError;
+      }
+
+      console.log('🗑️ Balance actual del préstamo:', loanData.remaining_balance);
+
+      // Eliminar el pago
+      console.log('🗑️ Eliminando pago de la base de datos...');
+      const { error: deleteError } = await supabase
         .from('payments')
         .delete()
         .eq('id', payment.id);
 
-      if (error) throw error;
+      if (deleteError) {
+        console.error('🗑️ Error eliminando pago:', deleteError);
+        throw deleteError;
+      }
+
+      console.log('🗑️ Pago eliminado exitosamente');
+
+      // Recalcular el balance del préstamo sumando el monto eliminado
+      const newBalance = loanData.remaining_balance + payment.amount;
+      console.log('🗑️ Nuevo balance calculado:', newBalance);
+      
+      // Actualizar el balance del préstamo
+      console.log('🗑️ Actualizando balance del préstamo...');
+      const { error: updateError } = await supabase
+        .from('loans')
+        .update({ remaining_balance: newBalance })
+        .eq('id', payment.loan_id);
+
+      if (updateError) {
+        console.error('🗑️ Error actualizando préstamo:', updateError);
+        throw updateError;
+      }
+
+      console.log('🗑️ Balance del préstamo actualizado exitosamente');
+      console.log('🗑️ Llamando callback onPaymentUpdated...');
 
       toast.success('Pago eliminado exitosamente');
       setShowDeleteModal(false);
-      onPaymentUpdated?.();
+      
+      // Pequeño delay para asegurar que la eliminación se complete
+      setTimeout(() => {
+        // Llamar al callback para refrescar la lista
+        if (onPaymentUpdated) {
+          console.log('🗑️ CALLBACK: Ejecutando onPaymentUpdated');
+          console.log('🗑️ CALLBACK: Tipo de función:', typeof onPaymentUpdated);
+          try {
+            onPaymentUpdated();
+            console.log('🗑️ CALLBACK: Ejecutado exitosamente');
+          } catch (callbackError) {
+            console.error('🗑️ CALLBACK: Error ejecutando callback:', callbackError);
+          }
+        } else {
+          console.warn('🗑️ CALLBACK: onPaymentUpdated no está definido');
+        }
+      }, 500);
+      
     } catch (error) {
-      console.error('Error deleting payment:', error);
-      toast.error('Error al eliminar el pago');
+      console.error('🗑️ Error completo en eliminación:', error);
+      toast.error(`Error al eliminar el pago: ${error.message || 'Error desconocido'}`);
     } finally {
       setLoading(false);
+      console.log('🗑️ Proceso de eliminación finalizado');
     }
   };
 
   const handleUpdatePayment = async () => {
     try {
       setLoading(true);
+      
+      // Solo permitir actualizar campos del recibo, NO los montos
       const { error } = await supabase
         .from('payments')
         .update({
-          amount: editForm.amount,
-          principal_amount: editForm.principal_amount,
-          interest_amount: editForm.interest_amount,
-          late_fee: editForm.late_fee,
+          // NO actualizar estos campos (mantener valores originales):
+          // amount: editForm.amount,
+          // principal_amount: editForm.principal_amount,
+          // interest_amount: editForm.interest_amount,
+          // late_fee: editForm.late_fee,
+          
+          // Solo actualizar campos del recibo:
           payment_date: editForm.payment_date,
           due_date: editForm.due_date,
           payment_method: editForm.payment_method,
@@ -175,12 +244,12 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       if (error) throw error;
 
-      toast.success('Pago actualizado exitosamente');
+      toast.success('Información del recibo actualizada exitosamente');
       setShowEditModal(false);
       onPaymentUpdated?.();
     } catch (error) {
       console.error('Error updating payment:', error);
-      toast.error('Error al actualizar el pago');
+      toast.error('Error al actualizar el recibo');
     } finally {
       setLoading(false);
     }
@@ -895,23 +964,31 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
              {/* Formulario de Edición */}
              <div className="space-y-4">
+               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                 <h3 className="text-sm font-medium text-blue-800 mb-1">📝 Edición de Recibo</h3>
+                 <p className="text-xs text-blue-700">
+                   Solo puedes editar la información del recibo (fecha, método de pago, cobrador, comentarios). 
+                   Los montos no se pueden modificar una vez que el pago ha sido registrado.
+                 </p>
+               </div>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <div>
                    <label className="text-sm font-medium text-gray-700">Monto Total</label>
                    <input
                      type="number"
                      value={editForm.amount}
-                     onChange={(e) => setEditForm({...editForm, amount: parseFloat(e.target.value) || 0})}
-                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     disabled
+                     className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
                    />
+                   <p className="text-xs text-gray-500 mt-1">⚠️ No se puede modificar el monto una vez pagado</p>
                  </div>
                  <div>
                    <label className="text-sm font-medium text-gray-700">Pago a Principal</label>
                    <input
                      type="number"
                      value={editForm.principal_amount}
-                     onChange={(e) => setEditForm({...editForm, principal_amount: parseFloat(e.target.value) || 0})}
-                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     disabled
+                     className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
                    />
                  </div>
                  <div>
@@ -919,8 +996,8 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                    <input
                      type="number"
                      value={editForm.interest_amount}
-                     onChange={(e) => setEditForm({...editForm, interest_amount: parseFloat(e.target.value) || 0})}
-                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     disabled
+                     className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
                    />
                  </div>
                  <div>
@@ -928,8 +1005,8 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                    <input
                      type="number"
                      value={editForm.late_fee}
-                     onChange={(e) => setEditForm({...editForm, late_fee: parseFloat(e.target.value) || 0})}
-                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                     disabled
+                     className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
                    />
                  </div>
                  <div>

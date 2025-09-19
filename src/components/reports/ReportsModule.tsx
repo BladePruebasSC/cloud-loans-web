@@ -142,6 +142,66 @@ export const ReportsModule = () => {
     }
   };
 
+  // Función específica para refrescar pagos después de eliminar
+  const refreshPayments = async () => {
+    try {
+      console.log('🔄 REFRESH PAYMENTS: Iniciando...');
+      console.log('🔄 REFRESH PAYMENTS: companyId:', companyId);
+      console.log('🔄 REFRESH PAYMENTS: dateRange:', dateRange);
+      
+      // Fetch payments con el mismo filtro de fecha
+      const { data: paymentsData, error: paymentsError } = await supabase
+        .from('payments')
+        .select(`
+          *,
+          loans (
+            amount,
+            clients (
+              full_name,
+              dni
+            )
+          )
+        `)
+        .eq('created_by', companyId)
+        .gte('payment_date', dateRange.startDate)
+        .lte('payment_date', dateRange.endDate)
+        .order('payment_date', { ascending: false });
+
+      if (paymentsError) {
+        console.error('🔄 REFRESH PAYMENTS: Error:', paymentsError);
+        throw paymentsError;
+      }
+
+      console.log('🔄 REFRESH PAYMENTS: Pagos obtenidos:', paymentsData?.length || 0);
+      console.log('🔄 REFRESH PAYMENTS: Datos de pagos:', paymentsData);
+      
+      // Actualizar solo los pagos en el estado
+      setReportData(prev => {
+        console.log('🔄 REFRESH PAYMENTS: Estado anterior:', prev.payments?.length || 0);
+        const newState = {
+          ...prev,
+          payments: paymentsData || []
+        };
+        console.log('🔄 REFRESH PAYMENTS: Nuevo estado:', newState.payments?.length || 0);
+        return newState;
+      });
+      
+      console.log('🔄 REFRESH PAYMENTS: Completado exitosamente');
+      
+    } catch (error) {
+      console.error('🔄 REFRESH PAYMENTS: Error completo:', error);
+      console.log('🔄 REFRESH PAYMENTS: Ejecutando fetchReportData como fallback...');
+      // Si falla el refresh específico, hacer un refresh completo
+      fetchReportData();
+    }
+  };
+
+  // Función simple para forzar refresh completo
+  const forceRefresh = () => {
+    console.log('🔄 FORCE REFRESH: Ejecutando refresh completo...');
+    fetchReportData();
+  };
+
   const exportToCSV = (data: any[], filename: string) => {
     if (data.length === 0) {
       toast.error('No hay datos para exportar');
@@ -503,10 +563,15 @@ export const ReportsModule = () => {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Reporte de Pagos ({filteredPayments.length})</CardTitle>
-                <Button onClick={() => exportToCSV(reportData.payments, 'reporte_pagos')}>
-                  <Download className="h-4 w-4 mr-2" />
-                  Exportar CSV
-                </Button>
+                <div className="flex gap-2">
+                  <Button onClick={forceRefresh} variant="outline" size="sm">
+                    🔄 Refresh
+                  </Button>
+                  <Button onClick={() => exportToCSV(reportData.payments, 'reporte_pagos')}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Exportar CSV
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -559,7 +624,7 @@ export const ReportsModule = () => {
                         <div className="flex items-center gap-2 mt-2 sm:mt-0 sm:ml-4">
                           <PaymentActions 
                             payment={payment} 
-                            onPaymentUpdated={fetchReportData}
+                            onPaymentUpdated={forceRefresh}
                           />
                         </div>
                       </div>

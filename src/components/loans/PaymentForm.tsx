@@ -66,48 +66,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     if (!loanId) return 0;
     
     try {
-      // Obtener el próximo pago esperado y la fecha de inicio del préstamo
-      const { data: loan } = await supabase
-        .from('loans')
-        .select('next_payment_date, start_date, monthly_payment')
-        .eq('id', loanId)
-        .single();
-
-      if (!loan) return 0;
-
-      // Calcular el período de pago actual basado en next_payment_date
-      const nextPaymentDate = new Date(loan.next_payment_date);
-      
-      // Si next_payment_date está en el futuro, significa que estamos en el período anterior
-      // Si está en el pasado, significa que estamos en el período actual
-      const now = new Date();
-      let periodStart: Date;
-      let periodEnd: Date;
-      
-      if (nextPaymentDate > now) {
-        // El próximo pago está en el futuro, así que estamos en el período anterior
-        const previousMonth = new Date(nextPaymentDate);
-        previousMonth.setMonth(previousMonth.getMonth() - 1);
-        periodStart = new Date(previousMonth.getFullYear(), previousMonth.getMonth(), 1);
-        periodEnd = new Date(previousMonth.getFullYear(), previousMonth.getMonth() + 1, 0);
-      } else {
-        // El próximo pago está en el pasado, así que estamos en el período actual
-        periodStart = new Date(nextPaymentDate.getFullYear(), nextPaymentDate.getMonth(), 1);
-        periodEnd = new Date(nextPaymentDate.getFullYear(), nextPaymentDate.getMonth() + 1, 0);
-      }
-
-      console.log('🔍 Calculando interés pagado para período:', {
-        periodStart: periodStart.toISOString().split('T')[0],
-        periodEnd: periodEnd.toISOString().split('T')[0],
-        nextPaymentDate: nextPaymentDate.toISOString().split('T')[0]
-      });
-
+      // Obtener todos los pagos del préstamo ordenados por fecha
       const { data: payments, error } = await supabase
         .from('payments')
         .select('interest_amount, payment_date, amount')
         .eq('loan_id', loanId)
-        .gte('payment_date', periodStart.toISOString().split('T')[0])
-        .lte('payment_date', periodEnd.toISOString().split('T')[0])
         .order('payment_date', { ascending: true });
 
       if (error) {
@@ -115,17 +78,55 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         return 0;
       }
 
-      console.log('🔍 Pagos encontrados en el período:', payments);
+      if (!payments || payments.length === 0) {
+        console.log('🔍 No hay pagos para el préstamo');
+        return 0;
+      }
 
-      // Sumar todo el interés pagado en este período
-      const totalInterestPaid = (payments || []).reduce((sum, payment) => {
-        console.log('🔍 Pago:', payment.payment_date, 'Interés:', payment.interest_amount);
-        return sum + (payment.interest_amount || 0);
-      }, 0);
+      console.log('🔍 Todos los pagos del préstamo:', payments);
+
+      // Calcular el interés fijo por cuota
+      const { data: loan } = await supabase
+        .from('loans')
+        .select('amount, interest_rate')
+        .eq('id', loanId)
+        .single();
+
+      if (!loan) return 0;
+
+      const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+      console.log('🔍 Interés fijo por cuota:', fixedInterestPerPayment);
+
+      // Calcular cuántas cuotas se han completado y cuánto interés se ha pagado en la cuota actual
+      let totalInterestPaid = 0;
+      let currentInstallmentInterestPaid = 0;
+      let currentInstallmentStart = 0;
+
+      // Simular el proceso de pagos para determinar el interés de la cuota actual
+      for (let i = 0; i < payments.length; i++) {
+        const payment = payments[i];
+        const paymentInterest = payment.interest_amount || 0;
+        
+        totalInterestPaid += paymentInterest;
+        
+        // Si este pago completa una cuota (alcanza o excede el interés fijo)
+        if (currentInstallmentInterestPaid + paymentInterest >= fixedInterestPerPayment) {
+          // Esta cuota está completa, empezar la siguiente
+          const remainingInterestForThisInstallment = fixedInterestPerPayment - currentInstallmentInterestPaid;
+          currentInstallmentInterestPaid = paymentInterest - remainingInterestForThisInstallment;
+          currentInstallmentStart = i + 1;
+          console.log('🔍 Cuota completada en pago', i, 'Interés restante para siguiente cuota:', currentInstallmentInterestPaid);
+        } else {
+          // Esta cuota aún no está completa
+          currentInstallmentInterestPaid += paymentInterest;
+        }
+      }
+
+      console.log('🔍 Interés pagado en cuota actual:', currentInstallmentInterestPaid);
+      console.log('🔍 Total interés pagado:', totalInterestPaid);
+      console.log('🔍 Cuota actual empezó en pago:', currentInstallmentStart);
       
-      console.log('🔍 Total interés pagado en período:', totalInterestPaid);
-      
-      return totalInterestPaid;
+      return currentInstallmentInterestPaid;
     } catch (error) {
       console.error('Error calculando interés pagado:', error);
       return 0;
