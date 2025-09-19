@@ -63,7 +63,7 @@ interface AmortizationRow {
   remainingBalance: number;
 }
 
-export const LoanForm = ({ onBack }: { onBack: () => void }) => {
+export const LoanForm = ({ onBack, onLoanCreated }: { onBack: () => void; onLoanCreated?: () => void }) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [clientSearch, setClientSearch] = useState('');
@@ -762,7 +762,7 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       if (error) throw error;
 
       toast.success('Préstamo creado exitosamente');
-      onBack();
+      onLoanCreated?.();
     } catch (error) {
       console.error('Error creating loan:', error);
       toast.error('Error al crear el préstamo');

@@ -54,7 +54,7 @@ export const LoansModule = () => {
   
      // Estados para filtros y búsqueda
    const [searchTerm, setSearchTerm] = useState('');
-   const [statusFilter, setStatusFilter] = useState('all');
+   const [statusFilter, setStatusFilter] = useState('active'); // Por defecto mostrar solo activos
    const [dateFilter, setDateFilter] = useState('all');
    const [amountFilter, setAmountFilter] = useState('all');
    const [overdueFilter, setOverdueFilter] = useState(false);
@@ -194,7 +194,17 @@ export const LoansModule = () => {
        loan.id.toLowerCase().includes(searchTerm.toLowerCase());
 
      // Filtro por estado
-     const matchesStatus = statusFilter === 'all' || loan.status === statusFilter;
+     let matchesStatus = false;
+     if (statusFilter === 'all') {
+       // Mostrar todos excepto completados por defecto
+       matchesStatus = loan.status !== 'paid';
+     } else if (statusFilter === 'active') {
+       // Mostrar activos, pendientes y en mora (pendientes con prioridad)
+       matchesStatus = loan.status === 'active' || loan.status === 'overdue' || loan.status === 'pending';
+     } else {
+       // Mostrar el estado específico seleccionado
+       matchesStatus = loan.status === statusFilter;
+     }
 
     // Filtro por fecha
     let matchesDate = true;
@@ -240,16 +250,44 @@ export const LoansModule = () => {
      const matchesOverdue = !overdueFilter || loan.status === 'overdue';
 
      return matchesSearch && matchesStatus && matchesDate && matchesAmount && matchesOverdue;
+  }).sort((a, b) => {
+    // Ordenar por prioridad: pendientes primero, luego por fecha de próximo pago
+    const statusPriority = {
+      'pending': 0,    // Pendientes primero (requieren aprobación)
+      'overdue': 1,    // Vencidos segundo (requieren atención urgente)
+      'active': 2,     // Activos tercero
+      'paid': 3,       // Completados cuarto
+      'deleted': 4     // Eliminados último
+    };
+
+    const aPriority = statusPriority[a.status] || 5;
+    const bPriority = statusPriority[b.status] || 5;
+
+    // Si tienen la misma prioridad, ordenar por fecha de próximo pago (más cercana primero)
+    if (aPriority === bPriority) {
+      return new Date(a.next_payment_date).getTime() - new Date(b.next_payment_date).getTime();
+    }
+
+    return aPriority - bPriority;
   });
 
   // Calcular estadísticas basadas en préstamos filtrados (excluyendo eliminados)
   const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
   const overdueLoans = filteredLoans.filter(loan => loan.status === 'overdue');
+  const pendingLoans = filteredLoans.filter(loan => loan.status === 'pending');
   const totalAmount = filteredLoans.filter(loan => loan.status !== 'deleted').reduce((sum, loan) => sum + loan.amount, 0);
   const totalBalance = filteredLoans.filter(loan => loan.status !== 'deleted').reduce((sum, loan) => sum + loan.remaining_balance, 0);
 
   if (showLoanForm) {
-    return <LoanForm onBack={() => setShowLoanForm(false)} />;
+    return (
+      <LoanForm 
+        onBack={() => setShowLoanForm(false)}
+        onLoanCreated={() => {
+          setShowLoanForm(false);
+          refetch(); // Actualizar los datos de préstamos
+        }}
+      />
+    );
   }
 
   if (showPaymentForm) {
@@ -324,7 +362,10 @@ export const LoansModule = () => {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{loans.length}</div>
-                <p className="text-xs text-muted-foreground">+{activeLoans.length} activos</p>
+                <p className="text-xs text-muted-foreground">
+                  {activeLoans.length} activos
+                  {pendingLoans.length > 0 && ` • ${pendingLoans.length} pendientes`}
+                </p>
               </CardContent>
             </Card>
 
@@ -334,8 +375,11 @@ export const LoansModule = () => {
                 <CheckCircle className="h-4 w-4 text-green-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">{activeLoans.length}</div>
-                <p className="text-xs text-muted-foreground">Al día con pagos</p>
+                <div className="text-2xl font-bold text-green-600">{activeLoans.length + pendingLoans.length}</div>
+                <p className="text-xs text-muted-foreground">
+                  {activeLoans.length} activos
+                  {pendingLoans.length > 0 && ` • ${pendingLoans.length} por aprobar`}
+                </p>
               </CardContent>
             </Card>
 
@@ -376,10 +420,10 @@ export const LoansModule = () => {
                     <SelectValue placeholder="Estado" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Todos los Estados</SelectItem>
+                    <SelectItem value="all">Todos (excepto completados)</SelectItem>
                     <SelectItem value="active">Activos</SelectItem>
                     <SelectItem value="overdue">Vencidos</SelectItem>
-                    <SelectItem value="paid">Pagados</SelectItem>
+                    <SelectItem value="paid">Completados</SelectItem>
                     <SelectItem value="pending">Pendientes</SelectItem>
                     <SelectItem value="deleted">Eliminados</SelectItem>
                   </SelectContent>
@@ -726,10 +770,10 @@ export const LoansModule = () => {
                      <SelectValue placeholder="Estado del préstamo" />
                    </SelectTrigger>
                    <SelectContent>
-                     <SelectItem value="all">Todos los Estados</SelectItem>
+                     <SelectItem value="all">Todos (excepto completados)</SelectItem>
                      <SelectItem value="active">Activos</SelectItem>
                      <SelectItem value="overdue">Vencidos</SelectItem>
-                     <SelectItem value="paid">Pagados</SelectItem>
+                     <SelectItem value="paid">Completados</SelectItem>
                      <SelectItem value="pending">Pendientes</SelectItem>
                      <SelectItem value="deleted">Eliminados</SelectItem>
                    </SelectContent>
