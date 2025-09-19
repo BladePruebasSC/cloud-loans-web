@@ -38,6 +38,7 @@ interface Loan {
   remaining_balance: number;
   monthly_payment: number;
   next_payment_date: string;
+  interest_rate: number;
   client: {
     full_name: string;
     dni: string;
@@ -55,6 +56,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
   const [showLoanDropdown, setShowLoanDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
 
@@ -71,9 +73,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Si hay un saldo pendiente menor a la cuota mensual, pre-llenar con ese monto
       if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
         form.setValue('amount', paymentStatus.currentPaymentRemaining);
+        setPaymentAmount(paymentStatus.currentPaymentRemaining);
       } else {
         // Si no hay pagos previos, usar la cuota mensual completa
         form.setValue('amount', selectedLoan.monthly_payment);
+        setPaymentAmount(selectedLoan.monthly_payment);
       }
     }
   }, [paymentStatus.currentPaymentRemaining, selectedLoan, form]);
@@ -88,6 +92,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       setSelectedLoan(preselectedLoan);
       form.setValue('loan_id', preselectedLoan.id);
       // El monto se establecerá automáticamente cuando se actualice el paymentStatus
+      setPaymentAmount(0); // Reset payment amount
     }
   }, [preselectedLoan, form]);
 
@@ -102,6 +107,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         remaining_balance,
         monthly_payment,
         next_payment_date,
+        interest_rate,
         clients (
           full_name,
           dni
@@ -163,6 +169,31 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     }
   };
 
+  // Función para calcular la distribución del pago
+  const calculatePaymentDistribution = (amount: number) => {
+    if (!selectedLoan || amount <= 0) {
+      return { interestPayment: 0, principalPayment: 0, monthlyInterestAmount: 0 };
+    }
+
+    // Calcular el interés fijo por cuota (amortización simple)
+    // Fórmula: Interés por cuota = (Monto Original × Tasa × Plazo) ÷ Plazo
+    // Simplificado: Interés por cuota = Monto Original × Tasa ÷ 100
+    const fixedInterestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
+    
+    let interestPayment = 0;
+    let principalPayment = 0;
+    
+    if (amount <= fixedInterestPerPayment) {
+      interestPayment = amount;
+      principalPayment = 0;
+    } else {
+      interestPayment = fixedInterestPerPayment;
+      principalPayment = amount - fixedInterestPerPayment;
+    }
+    
+    return { interestPayment, principalPayment, monthlyInterestAmount: fixedInterestPerPayment };
+  };
+
   const onSubmit = async (data: PaymentFormData) => {
     if (!user || !companyId || !selectedLoan) return;
 
@@ -172,6 +203,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       const monthlyPayment = selectedLoan.monthly_payment;
       const remainingBalance = selectedLoan.remaining_balance;
       const currentPaymentRemaining = paymentStatus.currentPaymentRemaining;
+      const interestRate = selectedLoan.interest_rate; // Tasa de interés mensual [[memory:6311805]]
       
       // Validación 1: No permitir pagos que excedan el balance restante
       if (data.amount > remainingBalance) {
@@ -193,9 +225,24 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         return;
       }
 
-      // Calcular principal e intereses (simplificado)
-      const interestAmount = (remainingBalance * 0.15) / 12; // Aproximado
-      const principalAmount = data.amount - interestAmount;
+      // Calcular el interés fijo por cuota (amortización simple)
+      // Fórmula: Interés por cuota = (Monto Original × Tasa × Plazo) ÷ Plazo
+      // Simplificado: Interés por cuota = Monto Original × Tasa ÷ 100
+      const fixedInterestPerPayment = (selectedLoan.amount * interestRate) / 100;
+      
+      // Aplicar la lógica: primero al interés, luego al capital
+      let interestPayment = 0;
+      let principalPayment = 0;
+      
+      if (data.amount <= fixedInterestPerPayment) {
+        // Si el pago es menor o igual al interés, todo va al interés
+        interestPayment = data.amount;
+        principalPayment = 0;
+      } else {
+        // Si el pago excede el interés, primero se paga el interés completo y el resto al capital
+        interestPayment = fixedInterestPerPayment;
+        principalPayment = data.amount - fixedInterestPerPayment;
+      }
       
       // Determinar si es un pago completo o parcial
       const isFullPayment = data.amount >= maxAllowedPayment;
@@ -207,16 +254,23 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         toast.warning(`Pago parcial registrado. Queda pendiente RD$${remainingAmount.toLocaleString()} de la cuota mensual.`);
       }
 
+      // Mostrar información sobre la distribución del pago
+      const distributionMessage = principalPayment > 0 
+        ? `Pago aplicado: RD$${interestPayment.toLocaleString()} al interés, RD$${principalPayment.toLocaleString()} al capital`
+        : `Pago aplicado: RD$${interestPayment.toLocaleString()} al interés (pendiente capital: RD$${(fixedInterestPerPayment - interestPayment).toLocaleString()})`;
+      
+      toast.info(distributionMessage);
+
       const paymentData = {
         loan_id: data.loan_id,
         amount: data.amount,
-        principal_amount: Math.max(0, principalAmount),
-        interest_amount: Math.min(data.amount, interestAmount),
+        principal_amount: principalPayment,
+        interest_amount: interestPayment,
         due_date: selectedLoan.next_payment_date,
         payment_method: data.payment_method,
         reference_number: data.reference_number,
         notes: data.notes,
-        status: paymentStatusValue, // Agregar el status del pago
+        status: paymentStatusValue,
         created_by: companyId,
       };
 
@@ -226,8 +280,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 
       if (paymentError) throw paymentError;
 
-      // Actualizar el balance restante del préstamo
-      const newBalance = Math.max(0, remainingBalance - principalAmount);
+      // Actualizar el balance restante del préstamo (solo se reduce con el pago al capital)
+      const newBalance = Math.max(0, remainingBalance - principalPayment);
       
       // Solo actualizar la fecha del próximo pago si es un pago completo
       let nextPaymentDate = selectedLoan.next_payment_date;
@@ -349,6 +403,44 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     )}
                   </div>
 
+                  {/* Mostrar distribución del pago en tiempo real */}
+                  {selectedLoan && paymentAmount > 0 && (
+                    <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="text-sm font-medium text-green-800 mb-2">
+                        📊 Distribución del Pago (RD${paymentAmount.toLocaleString()})
+                      </div>
+                      {(() => {
+                        const { interestPayment, principalPayment, monthlyInterestAmount } = calculatePaymentDistribution(paymentAmount);
+                        return (
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center">
+                              <span className="text-green-700">Interés fijo por cuota:</span>
+                              <span className="font-semibold">RD${monthlyInterestAmount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-green-700">Se aplica al interés:</span>
+                              <span className="font-semibold text-orange-600">RD${interestPayment.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-green-700">Se aplica al capital:</span>
+                              <span className="font-semibold text-blue-600">RD${principalPayment.toLocaleString()}</span>
+                            </div>
+                            {interestPayment < monthlyInterestAmount && (
+                              <div className="mt-2 p-2 bg-yellow-100 border border-yellow-300 rounded text-xs text-yellow-800">
+                                ⚠️ Pago parcial al interés. Queda pendiente: RD${(monthlyInterestAmount - interestPayment).toLocaleString()}
+                              </div>
+                            )}
+                            {principalPayment > 0 && (
+                              <div className="mt-2 p-2 bg-blue-100 border border-blue-300 rounded text-xs text-blue-800">
+                                ✅ El balance del préstamo se reducirá en RD${principalPayment.toLocaleString()}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <FormField
                       control={form.control}
@@ -365,7 +457,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               onChange={(e) => {
                                 const value = e.target.value;
                                 if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                  field.onChange(value === '' ? 0 : parseFloat(value) || 0);
+                                  const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                  field.onChange(numValue);
+                                  setPaymentAmount(numValue);
                                 }
                               }}
                               className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -486,6 +580,24 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                       {new Date(selectedLoan.next_payment_date).toLocaleDateString()}
                     </span>
                   </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Tasa de Interés:</span>
+                    <span className="font-semibold">
+                      {selectedLoan.interest_rate}% mensual
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Interés Fijo por Cuota:</span>
+                    <span className="font-semibold text-orange-600">
+                      RD${((selectedLoan.amount * selectedLoan.interest_rate) / 100).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-600">Capital por Cuota:</span>
+                    <span className="font-semibold text-blue-600">
+                      RD${(selectedLoan.monthly_payment - ((selectedLoan.amount * selectedLoan.interest_rate) / 100)).toLocaleString()}
+                    </span>
+                  </div>
                   
                   {/* Estado de la cuota actual */}
                   {paymentStatus.hasPartialPayments && (
@@ -517,6 +629,19 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                         <li>• Pago completo: ${(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment).toLocaleString()} o más</li>
                         <li>• Pago parcial: Menos de ${(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment).toLocaleString()}</li>
                         <li>• Máximo permitido: ${selectedLoan.remaining_balance.toLocaleString()}</li>
+                      </ul>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="text-sm text-blue-800">
+                      <div className="font-medium mb-1">🎯 Lógica de Aplicación de Pagos:</div>
+                      <ul className="text-xs space-y-1">
+                        <li>• <strong>Cuota mensual:</strong> RD${selectedLoan.monthly_payment.toLocaleString()} (interés + capital)</li>
+                        <li>• <strong>Interés fijo:</strong> RD${((selectedLoan.amount * selectedLoan.interest_rate) / 100).toLocaleString()} por cuota</li>
+                        <li>• <strong>Primero:</strong> Se paga el interés fijo de la cuota</li>
+                        <li>• <strong>Después:</strong> El resto se aplica al capital</li>
+                        <li>• <strong>Balance:</strong> Solo se reduce con pagos al capital</li>
                       </ul>
                     </div>
                   </div>

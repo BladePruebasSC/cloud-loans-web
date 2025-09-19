@@ -91,6 +91,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     calculateUpdatedValues();
   }, [watchedValues]);
 
+  // Pre-llenar el monto cuando se selecciona "Pago Completo de Cuota"
+  useEffect(() => {
+    const updateType = form.watch('update_type');
+    if (updateType === 'payment') {
+      // Para pago completo de cuota, usar la cuota mensual
+      form.setValue('amount', loan.monthly_payment);
+    }
+  }, [form.watch('update_type'), form, loan.monthly_payment]);
+
   const calculateUpdatedValues = () => {
     const [updateType, amount, additionalMonths] = watchedValues;
     
@@ -103,9 +112,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     switch (updateType) {
       case 'payment':
         if (amount) {
-          // Calcular interés mensual
-          interestAmount = (loan.remaining_balance * loan.interest_rate) / (100 * 12);
-          principalAmount = Math.max(0, amount - interestAmount);
+          // Calcular el interés fijo por cuota (amortización simple)
+          // Fórmula: Interés por cuota = Monto Original × Tasa de Interés ÷ 100
+          const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+          
+          // Aplicar la lógica: primero al interés, luego al capital
+          if (amount <= fixedInterestPerPayment) {
+            interestAmount = amount;
+            principalAmount = 0;
+          } else {
+            interestAmount = fixedInterestPerPayment;
+            principalAmount = amount - fixedInterestPerPayment;
+          }
+          
           newBalance = Math.max(0, loan.remaining_balance - principalAmount);
         }
         break;
@@ -420,17 +439,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             </FormLabel>
                             <FormControl>
                               <Input
-                                type="text"
+                                type="number"
                                 placeholder="0"
+                                step="0.01"
                                 {...field}
                                 value={field.value || ''}
                                 onChange={(e) => {
                                   const value = e.target.value;
-                                  if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                                    field.onChange(value === '' ? 0 : parseFloat(value) || 0);
-                                  }
+                                  field.onChange(value === '' ? 0 : parseFloat(value) || 0);
                                 }}
-                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />
@@ -450,17 +467,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             <FormLabel>Meses Adicionales</FormLabel>
                             <FormControl>
                               <Input
-                                type="text"
+                                type="number"
                                 placeholder="0"
+                                min="0"
                                 {...field}
                                 value={field.value || ''}
                                 onChange={(e) => {
                                   const value = e.target.value;
-                                  if (value === '' || /^\d*$/.test(value)) {
-                                    field.onChange(value === '' ? 0 : parseInt(value) || 0);
-                                  }
+                                  field.onChange(value === '' ? 0 : parseInt(value) || 0);
                                 }}
-                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />
