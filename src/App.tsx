@@ -83,7 +83,7 @@ function App() {
               </span>
             )}
           </p>
-          {loadingTime > 5 && (
+          {loadingTime > 3 && (
             <div className="space-x-2">
               <button 
                 onClick={() => window.location.reload()} 

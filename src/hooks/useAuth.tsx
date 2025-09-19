@@ -58,7 +58,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
         setError(new Error('La carga se demoró demasiado. Por favor, recarga la página.'));
       }
-    }, 15000); // 15 segundos de timeout
+    }, 5000); // 5 segundos de timeout
 
     return () => clearTimeout(safetyTimeout);
   }, [loading]);
@@ -599,14 +599,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    let hasInitialized = false;
+
     const handleAuthStateChange = async (event: string, session: any) => {
-      if (event === 'SIGNED_IN' && session?.user) {
+      // Solo procesar SIGNED_OUT para limpiar la sesión
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setProfile(null);
+        setCompanyId(null);
+        setNeedsRegistrationCode(false);
+        setLoading(false);
+        hasInitialized = false;
+        return;
+      }
+
+      // Solo procesar SIGNED_IN una vez para evitar re-procesamiento
+      if (event === 'SIGNED_IN' && session?.user && !hasInitialized) {
+        hasInitialized = true;
         setUser(session.user);
         
         try {
-          // Timeout para evitar cargas infinitas
+          // Timeout muy corto para evitar cargas largas
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout')), 10000)
+            setTimeout(() => reject(new Error('Timeout')), 3000)
           );
 
           const authPromise = async () => {
@@ -652,29 +667,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         
         setLoading(false);
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null);
-        setProfile(null);
-        setCompanyId(null);
-        setNeedsRegistrationCode(false);
-        setLoading(false);
       }
     };
 
-    // Verificar sesión inicial con timeout
+    // Verificar sesión inicial de manera simple
     const checkInitialSession = async () => {
       try {
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 8000)
-        );
-
-        const sessionPromise = supabase.auth.getSession();
-        const result = await Promise.race([sessionPromise, timeoutPromise]) as any;
-        const { data: { session } } = result;
+        const { data: { session } } = await supabase.auth.getSession();
         
         if (session?.user) {
+          console.log('✅ Sesión encontrada:', session.user.email);
           await handleAuthStateChange('SIGNED_IN', session);
         } else {
+          console.log('ℹ️ No hay sesión activa');
           setLoading(false);
         }
       } catch (error) {
@@ -683,10 +688,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
+    // Verificar sesión inicial inmediatamente
     checkInitialSession();
 
-    // Suscribirse a cambios de autenticación
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthStateChange);
+    // Suscribirse SOLO a SIGNED_OUT para evitar conflictos
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        handleAuthStateChange(event, session);
+      }
+      // Ignorar SIGNED_IN y otros eventos para evitar re-procesamiento
+    });
 
     return () => subscription.unsubscribe();
   }, []);
