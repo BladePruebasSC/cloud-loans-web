@@ -126,7 +126,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               principalAmount = amount - fixedInterestPerPayment;
             }
             
-            newBalance = Math.max(0, loan.remaining_balance - principalAmount);
+            newBalance = Math.max(0, loan.remaining_balance - amount);
           }
           break;
         
@@ -153,6 +153,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           const totalInterest = (loan.amount * loan.interest_rate * newTotalPayments) / 100;
           const totalAmount = totalInterest + loan.amount;
           newPayment = totalAmount / newTotalPayments;
+          
+          // Calcular nuevo balance: el balance actual + las cuotas adicionales
+          const additionalBalance = newPayment * additionalMonths;
+          newBalance = loan.remaining_balance + additionalBalance;
           
           // Calcular nueva fecha de fin
           const currentEndDate = new Date(loan.next_payment_date);
