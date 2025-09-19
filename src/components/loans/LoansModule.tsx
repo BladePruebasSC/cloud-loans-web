@@ -1,11 +1,12 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import { LoanForm } from './LoanForm';
 import { PaymentForm } from './PaymentForm';
 import { LoanUpdateForm } from './LoanUpdateForm';
@@ -27,11 +28,13 @@ import {
   AlertCircle,
   CheckCircle,
   Filter,
+  FileText,
   Receipt,
   Edit,
   History,
   X,
   ChevronLeft,
+  ArrowRight,
   ChevronRight,
   Trash2,
   RotateCcw,
@@ -47,6 +50,9 @@ export const LoansModule = () => {
   const [showStatistics, setShowStatistics] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
+  const [initialLoanData, setInitialLoanData] = useState(null);
+  const [showRequestSelector, setShowRequestSelector] = useState(false);
+  const [requests, setRequests] = useState([]);
   const [currentViewMonth, setCurrentViewMonth] = useState(new Date());
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [loanToCancel, setLoanToCancel] = useState(null);
@@ -76,6 +82,105 @@ export const LoansModule = () => {
 
   const resetToCurrentMonth = () => {
     setCurrentViewMonth(new Date());
+  };
+
+  // Detectar parámetros de URL para crear préstamo desde solicitud
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const createParam = urlParams.get('create');
+    
+    if (createParam === 'true') {
+      const initialData = {
+        client_id: urlParams.get('client_id') || undefined,
+        amount: urlParams.get('amount') ? Number(urlParams.get('amount')) : undefined,
+        purpose: urlParams.get('purpose') || undefined,
+        monthly_income: urlParams.get('monthly_income') ? Number(urlParams.get('monthly_income')) : undefined,
+        existing_debts: urlParams.get('existing_debts') ? Number(urlParams.get('existing_debts')) : undefined,
+        employment_status: urlParams.get('employment_status') || undefined,
+        // Campos de préstamo
+        interest_rate: urlParams.get('interest_rate') ? Number(urlParams.get('interest_rate')) : undefined,
+        term_months: urlParams.get('term_months') ? Number(urlParams.get('term_months')) : undefined,
+        loan_type: urlParams.get('loan_type') || undefined,
+        amortization_type: urlParams.get('amortization_type') || undefined,
+        payment_frequency: urlParams.get('payment_frequency') || undefined,
+        first_payment_date: urlParams.get('first_payment_date') || undefined,
+        closing_costs: urlParams.get('closing_costs') ? Number(urlParams.get('closing_costs')) : undefined,
+        late_fee: urlParams.get('late_fee') === 'true',
+        minimum_payment_type: urlParams.get('minimum_payment_type') || undefined,
+        minimum_payment_percentage: urlParams.get('minimum_payment_percentage') ? Number(urlParams.get('minimum_payment_percentage')) : undefined,
+        guarantor_required: urlParams.get('guarantor_required') === 'true',
+        guarantor_name: urlParams.get('guarantor_name') || undefined,
+        guarantor_phone: urlParams.get('guarantor_phone') || undefined,
+        guarantor_dni: urlParams.get('guarantor_dni') || undefined,
+        notes: urlParams.get('notes') || undefined,
+      };
+      
+      // Solo configurar si hay al menos un parámetro válido
+      if (initialData.client_id || initialData.amount) {
+        setInitialLoanData(initialData);
+        setShowLoanForm(true);
+        
+        // Limpiar URL para evitar re-aplicación
+        window.history.replaceState({}, '', '/prestamos');
+      }
+    }
+  }, []);
+
+  // Cargar solicitudes para el selector
+  const fetchRequests = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('loan_requests')
+        .select(`
+          *,
+          clients (
+            id,
+            full_name,
+            dni,
+            phone,
+            email
+          )
+        `)
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setRequests(data || []);
+    } catch (error) {
+      console.error('Error fetching requests:', error);
+    }
+  };
+
+  // Función para seleccionar una solicitud y crear préstamo
+  const handleSelectRequestForLoan = (request) => {
+    const initialData = {
+      client_id: request.client_id,
+      amount: request.requested_amount,
+      purpose: request.purpose,
+      monthly_income: request.monthly_income,
+      existing_debts: request.existing_debts,
+      employment_status: request.employment_status,
+      // Campos de préstamo
+      interest_rate: request.interest_rate,
+      term_months: request.term_months,
+      loan_type: request.loan_type,
+      amortization_type: request.amortization_type,
+      payment_frequency: request.payment_frequency,
+      first_payment_date: request.first_payment_date,
+      closing_costs: request.closing_costs,
+      late_fee: request.late_fee,
+      minimum_payment_type: request.minimum_payment_type,
+      minimum_payment_percentage: request.minimum_payment_percentage,
+      guarantor_required: request.guarantor_required,
+      guarantor_name: request.guarantor_name,
+      guarantor_phone: request.guarantor_phone,
+      guarantor_dni: request.guarantor_dni,
+      notes: request.notes,
+    };
+    
+    setInitialLoanData(initialData);
+    setShowRequestSelector(false);
+    setShowLoanForm(true);
   };
 
   // Función para aprobar préstamos pendientes
@@ -281,11 +386,16 @@ export const LoansModule = () => {
   if (showLoanForm) {
     return (
       <LoanForm 
-        onBack={() => setShowLoanForm(false)}
+        onBack={() => {
+          setShowLoanForm(false);
+          setInitialLoanData(null); // Limpiar datos iniciales
+        }}
         onLoanCreated={() => {
           setShowLoanForm(false);
+          setInitialLoanData(null); // Limpiar datos iniciales
           refetch(); // Actualizar los datos de préstamos
         }}
+        initialData={initialLoanData}
       />
     );
   }
@@ -339,6 +449,17 @@ export const LoansModule = () => {
           <Button onClick={() => setShowLoanForm(true)} className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" />
             Nuevo Préstamo
+          </Button>
+          <Button 
+            onClick={() => {
+              fetchRequests();
+              setShowRequestSelector(true);
+            }} 
+            className="w-full sm:w-auto"
+            variant="outline"
+          >
+            <FileText className="h-4 w-4 mr-2" />
+            Desde Solicitud
           </Button>
         </div>
       </div>
@@ -1902,6 +2023,76 @@ export const LoansModule = () => {
                {isCancelling ? 'Cancelando...' : 'Confirmar Cancelación'}
              </Button>
            </div>
+         </div>
+       </DialogContent>
+     </Dialog>
+
+     {/* Modal de Selección de Solicitudes */}
+     <Dialog open={showRequestSelector} onOpenChange={setShowRequestSelector}>
+       <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+         <DialogHeader>
+           <DialogTitle>Seleccionar Solicitud para Crear Préstamo</DialogTitle>
+         </DialogHeader>
+         <div className="space-y-4">
+           {requests.length === 0 ? (
+             <div className="text-center py-8">
+               <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+               <p className="text-gray-500">No hay solicitudes aprobadas disponibles</p>
+             </div>
+           ) : (
+             <div className="grid gap-4">
+               {requests.map((request) => (
+                 <Card key={request.id} className="hover:bg-gray-50 cursor-pointer transition-colors">
+                   <CardContent className="p-4">
+                     <div className="flex justify-between items-start">
+                       <div className="space-y-2 flex-1">
+                         <div className="flex items-center space-x-3">
+                           <Users className="h-4 w-4 text-gray-500" />
+                           <h3 className="font-medium">{request.clients?.full_name}</h3>
+                           <Badge variant="outline" className="text-green-600 border-green-600">
+                             Aprobada
+                           </Badge>
+                         </div>
+                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+                           <div className="flex items-center">
+                             <DollarSign className="h-3 w-3 mr-1" />
+                             Solicita: ${request.requested_amount.toLocaleString()}
+                           </div>
+                           <div className="flex items-center">
+                             <Clock className="h-3 w-3 mr-1" />
+                             {new Date(request.created_at).toLocaleDateString()}
+                           </div>
+                           {request.clients?.credit_score && (
+                             <div className="flex items-center">
+                               <AlertCircle className="h-3 w-3 mr-1" />
+                               Score: {request.clients.credit_score}
+                             </div>
+                           )}
+                         </div>
+                         {request.purpose && (
+                           <p className="text-sm text-gray-600">
+                             <strong>Propósito:</strong> {request.purpose}
+                           </p>
+                         )}
+                         {request.monthly_income && (
+                           <p className="text-sm text-gray-600">
+                             <strong>Ingresos:</strong> ${request.monthly_income.toLocaleString()}/mes
+                           </p>
+                         )}
+                       </div>
+                       <Button 
+                         onClick={() => handleSelectRequestForLoan(request)}
+                         className="ml-4"
+                       >
+                         <ArrowRight className="h-4 w-4 mr-1" />
+                         Usar Solicitud
+                       </Button>
+                     </div>
+                   </CardContent>
+                 </Card>
+               ))}
+             </div>
+           )}
          </div>
        </DialogContent>
      </Dialog>

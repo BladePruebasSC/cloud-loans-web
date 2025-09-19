@@ -21,7 +21,9 @@ import {
   User,
   DollarSign,
   Settings,
-  Eye
+  Eye,
+  ArrowRight,
+  Trash2
 } from 'lucide-react';
 
 interface LoanRequest {
@@ -34,6 +36,22 @@ interface LoanRequest {
   employment_status: string | null;
   income_verification: string | null;
   collateral_description: string | null;
+  // Nuevos campos para préstamos
+  interest_rate: number | null;
+  term_months: number | null;
+  loan_type: string | null;
+  amortization_type: string | null;
+  payment_frequency: string | null;
+  first_payment_date: string | null;
+  closing_costs: number | null;
+  late_fee: boolean | null;
+  minimum_payment_type: string | null;
+  minimum_payment_percentage: number | null;
+  guarantor_required: boolean | null;
+  guarantor_name: string | null;
+  guarantor_phone: string | null;
+  guarantor_dni: string | null;
+  notes: string | null;
   status: string;
   review_notes: string | null;
   reviewed_by: string | null;
@@ -65,6 +83,8 @@ const RequestsModule = () => {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<LoanRequest | null>(null);
   const [activeTab, setActiveTab] = useState('lista-solicitudes');
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [requestToDelete, setRequestToDelete] = useState<LoanRequest | null>(null);
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -75,7 +95,23 @@ const RequestsModule = () => {
     existing_debts: 0,
     employment_status: '',
     income_verification: '',
-    collateral_description: ''
+    collateral_description: '',
+    // Nuevos campos para préstamos
+    interest_rate: 0,
+    term_months: 12,
+    loan_type: 'personal',
+    amortization_type: 'simple',
+    payment_frequency: 'monthly',
+    first_payment_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
+    closing_costs: 0,
+    late_fee: false,
+    minimum_payment_type: 'interest',
+    minimum_payment_percentage: 100,
+    guarantor_required: false,
+    guarantor_name: '',
+    guarantor_phone: '',
+    guarantor_dni: '',
+    notes: ''
   });
 
   useEffect(() => {
@@ -155,12 +191,44 @@ const RequestsModule = () => {
     }
   };
 
+  const handleCreateLoanFromRequest = (request: LoanRequest) => {
+    // Crear URL con parámetros para pre-llenar el formulario de préstamo
+    const loanParams = new URLSearchParams({
+      client_id: request.client_id,
+      amount: request.requested_amount.toString(),
+      purpose: request.purpose || '',
+      // Campos de préstamo
+      interest_rate: (request.interest_rate || 0).toString(),
+      term_months: (request.term_months || 12).toString(),
+      loan_type: request.loan_type || 'personal',
+      amortization_type: request.amortization_type || 'simple',
+      payment_frequency: request.payment_frequency || 'monthly',
+      first_payment_date: request.first_payment_date || new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
+      closing_costs: (request.closing_costs || 0).toString(),
+      late_fee: (request.late_fee || false).toString(),
+      minimum_payment_type: request.minimum_payment_type || 'interest',
+      minimum_payment_percentage: (request.minimum_payment_percentage || 100).toString(),
+      guarantor_required: (request.guarantor_required || false).toString(),
+      guarantor_name: request.guarantor_name || '',
+      guarantor_phone: request.guarantor_phone || '',
+      guarantor_dni: request.guarantor_dni || '',
+      notes: request.notes || '',
+      // Campos adicionales de la solicitud
+      monthly_income: (request.monthly_income || 0).toString(),
+      existing_debts: (request.existing_debts || 0).toString(),
+      employment_status: request.employment_status || '',
+    });
+    
+    // Navegar al formulario de préstamos con los datos pre-llenados
+    window.location.href = `/prestamos?create=true&${loanParams.toString()}`;
+  };
+
   const updateRequestStatus = async (requestId: string, status: string, notes: string = '') => {
     try {
       const { error } = await supabase
         .from('loan_requests')
-        .update({
-          status,
+        .update({ 
+          status, 
           review_notes: notes,
           reviewed_by: user?.id,
           reviewed_at: new Date().toISOString()
@@ -177,6 +245,36 @@ const RequestsModule = () => {
     }
   };
 
+  const deleteApprovedRequest = async (requestId: string) => {
+    try {
+      const { error } = await supabase
+        .from('loan_requests')
+        .delete()
+        .eq('id', requestId);
+
+      if (error) throw error;
+
+      toast.success('Solicitud eliminada exitosamente');
+      fetchRequests();
+    } catch (error) {
+      console.error('Error deleting request:', error);
+      toast.error('Error al eliminar solicitud');
+    }
+  };
+
+  const handleDeleteRequest = (request: LoanRequest) => {
+    setRequestToDelete(request);
+    setShowDeleteDialog(true);
+  };
+
+  const confirmDeleteRequest = async () => {
+    if (requestToDelete) {
+      await deleteApprovedRequest(requestToDelete.id);
+      setShowDeleteDialog(false);
+      setRequestToDelete(null);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       client_id: '',
@@ -186,7 +284,23 @@ const RequestsModule = () => {
       existing_debts: 0,
       employment_status: '',
       income_verification: '',
-      collateral_description: ''
+      collateral_description: '',
+      // Resetear nuevos campos
+      interest_rate: 0,
+      term_months: 12,
+      loan_type: 'personal',
+      amortization_type: 'simple',
+      payment_frequency: 'monthly',
+      first_payment_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
+      closing_costs: 0,
+      late_fee: false,
+      minimum_payment_type: 'interest',
+      minimum_payment_percentage: 100,
+      guarantor_required: false,
+      guarantor_name: '',
+      guarantor_phone: '',
+      guarantor_dni: '',
+      notes: ''
     });
   };
 
@@ -441,6 +555,26 @@ const RequestsModule = () => {
                             <Eye className="h-4 w-4 mr-1" />
                             Ver
                           </Button>
+                          <Button 
+                            size="sm" 
+                            variant="default" 
+                            className="bg-blue-600 hover:bg-blue-700 text-white"
+                            onClick={() => handleCreateLoanFromRequest(request)}
+                          >
+                            <ArrowRight className="h-4 w-4 mr-1" />
+                            Crear Préstamo
+                          </Button>
+                          {request.status === 'approved' && (
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="text-red-600 hover:bg-red-50"
+                              onClick={() => handleDeleteRequest(request)}
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" />
+                              Eliminar
+                            </Button>
+                          )}
                           {request.status === 'pending' && (
                             <>
                               <Button 
@@ -616,12 +750,13 @@ const RequestsModule = () => {
 
       {/* New Request Form Dialog */}
       <Dialog open={showRequestForm} onOpenChange={setShowRequestForm}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="w-[95vw] max-w-4xl h-[95vh] max-h-[95vh] overflow-hidden flex flex-col sm:w-[90vw] lg:w-[80vw]">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>Nueva Solicitud de Préstamo</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex-1 overflow-y-auto pr-1 sm:pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+            <form id="request-form" onSubmit={handleSubmit} className="space-y-3 sm:space-y-4 pb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
                 <Label htmlFor="client_id">Cliente *</Label>
                 <Select value={formData.client_id} onValueChange={(value) => setFormData({...formData, client_id: value})}>
@@ -719,10 +854,240 @@ const RequestsModule = () => {
               />
             </div>
 
-            <div className="flex justify-end">
-              <Button type="submit">Crear Solicitud</Button>
+            {/* Sección de Datos del Préstamo */}
+            <div className="border-t pt-4 sm:pt-6">
+              <h3 className="text-lg font-semibold mb-3 sm:mb-4 text-blue-600">📋 Datos del Préstamo</h3>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div>
+                  <Label htmlFor="interest_rate">Tasa de Interés (%) *</Label>
+                  <Input
+                    id="interest_rate"
+                    type="number"
+                    step="0.01"
+                    value={formData.interest_rate}
+                    onChange={(e) => setFormData({...formData, interest_rate: Number(e.target.value)})}
+                    placeholder="Ej: 15.5"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="term_months">Plazo (meses) *</Label>
+                  <Input
+                    id="term_months"
+                    type="number"
+                    value={formData.term_months}
+                    onChange={(e) => setFormData({...formData, term_months: Number(e.target.value)})}
+                    placeholder="Ej: 12"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="loan_type">Tipo de Préstamo *</Label>
+                  <Select value={formData.loan_type} onValueChange={(value) => setFormData({...formData, loan_type: value})}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="personal">Personal</SelectItem>
+                      <SelectItem value="business">Empresarial</SelectItem>
+                      <SelectItem value="mortgage">Hipotecario</SelectItem>
+                      <SelectItem value="auto">Automotriz</SelectItem>
+                      <SelectItem value="education">Educativo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="amortization_type">Tipo de Amortización *</Label>
+                  <Select value={formData.amortization_type} onValueChange={(value) => setFormData({...formData, amortization_type: value})}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="simple">Simple</SelectItem>
+                      <SelectItem value="german">Alemán</SelectItem>
+                      <SelectItem value="american">Americano</SelectItem>
+                      <SelectItem value="indefinite">Indefinido</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="payment_frequency">Frecuencia de Pago *</Label>
+                  <Select value={formData.payment_frequency} onValueChange={(value) => setFormData({...formData, payment_frequency: value})}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar frecuencia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="monthly">Mensual</SelectItem>
+                      <SelectItem value="biweekly">Quincenal</SelectItem>
+                      <SelectItem value="weekly">Semanal</SelectItem>
+                      <SelectItem value="daily">Diario</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <Label htmlFor="first_payment_date">Fecha del Primer Pago *</Label>
+                  <Input
+                    id="first_payment_date"
+                    type="date"
+                    value={formData.first_payment_date}
+                    onChange={(e) => setFormData({...formData, first_payment_date: e.target.value})}
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="closing_costs">Costos de Cierre</Label>
+                  <Input
+                    id="closing_costs"
+                    type="number"
+                    step="0.01"
+                    value={formData.closing_costs}
+                    onChange={(e) => setFormData({...formData, closing_costs: Number(e.target.value)})}
+                    placeholder="0.00"
+                  />
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="late_fee"
+                    checked={formData.late_fee}
+                    onChange={(e) => setFormData({...formData, late_fee: e.target.checked})}
+                    className="rounded"
+                  />
+                  <Label htmlFor="late_fee">Incluir cargo por mora</Label>
+                </div>
+              </div>
+              
+              {/* Sección de Garantía */}
+              <div className="mt-4 sm:mt-6">
+                <h4 className="text-md font-semibold mb-3 text-gray-700">👥 Información de Garantía</h4>
+                
+                <div className="flex items-center space-x-2 mb-4">
+                  <input
+                    type="checkbox"
+                    id="guarantor_required"
+                    checked={formData.guarantor_required}
+                    onChange={(e) => setFormData({...formData, guarantor_required: e.target.checked})}
+                    className="rounded"
+                  />
+                  <Label htmlFor="guarantor_required">Requiere garantía</Label>
+                </div>
+                
+                {formData.guarantor_required && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4 bg-gray-50 rounded-lg">
+                    <div>
+                      <Label htmlFor="guarantor_name">Nombre del Garante</Label>
+                      <Input
+                        id="guarantor_name"
+                        value={formData.guarantor_name}
+                        onChange={(e) => setFormData({...formData, guarantor_name: e.target.value})}
+                        placeholder="Nombre completo"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor="guarantor_phone">Teléfono del Garante</Label>
+                      <Input
+                        id="guarantor_phone"
+                        value={formData.guarantor_phone}
+                        onChange={(e) => setFormData({...formData, guarantor_phone: e.target.value})}
+                        placeholder="(809) 123-4567"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor="guarantor_dni">DNI del Garante</Label>
+                      <Input
+                        id="guarantor_dni"
+                        value={formData.guarantor_dni}
+                        onChange={(e) => setFormData({...formData, guarantor_dni: e.target.value})}
+                        placeholder="000-0000000-0"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Campo de Notas */}
+              <div className="mt-4">
+                <Label htmlFor="notes">Notas Adicionales</Label>
+                <Textarea
+                  id="notes"
+                  value={formData.notes}
+                  onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                  placeholder="Información adicional sobre el préstamo..."
+                  rows={3}
+                />
+              </div>
             </div>
-          </form>
+
+            </form>
+          </div>
+          <div className="flex-shrink-0 border-t pt-4 mt-4">
+            <div className="flex justify-end">
+              <Button type="submit" form="request-form">Crear Solicitud</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Confirmación de Eliminación */}
+      <Dialog open={showDeleteDialog} onOpenChange={(open) => {
+        if (!open) {
+          setShowDeleteDialog(false);
+          setRequestToDelete(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-red-600" />
+              Confirmar Eliminación
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-gray-600">
+              ¿Estás seguro de que deseas eliminar esta solicitud aprobada?
+            </p>
+            {requestToDelete && (
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h4 className="font-medium text-gray-900">
+                  Solicitud de {requestToDelete.clients?.full_name}
+                </h4>
+                <p className="text-sm text-gray-600">
+                  Monto: ${requestToDelete.requested_amount.toLocaleString()}
+                </p>
+                <p className="text-sm text-gray-600">
+                  Fecha: {new Date(requestToDelete.created_at).toLocaleDateString()}
+                </p>
+              </div>
+            )}
+            <div className="flex justify-end space-x-2">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setShowDeleteDialog(false);
+                  setRequestToDelete(null);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                variant="destructive" 
+                onClick={confirmDeleteRequest}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Eliminar
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

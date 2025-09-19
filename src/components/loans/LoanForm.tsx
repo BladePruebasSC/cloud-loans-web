@@ -63,7 +63,36 @@ interface AmortizationRow {
   remainingBalance: number;
 }
 
-export const LoanForm = ({ onBack, onLoanCreated }: { onBack: () => void; onLoanCreated?: () => void }) => {
+interface LoanFormProps {
+  onBack: () => void;
+  onLoanCreated?: () => void;
+  initialData?: {
+    client_id?: string;
+    amount?: number;
+    purpose?: string;
+    monthly_income?: number;
+    existing_debts?: number;
+    employment_status?: string;
+    // Campos de préstamo
+    interest_rate?: number;
+    term_months?: number;
+    loan_type?: string;
+    amortization_type?: string;
+    payment_frequency?: string;
+    first_payment_date?: string;
+    closing_costs?: number;
+    late_fee?: boolean;
+    minimum_payment_type?: string;
+    minimum_payment_percentage?: number;
+    guarantor_required?: boolean;
+    guarantor_name?: string;
+    guarantor_phone?: string;
+    guarantor_dni?: string;
+    notes?: string;
+  };
+}
+
+export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [clientSearch, setClientSearch] = useState('');
@@ -143,6 +172,73 @@ export const LoanForm = ({ onBack, onLoanCreated }: { onBack: () => void; onLoan
   useEffect(() => {
     fetchClients();
   }, []);
+
+  // Aplicar datos iniciales si se proporcionan (desde solicitud)
+  useEffect(() => {
+    if (initialData && clients.length > 0) {
+      // Pre-seleccionar cliente si se proporciona
+      if (initialData.client_id) {
+        const client = clients.find(c => c.id === initialData.client_id);
+        if (client) {
+          setSelectedClient(client);
+          setClientSearch(client.full_name);
+        }
+      }
+
+      // Pre-llenar campos del formulario
+      if (initialData.amount) {
+        form.setValue('amount', initialData.amount);
+      }
+      if (initialData.purpose) {
+        form.setValue('comments', initialData.purpose);
+      }
+      if (initialData.interest_rate !== undefined) {
+        form.setValue('interest_rate', initialData.interest_rate);
+      }
+      if (initialData.term_months !== undefined) {
+        form.setValue('term_months', initialData.term_months);
+      }
+      if (initialData.loan_type) {
+        form.setValue('loan_type', initialData.loan_type);
+      }
+      if (initialData.amortization_type) {
+        form.setValue('amortization_type', initialData.amortization_type);
+      }
+      if (initialData.payment_frequency) {
+        form.setValue('payment_frequency', initialData.payment_frequency);
+      }
+      if (initialData.first_payment_date) {
+        form.setValue('first_payment_date', initialData.first_payment_date);
+      }
+      if (initialData.closing_costs !== undefined) {
+        form.setValue('closing_costs', initialData.closing_costs);
+      }
+      if (initialData.late_fee !== undefined) {
+        form.setValue('late_fee', initialData.late_fee);
+      }
+      if (initialData.minimum_payment_type) {
+        form.setValue('minimum_payment_type', initialData.minimum_payment_type);
+      }
+      if (initialData.minimum_payment_percentage !== undefined) {
+        form.setValue('minimum_payment_percentage', initialData.minimum_payment_percentage);
+      }
+      if (initialData.guarantor_required !== undefined) {
+        form.setValue('guarantor_required', initialData.guarantor_required);
+      }
+      if (initialData.guarantor_name) {
+        form.setValue('guarantor_name', initialData.guarantor_name);
+      }
+      if (initialData.guarantor_phone) {
+        form.setValue('guarantor_phone', initialData.guarantor_phone);
+      }
+      if (initialData.guarantor_dni) {
+        form.setValue('guarantor_dni', initialData.guarantor_dni);
+      }
+      if (initialData.notes) {
+        form.setValue('notes', initialData.notes);
+      }
+    }
+  }, [initialData, clients]);
 
   // Función para calcular la tasa de interés basada en una cuota fija
   const calculateInterestFromQuota = (principal: number, quota: number, months: number) => {
