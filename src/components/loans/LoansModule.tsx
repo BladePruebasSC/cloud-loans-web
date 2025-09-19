@@ -436,18 +436,29 @@ export const LoansModule = () => {
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Préstamos</h1>
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          <Button onClick={() => {
-            setSelectedLoanForPayment(null);
-            setShowPaymentForm(true);
-          }} className="w-full sm:w-auto">
-            <Receipt className="h-4 w-4 mr-2" />
+      {/* Header mejorado para móviles */}
+      <div className="space-y-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 text-center sm:text-left">Gestión de Préstamos</h1>
+        
+        {/* Botones principales - diseño móvil optimizado */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+          <Button 
+            onClick={() => {
+              setSelectedLoanForPayment(null);
+              setShowPaymentForm(true);
+            }} 
+            className="h-12 sm:h-10 text-base sm:text-sm font-medium"
+            size="lg"
+          >
+            <DollarSign className="h-5 w-5 mr-2" />
             Registrar Pago
           </Button>
-          <Button onClick={() => setShowLoanForm(true)} className="w-full sm:w-auto">
-            <Plus className="h-4 w-4 mr-2" />
+          <Button 
+            onClick={() => setShowLoanForm(true)} 
+            className="h-12 sm:h-10 text-base sm:text-sm font-medium"
+            size="lg"
+          >
+            <Plus className="h-5 w-5 mr-2" />
             Nuevo Préstamo
           </Button>
           <Button 
@@ -455,74 +466,110 @@ export const LoansModule = () => {
               fetchRequests();
               setShowRequestSelector(true);
             }} 
-            className="w-full sm:w-auto"
+            className="h-12 sm:h-10 text-base sm:text-sm font-medium"
             variant="outline"
+            size="lg"
           >
-            <FileText className="h-4 w-4 mr-2" />
+            <FileText className="h-5 w-5 mr-2" />
             Desde Solicitud
           </Button>
         </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 sm:gap-2 overflow-x-auto">
-          <TabsTrigger value="mis-prestamos" className="text-xs sm:text-sm whitespace-nowrap">Mis Préstamos</TabsTrigger>
-          <TabsTrigger value="nuevo-prestamo" className="text-xs sm:text-sm whitespace-nowrap">Nuevo Préstamo</TabsTrigger>
-          <TabsTrigger value="buscar" className="text-xs sm:text-sm whitespace-nowrap">Buscar</TabsTrigger>
-          <TabsTrigger value="pendientes" className="text-xs sm:text-sm whitespace-nowrap">Pendientes</TabsTrigger>
-          <TabsTrigger value="agenda" className="text-xs sm:text-sm whitespace-nowrap">Agenda</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 h-auto">
+          <TabsTrigger 
+            value="mis-prestamos" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <CreditCard className="h-4 w-4" />
+            <span className="hidden xs:inline">Mis</span>
+            <span className="xs:hidden">Mis</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="nuevo-prestamo" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <Plus className="h-4 w-4" />
+            <span className="hidden xs:inline">Nuevo</span>
+            <span className="xs:hidden">Nuevo</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="buscar" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <Search className="h-4 w-4" />
+            <span className="hidden xs:inline">Buscar</span>
+            <span className="xs:hidden">Buscar</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="pendientes" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <Clock className="h-4 w-4" />
+            <span className="hidden xs:inline">Pend.</span>
+            <span className="xs:hidden">Pend.</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="agenda" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <Calendar className="h-4 w-4" />
+            <span className="hidden xs:inline">Agenda</span>
+            <span className="xs:hidden">Agenda</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="mis-prestamos" className="space-y-6">
-          {/* Stats Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Préstamos</CardTitle>
-                <CreditCard className="h-4 w-4 text-muted-foreground" />
+          {/* Stats Cards - optimizado para móviles */}
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+            <Card className="hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                <CardTitle className="text-sm sm:text-sm font-medium">Total Préstamos</CardTitle>
+                <CreditCard className="h-5 w-5 text-muted-foreground" />
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{loans.length}</div>
-                <p className="text-xs text-muted-foreground">
+              <CardContent className="pt-0">
+                <div className="text-2xl sm:text-3xl font-bold">{loans.length}</div>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-1">
                   {activeLoans.length} activos
                   {pendingLoans.length > 0 && ` • ${pendingLoans.length} pendientes`}
                 </p>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Préstamos Activos</CardTitle>
-                <CheckCircle className="h-4 w-4 text-green-600" />
+            <Card className="hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                <CardTitle className="text-sm sm:text-sm font-medium">Préstamos Activos</CardTitle>
+                <CheckCircle className="h-5 w-5 text-green-600" />
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-green-600">{activeLoans.length + pendingLoans.length}</div>
-                <p className="text-xs text-muted-foreground">
+              <CardContent className="pt-0">
+                <div className="text-2xl sm:text-3xl font-bold text-green-600">{activeLoans.length + pendingLoans.length}</div>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-1">
                   {activeLoans.length} activos
                   {pendingLoans.length > 0 && ` • ${pendingLoans.length} por aprobar`}
                 </p>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Préstamos Vencidos</CardTitle>
-                <AlertCircle className="h-4 w-4 text-red-600" />
+            <Card className="hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                <CardTitle className="text-sm sm:text-sm font-medium">Préstamos Vencidos</CardTitle>
+                <AlertCircle className="h-5 w-5 text-red-600" />
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-red-600">{overdueLoans.length}</div>
-                <p className="text-xs text-muted-foreground">Requieren atención</p>
+              <CardContent className="pt-0">
+                <div className="text-2xl sm:text-3xl font-bold text-red-600">{overdueLoans.length}</div>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-1">Requieren atención</p>
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Capital Prestado</CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
+            <Card className="hover:shadow-md transition-shadow">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                <CardTitle className="text-sm sm:text-sm font-medium">Capital Prestado</CardTitle>
+                <DollarSign className="h-5 w-5 text-muted-foreground" />
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">${totalBalance.toLocaleString()}</div>
-                <p className="text-xs text-muted-foreground">Balance pendiente</p>
+              <CardContent className="pt-0">
+                <div className="text-2xl sm:text-3xl font-bold">${totalBalance.toLocaleString()}</div>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-1">Balance pendiente</p>
               </CardContent>
             </Card>
           </div>
@@ -666,18 +713,20 @@ export const LoansModule = () => {
               ) : (
                 <div className="space-y-4">
                   {filteredLoans.map((loan) => (
-                    <div key={loan.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="font-semibold text-lg">
-                              {loan.client?.full_name} - {loan.client?.dni}
+                    <div key={loan.id} className="border rounded-lg p-4 sm:p-6 hover:shadow-md transition-shadow bg-white">
+                      <div className="space-y-4">
+                        {/* Header del préstamo */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex-1">
+                            <h3 className="font-semibold text-lg sm:text-xl text-gray-900 mb-2">
+                              {loan.client?.full_name}
                             </h3>
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            <p className="text-sm text-gray-600 mb-2">DNI: {loan.client?.dni}</p>
+                            <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
                               loan.status === 'active' ? 'bg-green-100 text-green-800' :
                               loan.status === 'overdue' ? 'bg-red-100 text-red-800' :
                               loan.status === 'paid' ? 'bg-blue-100 text-blue-800' :
-                              loan.status === 'pending' ? 'bg-blue-100 text-blue-800' :
+                              loan.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
                               loan.status === 'deleted' ? 'bg-gray-100 text-gray-800' :
                               'bg-gray-100 text-gray-800'
                             }`}>
@@ -689,144 +738,141 @@ export const LoansModule = () => {
                                loan.status}
                             </span>
                           </div>
+                        </div>
+                        
+                        {/* Información del préstamo - optimizada para móviles */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                          <div className="bg-gray-50 rounded-lg p-3">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="font-medium text-sm text-gray-700">Monto Total</span>
+                              <span className="text-lg font-bold text-gray-900">${loan.amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="font-medium text-sm text-gray-700">Balance Pendiente</span>
+                              <span className="text-lg font-bold text-red-600">${loan.remaining_balance.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium text-sm text-gray-700">Cuota Mensual</span>
+                              <span className="text-lg font-bold text-blue-600">${loan.monthly_payment.toLocaleString()}</span>
+                            </div>
+                          </div>
                           
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
-                            <div className="flex flex-col sm:flex-row sm:items-center">
-                              <span className="font-medium text-xs sm:text-sm">Monto:</span> 
-                              <span className="text-xs sm:text-sm">${loan.amount.toLocaleString()}</span>
+                          <div className="bg-blue-50 rounded-lg p-3">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="font-medium text-sm text-gray-700">Próximo Pago</span>
+                              <span className="text-sm font-semibold text-gray-900">{new Date(loan.next_payment_date).toLocaleDateString()}</span>
                             </div>
-                            <div className="flex flex-col sm:flex-row sm:items-center">
-                              <span className="font-medium text-xs sm:text-sm">Balance:</span> 
-                              <span className="text-xs sm:text-sm">${loan.remaining_balance.toLocaleString()}</span>
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium text-sm text-gray-700">Plazo</span>
+                              <span className="text-sm font-semibold text-gray-900">{loan.term_months} meses</span>
                             </div>
-                            <div className="flex flex-col sm:flex-row sm:items-center">
-                              <span className="font-medium text-xs sm:text-sm">Cuota:</span> 
-                              <span className="text-xs sm:text-sm">${loan.monthly_payment.toLocaleString()}</span>
+                          </div>
+                        </div>
+                        
+                        {/* Información adicional */}
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                            <div className="flex justify-between">
+                              <span className="font-medium text-gray-700">Tasa de Interés:</span>
+                              <span className="font-semibold text-gray-900">{loan.interest_rate}%</span>
                             </div>
-                            <div className="flex flex-col sm:flex-row sm:items-center">
-                              <span className="font-medium text-xs sm:text-sm">Próximo Pago:</span> 
-                              <span className="text-xs sm:text-sm">{new Date(loan.next_payment_date).toLocaleDateString()}</span>
+                            <div className="flex justify-between">
+                              <span className="font-medium text-gray-700">Tipo:</span>
+                              <span className="font-semibold text-gray-900">{loan.loan_type}</span>
                             </div>
-                            <div className="flex flex-col sm:flex-row sm:items-center">
-                              <span className="font-medium text-xs sm:text-sm">Plazo:</span> 
-                              <span className="text-xs sm:text-sm">{loan.term_months} meses</span>
-                            </div>
-                            <div className="flex flex-col sm:flex-row sm:items-center">
-                              <span className="font-medium text-xs sm:text-sm">Tasa:</span> 
-                              <span className="text-xs sm:text-sm">{loan.interest_rate}%</span>
-                            </div>
-                            <div className="flex flex-col sm:flex-row sm:items-center">
-                              <span className="font-medium text-xs sm:text-sm">Tipo:</span> 
-                              <span className="text-xs sm:text-sm">{loan.loan_type}</span>
-                            </div>
-                            <div className="flex flex-col sm:flex-row sm:items-center">
-                              <span className="font-medium text-xs sm:text-sm">Inicio:</span> 
-                              <span className="text-xs sm:text-sm">{new Date(loan.start_date).toLocaleDateString()}</span>
+                            <div className="flex justify-between">
+                              <span className="font-medium text-gray-700">Fecha de Inicio:</span>
+                              <span className="font-semibold text-gray-900">{new Date(loan.start_date).toLocaleDateString()}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 mt-2 sm:mt-0">
+                        {/* Botones de acción - optimizados para móviles */}
+                        <div className="flex flex-col sm:flex-row gap-3 mt-4">
                           {loan.status === 'pending' ? (
-                            <div className="flex flex-col sm:flex-row gap-1 sm:gap-2 w-full sm:w-auto">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                               <Button
                                 variant="default"
-                                size="sm"
+                                size="lg"
                                 onClick={() => handleApproveLoan(loan.id)}
-                                className="w-full sm:w-auto text-xs bg-green-600 hover:bg-green-700"
+                                className="h-12 text-base font-medium bg-green-600 hover:bg-green-700"
                               >
-                                <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                <span className="sm:hidden">Aprobar</span>
-                                <span className="hidden sm:inline">Aprobar</span>
+                                <CheckCircle className="h-5 w-5 mr-2" />
+                                Aprobar Préstamo
                               </Button>
                               <Button
                                 variant="outline"
-                                size="sm"
+                                size="lg"
                                 onClick={() => {
                                   setSelectedLoan(loan);
                                   setShowUpdateForm(true);
                                 }}
-                                className="w-full sm:w-auto text-xs"
+                                className="h-12 text-base font-medium"
                               >
-                                <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                <span className="sm:hidden">Editar</span>
-                                <span className="hidden sm:inline">Editar</span>
+                                <Edit className="h-5 w-5 mr-2" />
+                                Editar
                               </Button>
                               <Button
                                 variant="destructive"
-                                size="sm"
+                                size="lg"
                                 onClick={() => handleCancelLoanClick(loan)}
-                                className="w-full sm:w-auto text-xs"
+                                className="h-12 text-base font-medium"
                               >
-                                <X className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                <span className="sm:hidden">Cancelar</span>
-                                <span className="hidden sm:inline">Cancelar</span>
+                                <X className="h-5 w-5 mr-2" />
+                                Cancelar
                               </Button>
                             </div>
                           ) : loan.status === 'deleted' ? (
                             <Button
                               variant="default"
-                              size="sm"
+                              size="lg"
                               onClick={() => handleRecoverLoan(loan.id)}
-                              className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700"
+                              className="h-12 text-base font-medium bg-blue-600 hover:bg-blue-700"
                             >
-                              <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                              <span className="sm:hidden">Recuperar</span>
-                              <span className="hidden sm:inline">Recuperar Préstamo</span>
+                              <RotateCcw className="h-5 w-5 mr-2" />
+                              Recuperar Préstamo
                             </Button>
                           ) : (
-                            <>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                               <Button
-                                variant="outline"
-                                size="sm"
+                                variant="default"
+                                size="lg"
                                 onClick={() => {
                                   setSelectedLoanForPayment(loan);
                                   setShowPaymentForm(true);
                                 }}
                                 disabled={loan.status === 'paid'}
-                                className="w-full sm:w-auto text-xs"
+                                className="h-12 text-base font-medium bg-green-600 hover:bg-green-700 disabled:bg-gray-400"
                               >
-                                <Receipt className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                <span className="sm:hidden">Pagar</span>
+                                <Receipt className="h-5 w-5 mr-2" />
+                                Registrar Pago
                               </Button>
                               <Button
                                 variant="outline"
-                                size="sm"
+                                size="lg"
                                 onClick={() => {
                                   setSelectedLoan(loan);
                                   setShowUpdateForm(true);
                                 }}
                                 disabled={loan.status === 'paid'}
-                                className="w-full sm:w-auto text-xs"
+                                className="h-12 text-base font-medium"
                               >
-                                <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                <span className="sm:hidden">Editar</span>
+                                <Edit className="h-5 w-5 mr-2" />
+                                Editar
                               </Button>
                               <Button
                                 variant="outline"
-                                size="sm"
+                                size="lg"
                                 onClick={() => {
                                   setSelectedLoan(loan);
                                   setShowHistoryView(true);
                                 }}
-                                className="w-full sm:w-auto text-xs"
+                                className="h-12 text-base font-medium"
                               >
-                                <History className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                <span className="sm:hidden">Historial</span>
+                                <History className="h-5 w-5 mr-2" />
+                                Historial
                               </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedLoan(loan);
-                                  setShowStatistics(true);
-                                }}
-                                className="w-full sm:w-auto text-xs"
-                              >
-                                <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                <span className="sm:hidden">Stats</span>
-                              </Button>
-                            </>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -858,36 +904,36 @@ export const LoansModule = () => {
            {/* Campo de búsqueda principal */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center">
+              <CardTitle className="flex items-center text-lg">
                 <Search className="h-5 w-5 mr-2" />
                  Búsqueda de Préstamos
               </CardTitle>
             </CardHeader>
              <CardContent className="space-y-4">
                <div className="relative">
-                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
                  <Input
                    placeholder="Buscar por nombre del cliente, DNI, ID de préstamo..."
                    value={searchTerm}
                    onChange={(e) => setSearchTerm(e.target.value)}
-                   className="pl-10"
+                   className="pl-12 h-12 text-base"
                  />
                  {searchTerm && (
                    <Button
                      variant="ghost"
                      size="sm"
                      onClick={() => setSearchTerm('')}
-                     className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
+                     className="absolute right-2 top-1/2 transform -translate-y-1/2 h-8 w-8 p-0"
                    >
-                     <X className="h-3 w-3" />
+                     <X className="h-4 w-4" />
                    </Button>
                  )}
                </div>
                
-               {/* Filtros avanzados */}
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+               {/* Filtros avanzados - optimizado para móviles */}
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                   <SelectTrigger>
+                   <SelectTrigger className="h-12 text-base">
                      <SelectValue placeholder="Estado del préstamo" />
                    </SelectTrigger>
                    <SelectContent>
@@ -901,7 +947,7 @@ export const LoansModule = () => {
                  </Select>
 
                  <Select value={dateFilter} onValueChange={setDateFilter}>
-                   <SelectTrigger>
+                   <SelectTrigger className="h-12 text-base">
                      <SelectValue placeholder="Fecha de inicio" />
                    </SelectTrigger>
                    <SelectContent>
@@ -914,7 +960,7 @@ export const LoansModule = () => {
                  </Select>
 
                  <Select value={amountFilter} onValueChange={setAmountFilter}>
-                   <SelectTrigger>
+                   <SelectTrigger className="h-12 text-base">
                      <SelectValue placeholder="Rango de monto" />
                    </SelectTrigger>
                    <SelectContent>
@@ -928,25 +974,25 @@ export const LoansModule = () => {
                  <Button
                    variant={overdueFilter ? "default" : "outline"}
                    onClick={() => setOverdueFilter(!overdueFilter)}
-                   className="w-full"
+                   className="w-full h-12 text-base font-medium"
                  >
-                   <AlertCircle className="h-4 w-4 mr-2" />
+                   <AlertCircle className="h-5 w-5 mr-2" />
                    Solo Vencidos
                  </Button>
 
                  <Button
                    variant={showDeleted ? "default" : "outline"}
                    onClick={() => setShowDeleted(!showDeleted)}
-                   className="w-full"
+                   className="w-full h-12 text-base font-medium"
                  >
-                   <Trash2 className="h-4 w-4 mr-2" />
+                   <Trash2 className="h-5 w-5 mr-2" />
                    {showDeleted ? 'Ocultar Eliminados' : 'Solo Eliminados'}
                  </Button>
                </div>
 
                {/* Botón limpiar filtros */}
                {(searchTerm || statusFilter !== 'all' || dateFilter !== 'all' || amountFilter !== 'all' || overdueFilter || showDeleted) && (
-                 <div className="flex justify-center">
+                 <div className="flex justify-center pt-2">
                    <Button
                      variant="outline"
                      onClick={() => {
@@ -957,8 +1003,9 @@ export const LoansModule = () => {
                        setOverdueFilter(false);
                        setShowDeleted(false);
                      }}
+                     className="h-12 px-6 text-base font-medium"
                    >
-                     <X className="h-4 w-4 mr-2" />
+                     <X className="h-5 w-5 mr-2" />
                      Limpiar Filtros
                    </Button>
                  </div>

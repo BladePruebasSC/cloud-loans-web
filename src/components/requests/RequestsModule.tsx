@@ -379,21 +379,43 @@ const RequestsModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2">
-          <TabsTrigger value="nueva-solicitud" className="text-xs sm:text-sm">Nueva Solicitud</TabsTrigger>
-          <TabsTrigger value="lista-solicitudes" className="text-xs sm:text-sm">Lista de Solicitudes</TabsTrigger>
-          <TabsTrigger value="configuracion" className="text-xs sm:text-sm">Configuración</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-3 gap-1 h-auto">
+          <TabsTrigger 
+            value="nueva-solicitud" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <Plus className="h-4 w-4" />
+            <span className="hidden xs:inline">Nueva</span>
+            <span className="xs:hidden">Nueva</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="lista-solicitudes" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <FileText className="h-4 w-4" />
+            <span className="hidden xs:inline">Lista</span>
+            <span className="xs:hidden">Lista</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="configuracion" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <Settings className="h-4 w-4" />
+            <span className="hidden xs:inline">Config</span>
+            <span className="xs:hidden">Config</span>
+          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="nueva-solicitud" className="space-y-6">
+        <TabsContent value="nueva-solicitud" className="space-y-4 sm:space-y-6">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <FileText className="h-5 w-5 mr-2" />
-                Crear Nueva Solicitud de Préstamo
+            <CardHeader className="pb-3 sm:pb-6">
+              <CardTitle className="flex items-center text-base sm:text-lg">
+                <FileText className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
+                <span className="hidden sm:inline">Crear Nueva Solicitud de Préstamo</span>
+                <span className="sm:hidden">Nueva Solicitud</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0">
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -493,20 +515,26 @@ const RequestsModule = () => {
                   />
                 </div>
 
-                <div className="flex justify-end">
-                  <Button type="submit">Crear Solicitud</Button>
+                <div className="flex flex-col sm:flex-row justify-end gap-2">
+                  <Button 
+                    type="submit" 
+                    className="w-full sm:w-auto min-h-[44px] touch-manipulation"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Crear Solicitud
+                  </Button>
                 </div>
               </form>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="lista-solicitudes" className="space-y-6">
+        <TabsContent value="lista-solicitudes" className="space-y-4 sm:space-y-6">
           <Card>
-            <CardHeader>
-              <CardTitle>Solicitudes Recientes</CardTitle>
+            <CardHeader className="pb-3 sm:pb-6">
+              <CardTitle className="text-base sm:text-lg">Solicitudes Recientes</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0">
               {loading ? (
                 <div className="text-center py-8">Cargando solicitudes...</div>
               ) : requests.length === 0 ? (
@@ -517,62 +545,74 @@ const RequestsModule = () => {
               ) : (
                 <div className="space-y-4">
                   {requests.map((request) => (
-                    <div key={request.id} className="border rounded-lg p-4 hover:bg-gray-50">
-                      <div className="flex justify-between items-start">
-                        <div className="space-y-2 flex-1">
-                          <div className="flex items-center space-x-3">
-                            <User className="h-4 w-4 text-gray-500" />
-                            <h3 className="font-medium">{request.clients?.full_name}</h3>
-                            {getStatusBadge(request.status)}
+                    <div key={request.id} className="border rounded-lg p-3 sm:p-4 hover:bg-gray-50 transition-colors">
+                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 sm:gap-4">
+                        <div className="space-y-2 flex-1 min-w-0">
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                            <div className="flex items-center space-x-2 sm:space-x-3">
+                              <User className="h-4 w-4 text-gray-500 flex-shrink-0" />
+                              <h3 className="font-medium truncate">{request.clients?.full_name}</h3>
+                            </div>
+                            <div className="flex-shrink-0">
+                              {getStatusBadge(request.status)}
+                            </div>
                           </div>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-4 text-xs sm:text-sm text-gray-600">
                             <div className="flex items-center">
-                              <DollarSign className="h-3 w-3 mr-1" />
-                              Solicita: ${request.requested_amount.toLocaleString()}
+                              <DollarSign className="h-3 w-3 mr-1 flex-shrink-0" />
+                              <span className="truncate">Solicita: ${request.requested_amount.toLocaleString()}</span>
                             </div>
                             <div className="flex items-center">
-                              <Clock className="h-3 w-3 mr-1" />
-                              {new Date(request.created_at).toLocaleDateString()}
+                              <Clock className="h-3 w-3 mr-1 flex-shrink-0" />
+                              <span className="truncate">{new Date(request.created_at).toLocaleDateString()}</span>
                             </div>
-                            <div className="flex items-center">
-                              <AlertCircle className="h-3 w-3 mr-1" />
-                              Score: {request.clients?.credit_score || 'N/A'}
+                            <div className="flex items-center sm:col-span-2 lg:col-span-1">
+                              <AlertCircle className="h-3 w-3 mr-1 flex-shrink-0" />
+                              <span className="truncate">Score: {request.clients?.credit_score || 'N/A'}</span>
                             </div>
                           </div>
                           {request.purpose && (
-                            <p className="text-sm text-gray-600">
+                            <p className="text-xs sm:text-sm text-gray-600 line-clamp-2">
                               <strong>Propósito:</strong> {request.purpose}
                             </p>
                           )}
                           {request.review_notes && (
-                            <p className="text-sm text-gray-600">
+                            <p className="text-xs sm:text-sm text-gray-600 line-clamp-2">
                               <strong>Notas:</strong> {request.review_notes}
                             </p>
                           )}
                         </div>
-                        <div className="flex space-x-2 ml-4">
-                          <Button size="sm" variant="outline" onClick={() => setSelectedRequest(request)}>
-                            <Eye className="h-4 w-4 mr-1" />
-                            Ver
+                        <div className="flex flex-col sm:flex-row gap-2 sm:gap-2 sm:ml-4">
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            onClick={() => setSelectedRequest(request)}
+                            className="w-full sm:w-auto min-h-[36px] touch-manipulation"
+                          >
+                            <Eye className="h-4 w-4 mr-1 sm:mr-2" />
+                            <span className="sm:hidden">Ver</span>
+                            <span className="hidden sm:inline">Ver</span>
                           </Button>
                           <Button 
                             size="sm" 
                             variant="default" 
-                            className="bg-blue-600 hover:bg-blue-700 text-white"
+                            className="bg-blue-600 hover:bg-blue-700 text-white w-full sm:w-auto min-h-[36px] touch-manipulation"
                             onClick={() => handleCreateLoanFromRequest(request)}
                           >
-                            <ArrowRight className="h-4 w-4 mr-1" />
-                            Crear Préstamo
+                            <ArrowRight className="h-4 w-4 mr-1 sm:mr-2" />
+                            <span className="sm:hidden">Crear</span>
+                            <span className="hidden sm:inline">Crear Préstamo</span>
                           </Button>
                           {request.status === 'approved' && (
                             <Button 
                               size="sm" 
                               variant="outline" 
-                              className="text-red-600 hover:bg-red-50"
+                              className="text-red-600 hover:bg-red-50 w-full sm:w-auto min-h-[36px] touch-manipulation"
                               onClick={() => handleDeleteRequest(request)}
                             >
-                              <Trash2 className="h-4 w-4 mr-1" />
-                              Eliminar
+                              <Trash2 className="h-4 w-4 mr-1 sm:mr-2" />
+                              <span className="sm:hidden">Eliminar</span>
+                              <span className="hidden sm:inline">Eliminar</span>
                             </Button>
                           )}
                           {request.status === 'pending' && (
@@ -580,17 +620,19 @@ const RequestsModule = () => {
                               <Button 
                                 size="sm" 
                                 variant="outline" 
-                                className="text-green-600 hover:bg-green-50"
+                                className="text-green-600 hover:bg-green-50 w-full sm:w-auto min-h-[36px] touch-manipulation"
                                 onClick={() => updateRequestStatus(request.id, 'approved')}
                               >
+                                <CheckCircle className="h-4 w-4 mr-1 sm:mr-2" />
                                 Aprobar
                               </Button>
                               <Button 
                                 size="sm" 
                                 variant="outline" 
-                                className="text-red-600 hover:bg-red-50"
+                                className="text-red-600 hover:bg-red-50 w-full sm:w-auto min-h-[36px] touch-manipulation"
                                 onClick={() => updateRequestStatus(request.id, 'rejected')}
                               >
+                                <XCircle className="h-4 w-4 mr-1 sm:mr-2" />
                                 Rechazar
                               </Button>
                             </>
@@ -605,16 +647,17 @@ const RequestsModule = () => {
           </Card>
         </TabsContent>
 
-        <TabsContent value="configuracion" className="space-y-6">
+        <TabsContent value="configuracion" className="space-y-4 sm:space-y-6">
           <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Settings className="h-5 w-5 mr-2" />
-                Configuración de Solicitudes
+            <CardHeader className="pb-3 sm:pb-6">
+              <CardTitle className="flex items-center text-base sm:text-lg">
+                <Settings className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
+                <span className="hidden sm:inline">Configuración de Solicitudes</span>
+                <span className="sm:hidden">Configuración</span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <CardContent className="space-y-4 sm:space-y-6 pt-0">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">Criterios de Aprobación</CardTitle>
@@ -680,7 +723,10 @@ const RequestsModule = () => {
               </div>
 
               <div className="flex justify-end">
-                <Button>Guardar Configuración</Button>
+                <Button className="w-full sm:w-auto min-h-[44px] touch-manipulation">
+                  <Settings className="h-4 w-4 mr-2" />
+                  Guardar Configuración
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -690,12 +736,12 @@ const RequestsModule = () => {
       {/* Request Details Dialog */}
       {selectedRequest && (
         <Dialog open={!!selectedRequest} onOpenChange={() => setSelectedRequest(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="w-[95vw] max-w-2xl max-h-[90vh] overflow-y-auto sm:w-[90vw]">
             <DialogHeader>
-              <DialogTitle>Detalles de la Solicitud</DialogTitle>
+              <DialogTitle className="text-lg sm:text-xl">Detalles de la Solicitud</DialogTitle>
             </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-3 sm:space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <Label className="text-sm font-medium text-gray-500">Cliente</Label>
                   <p className="text-lg font-semibold">{selectedRequest.clients?.full_name}</p>
@@ -1045,14 +1091,14 @@ const RequestsModule = () => {
           setRequestToDelete(null);
         }
       }}>
-        <DialogContent>
+        <DialogContent className="w-[95vw] max-w-md sm:w-[90vw]">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex items-center gap-2 text-lg sm:text-xl">
               <Trash2 className="h-5 w-5 text-red-600" />
               Confirmar Eliminación
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-3 sm:space-y-4">
             <p className="text-gray-600">
               ¿Estás seguro de que deseas eliminar esta solicitud aprobada?
             </p>
@@ -1069,21 +1115,23 @@ const RequestsModule = () => {
                 </p>
               </div>
             )}
-            <div className="flex justify-end space-x-2">
+            <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-2">
               <Button 
                 variant="outline" 
                 onClick={() => {
                   setShowDeleteDialog(false);
                   setRequestToDelete(null);
                 }}
+                className="w-full sm:w-auto min-h-[40px] touch-manipulation"
               >
                 Cancelar
               </Button>
               <Button 
                 variant="destructive" 
                 onClick={confirmDeleteRequest}
+                className="w-full sm:w-auto min-h-[40px] touch-manipulation"
               >
-                <Trash2 className="h-4 w-4 mr-1" />
+                <Trash2 className="h-4 w-4 mr-1 sm:mr-2" />
                 Eliminar
               </Button>
             </div>
