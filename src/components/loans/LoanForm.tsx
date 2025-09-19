@@ -709,6 +709,9 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
       return;
     }
 
+    // Evitar múltiples envíos
+    if (loading) return;
+
     setLoading(true);
     try {
       const startDate = new Date();
@@ -760,8 +763,6 @@ export const LoanForm = ({ onBack }: { onBack: () => void }) => {
 
       toast.success('Préstamo creado exitosamente');
       onBack();
-      // Recargar la página para mostrar los datos actualizados
-      window.location.reload();
     } catch (error) {
       console.error('Error creating loan:', error);
       toast.error('Error al crear el préstamo');

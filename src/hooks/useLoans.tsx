@@ -23,15 +23,27 @@ export interface Loan {
 export const useLoans = () => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefetching, setIsRefetching] = useState(false);
   const { user, profile, companyId } = useAuth();
 
-  const fetchLoans = async () => {
+  const fetchLoans = async (isRefetch = false) => {
     if (!user || !companyId) {
       setLoading(false);
       return;
     }
 
+    // Evitar requests duplicados
+    if (isRefetch && isRefetching) {
+      return;
+    }
+
     try {
+      if (isRefetch) {
+        setIsRefetching(true);
+      } else {
+        setLoading(true);
+      }
+
       let query = supabase
         .from('loans')
         .select(`
@@ -50,6 +62,7 @@ export const useLoans = () => {
         // Si es dueño, mostrar sus propios préstamos
         query = query.eq('loan_officer_id', user.id);
       }
+      
       const { data, error } = await query;
 
       if (error) {
@@ -69,7 +82,11 @@ export const useLoans = () => {
         toast.error('Error inesperado al cargar préstamos');
       }
     } finally {
-      setLoading(false);
+      if (isRefetch) {
+        setIsRefetching(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -82,7 +99,7 @@ export const useLoans = () => {
 
   return {
     loans,
-    loading,
-    refetch: fetchLoans,
+    loading: loading || isRefetching,
+    refetch: () => fetchLoans(true),
   };
 };

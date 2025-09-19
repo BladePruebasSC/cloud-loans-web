@@ -50,37 +50,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [error, setError] = useState<Error | null>(null);
   const [needsRegistrationCode, setNeedsRegistrationCode] = useState(false);
 
+  // Timeout de seguridad para evitar cargas infinitas
+  useEffect(() => {
+    const safetyTimeout = setTimeout(() => {
+      if (loading) {
+        console.warn('⚠️ Timeout de seguridad: Forzando finalización de carga');
+        setLoading(false);
+        setError(new Error('La carga se demoró demasiado. Por favor, recarga la página.'));
+      }
+    }, 15000); // 15 segundos de timeout
+
+    return () => clearTimeout(safetyTimeout);
+  }, [loading]);
+
   const loadEmployeeProfile = async (userId: string) => {
     try {
-      const { data: employeeData, error: employeeError } = await supabase
-        .from('employees')
-        .select('id,full_name,email,role,permissions,company_owner_id,status')
-        .eq('auth_user_id', userId)
-        .eq('status', 'active')
-        .maybeSingle();
+      // Timeout para evitar cargas infinitas
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 5000)
+      );
 
-      if (employeeError || !employeeData) {
-        return null;
-      }
+      const profilePromise = async () => {
+        const { data: employeeData, error: employeeError } = await supabase
+          .from('employees')
+          .select('id,full_name,email,role,permissions,company_owner_id,status')
+          .eq('auth_user_id', userId)
+          .eq('status', 'active')
+          .maybeSingle();
 
-      const { data: companyData } = await supabase
-        .from('company_settings')
-        .select('company_name')
-        .eq('user_id', employeeData.company_owner_id)
-        .maybeSingle();
+        if (employeeError || !employeeData) {
+          return null;
+        }
 
-      const employeeProfile: EmployeeProfile = {
-        id: employeeData.id,
-        full_name: employeeData.full_name,
-        email: employeeData.email,
-        role: employeeData.role,
-        permissions: employeeData.permissions || {},
-        company_owner_id: employeeData.company_owner_id,
-        is_employee: true,
-        company_name: companyData?.company_name || 'Empresa'
+        const { data: companyData } = await supabase
+          .from('company_settings')
+          .select('company_name')
+          .eq('user_id', employeeData.company_owner_id)
+          .maybeSingle();
+
+        const employeeProfile: EmployeeProfile = {
+          id: employeeData.id,
+          full_name: employeeData.full_name,
+          email: employeeData.email,
+          role: employeeData.role,
+          permissions: employeeData.permissions || {},
+          company_owner_id: employeeData.company_owner_id,
+          is_employee: true,
+          company_name: companyData?.company_name || 'Empresa'
+        };
+
+        return employeeProfile;
       };
 
-      return employeeProfile;
+      return await Promise.race([profilePromise(), timeoutPromise]) as EmployeeProfile | null;
     } catch (error) {
       console.error('Error in loadEmployeeProfile:', error);
       return null;
@@ -88,24 +110,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loadOwnerProfile = async (authUser: User) => {
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authUser.id)
-      .single();
+    try {
+      // Timeout para evitar cargas infinitas
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 5000)
+      );
 
-    const ownerProfile: EmployeeProfile = {
-      id: authUser.id,
-      full_name: profileData?.full_name || authUser.user_metadata?.full_name || 'Usuario',
-      email: authUser.email || '',
-      role: 'owner',
-      permissions: {},
-      company_owner_id: authUser.id,
-      is_employee: false
-    };
+      const profilePromise = async () => {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authUser.id)
+          .single();
 
-    setProfile(ownerProfile);
-    setCompanyId(authUser.id);
+        const ownerProfile: EmployeeProfile = {
+          id: authUser.id,
+          full_name: profileData?.full_name || authUser.user_metadata?.full_name || 'Usuario',
+          email: authUser.email || '',
+          role: 'owner',
+          permissions: {},
+          company_owner_id: authUser.id,
+          is_employee: false
+        };
+
+        setProfile(ownerProfile);
+        setCompanyId(authUser.id);
+      };
+
+      await Promise.race([profilePromise(), timeoutPromise]);
+    } catch (error) {
+      console.error('Error in loadOwnerProfile:', error);
+      // En caso de error, establecer valores por defecto
+      const fallbackProfile: EmployeeProfile = {
+        id: authUser.id,
+        full_name: authUser.user_metadata?.full_name || 'Usuario',
+        email: authUser.email || '',
+        role: 'owner',
+        permissions: {},
+        company_owner_id: authUser.id,
+        is_employee: false
+      };
+      setProfile(fallbackProfile);
+      setCompanyId(authUser.id);
+    }
   };
 
   const signIn = async (email: string, password: string, role: 'owner' | 'employee', companyCode?: string, adminCode?: string) => {
@@ -556,35 +603,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (event === 'SIGNED_IN' && session?.user) {
         setUser(session.user);
         
-        // Verificar si es empleado
-        const { data: employeeData } = await supabase
-          .from('employees')
-          .select('id,full_name,email,role,permissions,company_owner_id,status')
-          .eq('auth_user_id', session.user.id)
-          .eq('status', 'active')
-          .maybeSingle();
+        try {
+          // Timeout para evitar cargas infinitas
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 10000)
+          );
 
-        if (employeeData) {
-          const employeeProfile = await loadEmployeeProfile(session.user.id);
-          if (employeeProfile) {
-            setProfile(employeeProfile);
-            setCompanyId(employeeProfile.company_owner_id);
-          }
-        } else {
-          // Para propietarios, verificar si necesitan código de registro
-          const { data: usedCode } = await supabase
-            .from('registration_codes')
-            .select('id')
-            .eq('used_by', session.user.id)
-            .maybeSingle();
+          const authPromise = async () => {
+            // Verificar si es empleado
+            const { data: employeeData } = await supabase
+              .from('employees')
+              .select('id,full_name,email,role,permissions,company_owner_id,status')
+              .eq('auth_user_id', session.user.id)
+              .eq('status', 'active')
+              .maybeSingle();
 
-          if (!usedCode) {
-            setNeedsRegistrationCode(true);
-            setProfile(null);
-            setCompanyId(null);
-          } else {
-            await loadOwnerProfile(session.user);
-          }
+            if (employeeData) {
+              const employeeProfile = await loadEmployeeProfile(session.user.id);
+              if (employeeProfile) {
+                setProfile(employeeProfile);
+                setCompanyId(employeeProfile.company_owner_id);
+              }
+            } else {
+              // Para propietarios, verificar si necesitan código de registro
+              const { data: usedCode } = await supabase
+                .from('registration_codes')
+                .select('id')
+                .eq('used_by', session.user.id)
+                .maybeSingle();
+
+              if (!usedCode) {
+                setNeedsRegistrationCode(true);
+                setProfile(null);
+                setCompanyId(null);
+              } else {
+                await loadOwnerProfile(session.user);
+              }
+            }
+          };
+
+          await Promise.race([authPromise(), timeoutPromise]);
+        } catch (error) {
+          console.error('Error en autenticación:', error);
+          // En caso de error, establecer valores por defecto para evitar carga infinita
+          setProfile(null);
+          setCompanyId(null);
+          setNeedsRegistrationCode(true);
         }
         
         setLoading(false);
@@ -597,10 +661,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
-    // Verificar sesión inicial
+    // Verificar sesión inicial con timeout
     const checkInitialSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 8000)
+        );
+
+        const sessionPromise = supabase.auth.getSession();
+        const result = await Promise.race([sessionPromise, timeoutPromise]) as any;
+        const { data: { session } } = result;
+        
         if (session?.user) {
           await handleAuthStateChange('SIGNED_IN', session);
         } else {

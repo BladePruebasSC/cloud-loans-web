@@ -110,24 +110,25 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     let principalAmount = 0;
 
     switch (updateType) {
-      case 'payment':
-        if (amount) {
-          // Calcular el interés fijo por cuota (amortización simple)
-          // Fórmula: Interés por cuota = Monto Original × Tasa de Interés ÷ 100
-          const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
-          
-          // Aplicar la lógica: primero al interés, luego al capital
-          if (amount <= fixedInterestPerPayment) {
-            interestAmount = amount;
-            principalAmount = 0;
-          } else {
-            interestAmount = fixedInterestPerPayment;
-            principalAmount = amount - fixedInterestPerPayment;
+        case 'payment':
+          if (amount) {
+            // Calcular el interés fijo por cuota (amortización simple)
+            // Fórmula: Interés por cuota = Monto Original × Tasa de Interés ÷ 100
+            const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+            
+            // TODO: Implementar cálculo de interés ya pagado en esta cuota
+            // Por ahora, usar la lógica original hasta que se implemente completamente
+            if (amount <= fixedInterestPerPayment) {
+              interestAmount = amount;
+              principalAmount = 0;
+            } else {
+              interestAmount = fixedInterestPerPayment;
+              principalAmount = amount - fixedInterestPerPayment;
+            }
+            
+            newBalance = Math.max(0, loan.remaining_balance - principalAmount);
           }
-          
-          newBalance = Math.max(0, loan.remaining_balance - principalAmount);
-        }
-        break;
+          break;
         
       case 'partial_payment':
         if (amount) {
@@ -184,6 +185,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const onSubmit = async (data: UpdateFormData) => {
     if (!user || !companyId) return;
 
+    // Evitar múltiples envíos
+    if (loading) return;
+    
     setLoading(true);
     try {
       const updateType = data.update_type;
@@ -467,15 +471,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             <FormLabel>Meses Adicionales</FormLabel>
                             <FormControl>
                               <Input
-                                type="number"
+                                type="text"
                                 placeholder="0"
-                                min="0"
                                 {...field}
                                 value={field.value || ''}
                                 onChange={(e) => {
                                   const value = e.target.value;
-                                  field.onChange(value === '' ? 0 : parseInt(value) || 0);
+                                  if (value === '' || /^\d*$/.test(value)) {
+                                    field.onChange(value === '' ? 0 : parseInt(value) || 0);
+                                  }
                                 }}
+                                className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
                             <FormMessage />

@@ -1,7 +1,7 @@
 
 import { Routes, Route, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import LoginForm from '@/components/LoginForm'
 import RegisterForm from '@/components/RegisterForm'
 import Index from '@/pages/Index'
@@ -12,6 +12,7 @@ import RegistrationCodeModal from '@/components/RegistrationCodeModal'
 function App() {
   const { user, loading, signIn, signUp, signOut, needsRegistrationCode, validateRegistrationCode } = useAuth()
   const navigate = useNavigate()
+  const [loadingTime, setLoadingTime] = useState(0)
 
   // Efecto global para detectar Ctrl + Alt + A desde cualquier lugar
   useEffect(() => {
@@ -30,6 +31,36 @@ function App() {
     };
   }, [navigate]);
 
+  // Contador de tiempo de carga
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (loading) {
+      setLoadingTime(0);
+      interval = setInterval(() => {
+        setLoadingTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      setLoadingTime(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [loading]);
+
+  // Detectar si hay otras pestañas abiertas
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Marcar que esta pestaña se está cerrando
+      sessionStorage.setItem('tabClosing', Date.now().toString());
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
+
 
 
   // Mostrar pantalla de carga mientras se verifica la sesión
@@ -38,7 +69,36 @@ function App() {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Cargando...</p>
+          <p className="text-gray-600 mb-2">Cargando...</p>
+          <p className="text-sm text-gray-500 mb-4">
+            Tiempo transcurrido: {loadingTime}s
+            {loadingTime > 5 && (
+              <span className="block text-blue-600 mt-2">
+                ℹ️ Verificando sesión y sincronizando con otras pestañas...
+              </span>
+            )}
+            {loadingTime > 10 && (
+              <span className="block text-orange-600 mt-2">
+                ⚠️ La carga está tomando más tiempo del normal
+              </span>
+            )}
+          </p>
+          {loadingTime > 5 && (
+            <div className="space-x-2">
+              <button 
+                onClick={() => window.location.reload()} 
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+              >
+                Recargar Página
+              </button>
+              <button 
+                onClick={() => window.location.href = '/'} 
+                className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+              >
+                Ir al Inicio
+              </button>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -87,15 +147,7 @@ function App() {
     console.log('🔍 App.tsx: Mostrando modal de código de registro');
     console.log('🔍 App.tsx: user =', user?.email);
     console.log('🔍 App.tsx: needsRegistrationCode =', needsRegistrationCode);
-    return (
-      <RegistrationCodeModal 
-        onValidate={validateRegistrationCode}
-        onCancel={() => {
-          // Cerrar sesión si el usuario cancela
-          signOut();
-        }}
-      />
-    );
+    return <RegistrationCodeModal />;
   }
 
   console.log('🔍 App.tsx: No se muestra modal, continuando con rutas normales');
