@@ -20,7 +20,7 @@ import {
 
 interface Notification {
   id: string;
-  type: 'payment_due' | 'payment_overdue' | 'follow_up_due' | 'follow_up_overdue';
+  type: 'payment_due' | 'payment_overdue' | 'follow_up_due' | 'follow_up_overdue' | 'late_fee_critical' | 'late_fee_high' | 'late_fee_accumulated';
   title: string;
   message: string;
   priority: 'high' | 'medium' | 'low';
@@ -28,6 +28,8 @@ interface Notification {
   loanId?: string;
   clientName: string;
   amount?: number;
+  lateFeeAmount?: number;
+  daysOverdue?: number;
 }
 
 const Notifications: React.FC = () => {
@@ -50,6 +52,10 @@ const Notifications: React.FC = () => {
       // Para seguimientos, navegar al módulo de préstamos con acción de seguimiento
       navigate(`/prestamos?action=tracking&loanId=${loanId}`);
       toast.success(`Navegando a seguimiento de ${clientName}...`);
+    } else if (notificationType === 'late_fee_critical' || notificationType === 'late_fee_high' || notificationType === 'late_fee_accumulated') {
+      // Para notificaciones de mora, navegar al módulo de préstamos con acción de pago
+      navigate(`/prestamos?action=payment&loanId=${loanId}`);
+      toast.success(`Navegando a gestionar mora de ${clientName}...`);
     } else {
       // Fallback: navegar al módulo de préstamos
       navigate('/prestamos');
@@ -220,6 +226,82 @@ const Notifications: React.FC = () => {
         });
       }
 
+      // 4. Notificaciones de Mora
+      const { data: lateFeeLoans, error: lateFeeError } = await supabase
+        .from('loans')
+        .select(`
+          id,
+          client_id,
+          current_late_fee,
+          late_fee_rate,
+          grace_period_days,
+          next_payment_date,
+          late_fee_enabled,
+          clients!inner(
+            full_name,
+            company_id
+          )
+        `)
+        .eq('clients.company_id', user.user_metadata.company_id)
+        .eq('late_fee_enabled', true)
+        .gt('current_late_fee', 0);
+
+      if (!lateFeeError && lateFeeLoans) {
+        lateFeeLoans.forEach(loan => {
+          const today = new Date();
+          const nextPayment = new Date(loan.next_payment_date);
+          const daysOverdue = Math.max(0, Math.ceil((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0));
+          const lateFeeAmount = loan.current_late_fee || 0;
+          const clientName = (loan.clients as any).full_name || 'Cliente desconocido';
+
+          // Notificación crítica: Mora muy alta o muchos días vencidos
+          if (lateFeeAmount > 10000 || daysOverdue > 30) {
+            notificationsList.push({
+              id: `late_fee_critical_${loan.id}`,
+              type: 'late_fee_critical',
+              title: 'Mora Crítica',
+              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString()} (${daysOverdue} días vencidos)`,
+              priority: 'high',
+              dueDate: loan.next_payment_date,
+              loanId: loan.id,
+              clientName,
+              lateFeeAmount,
+              daysOverdue
+            });
+          }
+          // Notificación alta: Mora significativa
+          else if (lateFeeAmount > 5000 || daysOverdue > 14) {
+            notificationsList.push({
+              id: `late_fee_high_${loan.id}`,
+              type: 'late_fee_high',
+              title: 'Mora Alta',
+              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString()} (${daysOverdue} días vencidos)`,
+              priority: 'high',
+              dueDate: loan.next_payment_date,
+              loanId: loan.id,
+              clientName,
+              lateFeeAmount,
+              daysOverdue
+            });
+          }
+          // Notificación media: Mora acumulada
+          else if (lateFeeAmount > 1000 || daysOverdue > 7) {
+            notificationsList.push({
+              id: `late_fee_accumulated_${loan.id}`,
+              type: 'late_fee_accumulated',
+              title: 'Mora Acumulada',
+              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString()} (${daysOverdue} días vencidos)`,
+              priority: 'medium',
+              dueDate: loan.next_payment_date,
+              loanId: loan.id,
+              clientName,
+              lateFeeAmount,
+              daysOverdue
+            });
+          }
+        });
+      }
+
       // Ordenar notificaciones por prioridad y fecha
       notificationsList.sort((a, b) => {
         const priorityOrder = { high: 3, medium: 2, low: 1 };
@@ -272,6 +354,12 @@ const Notifications: React.FC = () => {
         }
       case 'follow_up_due':
         return <Phone className="h-4 w-4 text-blue-500" />;
+      case 'late_fee_critical':
+        return <AlertTriangle className="h-4 w-4 text-red-600" />;
+      case 'late_fee_high':
+        return <AlertTriangle className="h-4 w-4 text-orange-600" />;
+      case 'late_fee_accumulated':
+        return <DollarSign className="h-4 w-4 text-yellow-600" />;
       default:
         return <Clock className="h-4 w-4 text-gray-500" />;
     }
@@ -281,6 +369,21 @@ const Notifications: React.FC = () => {
     // Para pagos vencidos, usar un color más intenso
     if (type === 'payment_overdue') {
       return 'bg-red-200 text-red-900 border-red-300 border-l-red-500';
+    }
+    
+    // Para notificaciones de mora crítica, usar color rojo intenso
+    if (type === 'late_fee_critical') {
+      return 'bg-red-200 text-red-900 border-red-300 border-l-red-500';
+    }
+    
+    // Para notificaciones de mora alta, usar color naranja intenso
+    if (type === 'late_fee_high') {
+      return 'bg-orange-200 text-orange-900 border-orange-300 border-l-orange-500';
+    }
+    
+    // Para notificaciones de mora acumulada, usar color amarillo
+    if (type === 'late_fee_accumulated') {
+      return 'bg-yellow-200 text-yellow-900 border-yellow-300 border-l-yellow-500';
     }
     
     switch (priority) {
@@ -387,7 +490,9 @@ const Notifications: React.FC = () => {
                               ? "Registrar pago" 
                               : notification.type === 'follow_up_due' 
                                 ? "Crear seguimiento" 
-                                : "Ver préstamo"
+                                : notification.type === 'late_fee_critical' || notification.type === 'late_fee_high' || notification.type === 'late_fee_accumulated'
+                                  ? "Gestionar mora"
+                                  : "Ver préstamo"
                           }
                           onClick={() => handleNavigateToAction(notification.loanId!, notification.type, notification.clientName)}
                         >

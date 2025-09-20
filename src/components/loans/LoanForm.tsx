@@ -30,7 +30,11 @@ const loanSchema = z.object({
   comments: z.string().optional(),
   guarantor_required: z.boolean().default(false),
   loan_started: z.boolean().default(false),
-  late_fee: z.boolean().default(false),
+  late_fee_enabled: z.boolean().default(false),
+  late_fee_rate: z.number().min(0).max(100).default(2.0),
+  grace_period_days: z.number().min(0).max(30).default(0),
+  max_late_fee: z.number().min(0).default(0),
+  late_fee_calculation_type: z.enum(['daily', 'monthly', 'compound']).default('daily'),
   add_expense: z.boolean().default(false),
   minimum_payment: z.boolean().default(true),
   minimum_payment_type: z.string().default('interest'),
@@ -81,7 +85,11 @@ interface LoanFormProps {
     payment_frequency?: string;
     first_payment_date?: string;
     closing_costs?: number;
-    late_fee?: boolean;
+    late_fee_enabled?: boolean;
+    late_fee_rate?: number;
+    grace_period_days?: number;
+    max_late_fee?: number;
+    late_fee_calculation_type?: 'daily' | 'monthly' | 'compound';
     minimum_payment_type?: string;
     minimum_payment_percentage?: number;
     guarantor_required?: boolean;
@@ -98,6 +106,13 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
+  const [globalLateFeeConfig, setGlobalLateFeeConfig] = useState({
+    default_late_fee_enabled: false,
+    default_late_fee_rate: 2.0,
+    default_grace_period_days: 0,
+    default_max_late_fee: 0,
+    default_late_fee_calculation_type: 'daily' as 'daily' | 'monthly' | 'compound'
+  });
   const [loading, setLoading] = useState(false);
   const [showAmortizationTable, setShowAmortizationTable] = useState(false);
   const [amortizationSchedule, setAmortizationSchedule] = useState<AmortizationRow[]>([]);
@@ -111,7 +126,34 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   const [isFixingQuota, setIsFixingQuota] = useState(false);
   const { user, companyId } = useAuth();
 
+  // Cargar configuración global de mora
+  useEffect(() => {
+    const loadGlobalLateFeeConfig = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('system_settings')
+          .select('*')
+          .eq('key', 'default_late_fee_config')
+          .single();
 
+        if (data && !error) {
+          const config = JSON.parse(data.value);
+          setGlobalLateFeeConfig(config);
+          
+          // Actualizar el formulario con los valores por defecto
+          form.setValue('late_fee_enabled', config.default_late_fee_enabled);
+          form.setValue('late_fee_rate', config.default_late_fee_rate);
+          form.setValue('grace_period_days', config.default_grace_period_days);
+          form.setValue('max_late_fee', config.default_max_late_fee);
+          form.setValue('late_fee_calculation_type', config.default_late_fee_calculation_type);
+        }
+      } catch (error) {
+        console.error('Error loading global late fee config:', error);
+      }
+    };
+
+    loadGlobalLateFeeConfig();
+  }, []);
 
   // Función para verificar si una fecha cae en día excluido y ajustarla
   const adjustDateForExcludedDays = (date: Date) => {
@@ -213,8 +255,20 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       if (initialData.closing_costs !== undefined) {
         form.setValue('closing_costs', initialData.closing_costs);
       }
-      if (initialData.late_fee !== undefined) {
-        form.setValue('late_fee', initialData.late_fee);
+      if (initialData.late_fee_enabled !== undefined) {
+        form.setValue('late_fee_enabled', initialData.late_fee_enabled);
+      }
+      if (initialData.late_fee_rate !== undefined) {
+        form.setValue('late_fee_rate', initialData.late_fee_rate);
+      }
+      if (initialData.grace_period_days !== undefined) {
+        form.setValue('grace_period_days', initialData.grace_period_days);
+      }
+      if (initialData.max_late_fee !== undefined) {
+        form.setValue('max_late_fee', initialData.max_late_fee);
+      }
+      if (initialData.late_fee_calculation_type !== undefined) {
+        form.setValue('late_fee_calculation_type', initialData.late_fee_calculation_type);
       }
       if (initialData.minimum_payment_type) {
         form.setValue('minimum_payment_type', initialData.minimum_payment_type);
@@ -845,7 +899,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         minimum_payment_enabled: data.minimum_payment,
         minimum_payment_type: data.minimum_payment_type,
         minimum_payment_percentage: data.minimum_payment_percentage,
-        late_fee_enabled: data.late_fee,
+        late_fee_enabled: data.late_fee_enabled,
         add_expense_enabled: data.add_expense,
         fixed_payment_enabled: data.fixed_payment_enabled,
         fixed_payment_amount: data.fixed_payment_amount || 0,
@@ -1614,7 +1668,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
 
                       <FormField
                         control={form.control}
-                        name="late_fee"
+                        name="late_fee_enabled"
                         render={({ field }) => (
                           <FormItem className="flex items-center space-x-2">
                             <FormControl>
@@ -1658,6 +1712,195 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                       </div>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+
+              {/* Configuración de Mora */}
+              <Card>
+                <CardHeader className="bg-orange-500 text-white">
+                  <CardTitle className="text-base sm:text-lg">CONFIGURACIÓN DE MORA</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 sm:space-y-4 pt-4 sm:pt-6">
+                  {/* Habilitar/Deshabilitar mora */}
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                    <div>
+                      <FormLabel className="text-base font-semibold">Habilitar Mora</FormLabel>
+                      <p className="text-sm text-gray-600">Activar el cálculo automático de mora para este préstamo</p>
+                    </div>
+                    <FormField
+                      control={form.control}
+                      name="late_fee_enabled"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            <input
+                              type="checkbox"
+                              checked={field.value}
+                              onChange={field.onChange}
+                              className="rounded scale-125"
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  {form.watch('late_fee_enabled') && (
+                    <>
+                      {/* Tasa de mora y días de gracia */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <FormLabel className="text-sm font-semibold">
+                            Tasa de Mora por Día (%)
+                          </FormLabel>
+                          <FormField
+                            control={form.control}
+                            name="late_fee_rate"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    max="100"
+                                    value={field.value || ''}
+                                    onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                    className="h-12"
+                                    placeholder="2.0"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <p className="text-xs text-gray-600">
+                            Porcentaje diario sobre el balance pendiente
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <FormLabel className="text-sm font-semibold">
+                            Días de Gracia
+                          </FormLabel>
+                          <FormField
+                            control={form.control}
+                            name="grace_period_days"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    max="30"
+                                    value={field.value || ''}
+                                    onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                                    className="h-12"
+                                    placeholder="0"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <p className="text-xs text-gray-600">
+                            Días sin mora después del vencimiento
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Tipo de cálculo y límite máximo */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <FormLabel className="text-sm font-semibold">
+                            Tipo de Cálculo
+                          </FormLabel>
+                          <FormField
+                            control={form.control}
+                            name="late_fee_calculation_type"
+                            render={({ field }) => (
+                              <FormItem>
+                                <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                  <FormControl>
+                                    <SelectTrigger className="h-12">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <SelectItem value="daily">Diario</SelectItem>
+                                    <SelectItem value="monthly">Mensual</SelectItem>
+                                    <SelectItem value="compound">Compuesto</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <p className="text-xs text-gray-600">
+                            {form.watch('late_fee_calculation_type') === 'daily' && 'Mora simple: Se calcula por cada día de retraso'}
+                            {form.watch('late_fee_calculation_type') === 'monthly' && 'Mora mensual: Se calcula por mes completo de retraso'}
+                            {form.watch('late_fee_calculation_type') === 'compound' && 'Mora compuesta: Interés sobre interés (crecimiento exponencial)'}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <FormLabel className="text-sm font-semibold">
+                            Mora Máxima (RD$)
+                          </FormLabel>
+                          <FormField
+                            control={form.control}
+                            name="max_late_fee"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    value={field.value || ''}
+                                    onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                    className="h-12"
+                                    placeholder="0 (sin límite)"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <p className="text-xs text-gray-600">
+                            0 = Sin límite máximo
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Vista previa de cálculo */}
+                      {form.watch('late_fee_rate') > 0 && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                          <h4 className="text-sm font-semibold text-blue-800 mb-3">Vista Previa de Cálculo</h4>
+                          <p className="text-xs text-blue-600 mb-2">Ejemplo con un balance de RD$100,000</p>
+                          <div className="grid grid-cols-3 gap-4 text-center">
+                            <div className="p-3 bg-blue-100 rounded-lg">
+                              <div className="text-lg font-bold text-blue-700">
+                                ${(100000 * (form.watch('late_fee_rate') || 0) / 100).toLocaleString()}
+                              </div>
+                              <div className="text-sm text-blue-600">Por día</div>
+                            </div>
+                            <div className="p-3 bg-orange-100 rounded-lg">
+                              <div className="text-lg font-bold text-orange-700">
+                                ${(100000 * (form.watch('late_fee_rate') || 0) / 100 * 7).toLocaleString()}
+                              </div>
+                              <div className="text-sm text-orange-600">Por semana</div>
+                            </div>
+                            <div className="p-3 bg-red-100 rounded-lg">
+                              <div className="text-lg font-bold text-red-700">
+                                ${(100000 * (form.watch('late_fee_rate') || 0) / 100 * 30).toLocaleString()}
+                              </div>
+                              <div className="text-sm text-red-600">Por mes</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </CardContent>
               </Card>
 

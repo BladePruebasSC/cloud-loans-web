@@ -14,8 +14,12 @@ import { LoanHistoryView } from './LoanHistoryView';
 import { LoanStatistics } from './LoanStatistics';
 import { PaymentStatusBadge } from './PaymentStatusBadge';
 import { CollectionTracking } from './CollectionTracking';
+import { LateFeeInfo } from './LateFeeInfo';
+import { GlobalLateFeeConfig } from './GlobalLateFeeConfig';
+import { LateFeeReports } from './LateFeeReports';
 import { useLoans } from '@/hooks/useLoans';
 import { useAuth } from '@/hooks/useAuth';
+import { useLateFee } from '@/hooks/useLateFee';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { 
@@ -27,6 +31,7 @@ import {
   DollarSign,
   Users,
   AlertCircle,
+  AlertTriangle,
   CheckCircle,
   Filter,
   FileText,
@@ -72,6 +77,7 @@ export const LoansModule = () => {
   
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
+  const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
 
   // Funciones para navegación del calendario
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -162,6 +168,21 @@ export const LoansModule = () => {
       }
     }
   }, [loans]); // Dependencia en loans para asegurar que estén cargados
+
+  // Función para actualizar mora de todos los préstamos
+  const handleUpdateLateFees = async () => {
+    try {
+      const updatedCount = await updateAllLateFees();
+      if (updatedCount > 0) {
+        toast.success(`Mora actualizada para ${updatedCount} préstamos`);
+        refetch(); // Recargar los préstamos para mostrar los cambios
+      } else {
+        toast.info('No hay préstamos que requieran actualización de mora');
+      }
+    } catch (error) {
+      toast.error('Error al actualizar la mora');
+    }
+  };
 
   // Cargar solicitudes para el selector
   const fetchRequests = async () => {
@@ -478,7 +499,7 @@ export const LoansModule = () => {
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 text-center sm:text-left">Gestión de Préstamos</h1>
         
         {/* Botones principales - diseño móvil optimizado */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4">
           <Button 
             onClick={() => {
               setSelectedLoanForPayment(null);
@@ -510,11 +531,20 @@ export const LoansModule = () => {
             <FileText className="h-5 w-5 mr-2" />
             Desde Solicitud
           </Button>
+          <Button 
+            onClick={handleUpdateLateFees}
+            disabled={lateFeeLoading}
+            className="h-12 sm:h-10 text-base sm:text-sm font-medium bg-orange-600 hover:bg-orange-700"
+            size="lg"
+          >
+            <AlertTriangle className="h-5 w-5 mr-2" />
+            {lateFeeLoading ? 'Actualizando...' : 'Actualizar Mora'}
+          </Button>
         </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1 h-auto">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1 h-auto">
           <TabsTrigger 
             value="mis-prestamos" 
             className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
@@ -554,6 +584,14 @@ export const LoansModule = () => {
             <Calendar className="h-4 w-4" />
             <span className="hidden xs:inline">Agenda</span>
             <span className="xs:hidden">Agenda</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="configuracion-mora" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <AlertTriangle className="h-4 w-4" />
+            <span className="hidden xs:inline">Mora</span>
+            <span className="xs:hidden">Mora</span>
           </TabsTrigger>
         </TabsList>
 
@@ -839,6 +877,18 @@ export const LoansModule = () => {
                             <div className="text-xs text-gray-600">Tipo</div>
                           </div>
                         </div>
+
+                        {/* Información de mora */}
+                        <LateFeeInfo
+                          loanId={loan.id}
+                          nextPaymentDate={loan.next_payment_date}
+                          currentLateFee={(loan as any).current_late_fee || 0}
+                          lateFeeEnabled={(loan as any).late_fee_enabled || false}
+                          lateFeeRate={(loan as any).late_fee_rate || 2.0}
+                          gracePeriodDays={(loan as any).grace_period_days || 0}
+                          remainingBalance={loan.remaining_balance}
+                          clientName={loan.client?.full_name || 'Cliente'}
+                        />
 
                         {/* Botones de acción mejorados */}
                         <div className="border-t border-gray-100 pt-6">
@@ -2052,6 +2102,21 @@ export const LoansModule = () => {
                  </>
                );
              })()}
+         </TabsContent>
+
+         <TabsContent value="configuracion-mora" className="space-y-6">
+           <div className="space-y-6">
+             <div className="text-center">
+               <h2 className="text-2xl font-bold text-gray-900 mb-2">Configuración de Mora</h2>
+               <p className="text-gray-600">Gestiona la configuración de mora para tus préstamos</p>
+             </div>
+             
+             <GlobalLateFeeConfig />
+             
+             <div className="mt-8">
+               <LateFeeReports />
+             </div>
+           </div>
          </TabsContent>
        </Tabs>
 
