@@ -650,27 +650,26 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                           <FormLabel>Monto del Pago</FormLabel>
                           <FormControl>
                             <Input
-                              type="text"
-                              placeholder="0"
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="0.00"
                               {...field}
                               value={field.value || ''}
-                        onChange={async (e) => {
-                          const value = e.target.value;
-                          if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                            const numValue = value === '' ? 0 : parseFloat(value) || 0;
-                            field.onChange(numValue);
-                            setPaymentAmount(numValue);
-                            
-                            // Calcular distribución en tiempo real
-                            if (selectedLoan && numValue > 0) {
-                              const distribution = await calculatePaymentDistribution(numValue);
-                              setPaymentDistribution(distribution);
-                            } else {
-                              setPaymentDistribution(null);
-                            }
-                          }
-                        }}
-                              className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              onChange={async (e) => {
+                                const value = e.target.value;
+                                const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                field.onChange(numValue);
+                                setPaymentAmount(numValue);
+                                
+                                // Calcular distribución en tiempo real
+                                if (selectedLoan && numValue > 0) {
+                                  const distribution = await calculatePaymentDistribution(numValue);
+                                  setPaymentDistribution(distribution);
+                                } else {
+                                  setPaymentDistribution(null);
+                                }
+                              }}
                             />
                           </FormControl>
                           {paymentStatus.currentPaymentRemaining < selectedLoan?.monthly_payment && paymentStatus.currentPaymentRemaining > 0 && (
