@@ -1944,55 +1944,13 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                 </CardContent>
               </Card>
 
-                             <div className="flex flex-col items-center space-y-4">
-                 {/* Debug Info */}
-                 <div className="text-xs text-gray-500 space-y-1">
-                   <div>Loading: {loading ? 'Sí' : 'No'}</div>
-                   <div>Cliente: {selectedClient ? 'Seleccionado' : 'No seleccionado'}</div>
-                   <div>Pago mensual: {calculatedValues.monthlyPayment}</div>
-                   <div>Formulario válido: {form.formState.isValid ? 'Sí' : 'No'}</div>
-                   <div>Botón deshabilitado: {loading || !selectedClient || calculatedValues.monthlyPayment === 0 ? 'Sí' : 'No'}</div>
-                 </div>
-                 
+                             <div className="flex justify-center">
                  <Button 
                    type="submit" 
                    disabled={loading || !selectedClient || calculatedValues.monthlyPayment === 0}
                    className="bg-blue-500 hover:bg-blue-600 px-6 sm:px-12 py-2 sm:py-3 text-base sm:text-lg w-full sm:w-auto"
-                   onClick={() => {
-                     console.log('=== BUTTON CLICKED ===');
-                     console.log('Loading:', loading);
-                     console.log('Selected client:', selectedClient);
-                     console.log('Monthly payment:', calculatedValues.monthlyPayment);
-                     console.log('Form valid:', form.formState.isValid);
-                     console.log('Form errors:', form.formState.errors);
-                     console.log('Form values:', form.getValues());
-                     console.log('Button disabled:', loading || !selectedClient || calculatedValues.monthlyPayment === 0);
-                     
-                     // Verificar específicamente el client_id
-                     const formValues = form.getValues();
-                     console.log('client_id in form:', formValues.client_id);
-                     console.log('client_id type:', typeof formValues.client_id);
-                     console.log('client_id length:', formValues.client_id?.length);
-                   }}
                  >
                    💰 CREAR PRÉSTAMO
-                 </Button>
-                 
-                 {/* Botón de prueba */}
-                 <Button 
-                   type="button"
-                   onClick={() => {
-                     console.log('=== TEST BUTTON CLICKED ===');
-                     console.log('Form values:', form.getValues());
-                     console.log('Form errors:', form.formState.errors);
-                     console.log('Form valid:', form.formState.isValid);
-                     
-                     // Intentar enviar el formulario manualmente
-                     form.handleSubmit(onSubmit)();
-                   }}
-                   className="bg-green-500 hover:bg-green-600 px-4 py-2 text-sm"
-                 >
-                   🧪 PRUEBA (Sin validación)
                  </Button>
                </div>
             </form>
