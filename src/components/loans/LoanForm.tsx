@@ -26,8 +26,8 @@ const loanSchema = z.object({
   payment_frequency: z.string().default('monthly'),
   first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
   closing_costs: z.number().min(0).default(0),
-  portfolio: z.string().optional(),
-  comments: z.string().optional(),
+  portfolio: z.string().default(''),
+  comments: z.string().default(''),
   guarantor_required: z.boolean().default(false),
   loan_started: z.boolean().default(false),
   late_fee_enabled: z.boolean().default(false),
@@ -39,12 +39,12 @@ const loanSchema = z.object({
   minimum_payment: z.boolean().default(true),
   minimum_payment_type: z.string().default('interest'),
   minimum_payment_percentage: z.number().default(100),
-  guarantor_name: z.string().optional(),
-  guarantor_phone: z.string().optional(),
-  guarantor_dni: z.string().optional(),
-  notes: z.string().optional(),
+  guarantor_name: z.string().default(''),
+  guarantor_phone: z.string().default(''),
+  guarantor_dni: z.string().default(''),
+  notes: z.string().default(''),
   fixed_payment_enabled: z.boolean().default(false),
-  fixed_payment_amount: z.number().optional(),
+  fixed_payment_amount: z.number().default(0),
   excluded_days: z.array(z.string()).default([]),
 });
 
@@ -208,6 +208,17 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       minimum_payment_type: 'interest',
       fixed_payment_enabled: false,
       fixed_payment_amount: 0,
+      late_fee_enabled: false,
+      late_fee_rate: 2.0,
+      grace_period_days: 0,
+      max_late_fee: 0,
+      late_fee_calculation_type: 'daily',
+      portfolio: '',
+      comments: '',
+      guarantor_name: '',
+      guarantor_phone: '',
+      guarantor_dni: '',
+      notes: '',
     },
   });
 
@@ -224,6 +235,9 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         if (client) {
           setSelectedClient(client);
           setClientSearch(client.full_name);
+          form.setValue('client_id', client.id);
+          console.log('Initial client set:', client);
+          console.log('Initial client_id set to:', client.id);
         }
       }
 
@@ -354,6 +368,8 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
     setClientSearch(client.full_name);
     setShowClientDropdown(false);
     form.setValue('client_id', client.id);
+    console.log('Client selected:', client);
+    console.log('client_id set to:', client.id);
   };
 
        const getMinimumPayment = () => {
@@ -833,7 +849,16 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   };
 
   const onSubmit = async (data: LoanFormData) => {
+    console.log('=== ONSUBMIT CALLED ===');
+    console.log('Form data:', data);
+    console.log('Selected client:', selectedClient);
+    console.log('User:', user);
+    console.log('Company ID:', companyId);
+    console.log('Form valid:', form.formState.isValid);
+    console.log('Form errors:', form.formState.errors);
+    
     if (!user || !companyId || !selectedClient) {
+      console.log('Validation failed: missing user, companyId, or selectedClient');
       toast.error('Debe seleccionar un cliente');
       return;
     }
@@ -893,23 +918,38 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         // Campos de información adicional
         excluded_days: excludedDays,
         closing_costs: data.closing_costs,
-        portfolio_id: data.portfolio === 'none' ? null : data.portfolio,
+        portfolio_id: data.portfolio === 'none' || data.portfolio === '' ? null : data.portfolio,
         amortization_type: data.amortization_type,
         payment_frequency: data.payment_frequency,
         minimum_payment_enabled: data.minimum_payment,
         minimum_payment_type: data.minimum_payment_type,
         minimum_payment_percentage: data.minimum_payment_percentage,
         late_fee_enabled: data.late_fee_enabled,
+        late_fee_rate: data.late_fee_rate,
+        grace_period_days: data.grace_period_days,
+        max_late_fee: data.max_late_fee,
+        late_fee_calculation_type: data.late_fee_calculation_type,
         add_expense_enabled: data.add_expense,
         fixed_payment_enabled: data.fixed_payment_enabled,
         fixed_payment_amount: data.fixed_payment_amount || 0,
       };
 
+      console.log('Loan data to insert:', loanData);
+      
+      // Verificar campos UUID antes de enviar
+      console.log('UUID fields check:');
+      console.log('client_id:', loanData.client_id, 'type:', typeof loanData.client_id);
+      console.log('loan_officer_id:', loanData.loan_officer_id, 'type:', typeof loanData.loan_officer_id);
+      console.log('portfolio_id:', loanData.portfolio_id, 'type:', typeof loanData.portfolio_id);
+      
       const { error } = await supabase
         .from('loans')
         .insert([loanData]);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
 
       toast.success('Préstamo creado exitosamente');
       onLoanCreated?.();
@@ -1904,13 +1944,55 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                 </CardContent>
               </Card>
 
-                             <div className="flex justify-center">
+                             <div className="flex flex-col items-center space-y-4">
+                 {/* Debug Info */}
+                 <div className="text-xs text-gray-500 space-y-1">
+                   <div>Loading: {loading ? 'Sí' : 'No'}</div>
+                   <div>Cliente: {selectedClient ? 'Seleccionado' : 'No seleccionado'}</div>
+                   <div>Pago mensual: {calculatedValues.monthlyPayment}</div>
+                   <div>Formulario válido: {form.formState.isValid ? 'Sí' : 'No'}</div>
+                   <div>Botón deshabilitado: {loading || !selectedClient || calculatedValues.monthlyPayment === 0 ? 'Sí' : 'No'}</div>
+                 </div>
+                 
                  <Button 
                    type="submit" 
                    disabled={loading || !selectedClient || calculatedValues.monthlyPayment === 0}
                    className="bg-blue-500 hover:bg-blue-600 px-6 sm:px-12 py-2 sm:py-3 text-base sm:text-lg w-full sm:w-auto"
+                   onClick={() => {
+                     console.log('=== BUTTON CLICKED ===');
+                     console.log('Loading:', loading);
+                     console.log('Selected client:', selectedClient);
+                     console.log('Monthly payment:', calculatedValues.monthlyPayment);
+                     console.log('Form valid:', form.formState.isValid);
+                     console.log('Form errors:', form.formState.errors);
+                     console.log('Form values:', form.getValues());
+                     console.log('Button disabled:', loading || !selectedClient || calculatedValues.monthlyPayment === 0);
+                     
+                     // Verificar específicamente el client_id
+                     const formValues = form.getValues();
+                     console.log('client_id in form:', formValues.client_id);
+                     console.log('client_id type:', typeof formValues.client_id);
+                     console.log('client_id length:', formValues.client_id?.length);
+                   }}
                  >
                    💰 CREAR PRÉSTAMO
+                 </Button>
+                 
+                 {/* Botón de prueba */}
+                 <Button 
+                   type="button"
+                   onClick={() => {
+                     console.log('=== TEST BUTTON CLICKED ===');
+                     console.log('Form values:', form.getValues());
+                     console.log('Form errors:', form.formState.errors);
+                     console.log('Form valid:', form.formState.isValid);
+                     
+                     // Intentar enviar el formulario manualmente
+                     form.handleSubmit(onSubmit)();
+                   }}
+                   className="bg-green-500 hover:bg-green-600 px-4 py-2 text-sm"
+                 >
+                   🧪 PRUEBA (Sin validación)
                  </Button>
                </div>
             </form>

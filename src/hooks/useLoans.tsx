@@ -74,7 +74,17 @@ export const useLoans = () => {
         return;
       }
 
-      setLoans(data || []);
+      // Ordenar préstamos: pendientes primero, luego por fecha de creación
+      const sortedLoans = (data || []).sort((a, b) => {
+        // Si uno es pendiente y el otro no, el pendiente va primero
+        if (a.status === 'pending' && b.status !== 'pending') return -1;
+        if (a.status !== 'pending' && b.status === 'pending') return 1;
+        
+        // Si ambos tienen el mismo status, ordenar por fecha de creación (más reciente primero)
+        return new Date(b.created_at || b.start_date).getTime() - new Date(a.created_at || a.start_date).getTime();
+      });
+      
+      setLoans(sortedLoans);
     } catch (error: any) {
       if (typeof error?.message === 'string') {
         toast.error(error.message);

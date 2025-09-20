@@ -68,9 +68,9 @@ const Notifications: React.FC = () => {
     if (!user) return;
     
     try {
-      setLoading(true);
-      const notificationsList: Notification[] = [];
-      const today = new Date();
+        setLoading(true);
+        const notificationsList: Notification[] = [];
+        const today = new Date();
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
       const nextWeek = new Date(today);

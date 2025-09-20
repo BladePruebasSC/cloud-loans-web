@@ -63,13 +63,36 @@ export const GlobalLateFeeConfig: React.FC = () => {
     try {
       setLoading(true);
       
-      const { error } = await supabase
+      // Primero intentar actualizar
+      const { data: existingData, error: selectError } = await supabase
         .from('system_settings')
-        .upsert({
-          key: 'default_late_fee_config',
-          value: JSON.stringify(config),
-          updated_at: new Date().toISOString()
-        });
+        .select('id')
+        .eq('key', 'default_late_fee_config')
+        .single();
+
+      let error;
+      
+      if (existingData && !selectError) {
+        // Si existe, actualizar
+        const { error: updateError } = await supabase
+          .from('system_settings')
+          .update({
+            value: JSON.stringify(config),
+            updated_at: new Date().toISOString()
+          })
+          .eq('key', 'default_late_fee_config');
+        error = updateError;
+      } else {
+        // Si no existe, insertar
+        const { error: insertError } = await supabase
+          .from('system_settings')
+          .insert({
+            key: 'default_late_fee_config',
+            value: JSON.stringify(config),
+            description: 'Configuración por defecto para la mora en nuevos préstamos'
+          });
+        error = insertError;
+      }
 
       if (error) throw error;
 

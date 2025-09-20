@@ -28,13 +28,19 @@ import {
 } from 'lucide-react';
 
 const updateSchema = z.object({
-  update_type: z.enum(['payment', 'partial_payment', 'term_extension', 'balance_adjustment', 'delete_loan']),
+  update_type: z.enum(['payment', 'partial_payment', 'term_extension', 'balance_adjustment', 'delete_loan', 'late_fee_config']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
   adjustment_reason: z.string().min(1, 'Debe especificar la razón del ajuste'),
   payment_method: z.string().optional(),
   reference_number: z.string().optional(),
   notes: z.string().optional(),
+  // Campos de mora
+  late_fee_enabled: z.boolean().optional(),
+  late_fee_rate: z.number().min(0).max(100).optional(),
+  grace_period_days: z.number().min(0).max(30).optional(),
+  max_late_fee: z.number().min(0).optional(),
+  late_fee_calculation_type: z.enum(['daily', 'monthly', 'compound']).optional(),
 });
 
 type UpdateFormData = z.infer<typeof updateSchema>;
@@ -275,6 +281,16 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           };
           break;
           
+        case 'late_fee_config':
+          loanUpdates = {
+            late_fee_enabled: data.late_fee_enabled,
+            late_fee_rate: data.late_fee_rate,
+            grace_period_days: data.grace_period_days,
+            max_late_fee: data.max_late_fee,
+            late_fee_calculation_type: data.late_fee_calculation_type,
+          };
+          break;
+          
         case 'delete_loan':
           loanUpdates = {
             status: 'deleted',
@@ -327,6 +343,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         partial_payment: 'Abono parcial registrado exitosamente',
         term_extension: 'Plazo extendido exitosamente',
         balance_adjustment: 'Balance ajustado exitosamente',
+        late_fee_config: 'Configuración de mora actualizada exitosamente',
         delete_loan: 'Préstamo eliminado exitosamente (recuperable por 2 meses)'
       };
 
@@ -347,6 +364,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       case 'partial_payment': return <DollarSign className="h-4 w-4" />;
       case 'term_extension': return <Calendar className="h-4 w-4" />;
       case 'balance_adjustment': return <Calculator className="h-4 w-4" />;
+      case 'late_fee_config': return <AlertCircle className="h-4 w-4" />;
       case 'delete_loan': return <Trash2 className="h-4 w-4" />;
       default: return <Edit className="h-4 w-4" />;
     }
@@ -358,6 +376,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       partial_payment: 'Abono Parcial',
       term_extension: 'Extensión de Plazo',
       balance_adjustment: 'Ajuste de Balance',
+      late_fee_config: 'Configurar Mora',
       delete_loan: 'Eliminar Préstamo'
     };
     return labels[type as keyof typeof labels] || type;
@@ -426,6 +445,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   Eliminar Préstamo
                                 </div>
                               </SelectItem>
+                              <SelectItem value="late_fee_config">
+                                <div className="flex items-center gap-2">
+                                  <AlertCircle className="h-4 w-4" />
+                                  Configurar Mora
+                                </div>
+                              </SelectItem>
                             </SelectContent>
                           </Select>
                           <FormMessage />
@@ -492,6 +517,139 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           </FormItem>
                         )}
                       />
+                    )}
+
+                    {/* Configuración de Mora */}
+                    {form.watch('update_type') === 'late_fee_config' && (
+                      <div className="space-y-4">
+                        <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                          <h4 className="text-sm font-semibold text-orange-800 mb-3">Configuración de Mora</h4>
+                          
+                          <div className="space-y-4">
+                            {/* Habilitar Mora */}
+                            <FormField
+                              control={form.control}
+                              name="late_fee_enabled"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <div className="flex items-center justify-between p-3 bg-white rounded-lg border">
+                                    <div>
+                                      <FormLabel className="text-sm font-semibold">Habilitar Mora</FormLabel>
+                                      <p className="text-xs text-gray-600">Activar el cálculo automático de mora</p>
+                                    </div>
+                                    <FormControl>
+                                      <input
+                                        type="checkbox"
+                                        checked={field.value || false}
+                                        onChange={field.onChange}
+                                        className="rounded scale-125"
+                                      />
+                                    </FormControl>
+                                  </div>
+                                </FormItem>
+                              )}
+                            />
+
+                            {/* Campos de configuración de mora */}
+                            {form.watch('late_fee_enabled') && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                {/* Tasa de mora */}
+                                <FormField
+                                  control={form.control}
+                                  name="late_fee_rate"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel className="text-sm font-semibold">Tasa de Mora por Día (%)</FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          type="number"
+                                          step="0.1"
+                                          min="0"
+                                          max="100"
+                                          placeholder="2.0"
+                                          {...field}
+                                          value={field.value || ''}
+                                          onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                {/* Días de gracia */}
+                                <FormField
+                                  control={form.control}
+                                  name="grace_period_days"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel className="text-sm font-semibold">Días de Gracia</FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          type="number"
+                                          min="0"
+                                          max="30"
+                                          placeholder="0"
+                                          {...field}
+                                          value={field.value || ''}
+                                          onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                {/* Tipo de cálculo */}
+                                <FormField
+                                  control={form.control}
+                                  name="late_fee_calculation_type"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel className="text-sm font-semibold">Tipo de Cálculo</FormLabel>
+                                      <Select onValueChange={field.onChange} defaultValue={field.value || 'daily'}>
+                                        <FormControl>
+                                          <SelectTrigger>
+                                            <SelectValue placeholder="Seleccionar tipo" />
+                                          </SelectTrigger>
+                                        </FormControl>
+                                        <SelectContent>
+                                          <SelectItem value="daily">Diario</SelectItem>
+                                          <SelectItem value="monthly">Mensual</SelectItem>
+                                          <SelectItem value="compound">Compuesto</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+
+                                {/* Mora máxima */}
+                                <FormField
+                                  control={form.control}
+                                  name="max_late_fee"
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel className="text-sm font-semibold">Mora Máxima (0 = sin límite)</FormLabel>
+                                      <FormControl>
+                                        <Input
+                                          type="number"
+                                          min="0"
+                                          placeholder="0"
+                                          {...field}
+                                          value={field.value || ''}
+                                          onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     )}
 
                     {['payment', 'partial_payment'].includes(form.watch('update_type')) && (
