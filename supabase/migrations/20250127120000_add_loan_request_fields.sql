@@ -46,14 +46,24 @@ WHERE
   OR minimum_payment_percentage IS NULL 
   OR guarantor_required IS NULL;
 
--- Add constraints for data validation
+-- Add constraints for data validation (drop existing ones first to avoid conflicts)
+ALTER TABLE loan_requests DROP CONSTRAINT IF EXISTS check_interest_rate;
+ALTER TABLE loan_requests DROP CONSTRAINT IF EXISTS check_term_months;
+ALTER TABLE loan_requests DROP CONSTRAINT IF EXISTS check_closing_costs;
+ALTER TABLE loan_requests DROP CONSTRAINT IF EXISTS check_minimum_payment_percentage;
+
 ALTER TABLE loan_requests 
 ADD CONSTRAINT check_interest_rate CHECK (interest_rate >= 0),
 ADD CONSTRAINT check_term_months CHECK (term_months > 0),
 ADD CONSTRAINT check_closing_costs CHECK (closing_costs >= 0),
 ADD CONSTRAINT check_minimum_payment_percentage CHECK (minimum_payment_percentage >= 0 AND minimum_payment_percentage <= 100);
 
--- Add check constraints for enum-like values
+-- Add check constraints for enum-like values (drop existing ones first to avoid conflicts)
+ALTER TABLE loan_requests DROP CONSTRAINT IF EXISTS check_loan_type;
+ALTER TABLE loan_requests DROP CONSTRAINT IF EXISTS check_amortization_type;
+ALTER TABLE loan_requests DROP CONSTRAINT IF EXISTS check_payment_frequency;
+ALTER TABLE loan_requests DROP CONSTRAINT IF EXISTS check_minimum_payment_type;
+
 ALTER TABLE loan_requests 
 ADD CONSTRAINT check_loan_type CHECK (loan_type IN ('personal', 'business', 'mortgage', 'auto', 'education')),
 ADD CONSTRAINT check_amortization_type CHECK (amortization_type IN ('simple', 'german', 'american', 'indefinite')),

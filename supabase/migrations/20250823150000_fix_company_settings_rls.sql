@@ -5,6 +5,7 @@
 DROP POLICY IF EXISTS "Company users can manage company settings" ON public.company_settings;
 
 -- Crear política para SELECT (lectura) - empleados y dueños pueden leer
+DROP POLICY IF EXISTS "Company users and employees can read company settings" ON public.company_settings;
 CREATE POLICY "Company users and employees can read company settings"
   ON public.company_settings
   FOR SELECT
@@ -20,6 +21,7 @@ CREATE POLICY "Company users and employees can read company settings"
   );
 
 -- Crear política para INSERT (creación) - solo dueños pueden crear
+DROP POLICY IF EXISTS "Only company owners can create company settings" ON public.company_settings;
 CREATE POLICY "Only company owners can create company settings"
   ON public.company_settings
   FOR INSERT
@@ -27,6 +29,7 @@ CREATE POLICY "Only company owners can create company settings"
   WITH CHECK (user_id = get_user_company_id());
 
 -- Crear política para UPDATE (actualización) - solo dueños pueden actualizar
+DROP POLICY IF EXISTS "Only company owners can update company settings" ON public.company_settings;
 CREATE POLICY "Only company owners can update company settings"
   ON public.company_settings
   FOR UPDATE
@@ -35,6 +38,7 @@ CREATE POLICY "Only company owners can update company settings"
   WITH CHECK (user_id = get_user_company_id());
 
 -- También permitir acceso para validación de códigos de empresa (sin autenticación)
+DROP POLICY IF EXISTS "Allow company code validation" ON public.company_settings;
 CREATE POLICY "Allow company code validation"
   ON public.company_settings
   FOR SELECT
@@ -42,6 +46,7 @@ CREATE POLICY "Allow company code validation"
   USING (company_code_enabled = true);
 
 -- Permitir inserción de configuraciones de empresa para nuevos usuarios
+DROP POLICY IF EXISTS "Allow company settings creation" ON public.company_settings;
 CREATE POLICY "Allow company settings creation"
   ON public.company_settings
   FOR INSERT

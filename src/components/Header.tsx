@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { LogOut, User, Building, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import Notifications from './Notifications';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -43,6 +44,9 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
 
         {/* Lado derecho - Acciones */}
         <div className="flex items-center gap-2">
+          {/* Notificaciones */}
+          <Notifications />
+
           {/* Perfil - Solo en desktop */}
           {profile && (
             <div className="hidden sm:flex items-center gap-3">

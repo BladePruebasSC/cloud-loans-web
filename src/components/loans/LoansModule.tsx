@@ -13,6 +13,7 @@ import { LoanUpdateForm } from './LoanUpdateForm';
 import { LoanHistoryView } from './LoanHistoryView';
 import { LoanStatistics } from './LoanStatistics';
 import { PaymentStatusBadge } from './PaymentStatusBadge';
+import { CollectionTracking } from './CollectionTracking';
 import { useLoans } from '@/hooks/useLoans';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -38,7 +39,8 @@ import {
   ChevronRight,
   Trash2,
   RotateCcw,
-  BarChart3
+  BarChart3,
+  Phone
 } from 'lucide-react';
 
 export const LoansModule = () => {
@@ -57,6 +59,8 @@ export const LoansModule = () => {
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [loanToCancel, setLoanToCancel] = useState(null);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [showCollectionTracking, setShowCollectionTracking] = useState(false);
+  const [selectedLoanForTracking, setSelectedLoanForTracking] = useState(null);
   
      // Estados para filtros y búsqueda
    const [searchTerm, setSearchTerm] = useState('');
@@ -711,91 +715,107 @@ export const LoansModule = () => {
                    )}
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-6">
                   {filteredLoans.map((loan) => (
-                    <div key={loan.id} className="border rounded-lg p-4 sm:p-6 hover:shadow-md transition-shadow bg-white">
-                      <div className="space-y-4">
-                        {/* Header del préstamo */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div className="flex-1">
-                            <h3 className="font-semibold text-lg sm:text-xl text-gray-900 mb-2">
-                              {loan.client?.full_name}
-                            </h3>
-                            <p className="text-sm text-gray-600 mb-2">DNI: {loan.client?.dni}</p>
-                            <span className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${
-                              loan.status === 'active' ? 'bg-green-100 text-green-800' :
-                              loan.status === 'overdue' ? 'bg-red-100 text-red-800' :
-                              loan.status === 'paid' ? 'bg-blue-100 text-blue-800' :
-                              loan.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                              loan.status === 'deleted' ? 'bg-gray-100 text-gray-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {loan.status === 'active' ? 'Activo' :
-                               loan.status === 'overdue' ? 'Vencido' :
-                               loan.status === 'paid' ? 'Pagado' :
-                               loan.status === 'pending' ? 'Pendiente' :
-                               loan.status === 'deleted' ? 'Eliminado' :
-                               loan.status}
-                            </span>
+                    <div key={loan.id} className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden">
+                      {/* Header con gradiente */}
+                      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-gray-100">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                              {loan.client?.full_name?.charAt(0) || 'C'}
+                            </div>
+                            <div>
+                              <h3 className="font-bold text-xl text-gray-900">
+                                {loan.client?.full_name}
+                              </h3>
+                              <p className="text-sm text-gray-600">DNI: {loan.client?.dni}</p>
+                            </div>
                           </div>
+                          <span className={`px-4 py-2 rounded-full text-sm font-semibold ${
+                            loan.status === 'active' ? 'bg-green-100 text-green-800 border border-green-200' :
+                            loan.status === 'overdue' ? 'bg-red-100 text-red-800 border border-red-200' :
+                            loan.status === 'paid' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                            loan.status === 'pending' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
+                            loan.status === 'deleted' ? 'bg-gray-100 text-gray-800 border border-gray-200' :
+                            'bg-gray-100 text-gray-800 border border-gray-200'
+                          }`}>
+                            {loan.status === 'active' ? 'Activo' :
+                             loan.status === 'overdue' ? 'Vencido' :
+                             loan.status === 'paid' ? 'Pagado' :
+                             loan.status === 'pending' ? 'Pendiente' :
+                             loan.status === 'deleted' ? 'Eliminado' :
+                             loan.status}
+                          </span>
                         </div>
-                        
-                        {/* Información del préstamo - optimizada para móviles */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                          <div className="bg-gray-50 rounded-lg p-3">
-                            <div className="flex justify-between items-center mb-2">
-                              <span className="font-medium text-sm text-gray-700">Monto Total</span>
-                              <span className="text-lg font-bold text-gray-900">${loan.amount.toLocaleString()}</span>
+                      </div>
+
+                      {/* Contenido principal */}
+                      <div className="p-6">
+                        {/* Información financiera destacada */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                          <div className="text-center p-4 bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-100">
+                            <div className="text-2xl font-bold text-green-700 mb-1">
+                              ${loan.amount.toLocaleString()}
                             </div>
-                            <div className="flex justify-between items-center mb-2">
-                              <span className="font-medium text-sm text-gray-700">Balance Pendiente</span>
-                              <span className="text-lg font-bold text-red-600">${loan.remaining_balance.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="font-medium text-sm text-gray-700">Cuota Mensual</span>
-                              <span className="text-lg font-bold text-blue-600">${loan.monthly_payment.toLocaleString()}</span>
-                            </div>
+                            <div className="text-sm text-green-600 font-medium">Monto Total</div>
                           </div>
                           
-                          <div className="bg-blue-50 rounded-lg p-3">
-                            <div className="flex justify-between items-center mb-2">
-                              <span className="font-medium text-sm text-gray-700">Próximo Pago</span>
-                              <span className="text-sm font-semibold text-gray-900">{new Date(loan.next_payment_date).toLocaleDateString()}</span>
+                          <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
+                            <div className="text-2xl font-bold text-red-700 mb-1">
+                              ${loan.remaining_balance.toLocaleString()}
                             </div>
-                            <div className="flex justify-between items-center">
-                              <span className="font-medium text-sm text-gray-700">Plazo</span>
-                              <span className="text-sm font-semibold text-gray-900">{loan.term_months} meses</span>
-                            </div>
+                            <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
                           </div>
-                        </div>
-                        
-                        {/* Información adicional */}
-                        <div className="bg-gray-50 rounded-lg p-3">
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                            <div className="flex justify-between">
-                              <span className="font-medium text-gray-700">Tasa de Interés:</span>
-                              <span className="font-semibold text-gray-900">{loan.interest_rate}%</span>
+                          
+                          <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl border border-blue-100">
+                            <div className="text-2xl font-bold text-blue-700 mb-1">
+                              ${loan.monthly_payment.toLocaleString()}
                             </div>
-                            <div className="flex justify-between">
-                              <span className="font-medium text-gray-700">Tipo:</span>
-                              <span className="font-semibold text-gray-900">{loan.loan_type}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="font-medium text-gray-700">Fecha de Inicio:</span>
-                              <span className="font-semibold text-gray-900">{new Date(loan.start_date).toLocaleDateString()}</span>
-                            </div>
+                            <div className="text-sm text-blue-600 font-medium">Cuota Mensual</div>
                           </div>
                         </div>
 
-                        {/* Botones de acción - optimizados para móviles */}
-                        <div className="flex flex-col sm:flex-row gap-3 mt-4">
+                        {/* Información adicional en grid */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                          <div className="text-center p-3 bg-gray-50 rounded-lg">
+                            <div className="text-lg font-bold text-gray-800 mb-1">
+                              {new Date(loan.next_payment_date).toLocaleDateString()}
+                            </div>
+                            <div className="text-xs text-gray-600">Próximo Pago</div>
+                          </div>
+                          
+                          <div className="text-center p-3 bg-gray-50 rounded-lg">
+                            <div className="text-lg font-bold text-gray-800 mb-1">
+                              {loan.term_months}
+                            </div>
+                            <div className="text-xs text-gray-600">Meses</div>
+                          </div>
+                          
+                          <div className="text-center p-3 bg-gray-50 rounded-lg">
+                            <div className="text-lg font-bold text-gray-800 mb-1">
+                              {loan.interest_rate}%
+                            </div>
+                            <div className="text-xs text-gray-600">Tasa</div>
+                          </div>
+                          
+                          <div className="text-center p-3 bg-gray-50 rounded-lg">
+                            <div className="text-lg font-bold text-gray-800 mb-1 capitalize">
+                              {loan.loan_type}
+                            </div>
+                            <div className="text-xs text-gray-600">Tipo</div>
+                          </div>
+                        </div>
+
+                        {/* Botones de acción mejorados */}
+                        <div className="border-t border-gray-100 pt-6">
                           {loan.status === 'pending' ? (
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                               <Button
                                 variant="default"
                                 size="lg"
                                 onClick={() => handleApproveLoan(loan.id)}
-                                className="h-12 text-base font-medium bg-green-600 hover:bg-green-700"
+                                className="h-12 text-base font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 shadow-lg hover:shadow-xl transition-all duration-200"
                               >
                                 <CheckCircle className="h-5 w-5 mr-2" />
                                 Aprobar Préstamo
@@ -807,7 +827,7 @@ export const LoansModule = () => {
                                   setSelectedLoan(loan);
                                   setShowUpdateForm(true);
                                 }}
-                                className="h-12 text-base font-medium"
+                                className="h-12 text-base font-semibold border-2 hover:bg-gray-50 transition-all duration-200"
                               >
                                 <Edit className="h-5 w-5 mr-2" />
                                 Editar
@@ -816,7 +836,7 @@ export const LoansModule = () => {
                                 variant="destructive"
                                 size="lg"
                                 onClick={() => handleCancelLoanClick(loan)}
-                                className="h-12 text-base font-medium"
+                                className="h-12 text-base font-semibold bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 shadow-lg hover:shadow-xl transition-all duration-200"
                               >
                                 <X className="h-5 w-5 mr-2" />
                                 Cancelar
@@ -827,13 +847,13 @@ export const LoansModule = () => {
                               variant="default"
                               size="lg"
                               onClick={() => handleRecoverLoan(loan.id)}
-                              className="h-12 text-base font-medium bg-blue-600 hover:bg-blue-700"
+                              className="h-12 text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transition-all duration-200 w-full"
                             >
                               <RotateCcw className="h-5 w-5 mr-2" />
                               Recuperar Préstamo
                             </Button>
                           ) : (
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                               <Button
                                 variant="default"
                                 size="lg"
@@ -842,10 +862,22 @@ export const LoansModule = () => {
                                   setShowPaymentForm(true);
                                 }}
                                 disabled={loan.status === 'paid'}
-                                className="h-12 text-base font-medium bg-green-600 hover:bg-green-700 disabled:bg-gray-400"
+                                className="h-12 text-base font-semibold bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:from-gray-400 disabled:to-gray-500 shadow-lg hover:shadow-xl transition-all duration-200"
                               >
                                 <Receipt className="h-5 w-5 mr-2" />
                                 Registrar Pago
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="lg"
+                                onClick={() => {
+                                  setSelectedLoanForTracking(loan);
+                                  setShowCollectionTracking(true);
+                                }}
+                                className="h-12 text-base font-semibold border-2 border-blue-200 text-blue-700 hover:bg-blue-50 hover:border-blue-300 transition-all duration-200"
+                              >
+                                <Phone className="h-5 w-5 mr-2" />
+                                Seguimiento
                               </Button>
                               <Button
                                 variant="outline"
@@ -855,7 +887,7 @@ export const LoansModule = () => {
                                   setShowUpdateForm(true);
                                 }}
                                 disabled={loan.status === 'paid'}
-                                className="h-12 text-base font-medium"
+                                className="h-12 text-base font-semibold border-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 disabled:opacity-50 transition-all duration-200"
                               >
                                 <Edit className="h-5 w-5 mr-2" />
                                 Editar
@@ -867,7 +899,7 @@ export const LoansModule = () => {
                                   setSelectedLoan(loan);
                                   setShowHistoryView(true);
                                 }}
-                                className="h-12 text-base font-medium"
+                                className="h-12 text-base font-semibold border-2 border-purple-200 text-purple-700 hover:bg-purple-50 hover:border-purple-300 transition-all duration-200"
                               >
                                 <History className="h-5 w-5 mr-2" />
                                 Historial
@@ -2143,6 +2175,19 @@ export const LoansModule = () => {
          </div>
        </DialogContent>
      </Dialog>
+
+     {/* Modal de Seguimiento de Cobro */}
+     {selectedLoanForTracking && (
+       <CollectionTracking
+         loanId={selectedLoanForTracking.id}
+         clientName={selectedLoanForTracking.client?.full_name || 'Cliente'}
+         isOpen={showCollectionTracking}
+         onClose={() => {
+           setShowCollectionTracking(false);
+           setSelectedLoanForTracking(null);
+         }}
+       />
+     )}
    </div>
  );
 };
