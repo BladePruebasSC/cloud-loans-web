@@ -130,6 +130,39 @@ export const LoansModule = () => {
     }
   }, []);
 
+  // Detectar parámetros de URL para acciones específicas desde notificaciones
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const action = urlParams.get('action');
+    const loanId = urlParams.get('loanId');
+    
+    if (action && loanId) {
+      // Buscar el préstamo específico
+      const targetLoan = loans.find(loan => loan.id === loanId);
+      
+      if (targetLoan) {
+        if (action === 'payment') {
+          // Abrir formulario de pago
+          setSelectedLoanForPayment(targetLoan);
+          setShowPaymentForm(true);
+          toast.success(`Abriendo formulario de pago para ${targetLoan.client?.full_name}`);
+        } else if (action === 'tracking') {
+          // Abrir formulario de seguimiento
+          setSelectedLoanForTracking(targetLoan);
+          setShowCollectionTracking(true);
+          toast.success(`Abriendo formulario de seguimiento para ${targetLoan.client?.full_name}`);
+        }
+        
+        // Limpiar URL para evitar re-aplicación
+        window.history.replaceState({}, '', '/prestamos');
+      } else {
+        toast.error('Préstamo no encontrado');
+        // Limpiar URL incluso si no se encuentra el préstamo
+        window.history.replaceState({}, '', '/prestamos');
+      }
+    }
+  }, [loans]); // Dependencia en loans para asegurar que estén cargados
+
   // Cargar solicitudes para el selector
   const fetchRequests = async () => {
     try {

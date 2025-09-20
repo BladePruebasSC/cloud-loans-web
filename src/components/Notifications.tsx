@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { 
   Bell, 
   Clock, 
@@ -33,6 +35,27 @@ const Notifications: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const { user } = useAuth();
+  const navigate = useNavigate();
+
+  // Función para navegar a la acción específica de la notificación
+  const handleNavigateToAction = (loanId: string, notificationType: string, clientName: string) => {
+    // Cerrar el modal de notificaciones
+    setIsOpen(false);
+    
+    if (notificationType === 'payment_overdue' || notificationType === 'payment_due') {
+      // Para pagos vencidos o próximos, navegar al módulo de préstamos con acción de pago
+      navigate(`/prestamos?action=payment&loanId=${loanId}`);
+      toast.success(`Navegando a registrar pago de ${clientName}...`);
+    } else if (notificationType === 'follow_up_due') {
+      // Para seguimientos, navegar al módulo de préstamos con acción de seguimiento
+      navigate(`/prestamos?action=tracking&loanId=${loanId}`);
+      toast.success(`Navegando a seguimiento de ${clientName}...`);
+    } else {
+      // Fallback: navegar al módulo de préstamos
+      navigate('/prestamos');
+      toast.success('Navegando a préstamos...');
+    }
+  };
 
   // Cargar notificaciones
   const fetchNotifications = async () => {
@@ -47,7 +70,7 @@ const Notifications: React.FC = () => {
       const nextWeek = new Date(today);
       nextWeek.setDate(nextWeek.getDate() + 7);
 
-      // 1. Préstamos con pagos vencidos
+      // 1. Préstamos con pagos vencidos (fecha ya pasó)
       const { data: overdueLoans, error: overdueError } = await supabase
         .from('loans')
         .select(`
@@ -64,15 +87,30 @@ const Notifications: React.FC = () => {
       if (!overdueError && overdueLoans) {
         overdueLoans.forEach(loan => {
           const daysOverdue = Math.ceil((today.getTime() - new Date(loan.next_payment_date).getTime()) / (1000 * 60 * 60 * 24));
+          
+          // Mensaje más específico según los días vencidos
+          const clientName = (loan.clients as any)?.full_name || 'Cliente desconocido';
+          let title, message;
+          if (daysOverdue === 1) {
+            title = '⚠️ Pago Vencido Ayer';
+            message = `${clientName} tenía un pago que debía realizarse AYER`;
+          } else if (daysOverdue <= 7) {
+            title = '🚨 Pago Vencido';
+            message = `${clientName} tiene un pago vencido hace ${daysOverdue} días`;
+          } else {
+            title = '🔴 Pago Muy Vencido';
+            message = `${clientName} tiene un pago vencido hace ${daysOverdue} días - URGENTE`;
+          }
+          
           notificationsList.push({
             id: `overdue-${loan.id}`,
             type: 'payment_overdue',
-            title: 'Pago Vencido',
-            message: `${loan.clients.full_name} tiene un pago vencido hace ${daysOverdue} día${daysOverdue !== 1 ? 's' : ''}`,
-            priority: 'high',
+            title,
+            message,
+            priority: daysOverdue <= 3 ? 'high' : 'high', // Todos los vencidos son alta prioridad
             dueDate: loan.next_payment_date,
             loanId: loan.id,
-            clientName: loan.clients.full_name,
+            clientName: clientName || 'Cliente desconocido',
             amount: loan.monthly_payment
           });
         });
@@ -98,23 +136,29 @@ const Notifications: React.FC = () => {
           const daysUntilDue = Math.ceil((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
           
           // Determinar el tipo de notificación y mensaje
+          const clientName = (loan.clients as any)?.full_name || 'Cliente desconocido';
           let title, message, priority;
           
           if (daysUntilDue === 0) {
             // Pago vence hoy
-            title = 'Pago Vence Hoy';
-            message = `${loan.clients.full_name} tiene un pago que vence HOY`;
+            title = '⏰ Pago Vence HOY';
+            message = `${clientName} tiene un pago que vence HOY - ¡No olvides cobrar!`;
             priority = 'high';
           } else if (daysUntilDue === 1) {
             // Pago vence mañana
-            title = 'Pago Vence Mañana';
-            message = `${loan.clients.full_name} tiene un pago que vence mañana`;
+            title = '📅 Pago Vence Mañana';
+            message = `${clientName} tiene un pago que vence mañana`;
             priority = 'high';
+          } else if (daysUntilDue <= 3) {
+            // Pago vence en pocos días
+            title = '⏳ Pago Próximo';
+            message = `${clientName} tiene un pago en ${daysUntilDue} días`;
+            priority = 'medium';
           } else {
             // Pago vence en varios días
-            title = 'Pago Próximo';
-            message = `${loan.clients.full_name} tiene un pago en ${daysUntilDue} días`;
-            priority = daysUntilDue <= 3 ? 'medium' : 'low';
+            title = '📋 Pago Programado';
+            message = `${clientName} tiene un pago en ${daysUntilDue} días`;
+            priority = 'low';
           }
           
           notificationsList.push({
@@ -125,7 +169,7 @@ const Notifications: React.FC = () => {
             priority,
             dueDate: loan.next_payment_date,
             loanId: loan.id,
-            clientName: loan.clients.full_name,
+            clientName: clientName || 'Cliente desconocido',
             amount: loan.monthly_payment
           });
         });
@@ -160,15 +204,18 @@ const Notifications: React.FC = () => {
             other: 'Otro'
           };
           
+          // Acceder correctamente al nombre del cliente
+          const clientName = (followUp.loans as any)?.clients?.full_name || 'Cliente desconocido';
+          
           notificationsList.push({
             id: `followup-${followUp.id}`,
             type: 'follow_up_due',
             title: 'Seguimiento Próximo',
-            message: `Recordatorio: ${contactTypeLabels[followUp.contact_type as keyof typeof contactTypeLabels]} a ${followUp.loans.clients.full_name} en ${daysUntilFollowUp} día${daysUntilFollowUp !== 1 ? 's' : ''}`,
+            message: `Recordatorio: ${contactTypeLabels[followUp.contact_type as keyof typeof contactTypeLabels]} a ${clientName} en ${daysUntilFollowUp} día${daysUntilFollowUp !== 1 ? 's' : ''}`,
             priority: daysUntilFollowUp <= 1 ? 'high' : 'medium',
             dueDate: followUp.next_contact_date,
             loanId: followUp.loan_id,
-            clientName: followUp.loans.clients.full_name
+            clientName: clientName || 'Cliente desconocido'
           });
         });
       }
@@ -202,19 +249,26 @@ const Notifications: React.FC = () => {
   const getNotificationIcon = (notification: Notification) => {
     switch (notification.type) {
       case 'payment_overdue':
+        // Para pagos vencidos, siempre usar icono de alerta roja
         return <AlertTriangle className="h-4 w-4 text-red-500" />;
       case 'payment_due':
-        // Si el pago vence hoy, usar icono de alerta
+        // Para pagos próximos, usar diferentes iconos según la urgencia
         const today = new Date();
         const dueDate = new Date(notification.dueDate);
         const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         
         if (daysUntilDue === 0) {
+          // Pago vence hoy - alerta roja
           return <AlertTriangle className="h-4 w-4 text-red-500" />;
         } else if (daysUntilDue === 1) {
+          // Pago vence mañana - alerta naranja
           return <AlertTriangle className="h-4 w-4 text-orange-500" />;
-        } else {
+        } else if (daysUntilDue <= 3) {
+          // Pago en pocos días - dólar naranja
           return <DollarSign className="h-4 w-4 text-orange-500" />;
+        } else {
+          // Pago en varios días - dólar azul
+          return <DollarSign className="h-4 w-4 text-blue-500" />;
         }
       case 'follow_up_due':
         return <Phone className="h-4 w-4 text-blue-500" />;
@@ -223,16 +277,21 @@ const Notifications: React.FC = () => {
     }
   };
 
-  const getPriorityColor = (priority: string) => {
+  const getPriorityColor = (priority: string, type?: string) => {
+    // Para pagos vencidos, usar un color más intenso
+    if (type === 'payment_overdue') {
+      return 'bg-red-200 text-red-900 border-red-300 border-l-red-500';
+    }
+    
     switch (priority) {
       case 'high':
-        return 'bg-red-100 text-red-800 border-red-200';
+        return 'bg-red-100 text-red-800 border-red-200 border-l-red-400';
       case 'medium':
-        return 'bg-orange-100 text-orange-800 border-orange-200';
+        return 'bg-orange-100 text-orange-800 border-orange-200 border-l-orange-400';
       case 'low':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
+        return 'bg-blue-100 text-blue-800 border-blue-200 border-l-blue-400';
       default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
+        return 'bg-gray-100 text-gray-800 border-gray-200 border-l-gray-400';
     }
   };
 
@@ -287,7 +346,7 @@ const Notifications: React.FC = () => {
               </div>
             ) : (
               notifications.map((notification) => (
-                <Card key={notification.id} className={`border-l-4 ${getPriorityColor(notification.priority)}`}>
+                <Card key={notification.id} className={`border-l-4 ${getPriorityColor(notification.priority, notification.type)}`}>
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-3 flex-1">
@@ -297,7 +356,7 @@ const Notifications: React.FC = () => {
                             <h4 className="font-medium text-sm">{notification.title}</h4>
                             <Badge 
                               variant="outline" 
-                              className={`text-xs ${getPriorityColor(notification.priority)}`}
+                              className={`text-xs ${getPriorityColor(notification.priority, notification.type)}`}
                             >
                               {notification.priority === 'high' ? 'Alta' : 
                                notification.priority === 'medium' ? 'Media' : 'Baja'}
@@ -322,8 +381,15 @@ const Notifications: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="p-1"
-                          title="Ver préstamo"
+                          className="p-1 hover:bg-gray-100 transition-colors"
+                          title={
+                            notification.type === 'payment_overdue' || notification.type === 'payment_due' 
+                              ? "Registrar pago" 
+                              : notification.type === 'follow_up_due' 
+                                ? "Crear seguimiento" 
+                                : "Ver préstamo"
+                          }
+                          onClick={() => handleNavigateToAction(notification.loanId!, notification.type, notification.clientName)}
                         >
                           <ChevronRight className="h-4 w-4" />
                         </Button>
