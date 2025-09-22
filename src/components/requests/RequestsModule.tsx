@@ -600,7 +600,7 @@ const RequestsModule = () => {
                             onClick={() => handleCreateLoanFromRequest(request)}
                           >
                             <ArrowRight className="h-4 w-4 mr-1 sm:mr-2" />
-                            <span className="sm:hidden">Crear</span>
+                            <span className="sm:hidden">Crear Préstamo</span>
                             <span className="hidden sm:inline">Crear Préstamo</span>
                           </Button>
                           {request.status === 'approved' && (

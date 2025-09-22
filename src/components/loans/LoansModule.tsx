@@ -80,7 +80,7 @@ export const LoansModule = () => {
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
   
   // Constante para el texto del botón Editar
-  const EDIT_BUTTON_TEXT = 'Editar';
+  const EDIT_BUTTON_TEXT = 'Actualizar';
 
   // Funciones para navegación del calendario
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -1551,8 +1551,8 @@ export const LoansModule = () => {
                                      className="w-full sm:w-auto text-xs"
                                    >
                                      <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                     <span className="sm:hidden">{EDIT_BUTTON_TEXT}</span>
-                                     <span className="hidden sm:inline">Actualizar</span>
+                                       <span className="sm:hidden">{EDIT_BUTTON_TEXT}</span>
+                                      <span className="hidden sm:inline">{EDIT_BUTTON_TEXT}</span>
                                    </Button>
                                    <Button
                                      variant="destructive"
