@@ -280,6 +280,19 @@ export const ReportsModule = () => {
   const approvalRate = totalLoans > 0 ? (activeLoans / totalLoans) * 100 : 0;
   const defaultRate = totalLoans > 0 ? (overdueLoans / totalLoans) * 100 : 0;
 
+  // Debug logs para estadísticas
+  console.log('📊 ESTADÍSTICAS CALCULADAS:');
+  console.log('📊 Total préstamos:', totalLoans);
+  console.log('📊 Préstamos activos:', activeLoans);
+  console.log('📊 Total monto préstamos:', totalLoanAmount);
+  console.log('📊 Total pagos:', totalPayments);
+  console.log('📊 Total intereses:', totalInterest);
+  console.log('📊 Total gastos:', totalExpenses);
+  console.log('📊 Ganancia neta:', netProfit);
+  console.log('📊 Total clientes:', totalClients);
+  console.log('📊 Datos de préstamos:', reportData.loans);
+  console.log('📊 Datos de pagos:', reportData.payments);
+
   // Filtros para pagos
   const filteredPayments = reportData.payments.filter(payment => {
     const matchesSearch = payment.loans?.clients?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -416,67 +429,55 @@ export const ReportsModule = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Préstamos Totales</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Préstamos</CardTitle>
             <CreditCard className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl sm:text-3xl font-bold text-blue-600">{totalLoans}</div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              ${totalLoanAmount.toLocaleString()} prestados
+              {activeLoans} activos
             </p>
-            <div className="mt-2 text-xs text-gray-500">
-              Promedio: ${Math.round(averageLoanAmount).toLocaleString()}
-            </div>
           </CardContent>
         </Card>
 
         <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pagos Recibidos</CardTitle>
+            <CardTitle className="text-sm font-medium">Portafolio Total</CardTitle>
             <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-green-600">${totalPayments.toLocaleString()}</div>
+            <div className="text-2xl sm:text-3xl font-bold text-green-600">RD${totalLoanAmount.toLocaleString()}</div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              ${totalInterest.toLocaleString()} en intereses
+              Balance: RD${reportData.loans.reduce((sum, loan) => sum + (loan.remaining_balance || 0), 0).toLocaleString()}
             </p>
-            <div className="mt-2 text-xs text-gray-500">
-              {reportData.payments.length} pagos registrados
-            </div>
           </CardContent>
         </Card>
 
         <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Gastos</CardTitle>
-            <TrendingDown className="h-4 w-4 text-red-600" />
+            <CardTitle className="text-sm font-medium">Pagos del Período</CardTitle>
+            <Receipt className="h-4 w-4 text-purple-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-red-600">${totalExpenses.toLocaleString()}</div>
+            <div className="text-2xl sm:text-3xl font-bold text-purple-600">RD${totalPayments.toLocaleString()}</div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              Gastos operativos
+              {reportData.payments.length} transacciones
             </p>
-            <div className="mt-2 text-xs text-gray-500">
-              {reportData.expenses.length} gastos registrados
-            </div>
           </CardContent>
         </Card>
 
         <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Ganancia Neta</CardTitle>
-            <TrendingUp className="h-4 w-4 text-purple-600" />
+            <CardTitle className="text-sm font-medium">Tasa de Cobro</CardTitle>
+            <TrendingUp className="h-4 w-4 text-orange-600" />
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl sm:text-3xl font-bold ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              ${netProfit.toLocaleString()}
+            <div className="text-2xl sm:text-3xl font-bold text-orange-600">
+              {totalLoanAmount > 0 ? Math.round((totalPayments / totalLoanAmount) * 100) : 0}%
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              Intereses - Gastos
+              Eficiencia de cobranza
             </p>
-            <div className="mt-2 text-xs text-gray-500">
-              Margen: {totalInterest > 0 ? Math.round((netProfit / totalInterest) * 100) : 0}%
-            </div>
           </CardContent>
         </Card>
       </div>

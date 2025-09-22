@@ -388,7 +388,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Edit className="h-5 w-5" />
-            Actualizar Préstamo - {loan.client.full_name}
+            Editar Préstamo - {loan.client.full_name}
           </DialogTitle>
         </DialogHeader>
 
@@ -746,7 +746,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     Cancelar
                   </Button>
                   <Button type="submit" disabled={loading}>
-                    {loading ? 'Procesando...' : 'Aplicar Actualización'}
+                    {loading ? 'Procesando...' : 'Guardar Cambios'}
                   </Button>
                 </div>
               </form>

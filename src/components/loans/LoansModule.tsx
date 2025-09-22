@@ -78,6 +78,9 @@ export const LoansModule = () => {
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
+  
+  // Constante para el texto del botón Editar
+  const EDIT_BUTTON_TEXT = 'Editar';
 
   // Funciones para navegación del calendario
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -913,7 +916,7 @@ export const LoansModule = () => {
                                 className="h-12 text-base font-semibold border-2 hover:bg-gray-50 transition-all duration-200"
                               >
                                 <Edit className="h-5 w-5 mr-2" />
-                                Editar
+                                <span>{EDIT_BUTTON_TEXT}</span>
                               </Button>
                               <Button
                                 variant="destructive"
@@ -973,7 +976,7 @@ export const LoansModule = () => {
                                 className="h-12 text-base font-semibold border-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 disabled:opacity-50 transition-all duration-200"
                               >
                                 <Edit className="h-5 w-5 mr-2" />
-                                Editar
+                                <span>{EDIT_BUTTON_TEXT}</span>
                               </Button>
                               <Button
                                 variant="outline"
@@ -1256,8 +1259,8 @@ export const LoansModule = () => {
                                  className="w-full sm:w-auto text-xs"
                                >
                                  <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                 <span className="sm:hidden">Editar</span>
-                                 <span className="hidden sm:inline">Editar</span>
+                                 <span className="sm:hidden">{EDIT_BUTTON_TEXT}</span>
+                                 <span className="hidden sm:inline">{EDIT_BUTTON_TEXT}</span>
                                </Button>
                                <Button
                                  variant="destructive"
@@ -1307,7 +1310,7 @@ export const LoansModule = () => {
                                  className="w-full sm:w-auto text-xs"
                                >
                                  <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                 <span className="sm:hidden">Editar</span>
+                                 <span className="sm:hidden">{EDIT_BUTTON_TEXT}</span>
                                </Button>
                                                              <Button
                                 variant="outline"
@@ -1548,8 +1551,8 @@ export const LoansModule = () => {
                                      className="w-full sm:w-auto text-xs"
                                    >
                                      <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                     <span className="sm:hidden">Editar</span>
-                                     <span className="hidden sm:inline">Editar</span>
+                                     <span className="sm:hidden">{EDIT_BUTTON_TEXT}</span>
+                                     <span className="hidden sm:inline">Actualizar</span>
                                    </Button>
                                    <Button
                                      variant="destructive"
@@ -1598,7 +1601,7 @@ export const LoansModule = () => {
                                      className="w-full sm:w-auto text-xs"
                                    >
                                      <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                     <span className="sm:hidden">Editar</span>
+                                     <span className="sm:hidden">{EDIT_BUTTON_TEXT}</span>
                                    </Button>
                                  </>
                                )}
