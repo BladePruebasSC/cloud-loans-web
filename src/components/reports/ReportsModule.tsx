@@ -71,28 +71,42 @@ export const ReportsModule = () => {
     try {
       setLoading(true);
       
-      // Fetch clients (filtrados por empresa)
+      // Fetch clients - Usar clientes que tienen préstamos con este companyId
+      console.log('🔄 FETCH CLIENTS: Buscando clientes para companyId:', companyId);
+      
+      // Obtener clientes que tienen préstamos con este loan_officer_id (companyId)
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
-        .select('*')
-        .eq('company_id', companyId)
+        .select(`
+          *,
+          loans!inner(
+            id,
+            loan_officer_id
+          )
+        `)
+        .eq('loans.loan_officer_id', companyId)
         .order('created_at', { ascending: false });
 
-      if (clientsError) throw clientsError;
+      if (clientsError) {
+        console.error('🔄 FETCH CLIENTS: Error:', clientsError);
+        throw clientsError;
+      }
+      
+      console.log('🔄 FETCH CLIENTS: Clientes encontrados:', clientsData?.length);
+      console.log('🔄 FETCH CLIENTS: Datos de clientes:', clientsData);
 
-      // Fetch loans (filtrados por empresa a través de clients)
+      // Fetch loans
       const { data: loansData, error: loansError } = await supabase
         .from('loans')
         .select(`
           *,
-          clients!inner (
+          clients (
             full_name,
             dni,
-            phone,
-            company_id
+            phone
           )
         `)
-        .eq('clients.company_id', companyId)
+                  .eq('loan_officer_id', companyId)
         .gte('created_at', dateRange.startDate)
         .lte('created_at', dateRange.endDate + 'T23:59:59')
         .order('created_at', { ascending: false });
@@ -108,16 +122,15 @@ export const ReportsModule = () => {
         .from('payments')
         .select(`
           *,
-          loans!inner (
+          loans (
             amount,
-            clients!inner (
+            clients (
               full_name,
-              dni,
-              company_id
+              dni
             )
           )
         `)
-        .eq('loans.clients.company_id', companyId)
+        .eq('created_by', companyId)
         .gte('payment_date', dateRange.startDate)
         .lte('payment_date', dateRange.endDate)
         .order('payment_date', { ascending: false });
@@ -130,16 +143,20 @@ export const ReportsModule = () => {
       console.log('🔄 FETCH PAYMENTS: Pagos encontrados:', paymentsData?.length);
       console.log('🔄 FETCH PAYMENTS: IDs de pagos:', paymentsData?.map(p => p.id));
 
-      // Fetch expenses (filtrados por empresa)
+      // Fetch expenses
       const { data: expensesData, error: expensesError } = await supabase
         .from('expenses')
         .select('*')
-        .eq('company_id', companyId)
+        .eq('created_by', companyId)
         .gte('expense_date', dateRange.startDate)
         .lte('expense_date', dateRange.endDate)
         .order('expense_date', { ascending: false });
 
       if (expensesError) throw expensesError;
+
+      console.log('🔄 FETCH CLIENTS: Clientes encontrados:', clientsData?.length);
+      console.log('🔄 FETCH LOANS: Préstamos encontrados:', loansData?.length);
+      console.log('🔄 FETCH EXPENSES: Gastos encontrados:', expensesData?.length);
 
       setReportData({
         clients: clientsData || [],
