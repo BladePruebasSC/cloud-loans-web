@@ -310,61 +310,103 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       switch (format) {
         case 'POS58':
           return `
+            * { box-sizing: border-box; }
             body { 
               font-family: 'Courier New', monospace; 
-              margin: 0; 
-              padding: 5px;
+              margin: 0 !important; 
+              padding: 0 !important;
               font-size: 12px;
               line-height: 1.2;
               color: #000;
+              width: 100% !important;
+              min-width: 100% !important;
             }
             .receipt-container {
-              max-width: 58mm;
-              margin: 0 auto;
-              padding: 5px;
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 5px !important;
+              min-width: 100% !important;
             }
-            .header { text-align: center; margin-bottom: 10px; }
+            .header { text-align: center; margin-bottom: 10px; width: 100%; }
             .receipt-title { font-size: 14px; font-weight: bold; margin-bottom: 5px; }
             .receipt-number { font-size: 10px; }
-            .section { margin-bottom: 10px; }
+            .section { margin-bottom: 10px; width: 100%; }
             .section-title { font-weight: bold; font-size: 11px; margin-bottom: 5px; text-decoration: underline; }
-            .info-row { margin-bottom: 3px; font-size: 10px; }
-            .amount-section { margin: 10px 0; }
+            .info-row { margin-bottom: 3px; font-size: 10px; width: 100%; }
+            .amount-section { margin: 10px 0; width: 100%; }
             .total-amount { font-size: 14px; font-weight: bold; text-align: center; margin-top: 10px; }
-            .footer { margin-top: 15px; text-align: center; font-size: 9px; }
+            .footer { margin-top: 15px; text-align: center; font-size: 9px; width: 100%; }
             @media print { 
-              body { margin: 0; padding: 2px; }
-              .receipt-container { border: none; max-width: 58mm; }
+              * { box-sizing: border-box; }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100% !important;
+                min-width: 100% !important;
+              }
+              .receipt-container { 
+                border: none; 
+                width: 100% !important; 
+                max-width: none !important; 
+                margin: 0 !important;
+                min-width: 100% !important;
+              }
+              @page { 
+                margin: 0 !important; 
+                size: auto !important;
+              }
             }
           `;
         
         case 'POS80':
           return `
+            * { box-sizing: border-box; }
             body { 
               font-family: 'Courier New', monospace; 
-              margin: 0; 
-              padding: 8px;
+              margin: 0 !important; 
+              padding: 0 !important;
               font-size: 14px;
               line-height: 1.3;
               color: #000;
+              width: 100% !important;
+              min-width: 100% !important;
             }
             .receipt-container {
-              max-width: 80mm;
-              margin: 0 auto;
-              padding: 8px;
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 8px !important;
+              min-width: 100% !important;
             }
-            .header { text-align: center; margin-bottom: 15px; }
+            .header { text-align: center; margin-bottom: 15px; width: 100%; }
             .receipt-title { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
             .receipt-number { font-size: 12px; }
-            .section { margin-bottom: 15px; }
+            .section { margin-bottom: 15px; width: 100%; }
             .section-title { font-weight: bold; font-size: 13px; margin-bottom: 8px; text-decoration: underline; }
-            .info-row { margin-bottom: 4px; font-size: 12px; }
-            .amount-section { margin: 15px 0; }
+            .info-row { margin-bottom: 4px; font-size: 12px; width: 100%; }
+            .amount-section { margin: 15px 0; width: 100%; }
             .total-amount { font-size: 16px; font-weight: bold; text-align: center; margin-top: 15px; }
-            .footer { margin-top: 20px; text-align: center; font-size: 10px; }
+            .footer { margin-top: 20px; text-align: center; font-size: 10px; width: 100%; }
             @media print { 
-              body { margin: 0; padding: 4px; }
-              .receipt-container { border: none; max-width: 80mm; }
+              * { box-sizing: border-box; }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100% !important;
+                min-width: 100% !important;
+              }
+              .receipt-container { 
+                border: none; 
+                width: 100% !important; 
+                max-width: none !important; 
+                margin: 0 !important;
+                min-width: 100% !important;
+              }
+              @page { 
+                margin: 0 !important; 
+                size: auto !important;
+              }
             }
           `;
         
