@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { 
   DropdownMenu, 
@@ -68,6 +68,58 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [showPrintFormatModal, setShowPrintFormatModal] = useState(false);
   const [loan, setLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isLatestPayment, setIsLatestPayment] = useState(false);
+  const [forceDelete, setForceDelete] = useState(false);
+  
+  // Verificar si este pago es el último del préstamo
+  useEffect(() => {
+    const checkIfLatestPayment = async () => {
+      try {
+        console.log('🔍 Verificando último pago para:', payment.id);
+        
+        const { data: allPayments, error } = await supabase
+          .from('payments')
+          .select('id, created_at')
+          .eq('loan_id', payment.loan_id)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false }); // Ordenar también por ID para consistencia
+
+        if (error) {
+          console.error('🔍 Error verificando último pago:', error);
+          setIsLatestPayment(false);
+          return;
+        }
+
+        if (allPayments && allPayments.length > 0) {
+          const latestPaymentId = allPayments[0].id;
+          const isLatest = latestPaymentId === payment.id;
+          
+          console.log('🔍 Resultado:', {
+            currentPaymentId: payment.id,
+            latestPaymentId: latestPaymentId,
+            totalPayments: allPayments.length,
+            isLatest: isLatest
+          });
+          
+          setIsLatestPayment(isLatest);
+        } else {
+          console.log('🔍 No hay pagos encontrados');
+          setIsLatestPayment(false);
+        }
+      } catch (error) {
+        console.error('🔍 Error en verificación:', error);
+        setIsLatestPayment(false);
+      }
+    };
+
+    checkIfLatestPayment();
+    
+    // Verificar nuevamente cada 5 segundos para detectar cambios
+    const interval = setInterval(checkIfLatestPayment, 5000);
+    
+    return () => clearInterval(interval);
+  }, [payment.id, payment.loan_id]);
+
   const [editForm, setEditForm] = useState({
     amount: payment.amount,
     principal_amount: payment.principal_amount,
@@ -139,84 +191,78 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
     try {
       setLoading(true);
       
-      console.log('🗑️ Iniciando eliminación del pago:', payment.id);
-      console.log('🗑️ Monto del pago a eliminar:', payment.amount);
-      console.log('🗑️ ID del préstamo:', payment.loan_id);
+      console.log('🗑️ ELIMINACIÓN DEL ÚLTIMO PAGO - Iniciando...');
+      console.log('🗑️ Pago ID:', payment.id);
+      console.log('🗑️ Monto:', payment.amount);
+      console.log('🗑️ Préstamo ID:', payment.loan_id);
       
-      // Primero, obtener el préstamo para recalcular el balance
-      console.log('🗑️ Obteniendo datos del préstamo...');
+      // PASO 1: Obtener balance actual del préstamo
+      console.log('🗑️ OBTENIENDO BALANCE DEL PRÉSTAMO...');
       const { data: loanData, error: loanError } = await supabase
         .from('loans')
-        .select('id, remaining_balance')
+        .select('remaining_balance')
         .eq('id', payment.loan_id)
         .single();
 
       if (loanError) {
-        console.error('🗑️ Error obteniendo préstamo:', loanError);
+        console.error('🗑️ ERROR obteniendo préstamo:', loanError);
         throw loanError;
       }
 
-      console.log('🗑️ Balance actual del préstamo:', loanData.remaining_balance);
+      const newBalance = loanData.remaining_balance + payment.amount;
+      console.log('🗑️ Balance actual:', loanData.remaining_balance);
+      console.log('🗑️ Nuevo balance:', newBalance);
 
-      // Eliminar el pago
-      console.log('🗑️ Eliminando pago de la base de datos...');
+      // PASO 2: Eliminar el pago
+      console.log('🗑️ ELIMINANDO PAGO...');
       const { error: deleteError } = await supabase
         .from('payments')
         .delete()
         .eq('id', payment.id);
 
       if (deleteError) {
-        console.error('🗑️ Error eliminando pago:', deleteError);
+        console.error('🗑️ ERROR eliminando pago:', deleteError);
+        console.error('🗑️ Detalles del error:', {
+          code: deleteError.code,
+          message: deleteError.message,
+          details: deleteError.details,
+          hint: deleteError.hint
+        });
         throw deleteError;
       }
 
-      console.log('🗑️ Pago eliminado exitosamente');
+      console.log('🗑️ ✅ Pago eliminado exitosamente');
 
-      // Recalcular el balance del préstamo sumando el monto eliminado
-      const newBalance = loanData.remaining_balance + payment.amount;
-      console.log('🗑️ Nuevo balance calculado:', newBalance);
-      
-      // Actualizar el balance del préstamo
-      console.log('🗑️ Actualizando balance del préstamo...');
+      // PASO 3: Actualizar balance del préstamo
+      console.log('🗑️ ACTUALIZANDO BALANCE...');
       const { error: updateError } = await supabase
         .from('loans')
         .update({ remaining_balance: newBalance })
         .eq('id', payment.loan_id);
 
       if (updateError) {
-        console.error('🗑️ Error actualizando préstamo:', updateError);
+        console.error('🗑️ ERROR actualizando préstamo:', updateError);
         throw updateError;
       }
 
-      console.log('🗑️ Balance del préstamo actualizado exitosamente');
-      console.log('🗑️ Llamando callback onPaymentUpdated...');
+      console.log('🗑️ ✅ Balance actualizado exitosamente');
 
+      // PASO 4: Notificar éxito y refrescar
       toast.success('Pago eliminado exitosamente');
       setShowDeleteModal(false);
       
-      // Pequeño delay para asegurar que la eliminación se complete
-      setTimeout(() => {
-        // Llamar al callback para refrescar la lista
-        if (onPaymentUpdated) {
-          console.log('🗑️ CALLBACK: Ejecutando onPaymentUpdated');
-          console.log('🗑️ CALLBACK: Tipo de función:', typeof onPaymentUpdated);
-          try {
-            onPaymentUpdated();
-            console.log('🗑️ CALLBACK: Ejecutado exitosamente');
-          } catch (callbackError) {
-            console.error('🗑️ CALLBACK: Error ejecutando callback:', callbackError);
-          }
-        } else {
-          console.warn('🗑️ CALLBACK: onPaymentUpdated no está definido');
-        }
-      }, 500);
+      // Refrescar inmediatamente
+      if (onPaymentUpdated) {
+        console.log('🗑️ Refrescando lista...');
+        onPaymentUpdated();
+      }
       
     } catch (error) {
-      console.error('🗑️ Error completo en eliminación:', error);
+      console.error('🗑️ ERROR GENERAL:', error);
       toast.error(`Error al eliminar el pago: ${error.message || 'Error desconocido'}`);
     } finally {
       setLoading(false);
-      console.log('🗑️ Proceso de eliminación finalizado');
+      console.log('🗑️ Proceso finalizado');
     }
   };
 
@@ -567,13 +613,18 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <Download className="mr-2 h-4 w-4" />
             Descargar
           </DropdownMenuItem>
-          <DropdownMenuItem 
-            onClick={() => setShowDeleteModal(true)}
-            className="text-red-600"
-          >
-            <Trash2 className="mr-2 h-4 w-4" />
-            Eliminar
-          </DropdownMenuItem>
+          {isLatestPayment && (
+            <DropdownMenuItem 
+              onClick={() => {
+                setForceDelete(false);
+                setShowDeleteModal(true);
+              }}
+              className="text-red-600"
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Eliminar Pago (Último)
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -753,8 +804,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
            </DialogHeader>
            <div className="space-y-4">
              <p>¿Estás seguro de que quieres eliminar este pago?</p>
+             <p className="text-sm text-blue-600 font-semibold">
+               ✅ Este es el último pago del préstamo
+             </p>
              <p className="text-sm text-gray-600">
-               Esta acción no se puede deshacer.
+               Esta acción no se puede deshacer y se actualizará el balance del préstamo.
              </p>
              <div className="flex justify-end gap-2">
                <Button 

@@ -98,6 +98,10 @@ export const ReportsModule = () => {
       if (loansError) throw loansError;
 
       // Fetch payments
+      console.log('🔄 FETCH PAYMENTS: Iniciando consulta...');
+      console.log('🔄 FETCH PAYMENTS: companyId:', companyId);
+      console.log('🔄 FETCH PAYMENTS: dateRange:', dateRange);
+      
       const { data: paymentsData, error: paymentsError } = await supabase
         .from('payments')
         .select(`
@@ -110,12 +114,18 @@ export const ReportsModule = () => {
             )
           )
         `)
-                  .eq('created_by', companyId)
+        .eq('created_by', companyId)
         .gte('payment_date', dateRange.startDate)
         .lte('payment_date', dateRange.endDate)
         .order('payment_date', { ascending: false });
 
-      if (paymentsError) throw paymentsError;
+      if (paymentsError) {
+        console.error('🔄 FETCH PAYMENTS: Error:', paymentsError);
+        throw paymentsError;
+      }
+
+      console.log('🔄 FETCH PAYMENTS: Pagos encontrados:', paymentsData?.length);
+      console.log('🔄 FETCH PAYMENTS: IDs de pagos:', paymentsData?.map(p => p.id));
 
       // Fetch expenses
       const { data: expensesData, error: expensesError } = await supabase
