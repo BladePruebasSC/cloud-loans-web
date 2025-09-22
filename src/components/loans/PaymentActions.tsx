@@ -53,6 +53,21 @@ interface Loan {
   };
 }
 
+interface CompanySettings {
+  company_name: string;
+  business_type?: string;
+  tax_id?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+  logo_url?: string;
+  website?: string;
+}
+
 interface PaymentActionsProps {
   payment: Payment;
   onPaymentUpdated?: () => void;
@@ -67,6 +82,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showPrintFormatModal, setShowPrintFormatModal] = useState(false);
   const [loan, setLoan] = useState<Loan | null>(null);
+  const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [isLatestPayment, setIsLatestPayment] = useState(false);
   const [forceDelete, setForceDelete] = useState(false);
@@ -169,11 +185,38 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
     }
   };
 
+  const fetchCompanySettings = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from('company_settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error fetching company settings:', error);
+        return;
+      }
+
+      if (data) {
+        setCompanySettings(data);
+      }
+    } catch (error) {
+      console.error('Error in fetchCompanySettings:', error);
+    }
+  };
+
   const handleViewReceipt = async () => {
     if (!loan) {
       setLoading(true);
       await fetchLoanDetails();
       setLoading(false);
+    }
+    if (!companySettings) {
+      await fetchCompanySettings();
     }
     setShowReceiptModal(true);
   };
@@ -183,6 +226,9 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       setLoading(true);
       await fetchLoanDetails();
       setLoading(false);
+    }
+    if (!companySettings) {
+      await fetchCompanySettings();
     }
     setShowEditModal(true);
   };
@@ -305,6 +351,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   // Función para generar el HTML del recibo según el formato
   const generateReceiptHTML = (format: string) => {
     if (!loan) return '';
+    
+    // Asegurar que tenemos los datos de la empresa
+    if (!companySettings) {
+      fetchCompanySettings();
+    }
 
     const getFormatStyles = (format: string) => {
       switch (format) {
@@ -496,6 +547,18 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         <body>
           <div class="receipt-container">
             <div class="header">
+              ${companySettings ? `
+                <div style="margin-bottom: 15px; text-align: center;">
+                  <div style="font-size: ${format.includes('POS') ? '14px' : '18px'}; font-weight: bold; margin-bottom: 5px;">
+                    ${companySettings.company_name}
+                  </div>
+                  ${companySettings.business_type ? `<div style="font-size: ${format.includes('POS') ? '10px' : '12px'}; margin-bottom: 3px;">${companySettings.business_type}</div>` : ''}
+                  ${companySettings.address ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 2px;">${companySettings.address}</div>` : ''}
+                  ${companySettings.city && companySettings.state ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 2px;">${companySettings.city}, ${companySettings.state}</div>` : ''}
+                  ${companySettings.tax_id ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 5px;">RNC: ${companySettings.tax_id}</div>` : ''}
+                </div>
+                <hr style="border: none; border-top: 1px solid #000; margin: 10px 0;">
+              ` : ''}
               <div class="receipt-title">${getFormatTitle(format)}</div>
               <div class="receipt-number">Recibo #${payment.id.slice(0, 8).toUpperCase()}</div>
               <div style="margin-top: 10px; font-size: ${format.includes('POS') ? '10px' : '14px'};">
