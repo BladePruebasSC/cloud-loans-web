@@ -71,26 +71,28 @@ export const ReportsModule = () => {
     try {
       setLoading(true);
       
-      // Fetch clients
+      // Fetch clients (filtrados por empresa)
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
         .select('*')
+        .eq('company_id', companyId)
         .order('created_at', { ascending: false });
 
       if (clientsError) throw clientsError;
 
-      // Fetch loans
+      // Fetch loans (filtrados por empresa a través de clients)
       const { data: loansData, error: loansError } = await supabase
         .from('loans')
         .select(`
           *,
-          clients (
+          clients!inner (
             full_name,
             dni,
-            phone
+            phone,
+            company_id
           )
         `)
-                  .eq('loan_officer_id', companyId)
+        .eq('clients.company_id', companyId)
         .gte('created_at', dateRange.startDate)
         .lte('created_at', dateRange.endDate + 'T23:59:59')
         .order('created_at', { ascending: false });
@@ -106,15 +108,16 @@ export const ReportsModule = () => {
         .from('payments')
         .select(`
           *,
-          loans (
+          loans!inner (
             amount,
-            clients (
+            clients!inner (
               full_name,
-              dni
+              dni,
+              company_id
             )
           )
         `)
-        .eq('created_by', companyId)
+        .eq('loans.clients.company_id', companyId)
         .gte('payment_date', dateRange.startDate)
         .lte('payment_date', dateRange.endDate)
         .order('payment_date', { ascending: false });
@@ -127,10 +130,11 @@ export const ReportsModule = () => {
       console.log('🔄 FETCH PAYMENTS: Pagos encontrados:', paymentsData?.length);
       console.log('🔄 FETCH PAYMENTS: IDs de pagos:', paymentsData?.map(p => p.id));
 
-      // Fetch expenses
+      // Fetch expenses (filtrados por empresa)
       const { data: expensesData, error: expensesError } = await supabase
         .from('expenses')
         .select('*')
+        .eq('company_id', companyId)
         .gte('expense_date', dateRange.startDate)
         .lte('expense_date', dateRange.endDate)
         .order('expense_date', { ascending: false });
@@ -241,15 +245,23 @@ export const ReportsModule = () => {
 
   // Cálculos para estadísticas
   const totalLoans = reportData.loans.length;
-  const totalLoanAmount = reportData.loans.reduce((sum, loan) => sum + loan.amount, 0);
-  const totalPayments = reportData.payments.reduce((sum, payment) => sum + payment.amount, 0);
-  const totalInterest = reportData.payments.reduce((sum, payment) => sum + payment.interest_amount, 0);
-  const totalExpenses = reportData.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const totalLoanAmount = reportData.loans.reduce((sum, loan) => sum + (loan.amount || 0), 0);
+  const totalPayments = reportData.payments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
+  const totalInterest = reportData.payments.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0);
+  const totalExpenses = reportData.expenses.reduce((sum, expense) => sum + (expense.amount || 0), 0);
   const netProfit = totalInterest - totalExpenses;
 
   const activeLoans = reportData.loans.filter(loan => loan.status === 'active').length;
   const overdueLoans = reportData.loans.filter(loan => loan.status === 'overdue').length;
   const paidLoans = reportData.loans.filter(loan => loan.status === 'paid').length;
+  const pendingLoans = reportData.loans.filter(loan => loan.status === 'pending').length;
+
+  // Cálculos adicionales
+  const totalClients = reportData.clients.length;
+  const averageLoanAmount = totalLoans > 0 ? totalLoanAmount / totalLoans : 0;
+  const averagePaymentAmount = reportData.payments.length > 0 ? totalPayments / reportData.payments.length : 0;
+  const approvalRate = totalLoans > 0 ? (activeLoans / totalLoans) * 100 : 0;
+  const defaultRate = totalLoans > 0 ? (overdueLoans / totalLoans) * 100 : 0;
 
   // Filtros para pagos
   const filteredPayments = reportData.payments.filter(payment => {
@@ -384,70 +396,124 @@ export const ReportsModule = () => {
       </Card>
 
       {/* Resumen Ejecutivo */}
-                <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-        <Card>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Préstamos Totales</CardTitle>
-            <CreditCard className="h-4 w-4 text-muted-foreground" />
+            <CreditCard className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalLoans}</div>
-            <p className="text-xs text-muted-foreground">
+            <div className="text-2xl sm:text-3xl font-bold text-blue-600">{totalLoans}</div>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
               ${totalLoanAmount.toLocaleString()} prestados
             </p>
+            <div className="mt-2 text-xs text-gray-500">
+              Promedio: ${Math.round(averageLoanAmount).toLocaleString()}
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Pagos Recibidos</CardTitle>
             <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">${totalPayments.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">
+            <div className="text-2xl sm:text-3xl font-bold text-green-600">${totalPayments.toLocaleString()}</div>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
               ${totalInterest.toLocaleString()} en intereses
             </p>
+            <div className="mt-2 text-xs text-gray-500">
+              {reportData.payments.length} pagos registrados
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Gastos</CardTitle>
             <TrendingDown className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">${totalExpenses.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">
+            <div className="text-2xl sm:text-3xl font-bold text-red-600">${totalExpenses.toLocaleString()}</div>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
               Gastos operativos
             </p>
+            <div className="mt-2 text-xs text-gray-500">
+              {reportData.expenses.length} gastos registrados
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Ganancia Neta</CardTitle>
             <TrendingUp className="h-4 w-4 text-purple-600" />
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl font-bold ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            <div className={`text-2xl sm:text-3xl font-bold ${netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               ${netProfit.toLocaleString()}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
               Intereses - Gastos
             </p>
+            <div className="mt-2 text-xs text-gray-500">
+              Margen: {totalInterest > 0 ? Math.round((netProfit / totalInterest) * 100) : 0}%
+            </div>
           </CardContent>
         </Card>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1 sm:gap-2">
-          <TabsTrigger value="estadisticas" className="text-xs sm:text-sm">Estadísticas</TabsTrigger>
-          <TabsTrigger value="prestamos" className="text-xs sm:text-sm">Préstamos</TabsTrigger>
-          <TabsTrigger value="pagos" className="text-xs sm:text-sm">Pagos</TabsTrigger>
-          <TabsTrigger value="clientes" className="text-xs sm:text-sm">Clientes</TabsTrigger>
-          <TabsTrigger value="financiero" className="text-xs sm:text-sm">Financiero</TabsTrigger>
-          <TabsTrigger value="operativo" className="text-xs sm:text-sm">Operativo</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1 h-auto">
+          <TabsTrigger 
+            value="estadisticas" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <BarChart3 className="h-4 w-4" />
+            <span className="hidden xs:inline">Estadísticas</span>
+            <span className="xs:hidden">Stats</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="prestamos" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <CreditCard className="h-4 w-4" />
+            <span className="hidden xs:inline">Préstamos</span>
+            <span className="xs:hidden">Loans</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="pagos" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <DollarSign className="h-4 w-4" />
+            <span className="hidden xs:inline">Pagos</span>
+            <span className="xs:hidden">Pagos</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="clientes" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <Users className="h-4 w-4" />
+            <span className="hidden xs:inline">Clientes</span>
+            <span className="xs:hidden">Clientes</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="financiero" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <TrendingUp className="h-4 w-4" />
+            <span className="hidden xs:inline">Financiero</span>
+            <span className="xs:hidden">Fin</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="operativo" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <Activity className="h-4 w-4" />
+            <span className="hidden xs:inline">Operativo</span>
+            <span className="xs:hidden">Ops</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="estadisticas" className="space-y-6">
@@ -467,18 +533,34 @@ export const ReportsModule = () => {
             </CardHeader>
             <CardContent>
               {/* Estadísticas de Préstamos */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-                <div className="text-center p-4 bg-green-50 rounded-lg">
-                  <div className="text-2xl font-bold text-green-600">{activeLoans}</div>
-                  <div className="text-sm text-gray-600">Préstamos Activos</div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                <div className="text-center p-3 sm:p-4 bg-green-50 rounded-lg border border-green-200">
+                  <div className="text-xl sm:text-2xl font-bold text-green-600">{activeLoans}</div>
+                  <div className="text-xs sm:text-sm text-gray-600">Activos</div>
+                  <div className="text-xs text-green-500 mt-1">
+                    {approvalRate.toFixed(1)}% del total
+                  </div>
                 </div>
-                <div className="text-center p-4 bg-red-50 rounded-lg">
-                  <div className="text-2xl font-bold text-red-600">{overdueLoans}</div>
-                  <div className="text-sm text-gray-600">Préstamos Vencidos</div>
+                <div className="text-center p-3 sm:p-4 bg-red-50 rounded-lg border border-red-200">
+                  <div className="text-xl sm:text-2xl font-bold text-red-600">{overdueLoans}</div>
+                  <div className="text-xs sm:text-sm text-gray-600">Vencidos</div>
+                  <div className="text-xs text-red-500 mt-1">
+                    {defaultRate.toFixed(1)}% del total
+                  </div>
                 </div>
-                <div className="text-center p-4 bg-blue-50 rounded-lg">
-                  <div className="text-2xl font-bold text-blue-600">{paidLoans}</div>
-                  <div className="text-sm text-gray-600">Préstamos Pagados</div>
+                <div className="text-center p-3 sm:p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="text-xl sm:text-2xl font-bold text-blue-600">{paidLoans}</div>
+                  <div className="text-xs sm:text-sm text-gray-600">Pagados</div>
+                  <div className="text-xs text-blue-500 mt-1">
+                    {totalLoans > 0 ? Math.round((paidLoans / totalLoans) * 100) : 0}% del total
+                  </div>
+                </div>
+                <div className="text-center p-3 sm:p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                  <div className="text-xl sm:text-2xl font-bold text-yellow-600">{pendingLoans}</div>
+                  <div className="text-xs sm:text-sm text-gray-600">Pendientes</div>
+                  <div className="text-xs text-yellow-500 mt-1">
+                    {totalLoans > 0 ? Math.round((pendingLoans / totalLoans) * 100) : 0}% del total
+                  </div>
                 </div>
               </div>
 
@@ -742,40 +824,70 @@ export const ReportsModule = () => {
         <TabsContent value="financiero" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Reporte Financiero</CardTitle>
+              <CardTitle className="text-lg sm:text-xl">Reporte Financiero</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="text-lg font-semibold mb-4">Ingresos</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span>Intereses cobrados:</span>
-                      <span className="font-semibold text-green-600">${totalInterest.toLocaleString()}</span>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <h3 className="text-base sm:text-lg font-semibold text-green-600 flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5" />
+                    Ingresos
+                  </h3>
+                  <div className="space-y-3 bg-green-50 p-4 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Intereses cobrados:</span>
+                      <span className="font-semibold text-green-600 text-sm sm:text-base">
+                        ${totalInterest.toLocaleString()}
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Pagos recibidos:</span>
-                      <span className="font-semibold">${totalPayments.toLocaleString()}</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Pagos recibidos:</span>
+                      <span className="font-semibold text-sm sm:text-base">
+                        ${totalPayments.toLocaleString()}
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Moras cobradas:</span>
-                      <span className="font-semibold">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Moras cobradas:</span>
+                      <span className="font-semibold text-orange-600 text-sm sm:text-base">
                         ${reportData.payments.reduce((sum, p) => sum + (p.late_fee || 0), 0).toLocaleString()}
                       </span>
+                    </div>
+                    <div className="border-t pt-2 mt-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm sm:text-base font-semibold">Total Ingresos:</span>
+                        <span className="font-bold text-green-600 text-sm sm:text-base">
+                          ${(totalInterest + reportData.payments.reduce((sum, p) => sum + (p.late_fee || 0), 0)).toLocaleString()}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div>
-                  <h3 className="text-lg font-semibold mb-4">Egresos</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span>Gastos operativos:</span>
-                      <span className="font-semibold text-red-600">${totalExpenses.toLocaleString()}</span>
+                <div className="space-y-4">
+                  <h3 className="text-base sm:text-lg font-semibold text-red-600 flex items-center gap-2">
+                    <TrendingDown className="h-5 w-5" />
+                    Egresos
+                  </h3>
+                  <div className="space-y-3 bg-red-50 p-4 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Gastos operativos:</span>
+                      <span className="font-semibold text-red-600 text-sm sm:text-base">
+                        ${totalExpenses.toLocaleString()}
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Capital prestado:</span>
-                      <span className="font-semibold">${totalLoanAmount.toLocaleString()}</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Capital prestado:</span>
+                      <span className="font-semibold text-sm sm:text-base">
+                        ${totalLoanAmount.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="border-t pt-2 mt-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm sm:text-base font-semibold">Total Egresos:</span>
+                        <span className="font-bold text-red-600 text-sm sm:text-base">
+                          ${(totalExpenses + totalLoanAmount).toLocaleString()}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -796,53 +908,72 @@ export const ReportsModule = () => {
         <TabsContent value="operativo" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Reporte Operativo</CardTitle>
+              <CardTitle className="text-lg sm:text-xl">Reporte Operativo</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="text-lg font-semibold mb-4">Métricas de Préstamos</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span>Tasa de aprobación:</span>
-                      <span className="font-semibold">
-                        {totalLoans > 0 ? Math.round((activeLoans / totalLoans) * 100) : 0}%
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <h3 className="text-base sm:text-lg font-semibold text-blue-600 flex items-center gap-2">
+                    <CreditCard className="h-5 w-5" />
+                    Métricas de Préstamos
+                  </h3>
+                  <div className="space-y-3 bg-blue-50 p-4 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Tasa de aprobación:</span>
+                      <span className="font-semibold text-green-600 text-sm sm:text-base">
+                        {approvalRate.toFixed(1)}%
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Tasa de morosidad:</span>
-                      <span className="font-semibold text-red-600">
-                        {totalLoans > 0 ? Math.round((overdueLoans / totalLoans) * 100) : 0}%
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Tasa de morosidad:</span>
+                      <span className="font-semibold text-red-600 text-sm sm:text-base">
+                        {defaultRate.toFixed(1)}%
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Préstamo promedio:</span>
-                      <span className="font-semibold">
-                        ${totalLoans > 0 ? Math.round(totalLoanAmount / totalLoans).toLocaleString() : 0}
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Préstamo promedio:</span>
+                      <span className="font-semibold text-sm sm:text-base">
+                        ${Math.round(averageLoanAmount).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Total clientes:</span>
+                      <span className="font-semibold text-sm sm:text-base">
+                        {totalClients}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div>
-                  <h3 className="text-lg font-semibold mb-4">Métricas de Cobranza</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span>Pagos puntuales:</span>
-                      <span className="font-semibold text-green-600">
+                <div className="space-y-4">
+                  <h3 className="text-base sm:text-lg font-semibold text-purple-600 flex items-center gap-2">
+                    <DollarSign className="h-5 w-5" />
+                    Métricas de Cobranza
+                  </h3>
+                  <div className="space-y-3 bg-purple-50 p-4 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Pagos puntuales:</span>
+                      <span className="font-semibold text-green-600 text-sm sm:text-base">
                         {reportData.payments.filter(p => !p.late_fee || p.late_fee === 0).length}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Pagos con mora:</span>
-                      <span className="font-semibold text-red-600">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Pagos con mora:</span>
+                      <span className="font-semibold text-red-600 text-sm sm:text-base">
                         {reportData.payments.filter(p => p.late_fee && p.late_fee > 0).length}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Pago promedio:</span>
-                      <span className="font-semibold">
-                        ${reportData.payments.length > 0 ? Math.round(totalPayments / reportData.payments.length).toLocaleString() : 0}
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Pago promedio:</span>
+                      <span className="font-semibold text-sm sm:text-base">
+                        ${Math.round(averagePaymentAmount).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm sm:text-base">Eficiencia cobranza:</span>
+                      <span className="font-semibold text-sm sm:text-base">
+                        {reportData.payments.length > 0 ? 
+                          Math.round((reportData.payments.filter(p => !p.late_fee || p.late_fee === 0).length / reportData.payments.length) * 100) : 0}%
                       </span>
                     </div>
                   </div>
