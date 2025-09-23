@@ -4,7 +4,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useLateFee, LateFeeCalculation, LateFeeHistory } from '@/hooks/useLateFee';
+import { calculateLateFee as calculateLateFeeUtil } from '@/utils/lateFeeCalculator';
 import { LateFeeConfigModal } from './LateFeeConfigModal';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { 
   AlertTriangle, 
@@ -24,6 +26,8 @@ interface LateFeeInfoProps {
   lateFeeEnabled: boolean;
   lateFeeRate: number;
   gracePeriodDays: number;
+  maxLateFee?: number;
+  lateFeeCalculationType?: 'daily' | 'monthly' | 'compound';
   remainingBalance: number;
   clientName: string;
 }
@@ -35,6 +39,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
   lateFeeEnabled,
   lateFeeRate,
   gracePeriodDays,
+  maxLateFee = 0,
+  lateFeeCalculationType = 'daily',
   remainingBalance,
   clientName
 }) => {
@@ -43,30 +49,79 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
   const [showConfig, setShowConfig] = useState(false);
   const [lateFeeCalculation, setLateFeeCalculation] = useState<LateFeeCalculation | null>(null);
   const [lateFeeHistory, setLateFeeHistory] = useState<LateFeeHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const { calculateLateFee, getLateFeeHistory, loading } = useLateFee();
+
+  // Función para calcular la mora localmente (consistente con PaymentForm)
+  const calculateLocalLateFee = () => {
+    if (!lateFeeEnabled || !lateFeeRate) {
+      return null;
+    }
+
+    const calculation = calculateLateFeeUtil({
+      remaining_balance: remainingBalance,
+      next_payment_date: nextPaymentDate,
+      late_fee_rate: lateFeeRate,
+      grace_period_days: gracePeriodDays,
+      max_late_fee: maxLateFee,
+      late_fee_calculation_type: lateFeeCalculationType,
+      late_fee_enabled: lateFeeEnabled
+    });
+
+    return {
+      days_overdue: calculation.daysOverdue,
+      late_fee_amount: calculation.lateFeeAmount,
+      total_late_fee: calculation.totalLateFee
+    };
+  };
 
   // Calcular días de mora
   const today = new Date();
   const paymentDate = new Date(nextPaymentDate);
   const daysOverdue = Math.max(0, Math.ceil((today.getTime() - paymentDate.getTime()) / (1000 * 60 * 60 * 24)) - gracePeriodDays);
 
-  // Cargar cálculo actual de mora
+  // Calcular mora localmente cuando cambien los parámetros
   useEffect(() => {
     if (daysOverdue > 0 && lateFeeEnabled) {
-      calculateLateFee(loanId).then(setLateFeeCalculation);
+      const localCalculation = calculateLocalLateFee();
+      if (localCalculation) {
+        setLateFeeCalculation(localCalculation);
+      }
+    } else {
+      setLateFeeCalculation(null);
     }
-  }, [loanId, daysOverdue, lateFeeEnabled, calculateLateFee]);
+  }, [loanId, daysOverdue, lateFeeEnabled, lateFeeRate, gracePeriodDays, lateFeeCalculationType, remainingBalance, nextPaymentDate, maxLateFee]);
 
-  // Cargar historial de mora
+  // Cargar historial de mora optimizado
   const loadHistory = async () => {
-    const history = await getLateFeeHistory(loanId);
-    setLateFeeHistory(history);
+    try {
+      setHistoryLoading(true);
+      const { data, error } = await supabase
+        .from('late_fee_history')
+        .select('*')
+        .eq('loan_id', loanId)
+        .order('calculation_date', { ascending: false })
+        .limit(50); // Limitar a 50 registros para mejor rendimiento
+
+      if (error) {
+        console.error('Error fetching late fee history:', error);
+        setLateFeeHistory([]);
+      } else {
+        setLateFeeHistory(data || []);
+      }
+    } catch (error) {
+      console.error('Error loading late fee history:', error);
+      setLateFeeHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
   const handleShowHistory = () => {
     setShowHistory(true);
     loadHistory();
   };
+
 
   const getLateFeeStatus = () => {
     if (!lateFeeEnabled) return { status: 'disabled', color: 'bg-gray-100 text-gray-600', icon: Settings };
@@ -142,15 +197,20 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         <div className="bg-red-50 border border-red-200 rounded-lg p-3">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-red-800">Mora Actual</span>
-            <span className="text-lg font-bold text-red-700">
-              ${currentLateFee.toLocaleString()}
-            </span>
+            <div className="flex items-center gap-2">
+              {loading && (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+              )}
+              <span className="text-lg font-bold text-red-700">
+                ${(lateFeeCalculation?.late_fee_amount || currentLateFee).toLocaleString()}
+              </span>
+            </div>
           </div>
           
           {lateFeeCalculation && (
             <div className="text-xs text-red-600 space-y-1">
               <div className="flex justify-between">
-                <span>Tasa diaria:</span>
+                <span>Tasa {lateFeeCalculationType === 'daily' ? 'diaria' : lateFeeCalculationType === 'monthly' ? 'mensual' : 'compuesta'}:</span>
                 <span>{lateFeeRate}%</span>
               </div>
               <div className="flex justify-between">
@@ -198,6 +258,17 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                     <span className="text-gray-600">Días de gracia:</span>
                     <div className="font-semibold">{gracePeriodDays} días</div>
                   </div>
+                  <div>
+                    <span className="text-gray-600">Tipo de cálculo:</span>
+                    <div className="font-semibold">
+                      {lateFeeCalculationType === 'daily' ? 'Diario' : 
+                       lateFeeCalculationType === 'monthly' ? 'Mensual' : 'Compuesto'}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Tasa de mora:</span>
+                    <div className="font-semibold">{lateFeeRate}%</div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -211,14 +282,14 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                     <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
                       <span className="text-red-800 font-medium">Mora Actual:</span>
                       <span className="text-red-700 font-bold text-lg">
-                        ${currentLateFee.toLocaleString()}
+                        ${(lateFeeCalculation?.late_fee_amount || currentLateFee).toLocaleString()}
                       </span>
                     </div>
                     
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
                         <span className="text-gray-600">Tasa de mora:</span>
-                        <div className="font-semibold">{lateFeeRate}% por día</div>
+                        <div className="font-semibold">{lateFeeRate}% {lateFeeCalculationType === 'daily' ? 'por día' : lateFeeCalculationType === 'monthly' ? 'por mes' : 'compuesta'}</div>
                       </div>
                       <div>
                         <span className="text-gray-600">Mora calculada:</span>
@@ -271,7 +342,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
           </DialogHeader>
           
           <div className="space-y-4">
-            {loading ? (
+            {historyLoading ? (
               <div className="text-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600 mx-auto"></div>
                 <p className="text-gray-600 mt-2">Cargando historial...</p>
@@ -330,16 +401,19 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         onClose={() => setShowConfig(false)}
         onConfigUpdated={() => {
           // Recargar el cálculo de mora cuando se actualice la configuración
-          if (daysOverdue > 0) {
-            calculateLateFee(loanId).then(setLateFeeCalculation);
+          if (daysOverdue > 0 && lateFeeEnabled) {
+            const localCalculation = calculateLocalLateFee();
+            if (localCalculation) {
+              setLateFeeCalculation(localCalculation);
+            }
           }
         }}
         currentConfig={{
           late_fee_enabled: lateFeeEnabled,
-          late_fee_rate: lateFeeRate,
-          grace_period_days: gracePeriodDays,
-          max_late_fee: 0, // TODO: Agregar este campo a la interfaz
-          late_fee_calculation_type: 'daily' // TODO: Agregar este campo a la interfaz
+        late_fee_rate: lateFeeRate,
+        grace_period_days: gracePeriodDays,
+        max_late_fee: maxLateFee,
+        late_fee_calculation_type: lateFeeCalculationType
         }}
       />
     </>

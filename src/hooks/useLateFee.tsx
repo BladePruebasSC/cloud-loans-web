@@ -39,7 +39,7 @@ export const useLateFee = () => {
     try {
       setLoading(true);
       
-      const { data, error } = await supabase.rpc('calculate_late_fee', {
+      const { data, error } = await supabase.rpc('recalculate_late_fee_from_scratch', {
         p_loan_id: loanId,
         p_calculation_date: calculationDate.toISOString().split('T')[0]
       });
@@ -62,7 +62,7 @@ export const useLateFee = () => {
     try {
       setLoading(true);
       
-      const { data, error } = await supabase.rpc('update_all_late_fees', {
+      const { data, error } = await supabase.rpc('update_all_late_fees_from_scratch', {
         p_calculation_date: calculationDate.toISOString().split('T')[0]
       });
 

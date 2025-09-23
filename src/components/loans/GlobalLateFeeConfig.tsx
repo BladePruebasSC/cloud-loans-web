@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useLateFee } from '@/hooks/useLateFee';
+import { calculateLateFee as calculateLateFeeUtil, updateLoanLateFee } from '@/utils/lateFeeCalculator';
 import { toast } from 'sonner';
 import { 
   Settings, 
@@ -26,7 +28,11 @@ interface GlobalLateFeeConfig {
   default_late_fee_calculation_type: 'daily' | 'monthly' | 'compound';
 }
 
-export const GlobalLateFeeConfig: React.FC = () => {
+interface GlobalLateFeeConfigProps {
+  onConfigUpdated?: () => void;
+}
+
+export const GlobalLateFeeConfig: React.FC<GlobalLateFeeConfigProps> = ({ onConfigUpdated }) => {
   const [config, setConfig] = useState<GlobalLateFeeConfig>({
     default_late_fee_enabled: true,
     default_late_fee_rate: 2.0,
@@ -37,6 +43,7 @@ export const GlobalLateFeeConfig: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
   const { user } = useAuth();
+  const { updateAllLateFees } = useLateFee();
 
   // Cargar configuración actual
   useEffect(() => {
@@ -96,18 +103,92 @@ export const GlobalLateFeeConfig: React.FC = () => {
 
       if (error) throw error;
 
-      toast.success('Configuración global de mora guardada correctamente. La página se recargará para aplicar los cambios...');
+      // Actualizar la configuración de mora en todos los préstamos existentes
+      toast.info('Actualizando configuración de mora en todos los préstamos...');
+      
+      // Primero actualizar la configuración de mora en los préstamos existentes
+      const { error: updateConfigError } = await supabase
+        .from('loans')
+        .update({
+          late_fee_enabled: config.default_late_fee_enabled,
+          late_fee_rate: config.default_late_fee_rate,
+          grace_period_days: config.default_grace_period_days,
+          max_late_fee: config.default_max_late_fee,
+          late_fee_calculation_type: config.default_late_fee_calculation_type
+        })
+        .eq('status', 'active');
+
+      if (updateConfigError) {
+        console.error('Error updating loan configurations:', updateConfigError);
+        toast.error('Error al actualizar la configuración de los préstamos');
+        return;
+      }
+
+      // Luego recalcular la mora de todos los préstamos usando la función centralizada
+      toast.info('Recalculando mora actual...');
+      
+      // Obtener todos los préstamos activos para recalcular la mora
+      const { data: activeLoans, error: loansError } = await supabase
+        .from('loans')
+        .select('id, remaining_balance, next_payment_date, late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type, late_fee_enabled')
+        .eq('status', 'active')
+        .eq('late_fee_enabled', true);
+
+      if (loansError) {
+        console.error('Error fetching loans:', loansError);
+        toast.error('Error al obtener los préstamos');
+        return;
+      }
+
+      // Actualizar la mora de todos los préstamos activos manualmente
+      let updatedCount = 0;
+      
+      for (const loan of activeLoans || []) {
+        // Calcular la mora usando la función centralizada
+        const calculation = calculateLateFeeUtil({
+          remaining_balance: loan.remaining_balance,
+          next_payment_date: loan.next_payment_date,
+          late_fee_rate: loan.late_fee_rate,
+          grace_period_days: loan.grace_period_days,
+          max_late_fee: loan.max_late_fee,
+          late_fee_calculation_type: loan.late_fee_calculation_type,
+          late_fee_enabled: loan.late_fee_enabled
+        });
+
+        // Actualizar directamente en la base de datos
+        const { error: updateError } = await supabase
+          .from('loans')
+          .update({
+            current_late_fee: calculation.lateFeeAmount,
+            last_late_fee_calculation: new Date().toISOString().split('T')[0]
+          })
+          .eq('id', loan.id);
+        
+        if (!updateError) {
+          updatedCount++;
+        } else {
+          console.error('Error updating loan late fee:', updateError);
+        }
+      }
+      
+      toast.success(`Configuración global de mora guardada correctamente. Se actualizaron ${updatedCount} préstamos. La página se recargará...`);
       setShowDialog(false);
       
-      // Recargar la página después de un breve delay para que el usuario vea el mensaje
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
+      // Llamar al callback para actualizar los datos en el componente padre
+      if (onConfigUpdated) {
+        onConfigUpdated();
+      }
+      
     } catch (error) {
       console.error('Error saving global late fee config:', error);
       toast.error('Error al guardar la configuración');
     } finally {
       setLoading(false);
+      
+      // Recargar la página después de completar la operación
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
     }
   };
 
@@ -237,8 +318,25 @@ export const GlobalLateFeeConfig: React.FC = () => {
                       step="0.1"
                       min="0"
                       max="100"
-                      value={config.default_late_fee_rate}
-                      onChange={(e) => setConfig({...config, default_late_fee_rate: parseFloat(e.target.value) || 0})}
+                      value={config.default_late_fee_rate === 0 ? '' : config.default_late_fee_rate}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '') {
+                          setConfig({...config, default_late_fee_rate: 0});
+                        } else {
+                          const numValue = parseFloat(value);
+                          if (!isNaN(numValue)) {
+                            setConfig({...config, default_late_fee_rate: numValue});
+                          }
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        // Permitir solo números, punto, backspace, delete, tab, escape, enter
+                        if (!/[0-9.]/.test(e.key) && !['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      placeholder="Ej: 2.5"
                       className="h-12"
                     />
                   </div>
@@ -252,8 +350,25 @@ export const GlobalLateFeeConfig: React.FC = () => {
                       type="number"
                       min="0"
                       max="30"
-                      value={config.default_grace_period_days}
-                      onChange={(e) => setConfig({...config, default_grace_period_days: parseInt(e.target.value) || 0})}
+                      value={config.default_grace_period_days === 0 ? '' : config.default_grace_period_days}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '') {
+                          setConfig({...config, default_grace_period_days: 0});
+                        } else {
+                          const numValue = parseInt(value);
+                          if (!isNaN(numValue)) {
+                            setConfig({...config, default_grace_period_days: numValue});
+                          }
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        // Permitir solo números, backspace, delete, tab, escape, enter
+                        if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      placeholder="Ej: 5"
                       className="h-12"
                     />
                   </div>
@@ -293,8 +408,24 @@ export const GlobalLateFeeConfig: React.FC = () => {
                       id="default_max"
                       type="number"
                       min="0"
-                      value={config.default_max_late_fee}
-                      onChange={(e) => setConfig({...config, default_max_late_fee: parseFloat(e.target.value) || 0})}
+                      value={config.default_max_late_fee === 0 ? '' : config.default_max_late_fee}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '') {
+                          setConfig({...config, default_max_late_fee: 0});
+                        } else {
+                          const numValue = parseFloat(value);
+                          if (!isNaN(numValue)) {
+                            setConfig({...config, default_max_late_fee: numValue});
+                          }
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        // Permitir solo números, punto, backspace, delete, tab, escape, enter
+                        if (!/[0-9.]/.test(e.key) && !['Backspace', 'Delete', 'Tab', 'Escape', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
                       className="h-12"
                       placeholder="0 (sin límite)"
                     />

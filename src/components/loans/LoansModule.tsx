@@ -885,10 +885,12 @@ export const LoansModule = () => {
                         <LateFeeInfo
                           loanId={loan.id}
                           nextPaymentDate={loan.next_payment_date}
-                          currentLateFee={(loan as any).current_late_fee || 0}
-                          lateFeeEnabled={(loan as any).late_fee_enabled || false}
-                          lateFeeRate={(loan as any).late_fee_rate || 2.0}
-                          gracePeriodDays={(loan as any).grace_period_days || 0}
+                          currentLateFee={loan.current_late_fee || 0}
+                          lateFeeEnabled={loan.late_fee_enabled || false}
+                          lateFeeRate={loan.late_fee_rate || 2.0}
+                          gracePeriodDays={loan.grace_period_days || 0}
+                          maxLateFee={loan.max_late_fee || 0}
+                          lateFeeCalculationType={loan.late_fee_calculation_type || 'daily'}
                           remainingBalance={loan.remaining_balance}
                           clientName={loan.client?.full_name || 'Cliente'}
                         />
@@ -2114,7 +2116,7 @@ export const LoansModule = () => {
                <p className="text-gray-600">Gestiona la configuración de mora para tus préstamos</p>
              </div>
              
-             <GlobalLateFeeConfig />
+             <GlobalLateFeeConfig onConfigUpdated={refetch} />
              
              <div className="mt-8">
                <LateFeeReports />

@@ -14,6 +14,17 @@ export interface Loan {
   status: string;
   start_date: string;
   loan_type: string;
+  
+  // Campos de mora
+  late_fee_enabled?: boolean;
+  late_fee_rate?: number;
+  grace_period_days?: number;
+  max_late_fee?: number;
+  late_fee_calculation_type?: 'daily' | 'monthly' | 'compound';
+  current_late_fee?: number;
+  last_late_fee_calculation?: string;
+  total_late_fee_paid?: number;
+  
   client?: {
     full_name: string;
     dni: string;

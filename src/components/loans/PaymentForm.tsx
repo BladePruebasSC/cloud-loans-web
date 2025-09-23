@@ -14,6 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useLoanPaymentStatusSimple } from '@/hooks/useLoanPaymentStatusSimple';
 import { useLateFee } from '@/hooks/useLateFee';
+import { calculateLateFee as calculateLateFeeUtil } from '@/utils/lateFeeCalculator';
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
 import { Search, User } from 'lucide-react';
@@ -72,60 +73,25 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
 
-  // Función para calcular la mora del préstamo
+  // Función para calcular la mora del préstamo usando la función centralizada
   const calculateLoanLateFee = async (loan: Loan) => {
-    if (!loan.late_fee_enabled || !loan.late_fee_rate) {
-      setLateFeeAmount(0);
-      setLateFeeCalculation(null);
-      return;
-    }
-
     try {
-      const today = new Date();
-      const dueDate = new Date(loan.next_payment_date);
-      const gracePeriod = loan.grace_period_days || 0;
-      
-      // Calcular días de retraso considerando el período de gracia
-      const daysOverdue = Math.max(0, Math.ceil((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)) - gracePeriod);
-      
-      if (daysOverdue <= 0) {
-        setLateFeeAmount(0);
-        setLateFeeCalculation(null);
-        return;
-      }
+      // Usar la función centralizada para calcular la mora
+      const calculation = calculateLateFeeUtil({
+        remaining_balance: loan.remaining_balance,
+        next_payment_date: loan.next_payment_date,
+        late_fee_rate: loan.late_fee_rate || 0,
+        grace_period_days: loan.grace_period_days || 0,
+        max_late_fee: loan.max_late_fee || 0,
+        late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
+        late_fee_enabled: loan.late_fee_enabled || false
+      });
 
-      // Calcular mora según el tipo de cálculo
-      let lateFee = 0;
-      const rate = loan.late_fee_rate / 100; // Convertir porcentaje a decimal
-      
-      switch (loan.late_fee_calculation_type) {
-        case 'daily':
-          lateFee = loan.remaining_balance * rate * daysOverdue;
-          break;
-        case 'monthly':
-          const monthsOverdue = Math.ceil(daysOverdue / 30);
-          lateFee = loan.remaining_balance * rate * monthsOverdue;
-          break;
-        case 'compound':
-          // Mora compuesta: se calcula sobre el balance + mora acumulada
-          lateFee = loan.remaining_balance * Math.pow(1 + rate, daysOverdue) - loan.remaining_balance;
-          break;
-        default:
-          lateFee = loan.remaining_balance * rate * daysOverdue;
-      }
-
-      // Aplicar límite máximo si está configurado
-      if (loan.max_late_fee && loan.max_late_fee > 0) {
-        lateFee = Math.min(lateFee, loan.max_late_fee);
-      }
-
-      setLateFeeAmount(Math.round(lateFee * 100) / 100);
+      setLateFeeAmount(calculation.lateFeeAmount);
       setLateFeeCalculation({
-        daysOverdue,
-        rate: loan.late_fee_rate,
-        calculationType: loan.late_fee_calculation_type,
-        gracePeriod,
-        maxLateFee: loan.max_late_fee
+        days_overdue: calculation.daysOverdue,
+        late_fee_amount: calculation.lateFeeAmount,
+        total_late_fee: calculation.totalLateFee
       });
     } catch (error) {
       console.error('Error calculating late fee:', error);
