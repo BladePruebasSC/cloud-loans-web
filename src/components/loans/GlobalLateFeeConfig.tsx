@@ -96,8 +96,13 @@ export const GlobalLateFeeConfig: React.FC = () => {
 
       if (error) throw error;
 
-      toast.success('Configuración global de mora guardada correctamente');
+      toast.success('Configuración global de mora guardada correctamente. La página se recargará para aplicar los cambios...');
       setShowDialog(false);
+      
+      // Recargar la página después de un breve delay para que el usuario vea el mensaje
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
     } catch (error) {
       console.error('Error saving global late fee config:', error);
       toast.error('Error al guardar la configuración');

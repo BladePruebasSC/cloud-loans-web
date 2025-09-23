@@ -175,6 +175,26 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     }
   };
 
+  // Función para recargar todo después de eliminar un pago
+  const refreshAfterPaymentDeletion = async () => {
+    try {
+      // Recargar pagos y detalles del préstamo
+      await Promise.all([
+        fetchPayments(),
+        fetchLoanDetails(),
+        fetchLoanHistory()
+      ]);
+      
+      // Recargar la página principal para actualizar el balance en la vista principal
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000); // Esperar 1 segundo para que se complete la actualización
+      
+    } catch (error) {
+      console.error('Error refreshing after payment deletion:', error);
+    }
+  };
+
 
 
   const getChangeTypeIcon = (type: string) => {
@@ -295,7 +315,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                            <div className="flex items-center gap-2 ml-4">
                              <PaymentActions 
                                payment={payment} 
-                               onPaymentUpdated={fetchPayments}
+                               onPaymentUpdated={refreshAfterPaymentDeletion}
                              />
                            </div>
                          </div>
