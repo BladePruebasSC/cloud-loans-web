@@ -359,18 +359,21 @@ export const LoansModule = () => {
        loan.client?.dni?.includes(searchTerm) ||
        loan.id.toLowerCase().includes(searchTerm.toLowerCase());
 
-     // Filtro por estado
-     let matchesStatus = false;
-     if (statusFilter === 'all') {
-       // Mostrar todos excepto completados por defecto
-       matchesStatus = loan.status !== 'paid';
-     } else if (statusFilter === 'active') {
-       // Mostrar activos, pendientes y en mora (pendientes con prioridad)
-       matchesStatus = loan.status === 'active' || loan.status === 'overdue' || loan.status === 'pending';
-     } else {
-       // Mostrar el estado específico seleccionado
-       matchesStatus = loan.status === statusFilter;
-     }
+    // Filtro por estado
+    let matchesStatus = false;
+    if (statusFilter === 'all') {
+      // Mostrar todos excepto completados por defecto
+      matchesStatus = loan.status !== 'paid';
+    } else if (statusFilter === 'active') {
+      // Mostrar solo activos y vencidos (NO pendientes)
+      matchesStatus = loan.status === 'active' || loan.status === 'overdue';
+    } else if (statusFilter === 'pending') {
+      // Mostrar solo pendientes
+      matchesStatus = loan.status === 'pending';
+    } else {
+      // Mostrar el estado específico seleccionado
+      matchesStatus = loan.status === statusFilter;
+    }
 
     // Filtro por fecha
     let matchesDate = true;
@@ -454,6 +457,7 @@ export const LoansModule = () => {
         onLoanCreated={() => {
           setShowLoanForm(false);
           setInitialLoanData(null); // Limpiar datos iniciales
+          setStatusFilter('pending'); // Cambiar automáticamente al filtro de pendientes
           refetch(); // Actualizar los datos de préstamos
         }}
         initialData={initialLoanData}
@@ -667,10 +671,10 @@ export const LoansModule = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos (excepto completados)</SelectItem>
-                    <SelectItem value="active">Activos</SelectItem>
-                    <SelectItem value="overdue">Vencidos</SelectItem>
-                    <SelectItem value="paid">Completados</SelectItem>
+                    <SelectItem value="active">Activos y Vencidos</SelectItem>
                     <SelectItem value="pending">Pendientes</SelectItem>
+                    <SelectItem value="overdue">Solo Vencidos</SelectItem>
+                    <SelectItem value="paid">Completados</SelectItem>
                     <SelectItem value="deleted">Eliminados</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1058,10 +1062,10 @@ export const LoansModule = () => {
                    </SelectTrigger>
                    <SelectContent>
                      <SelectItem value="all">Todos (excepto completados)</SelectItem>
-                     <SelectItem value="active">Activos</SelectItem>
-                     <SelectItem value="overdue">Vencidos</SelectItem>
-                     <SelectItem value="paid">Completados</SelectItem>
+                     <SelectItem value="active">Activos y Vencidos</SelectItem>
                      <SelectItem value="pending">Pendientes</SelectItem>
+                     <SelectItem value="overdue">Solo Vencidos</SelectItem>
+                     <SelectItem value="paid">Completados</SelectItem>
                      <SelectItem value="deleted">Eliminados</SelectItem>
                    </SelectContent>
                  </Select>
