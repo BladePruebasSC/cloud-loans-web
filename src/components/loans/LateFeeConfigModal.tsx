@@ -91,6 +91,15 @@ export const LateFeeConfigModal: React.FC<LateFeeConfigModalProps> = ({
         toast.success('Configuración de mora actualizada correctamente');
         onConfigUpdated?.();
         onClose();
+        
+        // Recargar la página automáticamente después de guardar
+        // Usar setTimeout para permitir que el modal se cierre primero
+        setTimeout(() => {
+          // Recargar la página completa para asegurar que todos los datos estén actualizados
+          // La sesión del usuario se mantiene automáticamente gracias a persistSession: true en supabase/client.ts
+          // Esto se comporta exactamente igual que presionar F5 - la sesión persiste
+          window.location.reload();
+        }, 1500); // Esperar 1.5 segundos para que el usuario vea el mensaje de éxito y el modal se cierre
       } else {
         toast.error('Error al actualizar la configuración');
       }
