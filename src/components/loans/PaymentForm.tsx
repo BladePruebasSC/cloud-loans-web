@@ -534,12 +534,20 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         nextPaymentDate = nextDate.toISOString().split('T')[0];
       }
 
+      // Calcular la nueva mora actual después del pago
+      let newCurrentLateFee = selectedLoan.current_late_fee || 0;
+      if (data.late_fee_amount && data.late_fee_amount > 0) {
+        // Restar la mora pagada de la mora actual
+        newCurrentLateFee = Math.max(0, newCurrentLateFee - data.late_fee_amount);
+      }
+
       const { error: loanError } = await supabase
         .from('loans')
         .update({
           remaining_balance: newBalance,
           next_payment_date: nextPaymentDate,
           status: newBalance <= 0 ? 'paid' : 'active',
+          current_late_fee: newCurrentLateFee,
         })
         .eq('id', data.loan_id);
 

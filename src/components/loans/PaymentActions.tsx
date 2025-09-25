@@ -279,11 +279,30 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       console.log('🗑️ ✅ Pago eliminado exitosamente');
 
-      // PASO 3: Actualizar balance del préstamo
+      // PASO 3: Actualizar balance del préstamo y restaurar mora si aplica
       console.log('🗑️ ACTUALIZANDO BALANCE...');
+      
+      // Si el pago eliminado incluía mora, restaurarla al préstamo
+      let updateData: any = { remaining_balance: newBalance };
+      if (payment.late_fee && payment.late_fee > 0) {
+        console.log('🗑️ RESTAURANDO MORA:', payment.late_fee);
+        // Obtener la mora actual del préstamo
+        const { data: currentLoan, error: currentLoanError } = await supabase
+          .from('loans')
+          .select('current_late_fee')
+          .eq('id', payment.loan_id)
+          .single();
+        
+        if (!currentLoanError && currentLoan) {
+          const newCurrentLateFee = (currentLoan.current_late_fee || 0) + payment.late_fee;
+          updateData.current_late_fee = newCurrentLateFee;
+          console.log('🗑️ Nueva mora actual:', newCurrentLateFee);
+        }
+      }
+      
       const { error: updateError } = await supabase
         .from('loans')
-        .update({ remaining_balance: newBalance })
+        .update(updateData)
         .eq('id', payment.loan_id);
 
       if (updateError) {
