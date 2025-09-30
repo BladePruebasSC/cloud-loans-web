@@ -15,6 +15,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useLoanPaymentStatusSimple } from '@/hooks/useLoanPaymentStatusSimple';
 import { useLateFee } from '@/hooks/useLateFee';
 import { calculateLateFee as calculateLateFeeUtil } from '@/utils/lateFeeCalculator';
+import { getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
 import { Search, User } from 'lucide-react';
@@ -73,6 +74,26 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
 
+  // Función para obtener pagos de mora previos
+  const getPreviousLateFeePayments = async (loanId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('late_fee')
+        .eq('loan_id', loanId)
+        .not('late_fee', 'is', null);
+
+      if (error) throw error;
+      
+      const totalPaidLateFee = data?.reduce((sum, payment) => sum + (payment.late_fee || 0), 0) || 0;
+      console.log('🔍 PaymentForm: Pagos de mora previos:', totalPaidLateFee);
+      return totalPaidLateFee;
+    } catch (error) {
+      console.error('Error obteniendo pagos de mora previos:', error);
+      return 0;
+    }
+  };
+
   // Función para calcular la mora del préstamo usando la función centralizada
   const calculateLoanLateFee = async (loan: Loan) => {
     try {
@@ -84,14 +105,27 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         grace_period_days: loan.grace_period_days || 0,
         max_late_fee: loan.max_late_fee || 0,
         late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
-        late_fee_enabled: loan.late_fee_enabled || false
+        late_fee_enabled: loan.late_fee_enabled || false,
+        amount: loan.amount, // Monto total del préstamo
+        term: 4, // Número de cuotas (asumiendo 4 para el ejemplo)
+        payment_frequency: 'monthly' // Frecuencia de pago
       });
 
-      setLateFeeAmount(calculation.lateFeeAmount);
+      // Obtener pagos de mora previos
+      const previousLateFeePayments = await getPreviousLateFeePayments(loan.id);
+      
+      // Calcular mora pendiente (mora total - mora ya pagada)
+      const pendingLateFee = Math.max(0, calculation.lateFeeAmount - previousLateFeePayments);
+      
+      console.log('🔍 PaymentForm: Mora calculada:', calculation.lateFeeAmount);
+      console.log('🔍 PaymentForm: Mora ya pagada:', previousLateFeePayments);
+      console.log('🔍 PaymentForm: Mora pendiente:', pendingLateFee);
+
+      setLateFeeAmount(pendingLateFee);
       setLateFeeCalculation({
         days_overdue: calculation.daysOverdue,
-        late_fee_amount: calculation.lateFeeAmount,
-        total_late_fee: calculation.totalLateFee
+        late_fee_amount: pendingLateFee, // Usar la mora pendiente
+        total_late_fee: pendingLateFee
       });
     } catch (error) {
       console.error('Error calculating late fee:', error);
@@ -786,22 +820,33 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               <AlertTriangle className="h-4 w-4 text-orange-600" />
                               Pago de Mora (Opcional)
                             </FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                max={lateFeeAmount}
-                                placeholder="0.00"
-                                {...field}
-                                value={field.value || ''}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  const numValue = value === '' ? 0 : parseFloat(value) || 0;
-                                  field.onChange(numValue);
-                                }}
-                              />
-                            </FormControl>
+                            <div className="flex gap-2">
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  max={lateFeeAmount}
+                                  placeholder="0.00"
+                                  {...field}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                    field.onChange(numValue);
+                                  }}
+                                />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => field.onChange(lateFeeAmount)}
+                                className="whitespace-nowrap"
+                              >
+                                Pagar Toda
+                              </Button>
+                            </div>
                             <div className="text-xs text-orange-600 mt-1">
                               💡 Mora pendiente: RD${lateFeeAmount.toLocaleString()}
                             </div>
@@ -946,12 +991,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                           </div>
                         )}
                         {lateFeeAmount > 0 && (
-                          <div className="flex justify-between">
-                            <span className="text-sm text-gray-600">Mora Pendiente:</span>
-                            <span className="font-bold text-red-600">
-                              RD${lateFeeAmount.toLocaleString()}
-                            </span>
-                          </div>
+                          <>
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">Mora Pendiente:</span>
+                              <span className="font-bold text-red-600">
+                                RD${lateFeeAmount.toLocaleString()}
+                              </span>
+                            </div>
+                            {lateFeeCalculation && (
+                              <div className="flex justify-between">
+                                <span className="text-sm text-gray-600">Días de Atraso:</span>
+                                <span className="font-semibold text-orange-600">
+                                  {lateFeeCalculation.days_overdue} días
+                                </span>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </>

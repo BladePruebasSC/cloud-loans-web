@@ -14,6 +14,7 @@ export interface Loan {
   status: string;
   start_date: string;
   loan_type: string;
+  payment_frequency?: string; // Frecuencia de pago
   
   // Campos de mora
   late_fee_enabled?: boolean;

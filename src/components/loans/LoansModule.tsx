@@ -897,6 +897,9 @@ export const LoansModule = () => {
                           lateFeeCalculationType={loan.late_fee_calculation_type || 'daily'}
                           remainingBalance={loan.remaining_balance}
                           clientName={loan.client?.full_name || 'Cliente'}
+                          amount={loan.amount}
+                          term={loan.term_months}
+                          payment_frequency={loan.payment_frequency || 'monthly'}
                         />
 
                         {/* Botones de acción mejorados */}
