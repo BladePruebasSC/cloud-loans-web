@@ -44,8 +44,16 @@ export const calculateDaysDifference = (date1: Date, date2: Date): number => {
  * Obtiene la fecha actual en formato YYYY-MM-DD para Santo Domingo
  */
 export const getCurrentDateString = (): string => {
-  const santoDomingoDate = getCurrentDateInSantoDomingo();
-  return santoDomingoDate.toISOString().split('T')[0];
+  const now = new Date();
+  // Obtener la fecha en zona horaria de Santo Domingo
+  const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
+  
+  // Formatear como YYYY-MM-DD
+  const year = santoDomingoDate.getFullYear();
+  const month = String(santoDomingoDate.getMonth() + 1).padStart(2, '0');
+  const day = String(santoDomingoDate.getDate()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}`;
 };
 
 /**

@@ -225,6 +225,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           toast.warning(`Pago parcial registrado. Queda pendiente RD$${remainingAmount.toLocaleString()} de la cuota mensual.`);
         }
 
+        // Ajustar fecha para zona horaria de Santo Domingo antes de enviar
+        const now = new Date();
+        const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
+        const paymentDate = santoDomingoDate.toISOString().split('T')[0]; // YYYY-MM-DD en Santo Domingo
+        
+        console.log('🔍 LoanUpdateForm: Fecha del pago que se enviará:', paymentDate);
+
         const paymentData = {
           loan_id: loan.id,
           amount: data.amount,
@@ -232,6 +239,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           interest_amount: calculatedValues.interestAmount,
           late_fee: 0,
           due_date: loan.next_payment_date,
+          payment_date: paymentDate, // Agregar fecha del pago
           payment_method: data.payment_method || 'cash',
           reference_number: data.reference_number,
           notes: `${updateType === 'partial_payment' ? 'Abono parcial' : 'Pago'}: ${data.notes || ''}`,
@@ -883,7 +891,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Próximo Pago:</span>
-                  <span className="font-semibold">{new Date(loan.next_payment_date).toLocaleDateString()}</span>
+                  <span className="font-semibold">{loan.next_payment_date}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Estado:</span>

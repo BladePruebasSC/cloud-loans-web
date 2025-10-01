@@ -858,7 +858,7 @@ export const LoansModule = () => {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                           <div className="text-center p-3 bg-gray-50 rounded-lg">
                             <div className="text-lg font-bold text-gray-800 mb-1">
-                              {new Date(loan.next_payment_date).toLocaleDateString()}
+                              {loan.next_payment_date}
                             </div>
                             <div className="text-xs text-gray-600">Próximo Pago</div>
                           </div>
@@ -1224,7 +1224,7 @@ export const LoansModule = () => {
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Próximo Pago:</span> 
-                               <span className="text-xs sm:text-sm">{new Date(loan.next_payment_date).toLocaleDateString()}</span>
+                               <span className="text-xs sm:text-sm">{loan.next_payment_date}</span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Plazo:</span> 
@@ -1528,7 +1528,7 @@ export const LoansModule = () => {
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Vence:</span> 
-                                   <span className="text-xs sm:text-sm font-semibold">{new Date(loan.next_payment_date).toLocaleDateString()}</span>
+                                   <span className="text-xs sm:text-sm font-semibold">{loan.next_payment_date}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Tasa:</span> 

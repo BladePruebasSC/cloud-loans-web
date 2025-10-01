@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer, Plus } from 'lucide-react';
+import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 
 const loanSchema = z.object({
   client_id: z.string().min(1, 'Debe seleccionar un cliente'),
@@ -187,10 +188,10 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
     return adjustedDate;
   };
 
-  // Función auxiliar para crear fechas en zona horaria local
+  // Función auxiliar para crear fechas en zona horaria de Santo Domingo
   const createLocalDate = (dateString: string): Date => {
     const [year, month, day] = dateString.split('-').map(Number);
-    return new Date(year, month - 1, day); // month - 1 porque los meses van de 0-11
+    return createDateInSantoDomingo(year, month, day);
   };
 
   const form = useForm<LoanFormData>({
@@ -202,7 +203,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       loan_type: 'personal',
       amortization_type: 'simple',
       payment_frequency: 'monthly',
-      first_payment_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
+      first_payment_date: getCurrentDateString(),
       closing_costs: 0,
       minimum_payment_percentage: 100,
       minimum_payment_type: 'interest',
@@ -889,11 +890,16 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
 
     setLoading(true);
     try {
-      const startDate = new Date();
-      const endDate = new Date();
+      // Ajustar fechas para zona horaria de Santo Domingo
+      const now = new Date();
+      const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
+      const startDate = santoDomingoDate;
+      const endDate = new Date(santoDomingoDate);
       endDate.setMonth(endDate.getMonth() + data.term_months);
       
-      const firstPaymentDate = new Date(data.first_payment_date);
+      const firstPaymentDate = createLocalDate(data.first_payment_date);
+      
+      console.log('🔍 LoanForm: Fecha de inicio que se enviará:', startDate.toISOString().split('T')[0]);
 
       const loanData = {
         client_id: data.client_id,

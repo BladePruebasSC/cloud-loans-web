@@ -15,7 +15,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useLoanPaymentStatusSimple } from '@/hooks/useLoanPaymentStatusSimple';
 import { useLateFee } from '@/hooks/useLateFee';
 import { calculateLateFee as calculateLateFeeUtil } from '@/utils/lateFeeCalculator';
-import { getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/dateUtils';
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
 import { Search, User } from 'lucide-react';
@@ -537,6 +537,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         
         toast.info(distributionMessage);
 
+      // Ajustar fecha para zona horaria de Santo Domingo antes de enviar
+      const now = new Date();
+      const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
+      const paymentDate = santoDomingoDate.toISOString().split('T')[0]; // YYYY-MM-DD en Santo Domingo
+      
+      console.log('🔍 PaymentForm: Fecha actual UTC:', now.toISOString());
+      console.log('🔍 PaymentForm: Fecha en Santo Domingo:', santoDomingoDate.toISOString());
+      console.log('🔍 PaymentForm: Fecha del pago que se enviará:', paymentDate);
+      
       const paymentData = {
         loan_id: data.loan_id,
         amount: data.amount + (data.late_fee_amount || 0),
@@ -544,12 +553,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         interest_amount: interestPayment,
         late_fee: data.late_fee_amount || 0,
         due_date: selectedLoan.next_payment_date,
+        payment_date: paymentDate, // Usar fecha actual en zona horaria de Santo Domingo
         payment_method: data.payment_method,
         reference_number: data.reference_number,
         notes: data.notes,
         status: paymentStatusValue,
         created_by: companyId,
       };
+      
+      console.log('🔍 PaymentForm: Datos del pago que se enviarán:', paymentData);
 
       const { error: paymentError } = await supabase
         .from('payments')
@@ -599,6 +611,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       // Actualizar el estado del pago
       await refetchPaymentStatus();
+      
+      // Forzar actualización de la página para recalcular días de mora
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
       
       // Llamar al callback para actualizar los datos del padre
       if (onPaymentSuccess) {
@@ -684,7 +701,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                             <div>
                               <span className="font-medium text-gray-600">Próximo Pago:</span>
                               <div className="text-sm">
-                                {new Date(selectedLoan.next_payment_date).toLocaleDateString()}
+                                {selectedLoan.next_payment_date}
                               </div>
                             </div>
                           </div>
@@ -958,7 +975,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Próximo Pago:</span>
                     <span className="font-semibold">
-                      {new Date(selectedLoan.next_payment_date).toLocaleDateString()}
+                      {selectedLoan.next_payment_date}
                     </span>
                   </div>
                   <div className="flex justify-between">

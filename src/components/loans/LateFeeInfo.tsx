@@ -160,17 +160,61 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     };
   };
 
-  // Calcular días de mora usando zona horaria de Santo Domingo
-  const today = getCurrentDateInSantoDomingo();
-  const paymentDate = new Date(nextPaymentDate);
-  const daysOverdue = Math.max(0, Math.ceil((today.getTime() - paymentDate.getTime()) / (1000 * 60 * 60 * 24)) - gracePeriodDays);
-  
-  console.log('🔍 LateFeeInfo: Días de mora calculados (Santo Domingo):', {
-    today: getCurrentDateString(),
-    nextPaymentDate,
-    daysOverdue,
-    gracePeriodDays
-  });
+  // Estado para días de mora calculados desde el último pago
+  const [daysOverdue, setDaysOverdue] = useState(0);
+
+  // Función para obtener la fecha del último pago
+  const getLastPaymentDate = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('payment_date')
+        .eq('loan_id', loanId)
+        .order('payment_date', { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+      
+      if (data && data.length > 0) {
+        return data[0].payment_date;
+      }
+      
+      // Si no hay pagos, usar la fecha de vencimiento de la primera cuota
+      return nextPaymentDate;
+    } catch (error) {
+      console.error('Error obteniendo último pago:', error);
+      return nextPaymentDate;
+    }
+  };
+
+  // Calcular días de mora desde el último pago
+  useEffect(() => {
+    const calculateDaysOverdue = async () => {
+      const lastPaymentDate = await getLastPaymentDate();
+      const today = getCurrentDateInSantoDomingo();
+      const lastPayment = new Date(lastPaymentDate);
+      
+      const calculatedDaysOverdue = Math.max(0, 
+        Math.floor((today.getTime() - lastPayment.getTime()) / (1000 * 60 * 60 * 24)) - gracePeriodDays
+      );
+      
+      setDaysOverdue(calculatedDaysOverdue);
+      
+      console.log('🔍 LateFeeInfo: Días de mora calculados desde último pago (Santo Domingo):', {
+        today: getCurrentDateString(),
+        lastPaymentDate,
+        daysOverdue: calculatedDaysOverdue,
+        gracePeriodDays
+      });
+    };
+
+    calculateDaysOverdue();
+    
+    // Recalcular cada 30 segundos para mantener los datos actualizados
+    const interval = setInterval(calculateDaysOverdue, 30000);
+    
+    return () => clearInterval(interval);
+  }, [loanId, nextPaymentDate, gracePeriodDays]);
 
   // Calcular mora localmente cuando cambien los parámetros
   useEffect(() => {
@@ -183,7 +227,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     });
     
     const calculateAndSetLateFee = async () => {
-      if (daysOverdue > 0 && lateFeeEnabled) {
+      if (lateFeeEnabled) {
         // Calcular capital pendiente primero
         const capital = await calculatePendingCapital();
         setPendingCapital(capital);
@@ -294,14 +338,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     );
   }
 
-  if (daysOverdue <= 0) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-green-600">
-        <Clock className="h-4 w-4" />
-        <span>Al día</span>
-      </div>
-    );
-  }
+  // Mostrar siempre la información de mora, incluso cuando es 0
 
   return (
     <>
@@ -600,7 +637,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         onClose={() => setShowConfig(false)}
         onConfigUpdated={() => {
           // Recargar el cálculo de mora cuando se actualice la configuración
-          if (daysOverdue > 0 && lateFeeEnabled) {
+          if (lateFeeEnabled) {
             calculateLocalLateFee().then(localCalculation => {
               if (localCalculation) {
                 setLateFeeCalculation(localCalculation);

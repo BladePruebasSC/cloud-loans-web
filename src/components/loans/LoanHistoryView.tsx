@@ -281,7 +281,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                             
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
                               <div>
-                                <span className="font-medium">Fecha:</span> {new Date(payment.payment_date).toLocaleDateString()}
+                                <span className="font-medium">Fecha:</span> {payment.payment_date}
                               </div>
                               <div>
                                 <span className="font-medium">Principal:</span> ${payment.principal_amount.toLocaleString()}

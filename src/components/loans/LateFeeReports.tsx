@@ -611,11 +611,11 @@ export const LateFeeReports: React.FC = () => {
                     </div>
                     <div>
                       <span className="text-gray-600">Próximo Pago:</span>
-                      <div className="font-medium">{new Date(selectedReport.next_payment_date).toLocaleDateString()}</div>
+                      <div className="font-medium">{selectedReport.next_payment_date}</div>
                     </div>
                     <div>
                       <span className="text-gray-600">Último Pago:</span>
-                      <div className="font-medium">{selectedReport.last_payment_date ? new Date(selectedReport.last_payment_date).toLocaleDateString() : 'N/A'}</div>
+                      <div className="font-medium">{selectedReport.last_payment_date || 'N/A'}</div>
                     </div>
                   </div>
                 </CardContent>

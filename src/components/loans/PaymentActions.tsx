@@ -622,10 +622,10 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <div class="section">
               <div class="section-title">DETALLES DEL PAGO</div>
               <div class="info-row">
-                <span>Fecha de Pago: ${new Date(payment.payment_date).toLocaleDateString()}</span>
+                <span>Fecha de Pago: ${payment.payment_date}</span>
               </div>
               <div class="info-row">
-                <span>Fecha de Vencimiento: ${new Date(payment.due_date).toLocaleDateString()}</span>
+                <span>Fecha de Vencimiento: ${payment.due_date}</span>
               </div>
               <div class="info-row">
                 <span>Método de Pago: ${getPaymentMethodLabel(payment.payment_method)}</span>
