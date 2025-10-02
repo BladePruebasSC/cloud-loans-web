@@ -900,6 +900,9 @@ export const LoansModule = () => {
                           amount={loan.amount}
                           term={loan.term_months}
                           payment_frequency={loan.payment_frequency || 'monthly'}
+                          interest_rate={loan.interest_rate}
+                          monthly_payment={loan.monthly_payment}
+                          paid_installments={[]} // Se detectará automáticamente
                         />
 
                         {/* Botones de acción mejorados */}

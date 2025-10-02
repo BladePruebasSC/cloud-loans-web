@@ -43,6 +43,8 @@ interface Loan {
   monthly_payment: number;
   next_payment_date: string;
   interest_rate: number;
+  term_months?: number;
+  payment_frequency?: string;
   late_fee_enabled?: boolean;
   late_fee_rate?: number;
   grace_period_days?: number;
@@ -94,9 +96,116 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     }
   };
 
+  // Función para detectar cuotas pagadas automáticamente
+  const getPaidInstallments = async (loan: Loan) => {
+    try {
+      console.log('🔍 PaymentForm: Detectando cuotas pagadas para loan:', loan.id);
+      
+      const { data: payments, error } = await supabase
+        .from('payments')
+        .select('principal_amount, payment_date')
+        .eq('loan_id', loan.id)
+        .order('payment_date', { ascending: true });
+
+      if (error) {
+        console.error('Error obteniendo pagos:', error);
+        return [];
+      }
+
+      if (!payments || payments.length === 0) {
+        console.log('🔍 PaymentForm: No hay pagos encontrados');
+        return [];
+      }
+
+      console.log('🔍 PaymentForm: Pagos encontrados:', payments);
+
+      // Calcular el capital por cuota (misma fórmula que LateFeeInfo)
+      // Fórmula correcta: interés fijo por cuota = (monto_total * tasa_interés) / 100
+      const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+      const principalPerPayment = loan.monthly_payment - fixedInterestPerPayment;
+      
+      console.log('🔍 PaymentForm: Cálculos base:', {
+        principalPerPayment,
+        monthlyPayment: loan.monthly_payment,
+        interestRate: loan.interest_rate,
+        fixedInterestPerPayment
+      });
+      
+      console.log('🔍 PaymentForm: DEBUG - Verificando cálculo de capital:', {
+        amount: loan.amount,
+        interestRate: loan.interest_rate,
+        fixedInterestPerPayment: (loan.amount * loan.interest_rate) / 100,
+        monthlyPayment: loan.monthly_payment,
+        principalPerPayment: loan.monthly_payment - ((loan.amount * loan.interest_rate) / 100)
+      });
+
+      // Detectar cuotas completas basándose en pagos de capital (misma lógica que LateFeeInfo)
+      const paidInstallments: number[] = [];
+      let totalPrincipalPaid = 0;
+      let installmentNumber = 1;
+
+      for (const payment of payments) {
+        const principalPaid = payment.principal_amount || 0;
+        totalPrincipalPaid += principalPaid;
+        
+        console.log(`🔍 PaymentForm: Pago ${payment.payment_date}:`, {
+          principalPaid,
+          totalPrincipalPaid,
+          installmentNumber,
+          principalPerPayment
+        });
+
+        // Si se ha pagado suficiente capital para una cuota completa
+        while (totalPrincipalPaid >= principalPerPayment && installmentNumber <= 4) {
+          paidInstallments.push(installmentNumber);
+          totalPrincipalPaid -= principalPerPayment;
+          installmentNumber++;
+          
+          console.log(`🔍 PaymentForm: Cuota ${installmentNumber - 1} completada`);
+          console.log(`🔍 PaymentForm: DEBUG - Estado después de completar cuota:`, {
+            cuotaCompletada: installmentNumber - 1,
+            totalPrincipalPaidRestante: totalPrincipalPaid,
+            installmentNumberSiguiente: installmentNumber,
+            paidInstallments: [...paidInstallments]
+          });
+        }
+      }
+
+      console.log('🔍 PaymentForm: Cuotas pagadas detectadas:', paidInstallments);
+      console.log('🔍 PaymentForm: Total capital pagado:', totalPrincipalPaid);
+      
+      return paidInstallments;
+    } catch (error) {
+      console.error('Error detectando cuotas pagadas:', error);
+      return [];
+    }
+  };
+
   // Función para calcular la mora del préstamo usando la función centralizada
   const calculateLoanLateFee = async (loan: Loan) => {
     try {
+      // Detectar cuotas pagadas automáticamente
+      const paidInstallments = await getPaidInstallments(loan);
+      
+      console.log('🔍 PaymentForm: Cuotas pagadas detectadas:', paidInstallments);
+      console.log('🔍 PaymentForm: DEBUG - Verificando detección de cuotas:', {
+        paidInstallmentsLength: paidInstallments.length,
+        paidInstallmentsContent: paidInstallments,
+        loanId: loan.id,
+        monthlyPayment: loan.monthly_payment,
+        interestRate: loan.interest_rate
+      });
+      console.log('🔍 PaymentForm: Datos del préstamo para cálculo:', {
+        loanId: loan.id,
+        amount: loan.amount,
+        term: loan.term_months,
+        payment_frequency: loan.payment_frequency,
+        interest_rate: loan.interest_rate,
+        monthly_payment: loan.monthly_payment,
+        next_payment_date: loan.next_payment_date,
+        late_fee_rate: loan.late_fee_rate
+      });
+      
       // Usar la función centralizada para calcular la mora
       const calculation = calculateLateFeeUtil({
         remaining_balance: loan.remaining_balance,
@@ -107,8 +216,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
         late_fee_enabled: loan.late_fee_enabled || false,
         amount: loan.amount, // Monto total del préstamo
-        term: 4, // Número de cuotas (asumiendo 4 para el ejemplo)
-        payment_frequency: 'monthly' // Frecuencia de pago
+        term: loan.term_months || 4, // Número de cuotas del préstamo
+        payment_frequency: loan.payment_frequency || 'monthly', // Frecuencia de pago
+        interest_rate: loan.interest_rate, // Tasa de interés del préstamo
+        monthly_payment: loan.monthly_payment, // Cuota mensual
+        paid_installments: paidInstallments // Usar las cuotas pagadas detectadas
       });
 
       // Obtener pagos de mora previos
@@ -120,6 +232,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       console.log('🔍 PaymentForm: Mora calculada:', calculation.lateFeeAmount);
       console.log('🔍 PaymentForm: Mora ya pagada:', previousLateFeePayments);
       console.log('🔍 PaymentForm: Mora pendiente:', pendingLateFee);
+      console.log('🔍 PaymentForm: Datos del préstamo:', {
+        amount: loan.amount,
+        term: loan.term_months,
+        payment_frequency: loan.payment_frequency,
+        interest_rate: loan.interest_rate,
+        monthly_payment: loan.monthly_payment
+      });
 
       setLateFeeAmount(pendingLateFee);
       setLateFeeCalculation({

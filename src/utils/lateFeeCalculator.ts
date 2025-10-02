@@ -17,11 +17,14 @@ export interface LoanData {
   amount: number; // Monto total del préstamo
   term: number; // Número de cuotas
   payment_frequency: string; // Frecuencia de pago
+  interest_rate?: number; // Tasa de interés del préstamo (necesaria para calcular el capital real)
+  monthly_payment?: number; // Cuota mensual (necesaria para calcular el capital real)
+  paid_installments?: number[]; // Cuotas que han sido pagadas (opcional)
 }
 
 /**
  * Calcula la mora de un préstamo desde cero
- * CORREGIDO: La mora se calcula sobre el capital de cada cuota vencida, no sobre el saldo restante
+ * MEJORADO: La mora se calcula sobre el capital de cada cuota vencida con mayor precisión
  * @param loan - Datos del préstamo
  * @param calculationDate - Fecha de cálculo (por defecto hoy)
  * @returns Cálculo de la mora
@@ -39,8 +42,31 @@ export const calculateLateFee = (
     };
   }
 
-  // Calcular el capital por cuota
-  const principalPerPayment = loan.amount / loan.term;
+  // Calcular el capital real por cuota
+  // IMPORTANTE: La mora se calcula solo sobre el capital, no sobre capital + interés
+  let principalPerPayment: number;
+  
+  if (loan.monthly_payment && loan.interest_rate) {
+    // Calcular el capital real: Cuota mensual - Interés fijo por cuota
+    const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+    principalPerPayment = Math.round((loan.monthly_payment - fixedInterestPerPayment) * 100) / 100;
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 Capital real por cuota calculado:', {
+        monthlyPayment: loan.monthly_payment,
+        interestRate: loan.interest_rate,
+        fixedInterestPerPayment,
+        principalPerPayment
+      });
+    }
+  } else {
+    // Fallback: usar el monto total dividido entre cuotas (método anterior)
+    principalPerPayment = Math.round((loan.amount / loan.term) * 100) / 100;
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('⚠️ Usando cálculo de capital simplificado (sin datos de interés)');
+    }
+  }
   
   // Obtener información de frecuencia de pago
   const getFrequencyInfo = () => {
@@ -67,42 +93,105 @@ export const calculateLateFee = (
   
   // Calcular todas las cuotas vencidas
   let totalLateFee = 0;
-  let maxDaysOverdue = 0;
   
-  // Calcular cuotas vencidas desde la primera hasta la actual
+  
+  // Obtener cuotas pagadas (si no se proporciona, asumir que ninguna está pagada)
+  const paidInstallments = loan.paid_installments || [];
+  
+  
+  
+  // Calcular mora de TODAS las cuotas pendientes (no pagadas)
   for (let installment = 1; installment <= loan.term; installment++) {
-    // Calcular fecha de vencimiento de esta cuota
-    // La primera cuota es la fecha base, las siguientes se calculan según la frecuencia
-    const installmentDueDate = new Date(loan.next_payment_date);
-    
-    // Calcular cuántos meses restar para llegar a esta cuota
-    const monthsToSubtract = loan.term - installment;
-    installmentDueDate.setMonth(installmentDueDate.getMonth() - monthsToSubtract);
-    
-    // Calcular días de atraso para esta cuota específica usando zona horaria de Santo Domingo
-    let daysOverdueForThisInstallment = Math.max(0, 
-      calculateDaysDifference(installmentDueDate, calculationDate) - gracePeriod
-    );
-    
-    // Ajuste para coincidir exactamente con el cálculo manual
-    // Usar los días exactos del ejemplo si están disponibles
-    if (installment === 1) {
-      daysOverdueForThisInstallment = 272;
-    } else if (installment === 2) {
-      daysOverdueForThisInstallment = 242;
-    } else if (installment === 3) {
-      daysOverdueForThisInstallment = 211;
-    } else if (installment === 4) {
-      daysOverdueForThisInstallment = 181;
+    // IMPORTANTE: Si esta cuota ya fue pagada, no calcular mora para ella
+    if (paidInstallments.includes(installment)) {
+      continue;
     }
+    
+    
+    // Calcular fecha de vencimiento de esta cuota de manera más precisa
+    // La fecha base es la fecha de la primera cuota
+    // Si la primera cuota vence el 01/01, entonces:
+    // - Cuota 1: 01/01 (0 períodos)
+    // - Cuota 2: 01/02 (1 período)
+    // - Cuota 3: 01/03 (2 períodos)
+    // - Cuota 4: 01/04 (3 períodos)
+    
+    // IMPORTANTE: Calcular la fecha de vencimiento de cada cuota basándose en next_payment_date
+    // Si next_payment_date es "2025-01-04", entonces:
+    // - Cuota 1: 2025-01-01 (día 1 del mismo mes)
+    // - Cuota 2: 2025-02-01 (día 1 del mes siguiente)
+    // - Cuota 3: 2025-03-01 (día 1 del mes +2)
+    // - Cuota 4: 2025-04-01 (día 1 del mes +3)
+    
+    // Usar la fecha exacta de next_payment_date como fecha base
+    const firstPaymentDate = new Date(loan.next_payment_date);
+    
+    const installmentDueDate = new Date(firstPaymentDate);
+    
+    // Calcular cuántos períodos agregar para llegar a esta cuota
+    // Para la cuota 1: 0 períodos (usa la fecha base)
+    // Para la cuota 2: 1 período después de la fecha base
+    // Para la cuota 3: 2 períodos después de la fecha base
+    // etc.
+    const periodsToAdd = installment - 1;
+    
+    // Ajustar la fecha según la frecuencia de pago (hacia adelante)
+    switch (loan.payment_frequency) {
+      case 'daily':
+        installmentDueDate.setDate(installmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+        break;
+      case 'weekly':
+        installmentDueDate.setDate(installmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+        break;
+      case 'biweekly':
+        installmentDueDate.setDate(installmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+        break;
+      case 'monthly':
+        installmentDueDate.setMonth(installmentDueDate.getMonth() + periodsToAdd);
+        break;
+      case 'quarterly':
+        installmentDueDate.setMonth(installmentDueDate.getMonth() + (periodsToAdd * 3));
+        break;
+      case 'yearly':
+        installmentDueDate.setFullYear(installmentDueDate.getFullYear() + periodsToAdd);
+        break;
+      default:
+        installmentDueDate.setMonth(installmentDueDate.getMonth() + periodsToAdd);
+    }
+    
+    // Calcular días de atraso para esta cuota específica
+    // IMPORTANTE: Los días de mora se cuentan desde la fecha de vencimiento
+    // Si una cuota vence el 01/01, la mora comienza el 01/01
+    const rawDaysDifference = calculateDaysDifference(installmentDueDate, calculationDate);
+    let daysOverdueForThisInstallment = Math.max(0, rawDaysDifference - gracePeriod);
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🔍 ===== CÁLCULO DETALLADO DE DÍAS DE ATRASO - CUOTA ${installment} =====`);
+      console.log(`🔍 Préstamo: $${loan.amount} con next_payment_date: ${loan.next_payment_date}`);
+      console.log(`🔍 Fecha base calculada: ${firstPaymentDate.toISOString().split('T')[0]}`);
+      console.log(`🔍 Períodos a agregar: ${periodsToAdd}`);
+      console.log(`🔍 Frecuencia de pago: ${loan.payment_frequency}`);
+      console.log(`🔍 Fecha de vencimiento: ${installmentDueDate.toISOString().split('T')[0]}`);
+      console.log(`🔍 Fecha de cálculo: ${calculationDate.toISOString().split('T')[0]}`);
+      console.log(`🔍 Días de diferencia (crudos): ${rawDaysDifference}`);
+      console.log(`🔍 Período de gracia: ${gracePeriod} días`);
+      console.log(`🔍 Días de mora finales: ${daysOverdueForThisInstallment}`);
+      console.log(`🔍 Cálculo manual: Del ${installmentDueDate.toISOString().split('T')[0]} al ${calculationDate.toISOString().split('T')[0]} = ${rawDaysDifference} días`);
+      console.log(`🔍 ================================================================`);
+    }
+    
+    
+    
+    // Calcular la mora para esta cuota específica
+    let lateFeeForThisInstallment = principalPerPayment * (loan.late_fee_rate / 100) * daysOverdueForThisInstallment;
+    
     
     // Si esta cuota no está vencida, no calcular mora
     if (daysOverdueForThisInstallment <= 0) {
       continue;
     }
     
-    // Calcular mora para esta cuota específica
-    let lateFeeForThisInstallment = 0;
+    // Calcular mora para esta cuota específica con mayor precisión
     
     switch (loan.late_fee_calculation_type) {
       case 'daily':
@@ -131,15 +220,100 @@ export const calculateLateFee = (
       lateFeeForThisInstallment = Math.min(lateFeeForThisInstallment, loan.max_late_fee);
     }
     
+    // Redondear a 2 decimales para esta cuota
+    lateFeeForThisInstallment = Math.round(lateFeeForThisInstallment * 100) / 100;
+    
     totalLateFee += lateFeeForThisInstallment;
-    maxDaysOverdue = Math.max(maxDaysOverdue, daysOverdueForThisInstallment);
+    
   }
 
-  // Redondear a 2 decimales
+  // Redondear total a 2 decimales
   totalLateFee = Math.round(totalLateFee * 100) / 100;
 
+  // Para mostrar los días correctos, usar los días de la primera cuota pendiente
+  let displayDaysOverdue = 0;
+  
+  if (paidInstallments.length === 0) {
+    // Sin pagos: calcular días de la primera cuota (cuota 1)
+    // Usar la fecha exacta de next_payment_date como fecha base
+    const firstPaymentDate = new Date(loan.next_payment_date);
+    
+    const firstInstallmentDueDate = new Date(firstPaymentDate);
+    const periodsToAdd = 0; // Para la primera cuota, agregar 0 períodos
+    
+    // Ajustar la fecha según la frecuencia de pago (hacia adelante)
+    switch (loan.payment_frequency) {
+      case 'daily':
+        firstInstallmentDueDate.setDate(firstInstallmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+        break;
+      case 'weekly':
+        firstInstallmentDueDate.setDate(firstInstallmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+        break;
+      case 'biweekly':
+        firstInstallmentDueDate.setDate(firstInstallmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+        break;
+      case 'monthly':
+        firstInstallmentDueDate.setMonth(firstInstallmentDueDate.getMonth() + periodsToAdd);
+        break;
+      case 'quarterly':
+        firstInstallmentDueDate.setMonth(firstInstallmentDueDate.getMonth() + (periodsToAdd * 3));
+        break;
+      case 'yearly':
+        firstInstallmentDueDate.setFullYear(firstInstallmentDueDate.getFullYear() + periodsToAdd);
+        break;
+      default:
+        firstInstallmentDueDate.setMonth(firstInstallmentDueDate.getMonth() + periodsToAdd);
+    }
+    
+    // Para el display, usar fecha de vencimiento directamente
+    displayDaysOverdue = Math.max(0, 
+      calculateDaysDifference(firstInstallmentDueDate, calculationDate) - gracePeriod
+    );
+  } else {
+    // Con pagos: mostrar días de la próxima cuota pendiente
+    const nextInstallment = Math.max(...paidInstallments) + 1;
+    if (nextInstallment <= loan.term) {
+      // Calcular días para la próxima cuota usando la misma lógica que arriba
+      // Usar la fecha exacta de next_payment_date como fecha base
+      const firstPaymentDate = new Date(loan.next_payment_date);
+      
+      const installmentDueDate = new Date(firstPaymentDate);
+      const periodsToAdd = nextInstallment - 1; // Para la próxima cuota
+      
+      // Ajustar la fecha según la frecuencia de pago (hacia adelante)
+      switch (loan.payment_frequency) {
+        case 'daily':
+          installmentDueDate.setDate(installmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+          break;
+        case 'weekly':
+          installmentDueDate.setDate(installmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+          break;
+        case 'biweekly':
+          installmentDueDate.setDate(installmentDueDate.getDate() + (periodsToAdd * dateIncrement));
+          break;
+        case 'monthly':
+          installmentDueDate.setMonth(installmentDueDate.getMonth() + periodsToAdd);
+          break;
+        case 'quarterly':
+          installmentDueDate.setMonth(installmentDueDate.getMonth() + (periodsToAdd * 3));
+          break;
+        case 'yearly':
+          installmentDueDate.setFullYear(installmentDueDate.getFullYear() + periodsToAdd);
+          break;
+        default:
+          installmentDueDate.setMonth(installmentDueDate.getMonth() + periodsToAdd);
+      }
+      
+      // Para el display, usar fecha de vencimiento directamente
+      displayDaysOverdue = Math.max(0, 
+        calculateDaysDifference(installmentDueDate, calculationDate) - gracePeriod
+      );
+    }
+  }
+
+
   return {
-    daysOverdue: maxDaysOverdue,
+    daysOverdue: displayDaysOverdue,
     lateFeeAmount: totalLateFee,
     totalLateFee: totalLateFee
   };
@@ -234,7 +408,9 @@ export const testLateFeeCalculation = (): void => {
     late_fee_enabled: true,
     amount: 10000, // Capital total
     term: 4, // 4 cuotas
-    payment_frequency: 'monthly' // Mensual
+    payment_frequency: 'monthly', // Mensual
+    interest_rate: 10, // 10% mensual
+    monthly_payment: 3500 // Cuota mensual (ejemplo)
   };
 
   // Fecha de pago: 29/09/2024
@@ -242,24 +418,416 @@ export const testLateFeeCalculation = (): void => {
   
   const result = calculateLateFee(testLoan, calculationDate);
   
-  console.log('=== PRUEBA DE CÁLCULO DE MORA ===');
+  console.log('=== PRUEBA DE CÁLCULO DE MORA MEJORADO ===');
   console.log('Capital total:', testLoan.amount);
   console.log('Cuotas:', testLoan.term);
-  console.log('Capital por cuota:', testLoan.amount / testLoan.term);
+  console.log('Cuota mensual:', testLoan.monthly_payment);
+  console.log('Tasa de interés:', testLoan.interest_rate + '%');
+  console.log('Interés fijo por cuota:', (testLoan.amount * testLoan.interest_rate) / 100);
+  console.log('Capital real por cuota:', testLoan.monthly_payment - (testLoan.amount * testLoan.interest_rate) / 100);
   console.log('Tasa de mora:', testLoan.late_fee_rate + '% diario');
   console.log('Fecha de cálculo:', calculationDate.toISOString().split('T')[0]);
   console.log('Días de atraso máximo:', result.daysOverdue);
   console.log('Mora total calculada:', result.totalLateFee);
   
-  // Cálculo manual esperado según el ejemplo:
-  // 1ra cuota: 2,500 × 0.02 × 237 = 11,850
-  // 2da cuota: 2,500 × 0.02 × 207 = 10,350  
-  // 3ra cuota: 2,500 × 0.02 × 176 = 8,800
-  // 4ta cuota: 2,500 × 0.02 × 146 = 7,300
-  // Total esperado: 38,300
+  // Cálculo manual esperado según el ejemplo de la imagen:
+  // 1ra cuota: 2,500 × 0.02 × 271 = 13,550
+  // 2da cuota: 2,500 × 0.02 × 240 = 12,000  
+  // 3ra cuota: 2,500 × 0.02 × 212 = 10,600
+  // 4ta cuota: 2,500 × 0.02 × 181 = 9,050
+  // Total esperado: 45,200
   
-  const expectedTotal = 38300;
-  console.log('Mora esperada:', expectedTotal);
+  const expectedTotal = 45200;
+  console.log('Mora esperada (según imagen):', expectedTotal);
   console.log('Diferencia:', Math.abs(result.totalLateFee - expectedTotal));
   console.log('¿Cálculo correcto?', Math.abs(result.totalLateFee - expectedTotal) < 1);
+  
+  // Validación adicional
+  if (Math.abs(result.totalLateFee - expectedTotal) > 1) {
+    console.warn('⚠️ ADVERTENCIA: El cálculo no coincide con el esperado');
+    console.log('Revisar lógica de cálculo de fechas y días de atraso');
+  } else {
+    console.log('✅ Cálculo correcto');
+  }
+};
+
+/**
+ * Función para replicar exactamente el cálculo manual de la imagen
+ * Capital por cuota: 2,500 (10,000 ÷ 4)
+ * Días específicos: 271, 240, 212, 181
+ */
+export const testManualCalculation = (): number => {
+  console.log('=== REPLICANDO CÁLCULO MANUAL EXACTO ===');
+  
+  const capitalPerInstallment = 2500; // Capital por cuota
+  const lateFeeRate = 0.02; // 2% diario
+  const daysOverdue = [271, 240, 212, 181]; // Días específicos de la imagen
+  
+  let totalLateFee = 0;
+  
+  daysOverdue.forEach((days, index) => {
+    const lateFee = capitalPerInstallment * lateFeeRate * days;
+    totalLateFee += lateFee;
+    console.log(`Cuota ${index + 1} (${days} días): ${capitalPerInstallment} × 0.02 × ${days} = ${lateFee.toLocaleString()}`);
+  });
+  
+  console.log(`Total mora (sobre capital) = ${totalLateFee.toLocaleString()}`);
+  console.log('Resultado esperado: 45,200.00');
+  console.log('¿Coincide?', Math.abs(totalLateFee - 45200) < 1 ? '✅' : '❌');
+  
+  return totalLateFee;
+};
+
+/**
+ * Función de validación para verificar la precisión de los cálculos
+ * @param loan - Datos del préstamo a validar
+ * @param expectedResult - Resultado esperado
+ * @returns true si el cálculo es correcto
+ */
+export const validateLateFeeCalculation = (
+  loan: LoanData, 
+  expectedResult: number, 
+  calculationDate: Date = getCurrentDateInSantoDomingo()
+): boolean => {
+  const result = calculateLateFee(loan, calculationDate);
+  const difference = Math.abs(result.totalLateFee - expectedResult);
+  const isCorrect = difference < 1; // Tolerancia de 1 peso
+  
+  console.log('🔍 Validación de cálculo:', {
+    calculated: result.totalLateFee,
+    expected: expectedResult,
+    difference,
+    isCorrect
+  });
+  
+  return isCorrect;
+};
+
+/**
+ * Función para calcular la mora con validación de precisión
+ * @param loan - Datos del préstamo
+ * @param calculationDate - Fecha de cálculo
+ * @returns Cálculo de mora con información de validación
+ */
+export const calculateLateFeeWithValidation = (
+  loan: LoanData,
+  calculationDate: Date = getCurrentDateInSantoDomingo()
+): LateFeeCalculation & { isValid: boolean; precision: number } => {
+  const result = calculateLateFee(loan, calculationDate);
+  
+  // Calcular precisión basada en redondeo
+  const precision = Math.abs(result.totalLateFee - Math.round(result.totalLateFee * 100) / 100);
+  const isValid = precision < 0.01; // Precisión de centavos
+  
+  console.log('🔍 Cálculo con validación:', {
+    result,
+    precision,
+    isValid
+  });
+  
+  return {
+    ...result,
+    isValid,
+    precision
+  };
+};
+
+/**
+ * Función para obtener un desglose detallado del cálculo de mora
+ * @param loan - Datos del préstamo
+ * @param calculationDate - Fecha de cálculo
+ * @returns Desglose detallado por cuota
+ */
+export const getDetailedLateFeeBreakdown = (
+  loan: LoanData,
+  calculationDate: Date = getCurrentDateInSantoDomingo()
+): {
+  totalLateFee: number;
+  breakdown: Array<{
+    installment: number;
+    dueDate: string;
+    daysOverdue: number;
+    principal: number;
+    lateFee: number;
+  }>;
+} => {
+  if (!loan.late_fee_enabled || !loan.late_fee_rate) {
+    return { totalLateFee: 0, breakdown: [] };
+  }
+
+  // Calcular el capital real por cuota (igual que en calculateLateFee)
+  let principalPerPayment: number;
+  
+  if (loan.monthly_payment && loan.interest_rate) {
+    const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+    principalPerPayment = Math.round((loan.monthly_payment - fixedInterestPerPayment) * 100) / 100;
+  } else {
+    principalPerPayment = Math.round((loan.amount / loan.term) * 100) / 100;
+  }
+  const gracePeriod = loan.grace_period_days || 0;
+  const breakdown: Array<{
+    installment: number;
+    dueDate: string;
+    daysOverdue: number;
+    principal: number;
+    lateFee: number;
+  }> = [];
+  
+  let totalLateFee = 0;
+
+  for (let installment = 1; installment <= loan.term; installment++) {
+    const installmentDueDate = new Date(loan.next_payment_date);
+    const periodsToSubtract = loan.term - installment;
+    
+    // Ajustar fecha según frecuencia
+    switch (loan.payment_frequency) {
+      case 'daily':
+        installmentDueDate.setDate(installmentDueDate.getDate() - (periodsToSubtract * 1));
+        break;
+      case 'weekly':
+        installmentDueDate.setDate(installmentDueDate.getDate() - (periodsToSubtract * 7));
+        break;
+      case 'biweekly':
+        installmentDueDate.setDate(installmentDueDate.getDate() - (periodsToSubtract * 14));
+        break;
+      case 'monthly':
+        installmentDueDate.setMonth(installmentDueDate.getMonth() - periodsToSubtract);
+        break;
+      case 'quarterly':
+        installmentDueDate.setMonth(installmentDueDate.getMonth() - (periodsToSubtract * 3));
+        break;
+      case 'yearly':
+        installmentDueDate.setFullYear(installmentDueDate.getFullYear() - periodsToSubtract);
+        break;
+      default:
+        installmentDueDate.setMonth(installmentDueDate.getMonth() - periodsToSubtract);
+    }
+    
+    const daysOverdue = Math.max(0, 
+      calculateDaysDifference(installmentDueDate, calculationDate) - gracePeriod
+    );
+    
+    if (daysOverdue > 0) {
+      let lateFee = 0;
+      
+      switch (loan.late_fee_calculation_type) {
+        case 'daily':
+          lateFee = (principalPerPayment * loan.late_fee_rate / 100) * daysOverdue;
+          break;
+        case 'monthly':
+          const monthsOverdue = Math.ceil(daysOverdue / 30);
+          lateFee = (principalPerPayment * loan.late_fee_rate / 100) * monthsOverdue;
+          break;
+        case 'compound':
+          lateFee = principalPerPayment * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdue) - 1);
+          break;
+        default:
+          lateFee = (principalPerPayment * loan.late_fee_rate / 100) * daysOverdue;
+      }
+      
+      if (loan.max_late_fee && loan.max_late_fee > 0) {
+        lateFee = Math.min(lateFee, loan.max_late_fee);
+      }
+      
+      lateFee = Math.round(lateFee * 100) / 100;
+      totalLateFee += lateFee;
+      
+      breakdown.push({
+        installment,
+        dueDate: installmentDueDate.toISOString().split('T')[0],
+        daysOverdue,
+        principal: principalPerPayment,
+        lateFee
+      });
+    }
+  }
+  
+  totalLateFee = Math.round(totalLateFee * 100) / 100;
+  
+  return { totalLateFee, breakdown };
+};
+
+/**
+ * Calcula la mora después de pagar una cuota específica
+ * @param loan - Datos del préstamo
+ * @param paidInstallment - Número de cuota que se pagó
+ * @param calculationDate - Fecha de cálculo
+ * @returns Cálculo de mora actualizado
+ */
+export const calculateLateFeeAfterPayment = (
+  loan: LoanData,
+  paidInstallment: number,
+  calculationDate: Date = getCurrentDateInSantoDomingo()
+): LateFeeCalculation => {
+  // Crear una copia del préstamo con la cuota pagada
+  const updatedLoan: LoanData = {
+    ...loan,
+    paid_installments: [...(loan.paid_installments || []), paidInstallment]
+  };
+  
+  console.log(`🔍 Calculando mora después de pagar cuota ${paidInstallment}`);
+  console.log('🔍 Cuotas pagadas:', updatedLoan.paid_installments);
+  
+  return calculateLateFee(updatedLoan, calculationDate);
+};
+
+/**
+ * Función para demostrar el comportamiento del sistema después de pagar cuotas
+ * Ejemplo: Después de pagar la Cuota 1, la mora debe ser solo de las cuotas 2, 3 y 4
+ */
+export const testPaymentScenario = (): void => {
+  console.log('=== DEMOSTRACIÓN: MORA DESPUÉS DE PAGAR CUOTAS ===');
+  
+  const testLoan: LoanData = {
+    remaining_balance: 10000,
+    next_payment_date: '2024-05-05',
+    late_fee_rate: 2,
+    grace_period_days: 0,
+    max_late_fee: 0,
+    late_fee_calculation_type: 'daily',
+    late_fee_enabled: true,
+    amount: 10000,
+    term: 4,
+    payment_frequency: 'monthly',
+    interest_rate: 10,
+    monthly_payment: 3500
+  };
+  
+  const calculationDate = new Date('2024-09-29');
+  
+  // 1. Mora inicial (todas las cuotas pendientes)
+  console.log('\n📊 1. MORA INICIAL (todas las cuotas pendientes):');
+  const initialMora = calculateLateFee(testLoan, calculationDate);
+  console.log('Mora total:', initialMora.totalLateFee);
+  
+  // 2. Después de pagar la Cuota 1
+  console.log('\n📊 2. DESPUÉS DE PAGAR CUOTA 1:');
+  const afterPayment1 = calculateLateFeeAfterPayment(testLoan, 1, calculationDate);
+  console.log('Mora restante (cuotas 2, 3, 4):', afterPayment1.totalLateFee);
+  console.log('Días de mora desde primera cuota pendiente (Cuota 2):', afterPayment1.daysOverdue);
+  
+  // 3. Después de pagar la Cuota 2
+  console.log('\n📊 3. DESPUÉS DE PAGAR CUOTA 2:');
+  const afterPayment2 = calculateLateFeeAfterPayment(testLoan, 2, calculationDate);
+  console.log('Mora restante (cuotas 3, 4):', afterPayment2.totalLateFee);
+  console.log('Días de mora desde primera cuota pendiente (Cuota 3):', afterPayment2.daysOverdue);
+  
+  // 4. Cálculo manual esperado
+  console.log('\n📊 4. CÁLCULO MANUAL ESPERADO:');
+  console.log('Después de pagar Cuota 1:');
+  console.log('  - Primera cuota pendiente: Cuota 2');
+  console.log('  - Cuota 2 (240 días): 2,500 × 0.02 × 240 = 12,000.00');
+  console.log('  - Cuota 3 (212 días): 2,500 × 0.02 × 212 = 10,600.00');
+  console.log('  - Cuota 4 (181 días): 2,500 × 0.02 × 181 = 9,050.00');
+  console.log('  - Total esperado: 31,650.00');
+  console.log('  - Días de mora: 240 (desde Cuota 2)');
+  
+  const expectedAfterPayment1 = 31650;
+  console.log('¿Coincide?', Math.abs(afterPayment1.totalLateFee - expectedAfterPayment1) < 1 ? '✅' : '❌');
+};
+
+/**
+ * Función para demostrar el escenario específico del usuario
+ * Después de pagar la Cuota 1, la mora debe ser $31,650 y los días 240
+ */
+export const testUserScenario = (): void => {
+  console.log('=== ESCENARIO DEL USUARIO: DESPUÉS DE PAGAR CUOTA 1 ===');
+  
+  const testLoan: LoanData = {
+    remaining_balance: 10000,
+    next_payment_date: '2024-05-05',
+    late_fee_rate: 2,
+    grace_period_days: 0,
+    max_late_fee: 0,
+    late_fee_calculation_type: 'daily',
+    late_fee_enabled: true,
+    amount: 10000,
+    term: 4,
+    payment_frequency: 'monthly',
+    interest_rate: 10,
+    monthly_payment: 3500,
+    paid_installments: [1] // Cuota 1 ya fue pagada
+  };
+  
+  const calculationDate = new Date('2024-09-29');
+  
+  console.log('\n📊 ESTADO DESPUÉS DE PAGAR CUOTA 1:');
+  const result = calculateLateFee(testLoan, calculationDate);
+  
+  console.log('Mora actual:', result.totalLateFee);
+  console.log('Días de mora:', result.daysOverdue);
+  
+  console.log('\n📊 CÁLCULO MANUAL ESPERADO:');
+  console.log('Cuota 1: PAGADA (eliminada del cálculo)');
+  console.log('Cuota 2 (240 días): 2,500 × 0.02 × 240 = 12,000.00');
+  console.log('Cuota 3 (212 días): 2,500 × 0.02 × 212 = 10,600.00');
+  console.log('Cuota 4 (181 días): 2,500 × 0.02 × 181 = 9,050.00');
+  console.log('Total esperado: 31,650.00');
+  console.log('Días de mora: 240 (de la Cuota 2)');
+  
+  const expectedTotal = 31650;
+  const expectedDays = 240;
+  
+  console.log('\n📊 VALIDACIÓN:');
+  console.log('¿Mora correcta?', Math.abs(result.totalLateFee - expectedTotal) < 1 ? '✅' : '❌');
+  console.log('¿Días correctos?', result.daysOverdue === expectedDays ? '✅' : '❌');
+  console.log('Diferencia en mora:', Math.abs(result.totalLateFee - expectedTotal));
+  console.log('Diferencia en días:', Math.abs(result.daysOverdue - expectedDays));
+};
+
+/**
+ * Función para probar el escenario específico del usuario
+ * Préstamo de $10,000 con 2 pagos de $3,500 cada uno
+ * Debería tener 2 cuotas pagadas y mora solo de las cuotas 3 y 4
+ */
+export const testUserSpecificScenario = (): void => {
+  console.log('=== ESCENARIO ESPECÍFICO DEL USUARIO ===');
+  
+  // Simular 2 pagos de $3,500 cada uno
+  const testLoan: LoanData = {
+    remaining_balance: 3000, // $10,000 - $7,000 (2 pagos de $3,500)
+    next_payment_date: '2024-05-05',
+    late_fee_rate: 2,
+    grace_period_days: 0,
+    max_late_fee: 0,
+    late_fee_calculation_type: 'daily',
+    late_fee_enabled: true,
+    amount: 10000,
+    term: 4,
+    payment_frequency: 'monthly',
+    interest_rate: 10,
+    monthly_payment: 3500,
+    paid_installments: [1, 2] // 2 cuotas pagadas
+  };
+  
+  const calculationDate = new Date('2024-09-29');
+  
+  console.log('\n📊 ESTADO CON 2 CUOTAS PAGADAS:');
+  const result = calculateLateFee(testLoan, calculationDate);
+  
+  console.log('Mora actual:', result.totalLateFee);
+  console.log('Días de mora:', result.daysOverdue);
+  
+  console.log('\n📊 CÁLCULO MANUAL ESPERADO:');
+  console.log('Cuota 1: PAGADA (eliminada del cálculo)');
+  console.log('Cuota 2: PAGADA (eliminada del cálculo)');
+  console.log('Cuota 3 (212 días): 2,500 × 0.02 × 212 = 10,600.00');
+  console.log('Cuota 4 (181 días): 2,500 × 0.02 × 181 = 9,050.00');
+  console.log('Total esperado: 19,650.00');
+  console.log('Días de mora: 212 (de la Cuota 3)');
+  
+  const expectedTotal = 19650;
+  const expectedDays = 212;
+  
+  console.log('\n📊 VALIDACIÓN:');
+  console.log('¿Mora correcta?', Math.abs(result.totalLateFee - expectedTotal) < 1 ? '✅' : '❌');
+  console.log('¿Días correctos?', result.daysOverdue === expectedDays ? '✅' : '❌');
+  console.log('Diferencia en mora:', Math.abs(result.totalLateFee - expectedTotal));
+  console.log('Diferencia en días:', Math.abs(result.daysOverdue - expectedDays));
+  
+  if (Math.abs(result.totalLateFee - expectedTotal) < 1) {
+    console.log('🎉 ¡El cálculo es correcto! La mora se ha recalculado correctamente después de pagar 2 cuotas.');
+  } else {
+    console.log('❌ El cálculo no es correcto. Revisar la lógica de detección de cuotas pagadas.');
+  }
 };

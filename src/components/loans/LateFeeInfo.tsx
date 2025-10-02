@@ -4,7 +4,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useLateFee, LateFeeCalculation, LateFeeHistory } from '@/hooks/useLateFee';
-import { calculateLateFee as calculateLateFeeUtil } from '@/utils/lateFeeCalculator';
+import { 
+  calculateLateFee as calculateLateFeeUtil, 
+  calculateLateFeeWithValidation,
+  getDetailedLateFeeBreakdown 
+} from '@/utils/lateFeeCalculator';
 import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/dateUtils';
 import { LateFeeConfigModal } from './LateFeeConfigModal';
 import { supabase } from '@/integrations/supabase/client';
@@ -35,6 +39,9 @@ interface LateFeeInfoProps {
   amount: number; // Monto total del préstamo
   term: number; // Número de cuotas
   payment_frequency: string; // Frecuencia de pago
+  interest_rate?: number; // Tasa de interés del préstamo
+  monthly_payment?: number; // Cuota mensual
+  paid_installments?: number[]; // Cuotas que han sido pagadas
 }
 
 export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
@@ -50,7 +57,10 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
   clientName,
   amount,
   term,
-  payment_frequency
+  payment_frequency,
+  interest_rate,
+  monthly_payment,
+  paid_installments
 }) => {
   const [showDetails, setShowDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -59,6 +69,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
   const [lateFeeHistory, setLateFeeHistory] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [pendingCapital, setPendingCapital] = useState<number>(0);
+  const [detectedPaidInstallments, setDetectedPaidInstallments] = useState<number[]>([]);
   const { calculateLateFee, getLateFeeHistory, loading } = useLateFee();
 
   // Función para obtener pagos de mora previos
@@ -78,6 +89,98 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     } catch (error) {
       console.error('Error obteniendo pagos de mora previos:', error);
       return 0;
+    }
+  };
+
+  // Función para detectar cuotas pagadas basándose en los pagos realizados
+  const getPaidInstallments = async () => {
+    try {
+      console.log('🔍 LateFeeInfo: Detectando cuotas pagadas...');
+      
+      // Obtener todos los pagos del préstamo
+      const { data: payments, error } = await supabase
+        .from('payments')
+        .select('principal_amount, interest_amount, payment_date, amount')
+        .eq('loan_id', loanId)
+        .order('payment_date', { ascending: true });
+
+      if (error) throw error;
+
+      if (!payments || payments.length === 0) {
+        console.log('🔍 LateFeeInfo: No hay pagos para el préstamo');
+        return [];
+      }
+
+      console.log('🔍 LateFeeInfo: Pagos encontrados:', payments);
+
+      // Calcular el capital por cuota
+      // Fórmula correcta: interés fijo por cuota = (monto_total * tasa_interés) / 100
+      const fixedInterestPerPayment = (amount * (interest_rate || 0)) / 100;
+      const principalPerPayment = (monthly_payment || 0) - fixedInterestPerPayment;
+      
+      console.log('🔍 LateFeeInfo: Cálculos base:', {
+        principalPerPayment,
+        monthlyPayment: monthly_payment,
+        interestRate: interest_rate,
+        fixedInterestPerPayment
+      });
+
+      // Detectar cuotas completas basándose en pagos de capital
+      const paidInstallments: number[] = [];
+      let totalPrincipalPaid = 0;
+      let installmentNumber = 1;
+
+      for (const payment of payments) {
+        const principalPaid = payment.principal_amount || 0;
+        totalPrincipalPaid += principalPaid;
+        
+        console.log(`🔍 LateFeeInfo: Pago ${payment.payment_date}:`, {
+          principalPaid,
+          totalPrincipalPaid,
+          installmentNumber,
+          principalPerPayment
+        });
+
+        // Si se ha pagado suficiente capital para una cuota completa
+        while (totalPrincipalPaid >= principalPerPayment && installmentNumber <= term) {
+          paidInstallments.push(installmentNumber);
+          totalPrincipalPaid -= principalPerPayment;
+          installmentNumber++;
+          
+          console.log(`🔍 LateFeeInfo: Cuota ${installmentNumber - 1} completada`);
+        }
+      }
+
+      console.log('🔍 LateFeeInfo: Cuotas pagadas detectadas:', paidInstallments);
+      
+      // Validación específica para diferentes escenarios
+      if (paidInstallments.length === 1) {
+        console.log('🔍 LateFeeInfo: VALIDACIÓN - 1 cuota pagada detectada');
+        console.log('🔍 LateFeeInfo: Mora esperada: $31,650 (cuotas 2+3+4)');
+        console.log('🔍 LateFeeInfo: Cálculo esperado:');
+        console.log('  - Cuota 2 (240 días): 2,500 × 0.02 × 240 = 12,000.00');
+        console.log('  - Cuota 3 (212 días): 2,500 × 0.02 × 212 = 10,600.00');
+        console.log('  - Cuota 4 (181 días): 2,500 × 0.02 × 181 = 9,050.00');
+        console.log('  - Total: 31,650.00');
+      } else if (paidInstallments.length === 2) {
+        console.log('🔍 LateFeeInfo: VALIDACIÓN - 2 cuotas pagadas detectadas');
+        console.log('🔍 LateFeeInfo: Mora esperada: $19,650 (solo cuotas 3 y 4)');
+        console.log('🔍 LateFeeInfo: Cálculo esperado:');
+        console.log('  - Cuota 3 (212 días): 2,500 × 0.02 × 212 = 10,600.00');
+        console.log('  - Cuota 4 (181 días): 2,500 × 0.02 × 181 = 9,050.00');
+        console.log('  - Total: 19,650.00');
+      } else {
+        console.log('🔍 LateFeeInfo: ADVERTENCIA - No se detectaron las cuotas esperadas');
+        console.log('🔍 LateFeeInfo: Cuotas detectadas:', paidInstallments.length);
+        console.log('🔍 LateFeeInfo: Total capital pagado:', totalPrincipalPaid);
+        console.log('🔍 LateFeeInfo: Capital por cuota:', principalPerPayment);
+        console.log('🔍 LateFeeInfo: Cuotas esperadas con este capital:', Math.floor(totalPrincipalPaid / principalPerPayment));
+      }
+      
+      return paidInstallments;
+    } catch (error) {
+      console.error('Error detectando cuotas pagadas:', error);
+      return [];
     }
   };
 
@@ -119,14 +222,24 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
       return null;
     }
 
-    console.log('🔍 LateFeeInfo: Calculando mora local con datos:', {
+    // Detectar cuotas pagadas automáticamente
+    const detectedPaidInstallments = await getPaidInstallments();
+    setDetectedPaidInstallments(detectedPaidInstallments);
+    
+    console.log('🔍 LateFeeInfo: Calculando mora local con datos mejorados:', {
       amount,
       term,
       payment_frequency,
       late_fee_rate: lateFeeRate,
       next_payment_date: nextPaymentDate,
-      grace_period_days: gracePeriodDays
+      grace_period_days: gracePeriodDays,
+      late_fee_calculation_type: lateFeeCalculationType,
+      detectedPaidInstallments,
+      providedPaidInstallments: paid_installments
     });
+
+    // Usar las cuotas pagadas detectadas automáticamente o las proporcionadas
+    const finalPaidInstallments = detectedPaidInstallments.length > 0 ? detectedPaidInstallments : (paid_installments || []);
 
     const calculation = calculateLateFeeUtil({
       remaining_balance: remainingBalance,
@@ -138,10 +251,13 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
       late_fee_enabled: lateFeeEnabled,
       amount: amount, // Monto total del préstamo
       term: term, // Número de cuotas
-      payment_frequency: payment_frequency // Frecuencia de pago
+      payment_frequency: payment_frequency, // Frecuencia de pago
+      interest_rate: interest_rate, // Tasa de interés del préstamo
+      monthly_payment: monthly_payment, // Cuota mensual
+      paid_installments: finalPaidInstallments // Cuotas pagadas (detectadas o proporcionadas)
     });
 
-    console.log('🔍 LateFeeInfo: Resultado del cálculo local:', calculation);
+    console.log('🔍 LateFeeInfo: Resultado del cálculo local mejorado:', calculation);
 
     // Obtener pagos de mora previos
     const previousLateFeePayments = await getPreviousLateFeePayments();
@@ -153,6 +269,27 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     console.log('🔍 LateFeeInfo: Mora ya pagada:', previousLateFeePayments);
     console.log('🔍 LateFeeInfo: Mora pendiente:', pendingLateFee);
 
+    // Validar que el cálculo sea preciso
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 LateFeeInfo: Validación de precisión:', {
+        calculatedAmount: calculation.lateFeeAmount,
+        pendingAmount: pendingLateFee,
+        previousPayments: previousLateFeePayments,
+        isPrecise: Math.abs(calculation.lateFeeAmount - pendingLateFee - previousLateFeePayments) < 0.01
+      });
+    }
+
+    // Actualizar los días de mora calculados
+    setCalculatedDaysOverdue(calculation.daysOverdue);
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 DEBUG LateFeeInfo - Días calculados:', {
+        calculationDaysOverdue: calculation.daysOverdue,
+        currentCalculatedDaysOverdue: calculatedDaysOverdue,
+        currentDaysOverdue: daysOverdue
+      });
+    }
+
     return {
       days_overdue: calculation.daysOverdue,
       late_fee_amount: pendingLateFee, // Usar la mora pendiente
@@ -162,6 +299,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
 
   // Estado para días de mora calculados desde el último pago
   const [daysOverdue, setDaysOverdue] = useState(0);
+  const [calculatedDaysOverdue, setCalculatedDaysOverdue] = useState(0);
 
   // Función para obtener la fecha del último pago
   const getLastPaymentDate = async () => {
@@ -187,34 +325,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     }
   };
 
-  // Calcular días de mora desde el último pago
-  useEffect(() => {
-    const calculateDaysOverdue = async () => {
-      const lastPaymentDate = await getLastPaymentDate();
-      const today = getCurrentDateInSantoDomingo();
-      const lastPayment = new Date(lastPaymentDate);
-      
-      const calculatedDaysOverdue = Math.max(0, 
-        Math.floor((today.getTime() - lastPayment.getTime()) / (1000 * 60 * 60 * 24)) - gracePeriodDays
-      );
-      
-      setDaysOverdue(calculatedDaysOverdue);
-      
-      console.log('🔍 LateFeeInfo: Días de mora calculados desde último pago (Santo Domingo):', {
-        today: getCurrentDateString(),
-        lastPaymentDate,
-        daysOverdue: calculatedDaysOverdue,
-        gracePeriodDays
-      });
-    };
-
-    calculateDaysOverdue();
-    
-    // Recalcular cada 30 segundos para mantener los datos actualizados
-    const interval = setInterval(calculateDaysOverdue, 30000);
-    
-    return () => clearInterval(interval);
-  }, [loanId, nextPaymentDate, gracePeriodDays]);
+  // Los días de mora se calcularán en el useEffect de calculateLocalLateFee
+  // No necesitamos un useEffect separado para esto
 
   // Calcular mora localmente cuando cambien los parámetros
   useEffect(() => {
@@ -321,8 +433,10 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
 
   const getLateFeeStatus = () => {
     if (!lateFeeEnabled) return { status: 'disabled', color: 'bg-gray-100 text-gray-600', icon: Settings };
-    if (daysOverdue <= 0) return { status: 'current', color: 'bg-green-100 text-green-700', icon: Clock };
-    if (daysOverdue <= 7) return { status: 'warning', color: 'bg-yellow-100 text-yellow-700', icon: AlertTriangle };
+    // Usar solo los días calculados por el lateFeeCalculator
+    const effectiveDaysOverdue = calculatedDaysOverdue;
+    if (effectiveDaysOverdue <= 0) return { status: 'current', color: 'bg-green-100 text-green-700', icon: Clock };
+    if (effectiveDaysOverdue <= 7) return { status: 'warning', color: 'bg-yellow-100 text-yellow-700', icon: AlertTriangle };
     return { status: 'overdue', color: 'bg-red-100 text-red-700', icon: AlertTriangle };
   };
 
@@ -348,7 +462,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
           <div className="flex items-center gap-2">
             <StatusIcon className="h-4 w-4" />
             <Badge className={lateFeeStatus.color}>
-              {daysOverdue} día{daysOverdue !== 1 ? 's' : ''} de mora
+              {calculatedDaysOverdue} día{calculatedDaysOverdue !== 1 ? 's' : ''} de mora
             </Badge>
           </div>
           <div className="flex gap-1">
@@ -441,7 +555,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   </div>
                   <div>
                     <span className="text-gray-600">Días de mora:</span>
-                    <div className="font-semibold text-red-600">{daysOverdue} días</div>
+                    <div className="font-semibold text-red-600">{calculatedDaysOverdue} días</div>
                   </div>
                   <div>
                     <span className="text-gray-600">Días de gracia:</span>
@@ -496,7 +610,68 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
               </Card>
             )}
 
-            {/* Proyección de mora */}
+            {/* Desglose detallado por cuota */}
+            {lateFeeCalculation && (
+              <Card>
+                <CardContent className="p-4">
+                  <h4 className="font-semibold mb-3">Desglose por Cuota</h4>
+                  <div className="space-y-2">
+                    <div className="text-sm text-gray-600">
+                      💡 El desglose se actualiza automáticamente basándose en los pagos realizados
+                    </div>
+                    {(() => {
+                      const breakdown = getDetailedLateFeeBreakdown({
+                        remaining_balance: remainingBalance,
+                        next_payment_date: nextPaymentDate,
+                        late_fee_rate: lateFeeRate,
+                        grace_period_days: gracePeriodDays,
+                        max_late_fee: maxLateFee,
+                        late_fee_calculation_type: lateFeeCalculationType,
+                        late_fee_enabled: lateFeeEnabled,
+                        amount: amount,
+                        term: term,
+                        payment_frequency: payment_frequency,
+                        interest_rate: interest_rate,
+                        monthly_payment: monthly_payment,
+                        paid_installments: detectedPaidInstallments.length > 0 ? detectedPaidInstallments : (paid_installments || [])
+                      });
+                      
+                      const currentPaidInstallments = detectedPaidInstallments.length > 0 ? detectedPaidInstallments : (paid_installments || []);
+                      
+                      return breakdown.breakdown.map((item, index) => {
+                        const isPaid = currentPaidInstallments.includes(item.installment);
+                        return (
+                          <div key={index} className={`flex justify-between items-center p-2 rounded ${
+                            isPaid ? 'bg-green-50 border border-green-200' : 'bg-gray-50'
+                          }`}>
+                            <div className="text-sm">
+                              <span className="font-medium">
+                                Cuota {item.installment}
+                                {isPaid && <span className="ml-2 text-green-600 text-xs">✅ PAGADA</span>}
+                              </span>
+                              <div className="text-xs text-gray-600">
+                                Vence: {new Date(item.dueDate).toLocaleDateString()} | 
+                                {item.daysOverdue} días de atraso
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className={`font-semibold ${isPaid ? 'text-green-600' : 'text-red-600'}`}>
+                                {isPaid ? 'PAGADA' : `$${item.lateFee.toLocaleString()}`}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                Capital: ${item.principal.toLocaleString()}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Proyección de mora mejorada */}
             <Card>
               <CardContent className="p-4">
                 <h4 className="font-semibold mb-3">Proyección de Mora</h4>
@@ -504,26 +679,28 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   <div className="flex justify-between">
                     <span>En 7 días más:</span>
                     <span className="font-semibold">
-                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * 0.02 * 7)).toLocaleString() : '0'}
+                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 7)).toLocaleString() : '0'}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span>En 15 días más:</span>
                     <span className="font-semibold">
-                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * 0.02 * 15)).toLocaleString() : '0'}
+                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 15)).toLocaleString() : '0'}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span>En 30 días más:</span>
                     <span className="font-semibold">
-                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * 0.02 * 30)).toLocaleString() : '0'}
+                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 30)).toLocaleString() : '0'}
                     </span>
                   </div>
                 </div>
                 <div className="mt-3 text-xs text-gray-600">
-                  💡 Cálculo: Mora actual + (Capital pendiente × 2% × días adicionales)
+                  💡 Cálculo: Mora actual + (Capital pendiente × {lateFeeRate}% × días adicionales)
                   <br />
-                  📊 Capital pendiente: ${pendingCapital.toLocaleString()} | Incremento diario: ${(pendingCapital * 0.02).toLocaleString()}
+                  📊 Capital pendiente: ${pendingCapital.toLocaleString()} | Incremento diario: ${(pendingCapital * lateFeeRate / 100).toLocaleString()}
+                  <br />
+                  🔍 Tipo de cálculo: {lateFeeCalculationType === 'daily' ? 'Diario' : lateFeeCalculationType === 'monthly' ? 'Mensual' : 'Compuesto'}
                 </div>
               </CardContent>
             </Card>

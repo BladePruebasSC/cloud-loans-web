@@ -37,7 +37,23 @@ export const calculateDaysDifference = (date1: Date, date2: Date): number => {
   
   // Calcular diferencia en milisegundos y convertir a días
   const diffInMs = santoDomingoDate2.getTime() - santoDomingoDate1.getTime();
-  return Math.ceil(diffInMs / (1000 * 60 * 60 * 24));
+  const daysDiff = diffInMs / (1000 * 60 * 60 * 24);
+  const finalDays = Math.floor(daysDiff);
+  
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔍 DEBUG calculateDaysDifference:', {
+      date1: date1.toISOString().split('T')[0],
+      date2: date2.toISOString().split('T')[0],
+      santoDomingoDate1: santoDomingoDate1.toISOString().split('T')[0],
+      santoDomingoDate2: santoDomingoDate2.toISOString().split('T')[0],
+      diffInMs,
+      daysDiff,
+      finalDays
+    });
+  }
+  
+  // Usar Math.floor para obtener días completos
+  return finalDays;
 };
 
 /**
