@@ -682,11 +682,17 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       console.log('🔍 PaymentForm: Datos del pago que se enviarán:', paymentData);
 
-      const { error: paymentError } = await supabase
+      const { data: insertedPayment, error: paymentError } = await supabase
         .from('payments')
-        .insert([paymentData]);
+        .insert([paymentData])
+        .select();
 
-      if (paymentError) throw paymentError;
+      if (paymentError) {
+        console.error('🔍 PaymentForm: Error insertando pago:', paymentError);
+        throw paymentError;
+      }
+      
+      console.log('🔍 PaymentForm: Pago insertado exitosamente:', insertedPayment);
 
       // Actualizar el balance restante del préstamo (se reduce con el monto total pagado)
       const newBalance = Math.max(0, remainingBalance - data.amount);
@@ -706,7 +712,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         newCurrentLateFee = Math.max(0, newCurrentLateFee - data.late_fee_amount);
       }
 
-      const { error: loanError } = await supabase
+      console.log('🔍 PaymentForm: Actualizando préstamo con:', {
+        loanId: data.loan_id,
+        newBalance,
+        nextPaymentDate,
+        status: newBalance <= 0 ? 'paid' : 'active',
+        newCurrentLateFee
+      });
+
+      const { data: updatedLoan, error: loanError } = await supabase
         .from('loans')
         .update({
           remaining_balance: newBalance,
@@ -714,9 +728,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           status: newBalance <= 0 ? 'paid' : 'active',
           current_late_fee: newCurrentLateFee,
         })
-        .eq('id', data.loan_id);
+        .eq('id', data.loan_id)
+        .select();
 
-      if (loanError) throw loanError;
+      if (loanError) {
+        console.error('🔍 PaymentForm: Error actualizando préstamo:', loanError);
+        throw loanError;
+      }
+      
+      console.log('🔍 PaymentForm: Préstamo actualizado exitosamente:', updatedLoan);
 
       let successMessage = isFullPayment 
         ? 'Pago completo registrado exitosamente' 
@@ -730,11 +750,6 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       // Actualizar el estado del pago
       await refetchPaymentStatus();
-      
-      // Forzar actualización de la página para recalcular días de mora
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
       
       // Llamar al callback para actualizar los datos del padre
       if (onPaymentSuccess) {

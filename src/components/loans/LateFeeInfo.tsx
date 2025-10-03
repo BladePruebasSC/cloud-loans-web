@@ -153,6 +153,14 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
 
       console.log('🔍 LateFeeInfo: Cuotas pagadas detectadas:', paidInstallments);
       
+      console.log('🔍 LateFeeInfo: DEBUG - Detalle de detección de cuotas:', {
+        totalPayments: payments.length,
+        totalPrincipalPaid,
+        principalPerPayment,
+        paidInstallments,
+        nextPaymentDate: nextPaymentDate
+      });
+      
       // Validación específica para diferentes escenarios
       if (paidInstallments.length === 1) {
         console.log('🔍 LateFeeInfo: VALIDACIÓN - 1 cuota pagada detectada');
@@ -236,6 +244,12 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
       late_fee_calculation_type: lateFeeCalculationType,
       detectedPaidInstallments,
       providedPaidInstallments: paid_installments
+    });
+    
+    console.log('🔍 LateFeeInfo: DEBUG - Cuotas pagadas detectadas:', {
+      detectedPaidInstallments,
+      providedPaidInstallments: paid_installments,
+      finalPaidInstallments: detectedPaidInstallments.length > 0 ? detectedPaidInstallments : (paid_installments || [])
     });
 
     // Usar las cuotas pagadas detectadas automáticamente o las proporcionadas
