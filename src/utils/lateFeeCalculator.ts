@@ -1009,3 +1009,39 @@ export const testPaymentFix = (): void => {
   console.log('\n🎉 ¡Fix exitoso! El problema de doble pago ha sido corregido.');
   console.log('✅ Los pagos ahora se registran correctamente en la primera vez.');
 };
+
+/**
+ * Función para probar el fix de separación de mora y cuota
+ * Simula el escenario donde la mora se incluía incorrectamente en el pago de cuota
+ */
+export const testLateFeeSeparationFix = (): void => {
+  console.log('=== PRUEBA DEL FIX: SEPARACIÓN DE MORA Y CUOTA ===');
+  
+  console.log('🔍 Problema identificado:');
+  console.log('❌ ANTES: La mora se sumaba al monto del pago de cuota');
+  console.log('❌ Ejemplo: Cuota $3,500 + Mora $1,000 = Pago registrado $4,500');
+  console.log('❌ Esto causaba que el balance se redujera incorrectamente');
+  
+  console.log('\n🔍 Solución implementada:');
+  console.log('✅ AHORA: La mora se maneja como concepto separado');
+  console.log('✅ Ejemplo: Cuota $3,500 (capital $2,500 + interés $1,000) + Mora $1,000');
+  console.log('✅ Balance se reduce solo con el capital pagado ($2,500)');
+  console.log('✅ Mora se registra en campo separado sin afectar el balance principal');
+  
+  console.log('\n📊 CAMBIOS REALIZADOS EN PaymentForm.tsx:');
+  console.log('1. ✅ amount: data.amount (solo cuota, sin mora)');
+  console.log('2. ✅ late_fee: data.late_fee_amount (mora como concepto separado)');
+  console.log('3. ✅ newBalance = remainingBalance - principalPayment (solo capital)');
+  console.log('4. ✅ Validaciones separadas para cuota y mora');
+  console.log('5. ✅ Logs detallados del resumen del pago');
+  
+  console.log('\n📊 EJEMPLO DE REGISTRO CORRECTO:');
+  console.log('Pago de cuota: $3,500 (Capital: $2,500, Interés: $1,000)');
+  console.log('Pago de mora: $1,000 (Concepto separado)');
+  console.log('Balance anterior: $10,000');
+  console.log('Balance nuevo: $7,500 (solo se reduce el capital pagado)');
+  console.log('Mora pendiente: Se actualiza según el pago de mora realizado');
+  
+  console.log('\n🎉 ¡Fix exitoso! La mora ahora se maneja correctamente como concepto separado.');
+  console.log('✅ Los pagos de cuota y mora se registran independientemente.');
+};

@@ -614,10 +614,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       const currentPaymentRemaining = paymentStatus.currentPaymentRemaining;
       const interestRate = selectedLoan.interest_rate; // Tasa de interés mensual [[memory:6311805]]
       
-      // Validación 1: No permitir pagos que excedan el balance restante + mora
-      const totalPaymentAmount = data.amount + (data.late_fee_amount || 0);
-      if (totalPaymentAmount > remainingBalance + lateFeeAmount) {
-        toast.error(`El pago total (cuota + mora) no puede exceder RD$${(remainingBalance + lateFeeAmount).toLocaleString()}`);
+      // Validación 1: No permitir que la cuota exceda el balance restante
+      if (data.amount > remainingBalance) {
+        toast.error(`El pago de cuota no puede exceder el balance restante de RD$${remainingBalance.toLocaleString()}`);
+        return;
+      }
+      
+      // Validación 1b: No permitir que la mora exceda la mora actual
+      if (data.late_fee_amount && data.late_fee_amount > lateFeeAmount) {
+        toast.error(`El pago de mora no puede exceder la mora actual de RD$${lateFeeAmount.toLocaleString()}`);
         return;
       }
       
@@ -667,10 +672,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       const paymentData = {
         loan_id: data.loan_id,
-        amount: data.amount + (data.late_fee_amount || 0),
+        amount: data.amount, // Solo el monto de la cuota, sin incluir la mora
         principal_amount: principalPayment,
         interest_amount: interestPayment,
-        late_fee: data.late_fee_amount || 0,
+        late_fee: data.late_fee_amount || 0, // Mora como concepto separado
         due_date: selectedLoan.next_payment_date,
         payment_date: paymentDate, // Usar fecha actual en zona horaria de Santo Domingo
         payment_method: data.payment_method,
@@ -694,8 +699,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       console.log('🔍 PaymentForm: Pago insertado exitosamente:', insertedPayment);
 
-      // Actualizar el balance restante del préstamo (se reduce con el monto total pagado)
-      const newBalance = Math.max(0, remainingBalance - data.amount);
+      // Actualizar el balance restante del préstamo (se reduce solo con el capital pagado)
+      const newBalance = Math.max(0, remainingBalance - principalPayment);
       
       // Solo actualizar la fecha del próximo pago si es un pago completo
       let nextPaymentDate = selectedLoan.next_payment_date;
@@ -743,8 +748,17 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         : 'Pago parcial registrado exitosamente';
       
       if (data.late_fee_amount && data.late_fee_amount > 0) {
-        successMessage += ` (incluye mora de RD$${data.late_fee_amount.toLocaleString()})`;
+        successMessage += ` + Mora de RD$${data.late_fee_amount.toLocaleString()}`;
       }
+      
+      console.log('🔍 PaymentForm: Resumen del pago registrado:', {
+        cuotaPagada: data.amount,
+        capitalPagado: principalPayment,
+        interesPagado: interestPayment,
+        moraPagada: data.late_fee_amount || 0,
+        balanceAnterior: remainingBalance,
+        balanceNuevo: newBalance
+      });
       
       toast.success(successMessage);
       
