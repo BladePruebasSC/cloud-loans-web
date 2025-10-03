@@ -476,7 +476,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
           <div className="flex items-center gap-2">
             <StatusIcon className="h-4 w-4" />
             <Badge className={lateFeeStatus.color}>
-              {calculatedDaysOverdue} día{calculatedDaysOverdue !== 1 ? 's' : ''} de mora
+              {calculatedDaysOverdue} día{calculatedDaysOverdue !== 1 ? 's' : ''} vencido{calculatedDaysOverdue !== 1 ? 's' : ''}
             </Badge>
           </div>
           <div className="flex gap-1">
@@ -568,7 +568,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                     <div className="font-semibold">{new Date(nextPaymentDate).toLocaleDateString()}</div>
                   </div>
                   <div>
-                    <span className="text-gray-600">Días de mora:</span>
+                    <span className="text-gray-600">Días vencidos:</span>
                     <div className="font-semibold text-red-600">{calculatedDaysOverdue} días</div>
                   </div>
                   <div>
