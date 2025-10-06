@@ -25,6 +25,7 @@ export interface Loan {
   current_late_fee?: number;
   last_late_fee_calculation?: string;
   total_late_fee_paid?: number;
+  paid_installments?: number[];
   
   client?: {
     full_name: string;

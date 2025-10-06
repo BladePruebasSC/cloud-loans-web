@@ -14,7 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useLoanPaymentStatusSimple } from '@/hooks/useLoanPaymentStatusSimple';
 import { useLateFee } from '@/hooks/useLateFee';
-import { calculateLateFee as calculateLateFeeUtil } from '@/utils/lateFeeCalculator';
+import { calculateLateFee as calculateLateFeeUtil, getDetailedLateFeeBreakdown, getOriginalLateFeeBreakdown, getFixedLateFeeBreakdown, applyLateFeePayment, calculateFixedLateFeeBreakdown } from '@/utils/lateFeeCalculator';
 import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/dateUtils';
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
@@ -42,6 +42,7 @@ interface Loan {
   remaining_balance: number;
   monthly_payment: number;
   next_payment_date: string;
+  start_date?: string;
   interest_rate: number;
   term_months?: number;
   payment_frequency?: string;
@@ -51,6 +52,7 @@ interface Loan {
   max_late_fee?: number;
   late_fee_calculation_type?: 'daily' | 'monthly' | 'compound';
   current_late_fee?: number;
+  paid_installments?: number[];
   client: {
     full_name: string;
     dni: string;
@@ -72,6 +74,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [paymentDistribution, setPaymentDistribution] = useState<any>(null);
   const [lateFeeAmount, setLateFeeAmount] = useState<number>(0);
   const [lateFeeCalculation, setLateFeeCalculation] = useState<any>(null);
+  const [lateFeeBreakdown, setLateFeeBreakdown] = useState<any>(null);
+  const [originalLateFeeBreakdown, setOriginalLateFeeBreakdown] = useState<any>(null);
+  const [appliedLateFeePayment, setAppliedLateFeePayment] = useState<number>(0);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
@@ -226,12 +231,66 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Obtener pagos de mora previos
       const previousLateFeePayments = await getPreviousLateFeePayments(loan.id);
       
-      // Calcular mora pendiente (mora total - mora ya pagada)
-      const pendingLateFee = Math.max(0, calculation.lateFeeAmount - previousLateFeePayments);
+      // Calcular desglose COMPLETO de mora (todas las cuotas, pagadas y pendientes)
+      let breakdown;
+      if (!originalLateFeeBreakdown) {
+        // Primera vez: calcular y almacenar el desglose COMPLETO con todas las cuotas
+        // Usar el desglose detallado ya calculado para obtener los días correctos
+        const detailedBreakdown = getDetailedLateFeeBreakdown({
+          remaining_balance: loan.remaining_balance,
+          next_payment_date: loan.next_payment_date,
+          late_fee_rate: loan.late_fee_rate,
+          grace_period_days: loan.grace_period_days,
+          max_late_fee: loan.max_late_fee,
+          late_fee_calculation_type: loan.late_fee_calculation_type,
+          late_fee_enabled: loan.late_fee_enabled,
+          amount: loan.amount,
+          term: loan.term_months || 4,
+          payment_frequency: loan.payment_frequency || 'monthly',
+          interest_rate: loan.interest_rate,
+          monthly_payment: loan.monthly_payment
+        }, getCurrentDateInSantoDomingo());
+        
+        const originalBreakdown = getOriginalLateFeeBreakdown({
+          remaining_balance: loan.remaining_balance,
+          next_payment_date: loan.next_payment_date,
+          late_fee_rate: loan.late_fee_rate,
+          grace_period_days: loan.grace_period_days,
+          max_late_fee: loan.max_late_fee,
+          late_fee_calculation_type: loan.late_fee_calculation_type,
+          late_fee_enabled: loan.late_fee_enabled,
+          amount: loan.amount,
+          term: loan.term_months || 4,
+          payment_frequency: loan.payment_frequency || 'monthly',
+          interest_rate: loan.interest_rate,
+          monthly_payment: loan.monthly_payment
+        }, paidInstallments, getCurrentDateInSantoDomingo(), detailedBreakdown);
+        
+        setOriginalLateFeeBreakdown(originalBreakdown);
+        breakdown = originalBreakdown;
+        
+        console.log('🔍 PaymentForm: Desglose COMPLETO calculado con todas las cuotas:', {
+          loanId: loan.id,
+          breakdown: originalBreakdown.breakdown.map(item => ({
+            installment: item.installment,
+            daysOverdue: item.daysOverdue,
+            lateFee: item.lateFee,
+            isPaid: item.isPaid
+          }))
+        });
+      } else {
+        // SIEMPRE usar el desglose COMPLETO almacenado y aplicar abonos si los hay
+        if (appliedLateFeePayment > 0) {
+          breakdown = applyLateFeePayment(originalLateFeeBreakdown, appliedLateFeePayment);
+        } else {
+          // Usar el desglose COMPLETO sin cambios
+          breakdown = originalLateFeeBreakdown;
+        }
+      }
       
       console.log('🔍 PaymentForm: Mora calculada:', calculation.lateFeeAmount);
       console.log('🔍 PaymentForm: Mora ya pagada:', previousLateFeePayments);
-      console.log('🔍 PaymentForm: Mora pendiente:', pendingLateFee);
+      console.log('🔍 PaymentForm: Desglose de mora:', breakdown);
       console.log('🔍 PaymentForm: Datos del préstamo:', {
         amount: loan.amount,
         term: loan.term_months,
@@ -240,16 +299,25 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         monthly_payment: loan.monthly_payment
       });
 
+      // Usar el total de la tabla como mora pendiente
+      const pendingLateFee = breakdown.totalLateFee;
+      
+      console.log('🔍 PaymentForm: Mora pendiente (de la tabla):', pendingLateFee);
+      
       setLateFeeAmount(pendingLateFee);
       setLateFeeCalculation({
         days_overdue: calculation.daysOverdue,
-        late_fee_amount: pendingLateFee, // Usar la mora pendiente
+        late_fee_amount: pendingLateFee, // Usar el total de la tabla
         total_late_fee: pendingLateFee
       });
+      setLateFeeBreakdown(breakdown);
     } catch (error) {
       console.error('Error calculating late fee:', error);
       setLateFeeAmount(0);
       setLateFeeCalculation(null);
+      setLateFeeBreakdown(null);
+      setOriginalLateFeeBreakdown(null);
+      setAppliedLateFeePayment(0);
     }
   };
 
@@ -457,6 +525,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     }
   }, [selectedLoan]);
 
+  // Aplicar abono de mora cuando cambie el monto
+  React.useEffect(() => {
+    if (selectedLoan && originalLateFeeBreakdown) {
+      const lateFeeAmount = form.watch('late_fee_amount') || 0;
+      if (lateFeeAmount > 0) {
+        const updatedBreakdown = applyLateFeePayment(originalLateFeeBreakdown, lateFeeAmount);
+        setLateFeeBreakdown(updatedBreakdown);
+        setAppliedLateFeePayment(lateFeeAmount);
+      } else {
+        // Resetear al desglose original
+        setLateFeeBreakdown(originalLateFeeBreakdown);
+        setAppliedLateFeePayment(0);
+      }
+    }
+  }, [form.watch('late_fee_amount'), originalLateFeeBreakdown, selectedLoan]);
+
   const fetchActiveLoans = async () => {
     if (!user || !companyId) return;
 
@@ -524,6 +608,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     setLoanSearch(`${loan.client?.full_name} - ${loan.client?.dni}`);
     setShowLoanDropdown(false);
     form.setValue('loan_id', loan.id);
+    // Limpiar el desglose original para recalcular con el nuevo préstamo
+    setOriginalLateFeeBreakdown(null);
+    setAppliedLateFeePayment(0);
     // Calcular mora cuando se selecciona un préstamo
     calculateLoanLateFee(loan);
     // El monto se establecerá cuando se actualice el paymentStatus
@@ -534,6 +621,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     setSelectedLoan(loan || null);
     if (loan) {
       form.setValue('loan_id', loan.id);
+      // Limpiar el desglose original para recalcular con el nuevo préstamo
+      setOriginalLateFeeBreakdown(null);
+      setAppliedLateFeePayment(0);
       // Calcular mora cuando se selecciona un préstamo
       calculateLoanLateFee(loan);
       // El monto se establecerá cuando se actualice el paymentStatus
@@ -699,30 +789,94 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       console.log('🔍 PaymentForm: Pago insertado exitosamente:', insertedPayment);
 
-      // Actualizar el balance restante del préstamo (se reduce solo con el capital pagado)
-      const newBalance = Math.max(0, remainingBalance - principalPayment);
+      // CORREGIR: El balance se reduce por el pago completo (capital + interés), no solo por el capital
+      const newBalance = Math.max(0, remainingBalance - data.amount);
       
       // Solo actualizar la fecha del próximo pago si es un pago completo
       let nextPaymentDate = selectedLoan.next_payment_date;
+      let updatedPaidInstallments = selectedLoan.paid_installments || [];
+      
       if (isFullPayment) {
         const nextDate = new Date(selectedLoan.next_payment_date);
         nextDate.setMonth(nextDate.getMonth() + 1);
         nextPaymentDate = nextDate.toISOString().split('T')[0];
+        
+        // CORREGIR: Marcar la cuota actual como pagada permanentemente
+        // La cuota que se está pagando es la que corresponde a next_payment_date
+        // Calcular qué cuota corresponde a la fecha de pago actual
+        const currentPaymentDate = new Date(selectedLoan.next_payment_date);
+        const startDate = new Date(selectedLoan.start_date || selectedLoan.next_payment_date);
+        
+        // Calcular el número de cuota basándose en la diferencia de períodos
+        let periodsDiff = 0;
+        const startDateObj = new Date(startDate);
+        const currentDateObj = new Date(currentPaymentDate);
+        
+        // Calcular diferencia según la frecuencia de pago
+        switch (selectedLoan.payment_frequency || 'monthly') {
+          case 'daily':
+            periodsDiff = Math.floor((currentDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24));
+            break;
+          case 'weekly':
+            periodsDiff = Math.floor((currentDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24 * 7));
+            break;
+          case 'biweekly':
+            periodsDiff = Math.floor((currentDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24 * 14));
+            break;
+          case 'monthly':
+            periodsDiff = (currentDateObj.getFullYear() - startDateObj.getFullYear()) * 12 + 
+                         (currentDateObj.getMonth() - startDateObj.getMonth());
+            break;
+          case 'quarterly':
+            periodsDiff = Math.floor(((currentDateObj.getFullYear() - startDateObj.getFullYear()) * 12 + 
+                         (currentDateObj.getMonth() - startDateObj.getMonth())) / 3);
+            break;
+          case 'yearly':
+            periodsDiff = currentDateObj.getFullYear() - startDateObj.getFullYear();
+            break;
+          default:
+            periodsDiff = (currentDateObj.getFullYear() - startDateObj.getFullYear()) * 12 + 
+                         (currentDateObj.getMonth() - startDateObj.getMonth());
+        }
+        
+        const currentInstallment = periodsDiff + 1;
+        
+        // Agregar la cuota a las pagadas si no está ya incluida
+        if (!updatedPaidInstallments.includes(currentInstallment)) {
+          updatedPaidInstallments.push(currentInstallment);
+          updatedPaidInstallments.sort((a, b) => a - b); // Mantener ordenado
+          
+          console.log('🔍 PaymentForm: Cuota marcada como pagada:', {
+            currentInstallment,
+            updatedPaidInstallments
+          });
+        }
+        
+        // Marcar la cuota como pagada en la tabla installments
+        const { error: installmentError } = await supabase
+          .from('installments')
+          .update({ 
+            is_paid: true,
+            paid_date: new Date().toISOString().split('T')[0]
+          })
+          .eq('loan_id', data.loan_id)
+          .eq('installment_number', currentInstallment);
+          
+        if (installmentError) {
+          console.error('Error marcando cuota como pagada:', installmentError);
+        } else {
+          console.log('✅ Cuota marcada como pagada en la tabla installments');
+        }
       }
 
-      // Calcular la nueva mora actual después del pago
-      let newCurrentLateFee = selectedLoan.current_late_fee || 0;
-      if (data.late_fee_amount && data.late_fee_amount > 0) {
-        // Restar la mora pagada de la mora actual
-        newCurrentLateFee = Math.max(0, newCurrentLateFee - data.late_fee_amount);
-      }
+      // La mora se recalculará automáticamente usando calculateLateFee
+      // No restamos manualmente el abono de mora para evitar acumulación incorrecta
 
       console.log('🔍 PaymentForm: Actualizando préstamo con:', {
         loanId: data.loan_id,
         newBalance,
         nextPaymentDate,
-        status: newBalance <= 0 ? 'paid' : 'active',
-        newCurrentLateFee
+        status: newBalance <= 0 ? 'paid' : 'active'
       });
 
       const { data: updatedLoan, error: loanError } = await supabase
@@ -731,7 +885,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           remaining_balance: newBalance,
           next_payment_date: nextPaymentDate,
           status: newBalance <= 0 ? 'paid' : 'active',
-          current_late_fee: newCurrentLateFee,
+          paid_installments: updatedPaidInstallments,
         })
         .eq('id', data.loan_id)
         .select();
@@ -761,6 +915,45 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       });
       
       toast.success(successMessage);
+      
+      // Recalcular automáticamente la mora después del pago
+      try {
+        console.log('🔍 PaymentForm: Recalculando mora después del pago...');
+        const updatedLoanData = {
+          remaining_balance: newBalance,
+          next_payment_date: nextPaymentDate,
+          late_fee_rate: selectedLoan.late_fee_rate,
+          grace_period_days: selectedLoan.grace_period_days,
+          max_late_fee: selectedLoan.max_late_fee,
+          late_fee_calculation_type: selectedLoan.late_fee_calculation_type,
+          late_fee_enabled: selectedLoan.late_fee_enabled,
+          amount: selectedLoan.amount,
+          term: selectedLoan.term_months || 4, // Usar term_months o valor por defecto
+          payment_frequency: selectedLoan.payment_frequency || 'monthly',
+          interest_rate: selectedLoan.interest_rate,
+          monthly_payment: selectedLoan.monthly_payment,
+          paid_installments: await getPaidInstallments(selectedLoan)
+        };
+        
+        const newLateFeeCalculation = calculateLateFeeUtil(updatedLoanData);
+        
+        // Actualizar la mora en la base de datos
+        const { error: lateFeeError } = await supabase
+          .from('loans')
+          .update({ 
+            current_late_fee: newLateFeeCalculation.totalLateFee,
+            last_late_fee_calculation: new Date().toISOString().split('T')[0]
+          })
+          .eq('id', data.loan_id);
+          
+        if (lateFeeError) {
+          console.error('Error actualizando mora:', lateFeeError);
+        } else {
+          console.log('🔍 PaymentForm: Mora recalculada exitosamente:', newLateFeeCalculation.totalLateFee);
+        }
+      } catch (error) {
+        console.error('Error recalculando mora:', error);
+      }
       
       // Actualizar el estado del pago
       await refetchPaymentStatus();
@@ -1169,6 +1362,35 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                 <span className="font-semibold text-orange-600">
                                   {lateFeeCalculation.days_overdue} días
                                 </span>
+                              </div>
+                            )}
+                            
+                            {/* Tabla de desglose de mora por cuota */}
+                            {lateFeeBreakdown && lateFeeBreakdown.breakdown && lateFeeBreakdown.breakdown.length > 0 && (
+                              <div className="mt-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                                <div className="text-sm font-medium text-orange-800 mb-2">
+                                  📊 Desglose de Mora por Cuota
+                                </div>
+                                <div className="space-y-1">
+                                  {lateFeeBreakdown.breakdown.map((item: any, index: number) => (
+                                    <div key={index} className={`flex justify-between items-center text-xs ${item.isPaid ? 'bg-green-100 border border-green-300 rounded px-2 py-1' : ''}`}>
+                                      <span className={`text-orange-700 ${item.isPaid ? 'text-green-700' : ''}`}>
+                                        Cuota {item.installment} ({item.daysOverdue} días):
+                                        {item.isPaid && ' ✅ PAGADA'}
+                                      </span>
+                                      <span className={`font-semibold ${item.isPaid ? 'text-green-700' : 'text-orange-800'}`}>
+                                        RD${item.lateFee.toLocaleString()}
+                                      </span>
+                                    </div>
+                                  ))}
+                                  <div className="border-t pt-1 mt-2 flex justify-between items-center font-bold text-orange-900">
+                                    <span>Total Mora Pendiente:</span>
+                                    <span>RD${lateFeeBreakdown.totalLateFee.toLocaleString()}</span>
+                                  </div>
+                                </div>
+                                <div className="mt-2 text-xs text-gray-600">
+                                  💡 Las cuotas pagadas se mantienen visibles con su número original
+                                </div>
                               </div>
                             )}
                           </>

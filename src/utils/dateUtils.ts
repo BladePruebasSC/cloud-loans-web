@@ -6,9 +6,20 @@
  */
 export const getCurrentDateInSantoDomingo = (): Date => {
   const now = new Date();
-  // Convertir a zona horaria de Santo Domingo (UTC-4)
-  const santoDomingoTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
-  return santoDomingoTime;
+  
+  // DEBUG: Verificar la fecha actual
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔍 DEBUG getCurrentDateInSantoDomingo - Fecha actual:', {
+      now: now.toISOString(),
+      nowLocal: now.toLocaleString(),
+      nowSantoDomingo: now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}),
+      currentDateString: now.toISOString().split('T')[0]
+    });
+  }
+  
+  // Usar directamente la fecha actual sin conversión de zona horaria
+  // para evitar problemas de cálculo
+  return now;
 };
 
 /**
@@ -31,24 +42,24 @@ export const createDateInSantoDomingo = (year: number, month: number, day: numbe
  * Calcula la diferencia en días entre dos fechas, considerando la zona horaria de Santo Domingo
  */
 export const calculateDaysDifference = (date1: Date, date2: Date): number => {
-  // Convertir ambas fechas a Santo Domingo
-  const santoDomingoDate1 = toSantoDomingoTime(date1);
-  const santoDomingoDate2 = toSantoDomingoTime(date2);
+  // CORREGIR: Usar fechas directamente sin conversión de zona horaria
+  // para evitar problemas de cálculo
   
   // Calcular diferencia en milisegundos y convertir a días
-  const diffInMs = santoDomingoDate2.getTime() - santoDomingoDate1.getTime();
+  const diffInMs = date2.getTime() - date1.getTime();
   const daysDiff = diffInMs / (1000 * 60 * 60 * 24);
   const finalDays = Math.floor(daysDiff);
   
   if (process.env.NODE_ENV === 'development') {
-    console.log('🔍 DEBUG calculateDaysDifference:', {
+    console.log('🔍 DEBUG calculateDaysDifference (CORREGIDO):', {
       date1: date1.toISOString().split('T')[0],
       date2: date2.toISOString().split('T')[0],
-      santoDomingoDate1: santoDomingoDate1.toISOString().split('T')[0],
-      santoDomingoDate2: santoDomingoDate2.toISOString().split('T')[0],
+      date1Time: date1.getTime(),
+      date2Time: date2.getTime(),
       diffInMs,
       daysDiff,
-      finalDays
+      finalDays,
+      currentDate: new Date().toISOString().split('T')[0]
     });
   }
   

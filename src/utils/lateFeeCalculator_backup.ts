@@ -1,6 +1,5 @@
 // Utilidad centralizada para calcular la mora
 import { getCurrentDateInSantoDomingo, calculateDaysDifference } from './dateUtils';
-import { supabase } from '@/integrations/supabase/client';
 export interface LateFeeCalculation {
   daysOverdue: number;
   lateFeeAmount: number;
@@ -1619,67 +1618,206 @@ export const getOriginalLateFeeBreakdown = (
   
   let totalLateFee = 0;
 
-  // CORREGIR: Mantener las cuotas originales y solo marcar las pagadas
-  for (let installment = 1; installment <= loan.term; installment++) {
-    let daysOverdue = 0;
-    let installmentDueDate = new Date();
-    let lateFee = 0;
-    
-    // Verificar si esta cuota está pagada
-    const isInstallmentPaid = paidInstallments.includes(installment);
-    
-    if (isInstallmentPaid) {
-      // Si está pagada, mostrar 0 días y 0 mora
-      daysOverdue = 0;
-      lateFee = 0;
-      installmentDueDate = new Date(loan.next_payment_date);
+  // CORREGIR: Usar el desglose calculado y solo marcar las cuotas pagadas
+  if (calculatedBreakdown && calculatedBreakdown.breakdown) {
+    // Usar el desglose calculado y solo marcar las cuotas pagadas
+    calculatedBreakdown.breakdown.forEach((item: any) => {
+      const installment = item.installment;
+      const isInstallmentPaid = paidInstallments.includes(installment);
       
-      // Calcular la fecha original de esta cuota para mantener la numeración
-      const baseDate = new Date(loan.next_payment_date);
-      const periodsToAdd = installment - 1;
+      let daysOverdue = item.daysOverdue;
+      let lateFee = item.lateFee;
+      let installmentDueDate = new Date(item.dueDate);
       
-      switch (loan.payment_frequency) {
-        case 'daily':
-          baseDate.setDate(baseDate.getDate() + (periodsToAdd * 1));
-          break;
-        case 'weekly':
-          baseDate.setDate(baseDate.getDate() + (periodsToAdd * 7));
-          break;
-        case 'biweekly':
-          baseDate.setDate(baseDate.getDate() + (periodsToAdd * 14));
-          break;
-        case 'monthly':
-          baseDate.setMonth(baseDate.getMonth() + periodsToAdd);
-          break;
-        case 'quarterly':
-          baseDate.setMonth(baseDate.getMonth() + (periodsToAdd * 3));
-          break;
-        case 'yearly':
-          baseDate.setFullYear(baseDate.getFullYear() + periodsToAdd);
-          break;
-        default:
-          baseDate.setMonth(baseDate.getMonth() + periodsToAdd);
-      }
-      
-      installmentDueDate = new Date(baseDate);
-    } else {
-      // Si no está pagada, calcular normalmente
-      if (calculatedBreakdown && calculatedBreakdown.breakdown) {
-        const existingItem = calculatedBreakdown.breakdown.find((item: any) => item.installment === installment);
-        if (existingItem) {
-          // Usar fecha y mora calculados, pero corregir los días
-          installmentDueDate = new Date(existingItem.dueDate);
-          lateFee = existingItem.lateFee;
+      if (isInstallmentPaid) {
+        // Si está pagada, mostrar 0 días y 0 mora pero mantener la fecha original
+        daysOverdue = 0;
+        lateFee = 0;
+      } else {
+        // Si no está pagada, recalcular los días desde la fecha de vencimiento hasta hoy
+        daysOverdue = Math.max(0, 
+          calculateDaysDifference(installmentDueDate, calculationDate) - gracePeriod
+        );
+        
+        // Recalcular la mora si es necesario
+        if (daysOverdue > 0) {
+          const principalPerPayment = loan.monthly_payment - ((loan.amount * loan.interest_rate) / 100);
           
-          // Calcular días reales desde la fecha de vencimiento hasta hoy
-          daysOverdue = Math.max(0, 
-            calculateDaysDifference(installmentDueDate, calculationDate) - gracePeriod
-          );
+          switch (loan.late_fee_calculation_type) {
+            case 'daily':
+              lateFee = (principalPerPayment * loan.late_fee_rate / 100) * daysOverdue;
+              break;
+            case 'monthly':
+              const monthsOverdue = Math.ceil(daysOverdue / 30);
+              lateFee = (principalPerPayment * loan.late_fee_rate / 100) * monthsOverdue;
+              break;
+            case 'compound':
+              lateFee = principalPerPayment * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdue) - 1);
+              break;
+            default:
+              lateFee = (principalPerPayment * loan.late_fee_rate / 100) * daysOverdue;
+          }
+          
+          if (loan.max_late_fee && loan.max_late_fee > 0) {
+            lateFee = Math.min(lateFee, loan.max_late_fee);
+          }
+          
+          lateFee = Math.round(lateFee * 100) / 100;
         }
       }
+      
+      // Solo agregar al total si la cuota NO está pagada
+      if (!isInstallmentPaid) {
+        totalLateFee += lateFee;
+      }
+      
+      // SIEMPRE agregar la cuota al desglose (pagada o pendiente)
+      breakdown.push({
+        installment,
+        dueDate: installmentDueDate.toISOString().split('T')[0],
+        daysOverdue,
+        principal: item.principal,
+        lateFee: isInstallmentPaid ? 0 : lateFee,
+        isPaid: isInstallmentPaid
+      });
+    });
+  } else {
+    // Si no hay desglose calculado, generar las cuotas normalmente
+    for (let installment = 1; installment <= loan.term; installment++) {
+      let daysOverdue = 0;
+      let installmentDueDate = new Date();
+      let lateFee = 0;
+      
+      // Verificar si esta cuota está pagada
+      const isInstallmentPaid = paidInstallments.includes(installment);
+      
+      if (isInstallmentPaid) {
+        // Si está pagada, mostrar 0 días y 0 mora
+        daysOverdue = 0;
+        lateFee = 0;
+        installmentDueDate = new Date(loan.next_payment_date);
+        
+        // Calcular la fecha original de esta cuota para mantener la numeración
+        const baseDate = new Date(loan.next_payment_date);
+        const periodsToAdd = installment - 1;
+        
+        switch (loan.payment_frequency) {
+          case 'daily':
+            baseDate.setDate(baseDate.getDate() + (periodsToAdd * 1));
+            break;
+          case 'weekly':
+            baseDate.setDate(baseDate.getDate() + (periodsToAdd * 7));
+            break;
+          case 'biweekly':
+            baseDate.setDate(baseDate.getDate() + (periodsToAdd * 14));
+            break;
+          case 'monthly':
+            baseDate.setMonth(baseDate.getMonth() + periodsToAdd);
+            break;
+          case 'quarterly':
+            baseDate.setMonth(baseDate.getMonth() + (periodsToAdd * 3));
+            break;
+          case 'yearly':
+            baseDate.setFullYear(baseDate.getFullYear() + periodsToAdd);
+            break;
+          default:
+            baseDate.setMonth(baseDate.getMonth() + periodsToAdd);
+        }
+        
+        installmentDueDate = new Date(baseDate);
+      } else {
+        // Si no está pagada, calcular normalmente
+        // Usar la fecha de inicio del préstamo para calcular las fechas de vencimiento correctas
+        const baseDate = new Date(loan.next_payment_date);
+        const periodsToAdd = installment - 1;
+        
+        // Ajustar la fecha según la frecuencia de pago
+        switch (loan.payment_frequency) {
+          case 'daily':
+            baseDate.setDate(baseDate.getDate() + (periodsToAdd * 1));
+            break;
+          case 'weekly':
+            baseDate.setDate(baseDate.getDate() + (periodsToAdd * 7));
+            break;
+          case 'biweekly':
+            baseDate.setDate(baseDate.getDate() + (periodsToAdd * 14));
+            break;
+          case 'monthly':
+            baseDate.setMonth(baseDate.getMonth() + periodsToAdd);
+            break;
+          case 'quarterly':
+            baseDate.setMonth(baseDate.getMonth() + (periodsToAdd * 3));
+            break;
+          case 'yearly':
+            baseDate.setFullYear(baseDate.getFullYear() + periodsToAdd);
+            break;
+          default:
+            baseDate.setMonth(baseDate.getMonth() + periodsToAdd);
+        }
+        
+        installmentDueDate = new Date(baseDate);
+        
+        // Calcular días de atraso para esta cuota específica
+        const today = new Date();
+        const daysSinceDue = Math.floor((today.getTime() - installmentDueDate.getTime()) / (1000 * 60 * 60 * 24));
+        daysOverdue = Math.max(0, daysSinceDue - gracePeriod);
+        
+        // Calcular mora si hay días de atraso
+        if (daysOverdue > 0) {
+          const principalPerPayment = loan.monthly_payment - ((loan.amount * loan.interest_rate) / 100);
+          
+          switch (loan.late_fee_calculation_type) {
+            case 'daily':
+              lateFee = (principalPerPayment * loan.late_fee_rate / 100) * daysOverdue;
+              break;
+            case 'monthly':
+              const monthsOverdue = Math.ceil(daysOverdue / 30);
+              lateFee = (principalPerPayment * loan.late_fee_rate / 100) * monthsOverdue;
+              break;
+            case 'compound':
+              lateFee = principalPerPayment * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdue) - 1);
+              break;
+            default:
+              lateFee = (principalPerPayment * loan.late_fee_rate / 100) * daysOverdue;
+          }
+          
+          if (loan.max_late_fee && loan.max_late_fee > 0) {
+            lateFee = Math.min(lateFee, loan.max_late_fee);
+          }
+          
+          lateFee = Math.round(lateFee * 100) / 100;
+        }
+      }
+      
+      // Solo agregar al total si la cuota NO está pagada
+      if (!isInstallmentPaid) {
+        totalLateFee += lateFee;
+      }
+      
+      // SIEMPRE agregar la cuota al desglose (pagada o pendiente)
+      breakdown.push({
+        installment,
+        dueDate: installmentDueDate.toISOString().split('T')[0],
+        daysOverdue,
+        principal: loan.monthly_payment - ((loan.amount * loan.interest_rate) / 100),
+        lateFee: isInstallmentPaid ? 0 : lateFee,
+        isPaid: isInstallmentPaid
+      });
     }
-    
-    // Si no hay datos calculados, usar la lógica de cálculo original
+  }
+  
+  // RECALCULAR EL TOTAL basándose en las cuotas no pagadas en el desglose final
+  totalLateFee = 0;
+  breakdown.forEach((item) => {
+    if (!item.isPaid) {
+      totalLateFee += item.lateFee;
+    }
+  });
+  
+  totalLateFee = Math.round(totalLateFee * 100) / 100;
+  
+  return { totalLateFee, breakdown };
+};
     if (daysOverdue === 0 && lateFee === 0) {
       // CORREGIR: Usar la fecha de inicio del préstamo para calcular las fechas de vencimiento correctas
       let baseDate: Date;

@@ -312,6 +312,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       const auditNote = `${new Date().toLocaleDateString()} - ${updateType}: ${data.adjustment_reason}`;
       // Note: loan.notes doesn't exist in the Loan interface, using purpose instead
       loanUpdates.purpose = auditNote;
+      
+      // CRÍTICO: Preservar la fecha de inicio original en todas las actualizaciones
+      loanUpdates.start_date = loan.start_date;
 
       const { error: loanError } = await supabase
         .from('loans')

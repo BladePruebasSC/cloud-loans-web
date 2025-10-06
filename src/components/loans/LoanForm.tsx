@@ -15,6 +15,71 @@ import { toast } from 'sonner';
 import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer, Plus } from 'lucide-react';
 import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 
+// Función para generar las cuotas originales del préstamo
+const generateOriginalInstallments = async (loan: any, formData: LoanFormData) => {
+  try {
+    const installments = [];
+    const baseDate = new Date(loan.start_date);
+    const principalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
+    const interestPerPayment = loan.amount * loan.interest_rate / 100;
+    
+    // Generar cada cuota
+    for (let i = 1; i <= loan.term_months; i++) {
+      const installmentDate = new Date(baseDate);
+      const periodsToAdd = i - 1;
+      
+      // Ajustar fecha según la frecuencia de pago
+      switch (loan.payment_frequency) {
+        case 'daily':
+          installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 1));
+          break;
+        case 'weekly':
+          installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 7));
+          break;
+        case 'biweekly':
+          installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 14));
+          break;
+        case 'monthly':
+          installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
+          break;
+        case 'quarterly':
+          installmentDate.setMonth(installmentDate.getMonth() + (periodsToAdd * 3));
+          break;
+        case 'yearly':
+          installmentDate.setFullYear(installmentDate.getFullYear() + periodsToAdd);
+          break;
+        default:
+          installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
+      }
+      
+      installments.push({
+        loan_id: loan.id,
+        installment_number: i,
+        due_date: installmentDate.toISOString().split('T')[0],
+        principal_amount: principalPerPayment,
+        interest_amount: interestPerPayment,
+        total_amount: loan.monthly_payment,
+        is_paid: false
+      });
+    }
+    
+    // Insertar las cuotas en la base de datos
+    const { error } = await supabase
+      .from('installments')
+      .insert(installments);
+      
+    if (error) {
+      console.error('Error generando cuotas:', error);
+      throw error;
+    }
+    
+    console.log('✅ Cuotas originales generadas exitosamente:', installments.length);
+  } catch (error) {
+    console.error('Error generando cuotas originales:', error);
+    throw error;
+  }
+};
+
 const loanSchema = z.object({
   client_id: z.string().min(1, 'Debe seleccionar un cliente'),
   amount: z.number().min(1, 'El monto debe ser mayor a 0'),
@@ -913,9 +978,9 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         monthly_payment: calculatedValues.monthlyPayment,
         total_amount: calculatedValues.totalAmount,
         remaining_balance: calculatedValues.totalAmount,
-        start_date: startDate.toISOString().split('T')[0],
+        start_date: firstPaymentDate.toISOString().split('T')[0], // CRÍTICO: start_date debe ser la fecha del primer pago
         end_date: endDate.toISOString().split('T')[0],
-        next_payment_date: firstPaymentDate.toISOString().split('T')[0],
+        next_payment_date: firstPaymentDate.toISOString().split('T')[0], // La primera cuota también es la próxima cuota
         status: data.loan_started ? 'active' : 'pending',
         guarantor_name: data.guarantor_name || null,
         guarantor_phone: data.guarantor_phone || null,
@@ -948,14 +1013,20 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       console.log('loan_officer_id:', loanData.loan_officer_id, 'type:', typeof loanData.loan_officer_id);
       console.log('portfolio_id:', loanData.portfolio_id, 'type:', typeof loanData.portfolio_id);
       
-      const { error } = await supabase
+      const { data: insertedLoan, error } = await supabase
         .from('loans')
-        .insert([loanData]);
+        .insert([loanData])
+        .select()
+        .single();
 
       if (error) {
         console.error('Database error:', error);
         throw error;
       }
+
+      // Generar las cuotas originales del préstamo
+      console.log('Generando cuotas originales para el préstamo:', insertedLoan.id);
+      await generateOriginalInstallments(insertedLoan, data);
 
       toast.success('Préstamo creado exitosamente');
       onLoanCreated?.();

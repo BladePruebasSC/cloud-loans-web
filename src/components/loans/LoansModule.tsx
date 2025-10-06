@@ -902,7 +902,8 @@ export const LoansModule = () => {
                           payment_frequency={loan.payment_frequency || 'monthly'}
                           interest_rate={loan.interest_rate}
                           monthly_payment={loan.monthly_payment}
-                          paid_installments={[]} // Se detectará automáticamente
+                          paid_installments={loan.paid_installments || []} // Usar cuotas pagadas de la base de datos
+                          start_date={loan.start_date} // CRÍTICO: Fecha de inicio del préstamo
                         />
 
                         {/* Botones de acción mejorados */}
