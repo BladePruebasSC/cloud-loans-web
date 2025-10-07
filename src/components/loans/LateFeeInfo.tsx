@@ -754,10 +754,13 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   <h4 className="font-semibold mb-3">Desglose por Cuota</h4>
                   <div className="space-y-2">
                     <div className="text-sm text-gray-600">
-                      💡 El desglose se actualiza automáticamente basándose en los pagos realizados
+                      💡 Días de mora FIJOS desde la fecha de vencimiento. Al pagar una cuota se marca como PAGADA pero mantiene sus días originales.
                     </div>
                     {(() => {
-                      const breakdown = getDetailedLateFeeBreakdown({
+                      // Usar getOriginalLateFeeBreakdown que mantiene los días FIJOS
+                      const currentPaidInstallments = detectedPaidInstallments.length > 0 ? detectedPaidInstallments : (paid_installments || []);
+
+                      const breakdown = getOriginalLateFeeBreakdown({
                         remaining_balance: remainingBalance,
                         next_payment_date: nextPaymentDate,
                         late_fee_rate: lateFeeRate,
@@ -770,30 +773,27 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                         payment_frequency: payment_frequency,
                         interest_rate: interest_rate,
                         monthly_payment: monthly_payment,
-                        paid_installments: detectedPaidInstallments.length > 0 ? detectedPaidInstallments : (paid_installments || [])
-                      });
-                      
-                      const currentPaidInstallments = detectedPaidInstallments.length > 0 ? detectedPaidInstallments : (paid_installments || []);
-                      
+                        paid_installments: currentPaidInstallments
+                      }, currentPaidInstallments, getCurrentDateInSantoDomingo());
+
                       return breakdown.breakdown.map((item, index) => {
-                        const isPaid = currentPaidInstallments.includes(item.installment);
                         return (
                           <div key={index} className={`flex justify-between items-center p-2 rounded ${
-                            isPaid ? 'bg-green-50 border border-green-200' : 'bg-gray-50'
+                            item.isPaid ? 'bg-green-50 border border-green-200' : 'bg-gray-50'
                           }`}>
                             <div className="text-sm">
                               <span className="font-medium">
                                 Cuota {item.installment}
-                                {isPaid && <span className="ml-2 text-green-600 text-xs">✅ PAGADA</span>}
+                                {item.isPaid && <span className="ml-2 text-green-600 text-xs">✅ PAGADA</span>}
                               </span>
                               <div className="text-xs text-gray-600">
-                                Vence: {new Date(item.dueDate).toLocaleDateString()} | 
+                                Vence: {new Date(item.dueDate).toLocaleDateString()} |
                                 {item.daysOverdue} días de atraso
                               </div>
                             </div>
                             <div className="text-right">
-                              <div className={`font-semibold ${isPaid ? 'text-green-600' : 'text-red-600'}`}>
-                                {isPaid ? 'PAGADA' : `$${item.lateFee.toLocaleString()}`}
+                              <div className={`font-semibold ${item.isPaid ? 'text-green-600' : 'text-red-600'}`}>
+                                {item.isPaid ? 'PAGADA' : `$${item.lateFee.toLocaleString()}`}
                               </div>
                               <div className="text-xs text-gray-500">
                                 Capital: ${item.principal.toLocaleString()}
