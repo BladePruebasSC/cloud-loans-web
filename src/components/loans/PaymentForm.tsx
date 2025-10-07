@@ -364,18 +364,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         breakdown: manualBreakdown
       };
       
-      // USAR LA MISMA LÓGICA QUE LateFeeInfo
-      // Usar detailedBreakdown.totalLateFee (6100) en lugar de breakdown.totalLateFee (1500)
-      const pendingLateFee = breakdown.totalLateFee;
-      
-      // Si el total de la tabla es menor que 6100, usar 6100 (como en LateFeeInfo)
-      const correctLateFee = pendingLateFee < 6100 ? 6100 : pendingLateFee;
-      
+      // LA TABLA ES LA LÓGICA CORRECTA
+      // Usar SIEMPRE el total de la tabla sin ninguna corrección adicional
+      const tableTotalLateFee = breakdown.totalLateFee;
+
       // NO usar originalLateFeeBreakdown, siempre calcular desde cero
       setOriginalLateFeeBreakdown(breakdown);
-      
-      console.log('🔍 PaymentForm: Mora calculada (de la tabla):', pendingLateFee);
-      console.log('🔍 PaymentForm: Mora corregida (como LateFeeInfo):', correctLateFee);
+
+      console.log('🔍 PaymentForm: Usando el total de la tabla directamente');
+      console.log('🔍 PaymentForm: Total de la tabla (sin correcciones):', tableTotalLateFee);
       console.log('🔍 PaymentForm: Mora ya pagada:', previousLateFeePayments);
       console.log('🔍 PaymentForm: Desglose de mora:', breakdown);
       console.log('🔍 PaymentForm: Datos del préstamo:', {
@@ -385,16 +382,16 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         interest_rate: loan.interest_rate,
         monthly_payment: loan.monthly_payment
       });
-      
-      console.log('🔍 PaymentForm: Mora pendiente (CORREGIDA):', correctLateFee);
-      console.log('🔍 PaymentForm: Total de la tabla:', breakdown.totalLateFee);
-      console.log('🔍 PaymentForm: ¿Usando 6100?', correctLateFee === 6100);
-      
-      setLateFeeAmount(correctLateFee); // Usar la mora corregida (6100)
+      console.log('🔍 PaymentForm: DEBUG - Desglose por cuotas:');
+      manualBreakdown.forEach((item: any) => {
+        console.log(`  - Cuota ${item.installment}: ${item.isPaid ? 'PAGADA' : `RD$${item.lateFee}`} (${item.daysOverdue} días)`);
+      });
+
+      setLateFeeAmount(tableTotalLateFee); // Usar el total de la tabla directamente
       setLateFeeCalculation({
         days_overdue: manualBreakdown.length > 0 ? manualBreakdown[0].daysOverdue : 0, // Usar días de la tabla
-        late_fee_amount: correctLateFee, // Usar la mora corregida (6100)
-        total_late_fee: correctLateFee    // Usar la mora corregida (6100)
+        late_fee_amount: tableTotalLateFee, // Usar el total de la tabla directamente
+        total_late_fee: tableTotalLateFee   // Usar el total de la tabla directamente
       });
       setLateFeeBreakdown(breakdown);
     } catch (error) {

@@ -361,39 +361,20 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     });
     
     const daysOverdue = finalNextDueItem ? finalNextDueItem.daysOverdue : 0;
-    
-    // USAR LA MISMA LÓGICA QUE PaymentForm
-    // Calcular el total de la tabla de desglose de cuotas pendientes
-    const pendingLateFee = originalBreakdown.totalLateFee;
 
-    // Si el total de la tabla es menor que 6100, usar 6100 (como en PaymentForm)
-    const correctLateFee = pendingLateFee < 6100 ? 6100 : pendingLateFee;
+    // LA TABLA ES LA LÓGICA CORRECTA
+    // Usar SIEMPRE el total de la tabla sin ninguna corrección adicional
+    const tableTotalLateFee = originalBreakdown.totalLateFee;
 
-    console.log('🔍 LateFeeInfo: Usando EXACTAMENTE la misma lógica que PaymentForm');
-    console.log('🔍 LateFeeInfo: Mora de la tabla (pendiente):', pendingLateFee);
-    console.log('🔍 LateFeeInfo: Mora corregida (como PaymentForm):', correctLateFee);
-    console.log('🔍 LateFeeInfo: ¿Usando 6100?', correctLateFee === 6100);
+    console.log('🔍 LateFeeInfo: Usando el total de la tabla directamente');
+    console.log('🔍 LateFeeInfo: Total de la tabla (sin correcciones):', tableTotalLateFee);
     console.log('🔍 LateFeeInfo: Días de atraso:', daysOverdue);
     console.log('🔍 LateFeeInfo: DEBUG - Breakdown completo:', originalBreakdown.breakdown);
-    console.log('🔍 LateFeeInfo: DEBUG - nextDueItem:', nextDueItem);
-    console.log('🔍 LateFeeInfo: DEBUG - finalNextDueItem:', finalNextDueItem);
-    console.log('🔍 LateFeeInfo: DEBUG - finalPaidInstallments:', finalPaidInstallments);
-
-    // DEBUG: Verificar qué cuota se está considerando como próxima
-    console.log('🔍 LateFeeInfo: DEBUG - Análisis de cuotas:', {
-      totalInstallments: detailedBreakdown.breakdown.length,
-      nextDueItem: nextDueItem,
-      finalNextDueItem: finalNextDueItem,
-      nextDueItemDaysOverdue: finalNextDueItem?.daysOverdue,
-      nextPaymentDate: nextPaymentDate,
-      allInstallments: detailedBreakdown.breakdown.map(item => ({
-        installment: item.installment,
-        dueDate: item.dueDate,
-        daysOverdue: item.daysOverdue,
-        principal: item.principal,
-        lateFee: item.lateFee
-      }))
+    console.log('🔍 LateFeeInfo: DEBUG - Desglose por cuotas:');
+    originalBreakdown.breakdown.forEach((item: any) => {
+      console.log(`  - Cuota ${item.installment}: ${item.isPaid ? 'PAGADA' : `RD$${item.lateFee}`} (${item.daysOverdue} días)`);
     });
+    console.log('🔍 LateFeeInfo: DEBUG - finalPaidInstallments:', finalPaidInstallments);
 
     // Actualizar los días de mora calculados
     setCalculatedDaysOverdue(daysOverdue);
@@ -416,8 +397,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
 
     return {
       days_overdue: daysOverdue,
-      late_fee_amount: correctLateFee, // Usar la mora corregida (6100)
-      total_late_fee: correctLateFee   // Usar la mora corregida (6100)
+      late_fee_amount: tableTotalLateFee, // Usar el total de la tabla directamente
+      total_late_fee: tableTotalLateFee   // Usar el total de la tabla directamente
     };
   };
 
