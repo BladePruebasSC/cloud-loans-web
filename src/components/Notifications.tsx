@@ -92,7 +92,7 @@ const Notifications: React.FC = () => {
 
       if (!overdueError && overdueLoans) {
         overdueLoans.forEach(loan => {
-          const daysOverdue = Math.ceil((today.getTime() - new Date(loan.next_payment_date).getTime()) / (1000 * 60 * 60 * 24));
+          const daysOverdue = Math.floor((today.getTime() - new Date(loan.next_payment_date).getTime()) / (1000 * 60 * 60 * 24));
           
           // Mensaje más específico según los días vencidos
           const clientName = (loan.clients as any)?.full_name || 'Cliente desconocido';
@@ -139,7 +139,7 @@ const Notifications: React.FC = () => {
       if (!upcomingError && upcomingLoans) {
         upcomingLoans.forEach(loan => {
           const paymentDate = new Date(loan.next_payment_date);
-          const daysUntilDue = Math.ceil((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          const daysUntilDue = Math.floor((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
           
           // Determinar el tipo de notificación y mensaje
           const clientName = (loan.clients as any)?.full_name || 'Cliente desconocido';
@@ -200,7 +200,7 @@ const Notifications: React.FC = () => {
 
       if (!followUpError && upcomingFollowUps) {
         upcomingFollowUps.forEach(followUp => {
-          const daysUntilFollowUp = Math.ceil((new Date(followUp.next_contact_date).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          const daysUntilFollowUp = Math.floor((new Date(followUp.next_contact_date).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
           const contactTypeLabels = {
             phone: 'Llamada',
             email: 'Email',
@@ -250,7 +250,7 @@ const Notifications: React.FC = () => {
         lateFeeLoans.forEach(loan => {
           const today = new Date();
           const nextPayment = new Date(loan.next_payment_date);
-          const daysOverdue = Math.max(0, Math.ceil((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0));
+          const daysOverdue = Math.max(0, Math.floor((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0));
           const lateFeeAmount = loan.current_late_fee || 0;
           const clientName = (loan.clients as any).full_name || 'Cliente desconocido';
 
@@ -337,7 +337,7 @@ const Notifications: React.FC = () => {
         // Para pagos próximos, usar diferentes iconos según la urgencia
         const today = new Date();
         const dueDate = new Date(notification.dueDate);
-        const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         
         if (daysUntilDue === 0) {
           // Pago vence hoy - alerta roja

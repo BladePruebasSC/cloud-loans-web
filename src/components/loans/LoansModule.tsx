@@ -538,15 +538,6 @@ export const LoansModule = () => {
             <FileText className="h-5 w-5 mr-2" />
             Desde Solicitud
           </Button>
-          <Button 
-            onClick={handleUpdateLateFees}
-            disabled={lateFeeLoading}
-            className="h-12 sm:h-10 text-base sm:text-sm font-medium bg-orange-600 hover:bg-orange-700"
-            size="lg"
-          >
-            <AlertTriangle className="h-5 w-5 mr-2" />
-            {lateFeeLoading ? 'Actualizando...' : 'Actualizar Mora'}
-          </Button>
         </div>
       </div>
 

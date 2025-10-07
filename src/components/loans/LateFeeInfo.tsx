@@ -543,7 +543,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
 
       {/* Modal de detalles de mora */}
       <Dialog open={showDetails} onOpenChange={setShowDetails}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Calculator className="h-5 w-5" />
