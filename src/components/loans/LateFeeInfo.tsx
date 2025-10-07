@@ -228,252 +228,70 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     }
   };
 
-  // Función para calcular la mora localmente (consistente con PaymentForm)
+  // Función para calcular la mora localmente usando la función que considera pagos parciales
   const calculateLocalLateFee = async () => {
     if (!lateFeeEnabled || !lateFeeRate) {
       console.log('🔍 LateFeeInfo: Mora deshabilitada o sin tasa');
       return null;
     }
 
-    // DEBUG: Verificar la fecha de inicio del préstamo
-    console.log('🔍 LateFeeInfo: DEBUG - Fecha de inicio del préstamo:', {
-      start_date,
-      nextPaymentDate,
-      amount,
-      term
-    });
-
-  // CORREGIR: Siempre calcular la fecha real de inicio del préstamo
-  // porque start_date puede ser incorrecta o no existir
-  let correctedStartDate = start_date;
-  
-  console.log('🔍 LateFeeInfo: Verificando start_date:', {
-    start_date,
-    isStartDateFuture: start_date ? new Date(start_date) > new Date() : false,
-    currentDate: new Date().toISOString().split('T')[0]
-  });
-  
-  // CORREGIR: Usar la fecha de inicio correcta del préstamo
-  console.log('🔍 LateFeeInfo: CORRIGIENDO lógica de fecha de inicio');
-  
-  // Usar start_date si está disponible, sino calcular desde next_payment_date
-  // pero calcular correctamente hacia atrás según las cuotas pagadas
-  if (start_date) {
-    correctedStartDate = start_date;
-    console.log('🔍 LateFeeInfo: Usando start_date:', start_date);
-  } else {
-    // Si no hay start_date, calcular la fecha de inicio basándose en next_payment_date
-    // y las cuotas pagadas, respetando la frecuencia de pago
-    const paidInstallmentsCount = paid_installments?.length || 0;
-    const baseDate = new Date(nextPaymentDate);
+    console.log('🔍 LateFeeInfo: Calculando mora usando getLateFeeBreakdownFromInstallments...');
     
-    // Retroceder según las cuotas pagadas y la frecuencia de pago
-    switch (payment_frequency) {
-      case 'daily':
-        baseDate.setDate(baseDate.getDate() - (paidInstallmentsCount * 1));
-        break;
-      case 'weekly':
-        baseDate.setDate(baseDate.getDate() - (paidInstallmentsCount * 7));
-        break;
-      case 'biweekly':
-        baseDate.setDate(baseDate.getDate() - (paidInstallmentsCount * 14));
-        break;
-      case 'monthly':
-        baseDate.setMonth(baseDate.getMonth() - paidInstallmentsCount);
-        break;
-      case 'quarterly':
-        baseDate.setMonth(baseDate.getMonth() - (paidInstallmentsCount * 3));
-        break;
-      case 'yearly':
-        baseDate.setFullYear(baseDate.getFullYear() - paidInstallmentsCount);
-        break;
-      default:
-        baseDate.setMonth(baseDate.getMonth() - paidInstallmentsCount);
+    try {
+      // Preparar los datos del préstamo para la función
+      const loanData = {
+        id: loanId,
+        remaining_balance: remainingBalance,
+        next_payment_date: nextPaymentDate,
+        late_fee_rate: lateFeeRate,
+        grace_period_days: gracePeriodDays,
+        max_late_fee: maxLateFee || 0,
+        late_fee_calculation_type: lateFeeCalculationType,
+        late_fee_enabled: lateFeeEnabled,
+        amount: amount,
+        term: term,
+        payment_frequency: payment_frequency,
+        interest_rate: interest_rate,
+        monthly_payment: monthly_payment,
+        start_date: start_date
+      };
+      
+      console.log('🔍 LateFeeInfo: Datos del préstamo:', loanData);
+      
+      // USAR LA FUNCIÓN CORRECTA QUE CONSIDERA PAGOS PARCIALES
+      const breakdown = await getLateFeeBreakdownFromInstallments(loanId, loanData);
+      
+      console.log('🔍 LateFeeInfo: Desglose obtenido:', breakdown);
+      console.log('🔍 LateFeeInfo: Total mora (considerando pagos parciales):', breakdown.totalLateFee);
+      
+      // Guardar el desglose en el estado para usarlo en el modal
+      setManualBreakdownState(breakdown.breakdown);
+      
+      // Encontrar la próxima cuota pendiente de pago para mostrar sus días de atraso
+      console.log('🔍 LateFeeInfo: Desglose completo para encontrar próxima cuota:', breakdown.breakdown);
+      
+      const nextUnpaidInstallment = breakdown.breakdown.find(item => !item.isPaid && item.lateFee > 0);
+      console.log('🔍 LateFeeInfo: Próxima cuota pendiente encontrada:', nextUnpaidInstallment);
+      
+      const daysOverdue = nextUnpaidInstallment ? nextUnpaidInstallment.daysOverdue : 0;
+      console.log('🔍 LateFeeInfo: Días de atraso para mostrar:', daysOverdue);
+      
+      // Actualizar los días de mora calculados
+      setCalculatedDaysOverdue(daysOverdue);
+      
+      console.log('🔍 LateFeeInfo: Estado actualizado correctamente');
+      console.log('🔍 LateFeeInfo: Días de atraso:', daysOverdue);
+      console.log('🔍 LateFeeInfo: Total mora:', breakdown.totalLateFee);
+      
+      return {
+        days_overdue: daysOverdue,
+        late_fee_amount: breakdown.totalLateFee,
+        total_late_fee: breakdown.totalLateFee
+      };
+    } catch (error) {
+      console.error('Error calculando mora en LateFeeInfo:', error);
+      return null;
     }
-    
-    correctedStartDate = baseDate.toISOString().split('T')[0];
-    console.log('🔍 LateFeeInfo: Calculando fecha de inicio:', {
-      nextPaymentDate,
-      paidInstallmentsCount,
-      payment_frequency,
-      calculatedStartDate: correctedStartDate
-    });
-  }
-  
-  console.log('🔍 LateFeeInfo: Fecha de inicio corregida:', {
-    originalStartDate: start_date,
-    nextPaymentDate: nextPaymentDate,
-    correctedStartDate,
-    explanation: 'Usando start_date o calculando desde next_payment_date'
-  });
-
-    // USAR DIRECTAMENTE paid_installments de la base de datos
-    // NO detectar automáticamente basándose en capital pagado
-    const finalPaidInstallments = paid_installments || [];
-    setDetectedPaidInstallments(finalPaidInstallments);
-
-    console.log('🔍 LateFeeInfo: Calculando mora local con datos mejorados:', {
-      amount,
-      term,
-      payment_frequency,
-      late_fee_rate: lateFeeRate,
-      next_payment_date: nextPaymentDate,
-      grace_period_days: gracePeriodDays,
-      late_fee_calculation_type: lateFeeCalculationType,
-      paidInstallments: finalPaidInstallments
-    });
-
-    // USAR LA MISMA LÓGICA MANUAL QUE PaymentForm
-    // CREAR DESGLOSE MANUAL QUE SOLO MUESTRE CUOTAS PENDIENTES
-    const manualBreakdown = [];
-    let totalManualLateFee = 0;
-
-    // Calcular el capital real por cuota
-    const fixedInterestPerPayment = (amount * (interest_rate || 0)) / 100;
-    const principalPerPayment = Math.round(((monthly_payment || 0) - fixedInterestPerPayment) * 100) / 100;
-
-    console.log('🔍 LateFeeInfo: ===== CREANDO DESGLOSE MANUAL =====');
-    console.log('🔍 LateFeeInfo: Cuotas pagadas:', finalPaidInstallments);
-    console.log('🔍 LateFeeInfo: Capital real por cuota:', principalPerPayment);
-    console.log('🔍 LateFeeInfo: Total de cuotas:', term);
-
-    // Procesar TODAS las cuotas pendientes
-    const totalInstallments = term || 4;
-
-    for (let installment = 1; installment <= totalInstallments; installment++) {
-      // Saltar cuotas que ya están pagadas
-      if (finalPaidInstallments.includes(installment)) {
-        console.log(`🔍 LateFeeInfo: Saltando cuota ${installment} (ya pagada)`);
-        continue;
-      }
-      console.log(`🔍 LateFeeInfo: Procesando cuota ${installment} (pendiente)`);
-
-      // Calcular fecha de vencimiento de esta cuota
-      const baseDate = new Date(correctedStartDate);
-      const periodsToAdd = installment - 1;
-
-      // Ajustar fecha según la frecuencia de pago
-      switch (payment_frequency) {
-        case 'daily':
-          baseDate.setDate(baseDate.getDate() + (periodsToAdd * 1));
-          break;
-        case 'weekly':
-          baseDate.setDate(baseDate.getDate() + (periodsToAdd * 7));
-          break;
-        case 'biweekly':
-          baseDate.setDate(baseDate.getDate() + (periodsToAdd * 14));
-          break;
-        case 'monthly':
-          baseDate.setMonth(baseDate.getMonth() + periodsToAdd);
-          break;
-        case 'quarterly':
-          baseDate.setMonth(baseDate.getMonth() + (periodsToAdd * 3));
-          break;
-        case 'yearly':
-          baseDate.setFullYear(baseDate.getFullYear() + periodsToAdd);
-          break;
-        default:
-          baseDate.setMonth(baseDate.getMonth() + periodsToAdd);
-      }
-
-      const installmentDueDate = new Date(baseDate);
-      const calculationDate = getCurrentDateInSantoDomingo();
-
-      // Calcular días de atraso
-      const daysSinceDue = Math.floor((calculationDate.getTime() - installmentDueDate.getTime()) / (1000 * 60 * 60 * 24));
-      const daysOverdue = Math.max(0, daysSinceDue - gracePeriodDays);
-
-      // Calcular mora para esta cuota
-      let lateFee = 0;
-      if (daysOverdue > 0) {
-        switch (lateFeeCalculationType) {
-          case 'daily':
-            lateFee = (principalPerPayment * lateFeeRate / 100) * daysOverdue;
-            break;
-          case 'monthly':
-            const monthsOverdue = Math.ceil(daysOverdue / 30);
-            lateFee = (principalPerPayment * lateFeeRate / 100) * monthsOverdue;
-            break;
-          case 'compound':
-            lateFee = principalPerPayment * (Math.pow(1 + lateFeeRate / 100, daysOverdue) - 1);
-            break;
-          default:
-            lateFee = (principalPerPayment * lateFeeRate / 100) * daysOverdue;
-        }
-
-        if (maxLateFee && maxLateFee > 0) {
-          lateFee = Math.min(lateFee, maxLateFee);
-        }
-
-        lateFee = Math.round(lateFee * 100) / 100;
-        totalManualLateFee += lateFee;
-      }
-
-      manualBreakdown.push({
-        installment,
-        dueDate: installmentDueDate.toISOString().split('T')[0],
-        daysOverdue,
-        principal: principalPerPayment,
-        lateFee: lateFee,
-        isPaid: false
-      });
-
-      console.log(`🔍 LateFeeInfo: Cuota ${installment} (PENDIENTE):`, {
-        dueDate: installmentDueDate.toISOString().split('T')[0],
-        daysOverdue,
-        principal: principalPerPayment,
-        lateFee
-      });
-    }
-
-    console.log('🔍 LateFeeInfo: RESUMEN DEL CÁLCULO MANUAL');
-    console.log('🔍 LateFeeInfo: Total mora de cuotas pendientes:', totalManualLateFee);
-    console.log('🔍 LateFeeInfo: Número de cuotas pendientes:', manualBreakdown.length);
-
-    // Obtener días de atraso de la primera cuota pendiente
-    const daysOverdue = manualBreakdown.length > 0 ? manualBreakdown[0].daysOverdue : 0;
-
-    // LA TABLA ES LA LÓGICA CORRECTA
-    // Usar totalManualLateFee directamente
-    const tableTotalLateFee = totalManualLateFee;
-
-    console.log('🔍 LateFeeInfo: ===== USANDO TOTAL DE LA TABLA MANUAL =====');
-    console.log('🔍 LateFeeInfo: Total manual de la tabla:', tableTotalLateFee);
-    console.log('🔍 LateFeeInfo: Días de atraso:', daysOverdue);
-    console.log('🔍 LateFeeInfo: DEBUG - Desglose por cuotas:');
-    manualBreakdown.forEach((item: any) => {
-      console.log(`  - Cuota ${item.installment}: ${item.isPaid ? 'PAGADA' : `RD$${item.lateFee}`} (${item.daysOverdue} días)`);
-    });
-    console.log('🔍 LateFeeInfo: DEBUG - finalPaidInstallments:', finalPaidInstallments);
-    console.log('🔍 LateFeeInfo: TOTAL CORRECTO (suma de la tabla):', tableTotalLateFee);
-
-    // Guardar el desglose manual en el estado para usarlo en el modal
-    setManualBreakdownState(manualBreakdown);
-
-    // Actualizar los días de mora calculados
-    setCalculatedDaysOverdue(daysOverdue);
-
-    if (process.env.NODE_ENV === 'development') {
-      const currentDate = getCurrentDateInSantoDomingo();
-      console.log('🔍 DEBUG LateFeeInfo - Días calculados:', {
-        breakdownDaysOverdue: daysOverdue,
-        currentCalculatedDaysOverdue: calculatedDaysOverdue,
-        currentDaysOverdue: daysOverdue,
-        nextPaymentDate: nextPaymentDate,
-        calculationDate: currentDate.toISOString().split('T')[0],
-        currentDateReal: new Date().toISOString().split('T')[0],
-        santoDomingoDate: currentDate.toISOString().split('T')[0]
-      });
-    }
-
-    // Forzar actualización del estado
-    console.log('🔍 LateFeeInfo: Forzando actualización de días a:', daysOverdue);
-
-    return {
-      days_overdue: daysOverdue,
-      late_fee_amount: tableTotalLateFee, // Usar el total de la tabla directamente
-      total_late_fee: tableTotalLateFee   // Usar el total de la tabla directamente
-    };
   };
 
   // Estado para días de mora calculados desde el último pago
@@ -656,7 +474,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
           <div className="flex items-center gap-2">
             <StatusIcon className="h-4 w-4" />
             <Badge className={lateFeeStatus.color}>
-              {manualBreakdownState?.[0]?.daysOverdue || 0} día{(manualBreakdownState?.[0]?.daysOverdue || 0) !== 1 ? 's' : ''} vencido{(manualBreakdownState?.[0]?.daysOverdue || 0) !== 1 ? 's' : ''}
+              {calculatedDaysOverdue || 0} día{(calculatedDaysOverdue || 0) !== 1 ? 's' : ''} vencido{(calculatedDaysOverdue || 0) !== 1 ? 's' : ''}
             </Badge>
           </div>
           <div className="flex gap-1">
@@ -701,10 +519,6 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                <span className="text-lg font-bold text-red-700">
                  ${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
                </span>
-               {/* Debug temporal */}
-               <div className="text-xs text-gray-500">
-                 DEBUG: currentLateFee={currentLateFee}, lateFeeCalculation={lateFeeCalculation?.late_fee_amount || 'null'}
-               </div>
             </div>
           </div>
           
