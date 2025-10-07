@@ -23,16 +23,16 @@ import { Search, User } from 'lucide-react';
 
 const paymentSchema = z.object({
   loan_id: z.string().min(1, 'Debe seleccionar un préstamo'),
-  amount: z.number().min(0.01, 'El monto debe ser mayor a 0'),
+  amount: z.number().min(0, 'El monto no puede ser negativo'),
   payment_method: z.string().min(1, 'Debe seleccionar un método de pago'),
   reference_number: z.string().optional(),
   notes: z.string().optional(),
   late_fee_amount: z.number().min(0).optional(),
 }).refine((data) => {
-  // Esta validación se manejará en el onSubmit para tener acceso al selectedLoan
-  return true;
+  // Validar que al menos uno de los montos (cuota o mora) sea mayor a 0
+  return data.amount > 0 || (data.late_fee_amount && data.late_fee_amount > 0);
 }, {
-  message: "Validación de monto máximo se maneja en el formulario"
+  message: "Debe pagar al menos algo de la cuota o de la mora"
 });
 
 type PaymentFormData = z.infer<typeof paymentSchema>;
@@ -649,40 +649,62 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         return;
       }
       
-      // Validación 2: No permitir pagos negativos o cero
-      if (data.amount <= 0) {
-        toast.error('El monto del pago debe ser mayor a 0');
+      // Validación 2: No permitir pagos negativos, pero permitir 0 si hay pago de mora
+      if (data.amount < 0) {
+        toast.error('El monto del pago no puede ser negativo');
+        return;
+      }
+      
+      // Validación 2b: Debe haber al menos un pago (cuota o mora)
+      if (data.amount <= 0 && (!data.late_fee_amount || data.late_fee_amount <= 0)) {
+        toast.error('Debe pagar al menos algo de la cuota o de la mora');
         return;
       }
 
-      // Validación 3: No permitir pagos que excedan lo que falta de la cuota actual
-      // Si currentPaymentRemaining es 0, usar la cuota mensual completa
-      const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
-      if (data.amount > maxAllowedPayment) {
-        toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: RD$${maxAllowedPayment.toLocaleString()}`);
-        return;
+      // Validación 3: No permitir pagos que excedan lo que falta de la cuota actual (solo si hay pago de cuota)
+      if (data.amount > 0) {
+        const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
+        if (data.amount > maxAllowedPayment) {
+          toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: RD$${maxAllowedPayment.toLocaleString()}`);
+          return;
+        }
       }
 
-      // Calcular la distribución del pago considerando pagos previos
-      const distribution = await calculatePaymentDistribution(data.amount);
-      const { interestPayment, principalPayment, remainingInterest } = distribution;
+      // Calcular la distribución del pago considerando pagos previos (solo si hay pago de cuota)
+      let distribution = { interestPayment: 0, principalPayment: 0, remainingInterest: 0 };
+      let isFullPayment = false;
+      let paymentStatusValue = 'pending';
+      let interestPayment = 0;
+      let principalPayment = 0;
+      let remainingInterest = 0;
       
-      // Determinar si es un pago completo o parcial
-      const isFullPayment = data.amount >= maxAllowedPayment;
-      const paymentStatusValue = isFullPayment ? 'completed' : 'pending';
-      
-      // Si es pago parcial, mostrar advertencia
-      if (!isFullPayment) {
-        const remainingAmount = maxAllowedPayment - data.amount;
-        toast.warning(`Pago parcial registrado. Queda pendiente RD$${remainingAmount.toLocaleString()} de la cuota mensual.`);
-      }
+      if (data.amount > 0) {
+        distribution = await calculatePaymentDistribution(data.amount);
+        interestPayment = distribution.interestPayment;
+        principalPayment = distribution.principalPayment;
+        remainingInterest = distribution.remainingInterest;
+        
+        // Determinar si es un pago completo o parcial
+        const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
+        isFullPayment = data.amount >= maxAllowedPayment;
+        paymentStatusValue = isFullPayment ? 'completed' : 'pending';
+        
+        // Si es pago parcial, mostrar advertencia
+        if (!isFullPayment) {
+          const remainingAmount = maxAllowedPayment - data.amount;
+          toast.warning(`Pago parcial registrado. Queda pendiente RD$${remainingAmount.toLocaleString()} de la cuota mensual.`);
+        }
 
-      // Mostrar información sobre la distribución del pago
+        // Mostrar información sobre la distribución del pago
         const distributionMessage = principalPayment > 0 
           ? `Pago aplicado: RD$${interestPayment.toLocaleString()} al interés, RD$${principalPayment.toLocaleString()} al capital`
           : `Pago aplicado: RD$${interestPayment.toLocaleString()} al interés (pendiente interés: RD$${(remainingInterest - interestPayment).toLocaleString()})`;
         
         toast.info(distributionMessage);
+      } else {
+        // Solo pago de mora, no hay distribución de cuota
+        toast.info(`Pago de mora registrado: RD$${data.late_fee_amount?.toLocaleString()}`);
+      }
 
       // Ajustar fecha para zona horaria de Santo Domingo antes de enviar
       const now = new Date();
