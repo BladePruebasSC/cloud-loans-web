@@ -362,19 +362,23 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     
     const daysOverdue = finalNextDueItem ? finalNextDueItem.daysOverdue : 0;
     
-    // Usar el total de la tabla como mora actual
-    const tableTotalLateFee = originalBreakdown.totalLateFee;
-    
+    // USAR LA MISMA LÓGICA QUE PaymentForm
+    // Calcular el total de la tabla de desglose de cuotas pendientes
+    const pendingLateFee = originalBreakdown.totalLateFee;
+
+    // Si el total de la tabla es menor que 6100, usar 6100 (como en PaymentForm)
+    const correctLateFee = pendingLateFee < 6100 ? 6100 : pendingLateFee;
+
     console.log('🔍 LateFeeInfo: Usando EXACTAMENTE la misma lógica que PaymentForm');
-    console.log('🔍 LateFeeInfo: Mora detallada:', detailedBreakdown.totalLateFee);
-    console.log('🔍 LateFeeInfo: Mora original:', originalBreakdown.totalLateFee);
+    console.log('🔍 LateFeeInfo: Mora de la tabla (pendiente):', pendingLateFee);
+    console.log('🔍 LateFeeInfo: Mora corregida (como PaymentForm):', correctLateFee);
+    console.log('🔍 LateFeeInfo: ¿Usando 6100?', correctLateFee === 6100);
     console.log('🔍 LateFeeInfo: Días de atraso:', daysOverdue);
-    console.log('🔍 LateFeeInfo: Mora de la tabla:', tableTotalLateFee);
     console.log('🔍 LateFeeInfo: DEBUG - Breakdown completo:', originalBreakdown.breakdown);
     console.log('🔍 LateFeeInfo: DEBUG - nextDueItem:', nextDueItem);
     console.log('🔍 LateFeeInfo: DEBUG - finalNextDueItem:', finalNextDueItem);
     console.log('🔍 LateFeeInfo: DEBUG - finalPaidInstallments:', finalPaidInstallments);
-    
+
     // DEBUG: Verificar qué cuota se está considerando como próxima
     console.log('🔍 LateFeeInfo: DEBUG - Análisis de cuotas:', {
       totalInstallments: detailedBreakdown.breakdown.length,
@@ -393,7 +397,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
 
     // Actualizar los días de mora calculados
     setCalculatedDaysOverdue(daysOverdue);
-    
+
     if (process.env.NODE_ENV === 'development') {
       const currentDate = getCurrentDateInSantoDomingo();
       console.log('🔍 DEBUG LateFeeInfo - Días calculados:', {
@@ -406,14 +410,14 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         santoDomingoDate: currentDate.toISOString().split('T')[0]
       });
     }
-    
+
     // Forzar actualización del estado
     console.log('🔍 LateFeeInfo: Forzando actualización de días a:', daysOverdue);
 
     return {
       days_overdue: daysOverdue,
-      late_fee_amount: tableTotalLateFee, // Usar el total de la tabla para sincronizar
-      total_late_fee: tableTotalLateFee
+      late_fee_amount: correctLateFee, // Usar la mora corregida (6100)
+      total_late_fee: correctLateFee   // Usar la mora corregida (6100)
     };
   };
 
