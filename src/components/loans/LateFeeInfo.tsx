@@ -266,10 +266,11 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     explanation: 'Usando next_payment_date como fecha de inicio del préstamo'
   });
 
-    // Detectar cuotas pagadas automáticamente
-    const detectedPaidInstallments = await getPaidInstallments();
-    setDetectedPaidInstallments(detectedPaidInstallments);
-    
+    // USAR DIRECTAMENTE paid_installments de la base de datos
+    // NO detectar automáticamente basándose en capital pagado
+    const finalPaidInstallments = paid_installments || [];
+    setDetectedPaidInstallments(finalPaidInstallments);
+
     console.log('🔍 LateFeeInfo: Calculando mora local con datos mejorados:', {
       amount,
       term,
@@ -278,21 +279,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
       next_payment_date: nextPaymentDate,
       grace_period_days: gracePeriodDays,
       late_fee_calculation_type: lateFeeCalculationType,
-      detectedPaidInstallments,
-      providedPaidInstallments: paid_installments
+      paidInstallments: finalPaidInstallments
     });
-    
-    console.log('🔍 LateFeeInfo: DEBUG - Cuotas pagadas detectadas:', {
-      detectedPaidInstallments,
-      providedPaidInstallments: paid_installments,
-      finalPaidInstallments: detectedPaidInstallments.length > 0 ? detectedPaidInstallments : (paid_installments || [])
-    });
-
-    // CORREGIR: Usar primero el campo paid_installments de la base de datos
-    // Solo recalcular si no hay cuotas pagadas en la base de datos
-    const finalPaidInstallments = (paid_installments && paid_installments.length > 0) 
-      ? paid_installments 
-      : (detectedPaidInstallments.length > 0 ? detectedPaidInstallments : []);
 
     // USAR LAS CUOTAS DE LA TABLA INSTALLMENTS EN LUGAR DE RECALCULAR
     console.log('🔍 LateFeeInfo: Usando cuotas de la tabla installments para el préstamo:', loanId);

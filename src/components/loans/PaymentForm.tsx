@@ -189,8 +189,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   // Función para calcular la mora del préstamo usando la función centralizada
   const calculateLoanLateFee = async (loan: Loan) => {
     try {
-      // Detectar cuotas pagadas automáticamente
-      const paidInstallments = await getPaidInstallments(loan);
+      // USAR DIRECTAMENTE paid_installments de la base de datos
+      // NO recalcular basándose en capital pagado
+      const paidInstallments = loan.paid_installments || [];
       
       console.log('🔍 PaymentForm: Cuotas pagadas detectadas:', paidInstallments);
       console.log('🔍 PaymentForm: DEBUG - Verificando detección de cuotas:', {
@@ -797,75 +798,53 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       let updatedPaidInstallments = selectedLoan.paid_installments || [];
       
       if (isFullPayment) {
+        // Actualizar la fecha del próximo pago
         const nextDate = new Date(selectedLoan.next_payment_date);
         nextDate.setMonth(nextDate.getMonth() + 1);
         nextPaymentDate = nextDate.toISOString().split('T')[0];
-        
-        // CORREGIR: Marcar la cuota actual como pagada permanentemente
-        // La cuota que se está pagando es la que corresponde a next_payment_date
-        // Calcular qué cuota corresponde a la fecha de pago actual
-        const currentPaymentDate = new Date(selectedLoan.next_payment_date);
-        const startDate = new Date(selectedLoan.start_date || selectedLoan.next_payment_date);
-        
-        // Calcular el número de cuota basándose en la diferencia de períodos
-        let periodsDiff = 0;
-        const startDateObj = new Date(startDate);
-        const currentDateObj = new Date(currentPaymentDate);
-        
-        // Calcular diferencia según la frecuencia de pago
-        switch (selectedLoan.payment_frequency || 'monthly') {
-          case 'daily':
-            periodsDiff = Math.floor((currentDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24));
+
+        // CORRECCIÓN FUNDAMENTAL: Marcar la PRIMERA cuota NO pagada
+        // NO calcular basándose en fechas, sino en el array paid_installments
+
+        // Encontrar la primera cuota NO pagada (de 1 a term_months)
+        const totalInstallments = selectedLoan.term_months || 4;
+        let firstUnpaidInstallment = null;
+
+        for (let i = 1; i <= totalInstallments; i++) {
+          if (!updatedPaidInstallments.includes(i)) {
+            firstUnpaidInstallment = i;
             break;
-          case 'weekly':
-            periodsDiff = Math.floor((currentDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24 * 7));
-            break;
-          case 'biweekly':
-            periodsDiff = Math.floor((currentDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24 * 14));
-            break;
-          case 'monthly':
-            periodsDiff = (currentDateObj.getFullYear() - startDateObj.getFullYear()) * 12 + 
-                         (currentDateObj.getMonth() - startDateObj.getMonth());
-            break;
-          case 'quarterly':
-            periodsDiff = Math.floor(((currentDateObj.getFullYear() - startDateObj.getFullYear()) * 12 + 
-                         (currentDateObj.getMonth() - startDateObj.getMonth())) / 3);
-            break;
-          case 'yearly':
-            periodsDiff = currentDateObj.getFullYear() - startDateObj.getFullYear();
-            break;
-          default:
-            periodsDiff = (currentDateObj.getFullYear() - startDateObj.getFullYear()) * 12 + 
-                         (currentDateObj.getMonth() - startDateObj.getMonth());
+          }
         }
-        
-        const currentInstallment = periodsDiff + 1;
-        
-        // Agregar la cuota a las pagadas si no está ya incluida
-        if (!updatedPaidInstallments.includes(currentInstallment)) {
-          updatedPaidInstallments.push(currentInstallment);
+
+        if (firstUnpaidInstallment) {
+          // Agregar esta cuota a las pagadas
+          updatedPaidInstallments.push(firstUnpaidInstallment);
           updatedPaidInstallments.sort((a, b) => a - b); // Mantener ordenado
-          
+
           console.log('🔍 PaymentForm: Cuota marcada como pagada:', {
-            currentInstallment,
-            updatedPaidInstallments
+            paidInstallment: firstUnpaidInstallment,
+            updatedPaidInstallments,
+            totalInstallments
           });
-        }
-        
-        // Marcar la cuota como pagada en la tabla installments
-        const { error: installmentError } = await supabase
-          .from('installments')
-          .update({ 
-            is_paid: true,
-            paid_date: new Date().toISOString().split('T')[0]
-          })
-          .eq('loan_id', data.loan_id)
-          .eq('installment_number', currentInstallment);
-          
-        if (installmentError) {
-          console.error('Error marcando cuota como pagada:', installmentError);
+
+          // Marcar la cuota como pagada en la tabla installments
+          const { error: installmentError } = await supabase
+            .from('installments')
+            .update({
+              is_paid: true,
+              paid_date: new Date().toISOString().split('T')[0]
+            })
+            .eq('loan_id', data.loan_id)
+            .eq('installment_number', firstUnpaidInstallment);
+
+          if (installmentError) {
+            console.error('Error marcando cuota como pagada en installments:', installmentError);
+          } else {
+            console.log(`✅ Cuota ${firstUnpaidInstallment} marcada como pagada en la tabla installments`);
+          }
         } else {
-          console.log('✅ Cuota marcada como pagada en la tabla installments');
+          console.log('⚠️ No se encontró ninguna cuota sin pagar para marcar');
         }
       }
 
@@ -932,7 +911,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           payment_frequency: selectedLoan.payment_frequency || 'monthly',
           interest_rate: selectedLoan.interest_rate,
           monthly_payment: selectedLoan.monthly_payment,
-          paid_installments: await getPaidInstallments(selectedLoan)
+          paid_installments: updatedPaidInstallments // Usar las cuotas pagadas actualizadas
         };
         
         const newLateFeeCalculation = calculateLateFeeUtil(updatedLoanData);
