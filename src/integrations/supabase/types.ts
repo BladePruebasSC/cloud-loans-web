@@ -7,7 +7,7 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instanciate createClient with right options
+  // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "12.2.3 (519615d)"
@@ -252,6 +252,7 @@ export type Database = {
           bank_name: string | null
           birth_date: string | null
           city: string | null
+          company_id: string | null
           created_at: string | null
           credit_score: number | null
           dni: string
@@ -284,6 +285,7 @@ export type Database = {
           bank_name?: string | null
           birth_date?: string | null
           city?: string | null
+          company_id?: string | null
           created_at?: string | null
           credit_score?: number | null
           dni: string
@@ -316,6 +318,7 @@ export type Database = {
           bank_name?: string | null
           birth_date?: string | null
           city?: string | null
+          company_id?: string | null
           created_at?: string | null
           credit_score?: number | null
           dni?: string
@@ -398,11 +401,63 @@ export type Database = {
         }
         Relationships: []
       }
+      collection_tracking: {
+        Row: {
+          additional_notes: string | null
+          client_response: string | null
+          contact_date: string
+          contact_time: string
+          contact_type: string
+          created_at: string | null
+          created_by: string | null
+          id: string
+          loan_id: string
+          next_contact_date: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          additional_notes?: string | null
+          client_response?: string | null
+          contact_date: string
+          contact_time: string
+          contact_type: string
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          loan_id: string
+          next_contact_date?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          additional_notes?: string | null
+          client_response?: string | null
+          contact_date?: string
+          contact_time?: string
+          contact_type?: string
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          loan_id?: string
+          next_contact_date?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "collection_tracking_loan_id_fkey"
+            columns: ["loan_id"]
+            isOneToOne: false
+            referencedRelation: "loans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       company_settings: {
         Row: {
           address: string | null
           business_type: string | null
           city: string | null
+          company_code: string | null
+          company_code_enabled: boolean | null
           company_name: string
           country: string | null
           created_at: string
@@ -428,6 +483,8 @@ export type Database = {
           address?: string | null
           business_type?: string | null
           city?: string | null
+          company_code?: string | null
+          company_code_enabled?: boolean | null
           company_name: string
           country?: string | null
           created_at?: string
@@ -453,6 +510,8 @@ export type Database = {
           address?: string | null
           business_type?: string | null
           city?: string | null
+          company_code?: string | null
+          company_code_enabled?: boolean | null
           company_name?: string
           country?: string | null
           created_at?: string
@@ -686,58 +745,238 @@ export type Database = {
         }
         Relationships: []
       }
+      installments: {
+        Row: {
+          created_at: string | null
+          due_date: string
+          id: string
+          installment_number: number
+          interest_amount: number
+          is_paid: boolean | null
+          late_fee_paid: number
+          loan_id: string
+          paid_date: string | null
+          principal_amount: number
+          total_amount: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          due_date: string
+          id?: string
+          installment_number: number
+          interest_amount: number
+          is_paid?: boolean | null
+          late_fee_paid?: number
+          loan_id: string
+          paid_date?: string | null
+          principal_amount: number
+          total_amount: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          due_date?: string
+          id?: string
+          installment_number?: number
+          interest_amount?: number
+          is_paid?: boolean | null
+          late_fee_paid?: number
+          loan_id?: string
+          paid_date?: string | null
+          principal_amount?: number
+          total_amount?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "installments_loan_id_fkey"
+            columns: ["loan_id"]
+            isOneToOne: false
+            referencedRelation: "loans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      late_fee_history: {
+        Row: {
+          calculation_date: string
+          created_at: string | null
+          days_overdue: number
+          id: string
+          late_fee_amount: number
+          late_fee_rate: number
+          loan_id: string
+          total_late_fee: number
+        }
+        Insert: {
+          calculation_date: string
+          created_at?: string | null
+          days_overdue: number
+          id?: string
+          late_fee_amount: number
+          late_fee_rate: number
+          loan_id: string
+          total_late_fee: number
+        }
+        Update: {
+          calculation_date?: string
+          created_at?: string | null
+          days_overdue?: number
+          id?: string
+          late_fee_amount?: number
+          late_fee_rate?: number
+          loan_id?: string
+          total_late_fee?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "late_fee_history_loan_id_fkey"
+            columns: ["loan_id"]
+            isOneToOne: false
+            referencedRelation: "loans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      loan_history: {
+        Row: {
+          change_type: string
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          id: string
+          loan_id: string
+          new_value: string | null
+          old_value: string | null
+        }
+        Insert: {
+          change_type: string
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          loan_id: string
+          new_value?: string | null
+          old_value?: string | null
+        }
+        Update: {
+          change_type?: string
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          loan_id?: string
+          new_value?: string | null
+          old_value?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "loan_history_loan_id_fkey"
+            columns: ["loan_id"]
+            isOneToOne: false
+            referencedRelation: "loans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       loan_requests: {
         Row: {
+          amortization_type: string | null
           client_id: string
+          closing_costs: number | null
           collateral_description: string | null
           created_at: string
           employment_status: string | null
           existing_debts: number | null
+          first_payment_date: string | null
+          guarantor_dni: string | null
+          guarantor_name: string | null
+          guarantor_phone: string | null
+          guarantor_required: boolean | null
           id: string
           income_verification: string | null
+          interest_rate: number | null
+          late_fee: boolean | null
+          loan_type: string | null
+          minimum_payment_percentage: number | null
+          minimum_payment_type: string | null
           monthly_income: number | null
+          notes: string | null
+          payment_frequency: string | null
           purpose: string | null
           requested_amount: number
           review_notes: string | null
           reviewed_at: string | null
           reviewed_by: string | null
           status: string | null
+          term_months: number | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          amortization_type?: string | null
           client_id: string
+          closing_costs?: number | null
           collateral_description?: string | null
           created_at?: string
           employment_status?: string | null
           existing_debts?: number | null
+          first_payment_date?: string | null
+          guarantor_dni?: string | null
+          guarantor_name?: string | null
+          guarantor_phone?: string | null
+          guarantor_required?: boolean | null
           id?: string
           income_verification?: string | null
+          interest_rate?: number | null
+          late_fee?: boolean | null
+          loan_type?: string | null
+          minimum_payment_percentage?: number | null
+          minimum_payment_type?: string | null
           monthly_income?: number | null
+          notes?: string | null
+          payment_frequency?: string | null
           purpose?: string | null
           requested_amount: number
           review_notes?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           status?: string | null
+          term_months?: number | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          amortization_type?: string | null
           client_id?: string
+          closing_costs?: number | null
           collateral_description?: string | null
           created_at?: string
           employment_status?: string | null
           existing_debts?: number | null
+          first_payment_date?: string | null
+          guarantor_dni?: string | null
+          guarantor_name?: string | null
+          guarantor_phone?: string | null
+          guarantor_required?: boolean | null
           id?: string
           income_verification?: string | null
+          interest_rate?: number | null
+          late_fee?: boolean | null
+          loan_type?: string | null
+          minimum_payment_percentage?: number | null
+          minimum_payment_type?: string | null
           monthly_income?: number | null
+          notes?: string | null
+          payment_frequency?: string | null
           purpose?: string | null
           requested_amount?: number
           review_notes?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           status?: string | null
+          term_months?: number | null
           updated_at?: string
           user_id?: string
         }
@@ -753,63 +992,147 @@ export type Database = {
       }
       loans: {
         Row: {
+          add_expense_enabled: boolean | null
+          amortization_type: string | null
           amount: number
           client_id: string
+          closing_costs: number | null
+          closing_costs_percentage: number | null
           collateral: string | null
           created_at: string | null
+          current_late_fee: number | null
+          deleted_at: string | null
+          deleted_reason: string | null
           end_date: string
+          excluded_days: string[] | null
+          first_payment_date: string
+          fixed_payment_amount: number | null
+          fixed_payment_enabled: boolean | null
+          grace_period_days: number | null
+          guarantor_dni: string | null
+          guarantor_name: string | null
+          guarantor_phone: string | null
           id: string
           interest_rate: number
+          last_late_fee_calculation: string | null
+          late_fee_calculation_type: string | null
+          late_fee_enabled: boolean | null
+          late_fee_rate: number | null
           loan_officer_id: string | null
           loan_type: string | null
+          max_late_fee: number | null
+          minimum_payment_enabled: boolean | null
+          minimum_payment_percentage: number | null
+          minimum_payment_type: string | null
           monthly_payment: number
           next_payment_date: string
+          notes: string | null
+          paid_installments: number[] | null
+          payment_frequency: string | null
+          portfolio_id: string | null
           purpose: string | null
           remaining_balance: number
           start_date: string
           status: string | null
           term_months: number
           total_amount: number
+          total_late_fee_paid: number | null
           updated_at: string | null
         }
         Insert: {
+          add_expense_enabled?: boolean | null
+          amortization_type?: string | null
           amount: number
           client_id: string
+          closing_costs?: number | null
+          closing_costs_percentage?: number | null
           collateral?: string | null
           created_at?: string | null
+          current_late_fee?: number | null
+          deleted_at?: string | null
+          deleted_reason?: string | null
           end_date: string
+          excluded_days?: string[] | null
+          first_payment_date: string
+          fixed_payment_amount?: number | null
+          fixed_payment_enabled?: boolean | null
+          grace_period_days?: number | null
+          guarantor_dni?: string | null
+          guarantor_name?: string | null
+          guarantor_phone?: string | null
           id?: string
           interest_rate: number
+          last_late_fee_calculation?: string | null
+          late_fee_calculation_type?: string | null
+          late_fee_enabled?: boolean | null
+          late_fee_rate?: number | null
           loan_officer_id?: string | null
           loan_type?: string | null
+          max_late_fee?: number | null
+          minimum_payment_enabled?: boolean | null
+          minimum_payment_percentage?: number | null
+          minimum_payment_type?: string | null
           monthly_payment: number
           next_payment_date: string
+          notes?: string | null
+          paid_installments?: number[] | null
+          payment_frequency?: string | null
+          portfolio_id?: string | null
           purpose?: string | null
           remaining_balance: number
           start_date?: string
           status?: string | null
           term_months: number
           total_amount: number
+          total_late_fee_paid?: number | null
           updated_at?: string | null
         }
         Update: {
+          add_expense_enabled?: boolean | null
+          amortization_type?: string | null
           amount?: number
           client_id?: string
+          closing_costs?: number | null
+          closing_costs_percentage?: number | null
           collateral?: string | null
           created_at?: string | null
+          current_late_fee?: number | null
+          deleted_at?: string | null
+          deleted_reason?: string | null
           end_date?: string
+          excluded_days?: string[] | null
+          first_payment_date?: string
+          fixed_payment_amount?: number | null
+          fixed_payment_enabled?: boolean | null
+          grace_period_days?: number | null
+          guarantor_dni?: string | null
+          guarantor_name?: string | null
+          guarantor_phone?: string | null
           id?: string
           interest_rate?: number
+          last_late_fee_calculation?: string | null
+          late_fee_calculation_type?: string | null
+          late_fee_enabled?: boolean | null
+          late_fee_rate?: number | null
           loan_officer_id?: string | null
           loan_type?: string | null
+          max_late_fee?: number | null
+          minimum_payment_enabled?: boolean | null
+          minimum_payment_percentage?: number | null
+          minimum_payment_type?: string | null
           monthly_payment?: number
           next_payment_date?: string
+          notes?: string | null
+          paid_installments?: number[] | null
+          payment_frequency?: string | null
+          portfolio_id?: string | null
           purpose?: string | null
           remaining_balance?: number
           start_date?: string
           status?: string | null
           term_months?: number
           total_amount?: number
+          total_late_fee_paid?: number | null
           updated_at?: string | null
         }
         Relationships: [
@@ -818,6 +1141,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "loans_portfolio_id_fkey"
+            columns: ["portfolio_id"]
+            isOneToOne: false
+            referencedRelation: "portfolios"
             referencedColumns: ["id"]
           },
         ]
@@ -951,6 +1281,8 @@ export type Database = {
           id: string
           interest_amount: number
           late_fee: number | null
+          late_fee_days: number | null
+          late_fee_rate_applied: number | null
           loan_id: string
           notes: string | null
           payment_date: string
@@ -967,6 +1299,8 @@ export type Database = {
           id?: string
           interest_amount: number
           late_fee?: number | null
+          late_fee_days?: number | null
+          late_fee_rate_applied?: number | null
           loan_id: string
           notes?: string | null
           payment_date?: string
@@ -983,6 +1317,8 @@ export type Database = {
           id?: string
           interest_amount?: number
           late_fee?: number | null
+          late_fee_days?: number | null
+          late_fee_rate_applied?: number | null
           loan_id?: string
           notes?: string | null
           payment_date?: string
@@ -1356,6 +1692,45 @@ export type Database = {
           },
         ]
       }
+      registration_codes: {
+        Row: {
+          code: string
+          company_name: string
+          created_at: string | null
+          created_by: string | null
+          expires_at: string | null
+          id: string
+          is_used: boolean | null
+          updated_at: string | null
+          used_at: string | null
+          used_by: string | null
+        }
+        Insert: {
+          code: string
+          company_name: string
+          created_at?: string | null
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          is_used?: boolean | null
+          updated_at?: string | null
+          used_at?: string | null
+          used_by?: string | null
+        }
+        Update: {
+          code?: string
+          company_name?: string
+          created_at?: string | null
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          is_used?: boolean | null
+          updated_at?: string | null
+          used_at?: string | null
+          used_by?: string | null
+        }
+        Relationships: []
+      }
       reports: {
         Row: {
           created_at: string | null
@@ -1607,28 +1982,31 @@ export type Database = {
       }
       system_settings: {
         Row: {
+          created_at: string | null
+          created_by: string | null
           description: string | null
           id: string
-          setting_key: string
-          setting_value: string
+          key: string
           updated_at: string | null
-          updated_by: string | null
+          value: string
         }
         Insert: {
+          created_at?: string | null
+          created_by?: string | null
           description?: string | null
           id?: string
-          setting_key: string
-          setting_value: string
+          key: string
           updated_at?: string | null
-          updated_by?: string | null
+          value: string
         }
         Update: {
+          created_at?: string | null
+          created_by?: string | null
           description?: string | null
           id?: string
-          setting_key?: string
-          setting_value?: string
+          key?: string
           updated_at?: string | null
-          updated_by?: string | null
+          value?: string
         }
         Relationships: []
       }
@@ -1637,9 +2015,61 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      calculate_late_fee: {
+        Args: { p_calculation_date?: string; p_loan_id: string }
+        Returns: {
+          days_overdue: number
+          late_fee_amount: number
+          total_late_fee: number
+        }[]
+      }
+      current_santo_domingo_date: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      current_santo_domingo_timestamp: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      generate_company_code: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      generate_registration_code: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      get_santo_domingo_date: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
+      get_santo_domingo_timestamp: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       get_user_company_id: {
         Args: Record<PropertyKey, never>
         Returns: string
+      }
+      recalculate_late_fee_from_scratch: {
+        Args: { p_calculation_date?: string; p_loan_id: string }
+        Returns: {
+          days_overdue: number
+          late_fee_amount: number
+          total_late_fee: number
+        }[]
+      }
+      update_all_late_fees: {
+        Args: { p_calculation_date?: string }
+        Returns: number
+      }
+      update_all_late_fees_from_scratch: {
+        Args: { p_calculation_date?: string }
+        Returns: number
+      }
+      validate_and_use_registration_code: {
+        Args: { p_code: string; p_user_id: string }
+        Returns: boolean
       }
     }
     Enums: {

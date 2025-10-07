@@ -876,6 +876,51 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       console.log('🔍 PaymentForm: Pago insertado exitosamente:', insertedPayment);
 
+      // Si se pagó mora, actualizar el campo late_fee_paid en las cuotas afectadas
+      if (data.late_fee_amount && data.late_fee_amount > 0 && lateFeeBreakdown) {
+        console.log('🔍 PaymentForm: Distribuyendo pago de mora entre cuotas...');
+        let remainingLateFeePayment = data.late_fee_amount;
+        
+        // Ordenar el desglose por número de cuota (más antiguas primero)
+        const sortedBreakdown = [...lateFeeBreakdown.breakdown]
+          .filter(item => !item.isPaid && item.lateFee > 0)
+          .sort((a, b) => a.installment - b.installment);
+        
+        for (const item of sortedBreakdown) {
+          if (remainingLateFeePayment <= 0) break;
+          
+          const moraToPay = Math.min(remainingLateFeePayment, item.lateFee);
+          
+          // Obtener el late_fee_paid actual de esta cuota
+          const { data: currentInstallment } = await supabase
+            .from('installments')
+            .select('late_fee_paid')
+            .eq('loan_id', data.loan_id)
+            .eq('installment_number', item.installment)
+            .single();
+          
+          const currentLateFeePaid = currentInstallment?.late_fee_paid || 0;
+          const newLateFeePaid = currentLateFeePaid + moraToPay;
+          
+          // Actualizar el campo late_fee_paid de esta cuota
+          const { error: updateError } = await supabase
+            .from('installments')
+            .update({ late_fee_paid: newLateFeePaid })
+            .eq('loan_id', data.loan_id)
+            .eq('installment_number', item.installment);
+          
+          if (updateError) {
+            console.error(`Error actualizando late_fee_paid para cuota ${item.installment}:`, updateError);
+          } else {
+            console.log(`✅ Cuota ${item.installment}: late_fee_paid actualizado de ${currentLateFeePaid} a ${newLateFeePaid}`);
+          }
+          
+          remainingLateFeePayment -= moraToPay;
+        }
+        
+        console.log('🔍 PaymentForm: Distribución de mora completada');
+      }
+
       // CORREGIR: El balance se reduce por el pago completo (capital + interés), no solo por el capital
       const newBalance = Math.max(0, remainingBalance - data.amount);
       
@@ -939,12 +984,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             totalInstallments
           });
 
-          // Marcar la cuota como pagada en la tabla installments
+          // Marcar la cuota como pagada en la tabla installments y resetear late_fee_paid
           const { error: installmentError } = await supabase
             .from('installments')
             .update({
               is_paid: true,
-              paid_date: new Date().toISOString().split('T')[0]
+              paid_date: new Date().toISOString().split('T')[0],
+              late_fee_paid: 0 // Resetear mora pagada cuando se marca como pagada
             })
             .eq('loan_id', data.loan_id)
             .eq('installment_number', firstUnpaidInstallment);

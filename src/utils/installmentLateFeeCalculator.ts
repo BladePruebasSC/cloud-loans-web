@@ -102,6 +102,10 @@ export const getLateFeeBreakdownFromInstallments = async (
           }
           
           lateFee = Math.round(lateFee * 100) / 100;
+          
+          // Restar la mora ya pagada de esta cuota
+          const lateFeePaid = installment.late_fee_paid || 0;
+          lateFee = Math.max(0, lateFee - lateFeePaid);
         }
       }
       
