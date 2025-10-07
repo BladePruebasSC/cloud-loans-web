@@ -253,18 +253,58 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
     currentDate: new Date().toISOString().split('T')[0]
   });
   
-  // CORREGIR: Si next_payment_date es la primera cuota, usar esa fecha directamente
+  // CORREGIR: Usar la fecha de inicio correcta del préstamo
   console.log('🔍 LateFeeInfo: CORRIGIENDO lógica de fecha de inicio');
   
-  // Si next_payment_date es la primera cuota (como 2025-01-06), usar esa fecha
-  // No necesitamos calcular hacia atrás
-  correctedStartDate = nextPaymentDate;
+  // Usar start_date si está disponible, sino calcular desde next_payment_date
+  // pero calcular correctamente hacia atrás según las cuotas pagadas
+  if (start_date) {
+    correctedStartDate = start_date;
+    console.log('🔍 LateFeeInfo: Usando start_date:', start_date);
+  } else {
+    // Si no hay start_date, calcular la fecha de inicio basándose en next_payment_date
+    // y las cuotas pagadas, respetando la frecuencia de pago
+    const paidInstallmentsCount = paid_installments?.length || 0;
+    const baseDate = new Date(nextPaymentDate);
+    
+    // Retroceder según las cuotas pagadas y la frecuencia de pago
+    switch (payment_frequency) {
+      case 'daily':
+        baseDate.setDate(baseDate.getDate() - (paidInstallmentsCount * 1));
+        break;
+      case 'weekly':
+        baseDate.setDate(baseDate.getDate() - (paidInstallmentsCount * 7));
+        break;
+      case 'biweekly':
+        baseDate.setDate(baseDate.getDate() - (paidInstallmentsCount * 14));
+        break;
+      case 'monthly':
+        baseDate.setMonth(baseDate.getMonth() - paidInstallmentsCount);
+        break;
+      case 'quarterly':
+        baseDate.setMonth(baseDate.getMonth() - (paidInstallmentsCount * 3));
+        break;
+      case 'yearly':
+        baseDate.setFullYear(baseDate.getFullYear() - paidInstallmentsCount);
+        break;
+      default:
+        baseDate.setMonth(baseDate.getMonth() - paidInstallmentsCount);
+    }
+    
+    correctedStartDate = baseDate.toISOString().split('T')[0];
+    console.log('🔍 LateFeeInfo: Calculando fecha de inicio:', {
+      nextPaymentDate,
+      paidInstallmentsCount,
+      payment_frequency,
+      calculatedStartDate: correctedStartDate
+    });
+  }
   
   console.log('🔍 LateFeeInfo: Fecha de inicio corregida:', {
     originalStartDate: start_date,
     nextPaymentDate: nextPaymentDate,
     correctedStartDate,
-    explanation: 'Usando next_payment_date como fecha de inicio del préstamo'
+    explanation: 'Usando start_date o calculando desde next_payment_date'
   });
 
     // USAR DIRECTAMENTE paid_installments de la base de datos
@@ -491,7 +531,9 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         const localCalculation = await calculateLocalLateFee();
         if (localCalculation) {
           console.log('🔍 LateFeeInfo: Estableciendo cálculo local:', localCalculation);
+          console.log('🔍 LateFeeInfo: ANTES de setLateFeeCalculation - lateFeeCalculation:', lateFeeCalculation);
           setLateFeeCalculation(localCalculation);
+          console.log('🔍 LateFeeInfo: DESPUÉS de setLateFeeCalculation - localCalculation:', localCalculation);
         } else {
           console.log('🔍 LateFeeInfo: No se pudo calcular la mora local');
         }
@@ -506,6 +548,14 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
 
     calculateAndSetLateFee();
   }, [loanId, daysOverdue, lateFeeEnabled, lateFeeRate, gracePeriodDays, lateFeeCalculationType, remainingBalance, nextPaymentDate, maxLateFee, amount, term, payment_frequency]);
+
+  // Debug: useEffect para verificar cuando cambia lateFeeCalculation
+  useEffect(() => {
+    console.log('🔍 LateFeeInfo: lateFeeCalculation cambió:', lateFeeCalculation);
+    if (lateFeeCalculation) {
+      console.log('🔍 LateFeeInfo: Valor que se mostrará en la UI:', lateFeeCalculation.late_fee_amount);
+    }
+  }, [lateFeeCalculation]);
 
   // Cargar historial de mora optimizado (incluyendo pagos)
   const loadHistory = async () => {
@@ -606,7 +656,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
           <div className="flex items-center gap-2">
             <StatusIcon className="h-4 w-4" />
             <Badge className={lateFeeStatus.color}>
-              {calculatedDaysOverdue} día{calculatedDaysOverdue !== 1 ? 's' : ''} vencido{calculatedDaysOverdue !== 1 ? 's' : ''}
+              {manualBreakdownState?.[0]?.daysOverdue || 0} día{(manualBreakdownState?.[0]?.daysOverdue || 0) !== 1 ? 's' : ''} vencido{(manualBreakdownState?.[0]?.daysOverdue || 0) !== 1 ? 's' : ''}
             </Badge>
           </div>
           <div className="flex gap-1">
@@ -648,9 +698,13 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
               {loading && (
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
               )}
-              <span className="text-lg font-bold text-red-700">
-                ${(lateFeeCalculation?.late_fee_amount || currentLateFee).toLocaleString()}
-              </span>
+               <span className="text-lg font-bold text-red-700">
+                 ${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
+               </span>
+               {/* Debug temporal */}
+               <div className="text-xs text-gray-500">
+                 DEBUG: currentLateFee={currentLateFee}, lateFeeCalculation={lateFeeCalculation?.late_fee_amount || 'null'}
+               </div>
             </div>
           </div>
           
@@ -665,8 +719,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                 <span>{gracePeriodDays}</span>
               </div>
               <div className="flex justify-between">
-                <span>Mora calculada:</span>
-                <span>${lateFeeCalculation.late_fee_amount.toLocaleString()}</span>
+                 <span>Mora calculada:</span>
+                 <span>${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}</span>
               </div>
             </div>
           )}
@@ -699,7 +753,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   </div>
                   <div>
                     <span className="text-gray-600">Días vencidos:</span>
-                    <div className="font-semibold text-red-600">{calculatedDaysOverdue} días</div>
+                    <div className="font-semibold text-red-600">{manualBreakdownState?.[0]?.daysOverdue || 0} días</div>
                   </div>
                   <div>
                     <span className="text-gray-600">Días de gracia:</span>
@@ -728,16 +782,10 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   <div className="space-y-3">
                     <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
                       <span className="text-red-800 font-medium">Mora Actual:</span>
-                      <span className="text-red-700 font-bold text-lg">
-                        ${lateFeeCalculation?.late_fee_amount.toLocaleString() || '0'}
-                      </span>
+                       <span className="text-red-700 font-bold text-lg">
+                         ${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
+                       </span>
                     </div>
-                    {/* Debug info */}
-                    {process.env.NODE_ENV === 'development' && (
-                      <div className="text-xs text-gray-500 mt-2">
-                        Debug: lateFeeCalculation={JSON.stringify(lateFeeCalculation)}, currentLateFee={currentLateFee}
-                      </div>
-                    )}
                     
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
@@ -746,7 +794,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                       </div>
                       <div>
                         <span className="text-gray-600">Mora calculada:</span>
-                        <div className="font-semibold">${lateFeeCalculation.late_fee_amount.toLocaleString()}</div>
+                         <div className="font-semibold">${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}</div>
                       </div>
                     </div>
                   </div>
