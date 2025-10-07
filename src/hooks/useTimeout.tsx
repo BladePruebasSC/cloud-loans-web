@@ -14,7 +14,7 @@ export const useTimeout = (delay: number) => {
     }, delay);
   };
 
-  const clearTimeout = () => {
+  const resetTimeout = () => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
@@ -30,5 +30,5 @@ export const useTimeout = (delay: number) => {
     };
   }, []);
 
-  return { isTimeout, startTimeout, clearTimeout };
+  return { isTimeout, startTimeout, resetTimeout };
 };

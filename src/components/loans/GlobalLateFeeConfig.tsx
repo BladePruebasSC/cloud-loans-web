@@ -152,7 +152,10 @@ export const GlobalLateFeeConfig: React.FC<GlobalLateFeeConfigProps> = ({ onConf
           grace_period_days: loan.grace_period_days,
           max_late_fee: loan.max_late_fee,
           late_fee_calculation_type: loan.late_fee_calculation_type,
-          late_fee_enabled: loan.late_fee_enabled
+          late_fee_enabled: loan.late_fee_enabled,
+          amount: 0,
+          term: 0,
+          payment_frequency: 'monthly'
         });
 
         // Actualizar directamente en la base de datos

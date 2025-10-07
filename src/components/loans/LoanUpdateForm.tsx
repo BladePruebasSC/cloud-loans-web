@@ -53,6 +53,7 @@ interface Loan {
   interest_rate: number;
   term_months: number;
   next_payment_date: string;
+  start_date: string;
   status: string;
   client: {
     full_name: string;

@@ -161,7 +161,7 @@ export const StatisticsModule = () => {
       const paymentsData = payments || [];
 
       // Agrupar pagos por mes
-      const monthlyPayments = filteredPayments.reduce((acc, payment) => {
+      const monthlyPayments = paymentsData.reduce((acc, payment) => {
         const month = new Date(payment.payment_date).toLocaleDateString('es-ES', { 
           year: 'numeric', 
           month: 'long' 
@@ -203,17 +203,17 @@ export const StatisticsModule = () => {
         averagePayment: paymentsData.length > 0 
           ? paymentsData.reduce((sum, payment) => sum + payment.amount, 0) / paymentsData.length 
           : 0,
-        monthlyPayments: Object.entries(monthlyPayments).map(([month, data]) => ({
+        monthlyPayments: Object.entries(monthlyPayments).map(([month, data]: [string, { amount: number; count: number }]) => ({
           month,
           amount: data.amount,
           count: data.count
         })),
-        paymentMethods: Object.entries(paymentMethods).map(([method, data]) => ({
+        paymentMethods: Object.entries(paymentMethods).map(([method, data]: [string, { count: number; amount: number }]) => ({
           method,
           count: data.count,
           amount: data.amount
         })),
-        dailyPayments: Object.entries(dailyPayments).map(([date, data]) => ({
+        dailyPayments: Object.entries(dailyPayments).map(([date, data]: [string, { amount: number; count: number }]) => ({
           date,
           amount: data.amount,
           count: data.count
@@ -304,7 +304,7 @@ export const StatisticsModule = () => {
       }, {} as Record<string, number>);
 
       const topPerformingMonths = Object.entries(monthlyPerformance)
-        .map(([month, amount]) => ({ month, amount }))
+        .map(([month, amount]: [string, number]) => ({ month, amount }))
         .sort((a, b) => b.amount - a.amount)
         .slice(0, 5);
 
