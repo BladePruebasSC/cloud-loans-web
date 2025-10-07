@@ -79,13 +79,17 @@ interface Client {
 const RequestsModule = () => {
   const [requests, setRequests] = useState<LoanRequest[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [filteredClients, setFilteredClients] = useState<Client[]>([]);
+  const [clientSearch, setClientSearch] = useState('');
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<LoanRequest | null>(null);
   const [activeTab, setActiveTab] = useState('lista-solicitudes');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [requestToDelete, setRequestToDelete] = useState<LoanRequest | null>(null);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
 
   const [formData, setFormData] = useState({
     client_id: '',
@@ -150,19 +154,50 @@ const RequestsModule = () => {
   };
 
   const fetchClients = async () => {
+    if (!user || !companyId) return;
+
     try {
       const { data, error } = await supabase
         .from('clients')
         .select('id, full_name, dni, phone, email')
+        .eq('user_id', companyId)
         .eq('status', 'active')
         .order('full_name');
 
       if (error) throw error;
       setClients(data || []);
+      setFilteredClients(data || []);
     } catch (error) {
       console.error('Error fetching clients:', error);
       toast.error('Error al cargar clientes');
     }
+  };
+
+  const handleClientSearch = (searchTerm: string) => {
+    setClientSearch(searchTerm);
+    if (searchTerm.length === 0) {
+      setFilteredClients([]);
+      setShowClientDropdown(false);
+      setSelectedClient(null);
+      setFormData({...formData, client_id: ''});
+      return;
+    }
+
+    const filtered = clients.filter(client =>
+      client.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.dni.includes(searchTerm) ||
+      client.phone.includes(searchTerm)
+    );
+    
+    setFilteredClients(filtered);
+    setShowClientDropdown(filtered.length > 0);
+  };
+
+  const selectClient = (client: Client) => {
+    setSelectedClient(client);
+    setClientSearch(client.full_name);
+    setShowClientDropdown(false);
+    setFormData({...formData, client_id: client.id});
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -302,6 +337,9 @@ const RequestsModule = () => {
       guarantor_dni: '',
       notes: ''
     });
+    setClientSearch('');
+    setSelectedClient(null);
+    setShowClientDropdown(false);
   };
 
   const getStatusBadge = (status: string) => {
@@ -420,18 +458,31 @@ const RequestsModule = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="client_id">Cliente *</Label>
-                    <Select value={formData.client_id} onValueChange={(value) => setFormData({...formData, client_id: value})}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar cliente" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {clients.map(client => (
-                          <SelectItem key={client.id} value={client.id}>
-                            {client.full_name} - {client.dni}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="relative">
+                      <Input
+                        placeholder="Buscar cliente por nombre..."
+                        value={clientSearch}
+                        onChange={(e) => handleClientSearch(e.target.value)}
+                        className="w-full"
+                      />
+                      
+                      {showClientDropdown && (
+                        <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                          {filteredClients.map((client) => (
+                            <div
+                              key={client.id}
+                              className="p-3 hover:bg-gray-100 cursor-pointer border-b"
+                              onClick={() => selectClient(client)}
+                            >
+                              <div className="font-medium">{client.full_name}</div>
+                              <div className="text-sm text-gray-600">
+                                DNI: {client.dni} | Tel: {client.phone}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   
                   <div>
@@ -593,16 +644,22 @@ const RequestsModule = () => {
                             <span className="sm:hidden">Ver</span>
                             <span className="hidden sm:inline">Ver</span>
                           </Button>
-                          <Button 
-                            size="sm" 
-                            variant="default" 
-                            className="bg-blue-600 hover:bg-blue-700 text-white w-full sm:w-auto min-h-[36px] touch-manipulation"
-                            onClick={() => handleCreateLoanFromRequest(request)}
-                          >
-                            <ArrowRight className="h-4 w-4 mr-1 sm:mr-2" />
-                            <span className="sm:hidden">Crear Préstamo</span>
-                            <span className="hidden sm:inline">Crear Préstamo</span>
-                          </Button>
+                          
+                          {/* Botón Crear Préstamo - Solo para solicitudes aprobadas */}
+                          {request.status === 'approved' && (
+                            <Button 
+                              size="sm" 
+                              variant="default" 
+                              className="bg-blue-600 hover:bg-blue-700 text-white w-full sm:w-auto min-h-[36px] touch-manipulation"
+                              onClick={() => handleCreateLoanFromRequest(request)}
+                            >
+                              <ArrowRight className="h-4 w-4 mr-1 sm:mr-2" />
+                              <span className="sm:hidden">Crear Préstamo</span>
+                              <span className="hidden sm:inline">Crear Préstamo</span>
+                            </Button>
+                          )}
+                          
+                          {/* Botón Eliminar - Solo para solicitudes aprobadas */}
                           {request.status === 'approved' && (
                             <Button 
                               size="sm" 
@@ -615,6 +672,8 @@ const RequestsModule = () => {
                               <span className="hidden sm:inline">Eliminar</span>
                             </Button>
                           )}
+                          
+                          {/* Botones de Aprobación/Rechazo - Solo para solicitudes pendientes */}
                           {request.status === 'pending' && (
                             <>
                               <Button 
@@ -805,18 +864,31 @@ const RequestsModule = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
                 <Label htmlFor="client_id">Cliente *</Label>
-                <Select value={formData.client_id} onValueChange={(value) => setFormData({...formData, client_id: value})}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar cliente" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map(client => (
-                      <SelectItem key={client.id} value={client.id}>
-                        {client.full_name} - {client.dni}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="relative">
+                  <Input
+                    placeholder="Buscar cliente por nombre..."
+                    value={clientSearch}
+                    onChange={(e) => handleClientSearch(e.target.value)}
+                    className="w-full"
+                  />
+                  
+                  {showClientDropdown && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                      {filteredClients.map((client) => (
+                        <div
+                          key={client.id}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b"
+                          onClick={() => selectClient(client)}
+                        >
+                          <div className="font-medium">{client.full_name}</div>
+                          <div className="text-sm text-gray-600">
+                            DNI: {client.dni} | Tel: {client.phone}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               
               <div>
