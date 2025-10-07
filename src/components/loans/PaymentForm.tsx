@@ -16,6 +16,7 @@ import { useLoanPaymentStatusSimple } from '@/hooks/useLoanPaymentStatusSimple';
 import { useLateFee } from '@/hooks/useLateFee';
 import { calculateLateFee as calculateLateFeeUtil, getDetailedLateFeeBreakdown, getOriginalLateFeeBreakdown, getFixedLateFeeBreakdown, applyLateFeePayment, calculateFixedLateFeeBreakdown } from '@/utils/lateFeeCalculator';
 import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/dateUtils';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
 import { Search, User } from 'lucide-react';
@@ -1072,43 +1073,38 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           paid_installments: updatedPaidInstallments // Usar las cuotas pagadas actualizadas
         };
         
-        // CORREGIR: En lugar de recalcular desde cero, usar el desglose original y aplicar pagos
-        console.log('🔍 PaymentForm: Obteniendo desglose original de mora...');
-        const originalBreakdown = getOriginalLateFeeBreakdown(updatedLoanData, updatedPaidInstallments);
-        
-        // Obtener todos los pagos de mora registrados para este préstamo
-        const { data: lateFeePayments, error: paymentsError } = await supabase
-          .from('payments')
-          .select('late_fee')
-          .eq('loan_id', data.loan_id)
-          .not('late_fee', 'is', null);
+        // Recalcular mora desde installments respetando late_fee_paid
+        console.log('🔍 PaymentForm: Recalculando mora desde installments...');
+        const breakdownFromInstallments = await getLateFeeBreakdownFromInstallments(data.loan_id, {
+          id: data.loan_id,
+          remaining_balance: newBalance,
+          next_payment_date: nextPaymentDate,
+          late_fee_rate: selectedLoan.late_fee_rate as number,
+          grace_period_days: (selectedLoan.grace_period_days as number) || 0,
+          max_late_fee: selectedLoan.max_late_fee,
+          late_fee_calculation_type: (selectedLoan.late_fee_calculation_type as any) || 'daily',
+          late_fee_enabled: !!selectedLoan.late_fee_enabled,
+          amount: selectedLoan.amount,
+          term: selectedLoan.term_months || 4,
+          payment_frequency: selectedLoan.payment_frequency || 'monthly',
+          interest_rate: selectedLoan.interest_rate,
+          monthly_payment: selectedLoan.monthly_payment,
+          start_date: selectedLoan.first_payment_date || selectedLoan.start_date
+        });
+
+        // Actualizar la mora en la base de datos con el resultado desde installments
+        const { error: lateFeeError } = await supabase
+          .from('loans')
+          .update({ 
+            current_late_fee: breakdownFromInstallments.totalLateFee,
+            last_late_fee_calculation: new Date().toISOString().split('T')[0]
+          })
+          .eq('id', data.loan_id);
           
-        if (paymentsError) {
-          console.error('Error obteniendo pagos de mora:', paymentsError);
+        if (lateFeeError) {
+          console.error('Error actualizando mora:', lateFeeError);
         } else {
-          // Calcular el total de mora pagada
-          const totalLateFeePaid = lateFeePayments?.reduce((sum, payment) => sum + (payment.late_fee || 0), 0) || 0;
-          console.log('🔍 PaymentForm: Total mora pagada:', totalLateFeePaid);
-          
-          // Aplicar los pagos de mora al desglose original
-          const finalBreakdown = applyLateFeePayment(originalBreakdown, totalLateFeePaid);
-          
-          console.log('🔍 PaymentForm: Desglose final después de aplicar pagos:', finalBreakdown);
-          
-          // Actualizar la mora en la base de datos con el resultado final
-          const { error: lateFeeError } = await supabase
-            .from('loans')
-            .update({ 
-              current_late_fee: finalBreakdown.totalLateFee,
-              last_late_fee_calculation: new Date().toISOString().split('T')[0]
-            })
-            .eq('id', data.loan_id);
-            
-          if (lateFeeError) {
-            console.error('Error actualizando mora:', lateFeeError);
-          } else {
-            console.log('🔍 PaymentForm: Mora recalculada exitosamente con pagos parciales:', finalBreakdown.totalLateFee);
-          }
+          console.log('🔍 PaymentForm: Mora recalculada exitosamente desde installments:', breakdownFromInstallments.totalLateFee);
         }
       } catch (error) {
         console.error('Error recalculando mora:', error);
