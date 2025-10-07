@@ -42,6 +42,7 @@ interface Loan {
   remaining_balance: number;
   monthly_payment: number;
   next_payment_date: string;
+  first_payment_date?: string; // Fecha de la primera cuota (BASE FIJA que nunca cambia)
   start_date?: string;
   interest_rate: number;
   term_months?: number;
@@ -216,6 +217,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       const calculation = calculateLateFeeUtil({
         remaining_balance: loan.remaining_balance,
         next_payment_date: loan.next_payment_date,
+        first_payment_date: loan.first_payment_date || loan.next_payment_date, // CRÍTICO: Usar base fija
         late_fee_rate: loan.late_fee_rate || 0,
         grace_period_days: loan.grace_period_days || 0,
         max_late_fee: loan.max_late_fee || 0,
@@ -240,6 +242,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         const detailedBreakdown = getDetailedLateFeeBreakdown({
           remaining_balance: loan.remaining_balance,
           next_payment_date: loan.next_payment_date,
+          first_payment_date: loan.first_payment_date || loan.next_payment_date,
           late_fee_rate: loan.late_fee_rate,
           grace_period_days: loan.grace_period_days,
           max_late_fee: loan.max_late_fee,
@@ -255,6 +258,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         const originalBreakdown = getOriginalLateFeeBreakdown({
           remaining_balance: loan.remaining_balance,
           next_payment_date: loan.next_payment_date,
+          first_payment_date: loan.first_payment_date || loan.next_payment_date,
           late_fee_rate: loan.late_fee_rate,
           grace_period_days: loan.grace_period_days,
           max_late_fee: loan.max_late_fee,
@@ -796,11 +800,36 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Solo actualizar la fecha del próximo pago si es un pago completo
       let nextPaymentDate = selectedLoan.next_payment_date;
       let updatedPaidInstallments = selectedLoan.paid_installments || [];
-      
+
       if (isFullPayment) {
-        // Actualizar la fecha del próximo pago
+        // CORRECCIÓN: next_payment_date representa la PRÓXIMA cuota pendiente
+        // Se actualiza sumando un período de pago según la frecuencia
         const nextDate = new Date(selectedLoan.next_payment_date);
-        nextDate.setMonth(nextDate.getMonth() + 1);
+
+        // Ajustar según la frecuencia de pago
+        switch (selectedLoan.payment_frequency) {
+          case 'daily':
+            nextDate.setDate(nextDate.getDate() + 1);
+            break;
+          case 'weekly':
+            nextDate.setDate(nextDate.getDate() + 7);
+            break;
+          case 'biweekly':
+            nextDate.setDate(nextDate.getDate() + 14);
+            break;
+          case 'monthly':
+            nextDate.setMonth(nextDate.getMonth() + 1);
+            break;
+          case 'quarterly':
+            nextDate.setMonth(nextDate.getMonth() + 3);
+            break;
+          case 'yearly':
+            nextDate.setFullYear(nextDate.getFullYear() + 1);
+            break;
+          default:
+            nextDate.setMonth(nextDate.getMonth() + 1);
+        }
+
         nextPaymentDate = nextDate.toISOString().split('T')[0];
 
         // CORRECCIÓN FUNDAMENTAL: Marcar la PRIMERA cuota NO pagada
@@ -901,6 +930,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         const updatedLoanData = {
           remaining_balance: newBalance,
           next_payment_date: nextPaymentDate,
+          first_payment_date: selectedLoan.first_payment_date || selectedLoan.next_payment_date, // CRÍTICO: Preservar base fija
           late_fee_rate: selectedLoan.late_fee_rate,
           grace_period_days: selectedLoan.grace_period_days,
           max_late_fee: selectedLoan.max_late_fee,

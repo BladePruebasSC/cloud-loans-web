@@ -22,6 +22,7 @@ export interface LoanData {
   monthly_payment?: number; // Cuota mensual (necesaria para calcular el capital real)
   paid_installments?: number[]; // Cuotas que han sido pagadas (opcional)
   start_date?: string; // Fecha de inicio del préstamo (CRÍTICO para el cálculo correcto)
+  first_payment_date?: string; // Fecha de la primera cuota (BASE FIJA que nunca cambia)
 }
 
 /**
@@ -116,26 +117,24 @@ export const calculateLateFee = (
     if (paidInstallments.includes(installment)) {
       continue;
     }
-    
-    
-    // Calcular fecha de vencimiento de esta cuota de manera más precisa
-    // La fecha base es la fecha de la primera cuota
+
+
+    // CORRECCIÓN CRÍTICA: Usar first_payment_date como base fija
+    // first_payment_date NUNCA cambia durante la vida del préstamo
+    // next_payment_date cambia con cada pago y representa la PRÓXIMA cuota pendiente
+
+    // Si first_payment_date está disponible, usarlo como base
+    // Si no, usar next_payment_date como fallback (para préstamos antiguos)
+    const basePaymentDate = loan.first_payment_date || loan.next_payment_date;
+
+    // Calcular fecha de vencimiento de esta cuota de manera precisa
     // Si la primera cuota vence el 01/01, entonces:
-    // - Cuota 1: 01/01 (0 períodos)
-    // - Cuota 2: 01/02 (1 período)
-    // - Cuota 3: 01/03 (2 períodos)
-    // - Cuota 4: 01/04 (3 períodos)
-    
-    // CORREGIR: Calcular la fecha de vencimiento de cada cuota correctamente
-    // Si next_payment_date es "2025-01-06" y tenemos 4 cuotas mensuales, entonces:
-    // - Cuota 1: 2025-01-06 (la fecha de next_payment_date)
-    // - Cuota 2: 2025-02-06 (1 mes después)
-    // - Cuota 3: 2025-03-06 (2 meses después)
-    // - Cuota 4: 2025-04-06 (3 meses después)
-    
-    // CORRECCIÓN: next_payment_date es la fecha de la PRIMERA cuota
-    // Calcular hacia adelante desde next_payment_date para encontrar las cuotas siguientes
-    const firstPaymentDate = new Date(loan.next_payment_date);
+    // - Cuota 1: 01/01 (0 períodos desde la base)
+    // - Cuota 2: 01/02 (1 período desde la base)
+    // - Cuota 3: 01/03 (2 períodos desde la base)
+    // - Cuota 4: 01/04 (3 períodos desde la base)
+
+    const firstPaymentDate = new Date(basePaymentDate);
     
     // Para esta cuota específica, calcular cuántos períodos agregar
     // Cuota 1: 0 períodos (usa next_payment_date)
@@ -258,9 +257,10 @@ export const calculateLateFee = (
     if (paidInstallments.includes(installment)) {
       continue;
     }
-    
-    // Calcular hacia adelante desde next_payment_date para encontrar la fecha de esta cuota
-    const firstPaymentDate = new Date(loan.next_payment_date);
+
+    // CORRECCIÓN: Usar la misma base fija que arriba
+    const basePaymentDate = loan.first_payment_date || loan.next_payment_date;
+    const firstPaymentDate = new Date(basePaymentDate);
     
     // Para esta cuota específica, calcular cuántos períodos agregar
     // Cuota 1: 0 períodos (usa next_payment_date)

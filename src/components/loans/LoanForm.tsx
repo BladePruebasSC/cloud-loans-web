@@ -981,6 +981,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         start_date: firstPaymentDate.toISOString().split('T')[0], // CRÍTICO: start_date debe ser la fecha del primer pago
         end_date: endDate.toISOString().split('T')[0],
         next_payment_date: firstPaymentDate.toISOString().split('T')[0], // La primera cuota también es la próxima cuota
+        first_payment_date: firstPaymentDate.toISOString().split('T')[0], // NUEVO: Base fija para cálculos de mora
         status: data.loan_started ? 'active' : 'pending',
         guarantor_name: data.guarantor_name || null,
         guarantor_phone: data.guarantor_phone || null,
