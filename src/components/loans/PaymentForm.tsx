@@ -363,18 +363,12 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         totalLateFee: totalManualLateFee,
         breakdown: manualBreakdown
       };
-      
+
       // LA TABLA ES LA LÓGICA CORRECTA
-      // Usar SIEMPRE el total de la tabla sin ninguna corrección adicional
-      const tableTotalLateFee = breakdown.totalLateFee;
-
-      // NO usar originalLateFeeBreakdown, siempre calcular desde cero
-      setOriginalLateFeeBreakdown(breakdown);
-
-      console.log('🔍 PaymentForm: Usando el total de la tabla directamente');
-      console.log('🔍 PaymentForm: Total de la tabla (sin correcciones):', tableTotalLateFee);
+      // Usar totalManualLateFee que es el total calculado de las cuotas pendientes (22,900)
+      console.log('🔍 PaymentForm: ===== USANDO TOTAL DE LA TABLA MANUAL =====');
+      console.log('🔍 PaymentForm: Total manual de la tabla:', totalManualLateFee);
       console.log('🔍 PaymentForm: Mora ya pagada:', previousLateFeePayments);
-      console.log('🔍 PaymentForm: Desglose de mora:', breakdown);
       console.log('🔍 PaymentForm: Datos del préstamo:', {
         amount: loan.amount,
         term: loan.term_months,
@@ -386,12 +380,16 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       manualBreakdown.forEach((item: any) => {
         console.log(`  - Cuota ${item.installment}: ${item.isPaid ? 'PAGADA' : `RD$${item.lateFee}`} (${item.daysOverdue} días)`);
       });
+      console.log('🔍 PaymentForm: TOTAL CORRECTO (suma de la tabla):', totalManualLateFee);
 
-      setLateFeeAmount(tableTotalLateFee); // Usar el total de la tabla directamente
+      // NO usar originalLateFeeBreakdown, usar el breakdown manual
+      setOriginalLateFeeBreakdown(breakdown);
+
+      setLateFeeAmount(totalManualLateFee); // Usar totalManualLateFee directamente (22,900)
       setLateFeeCalculation({
         days_overdue: manualBreakdown.length > 0 ? manualBreakdown[0].daysOverdue : 0, // Usar días de la tabla
-        late_fee_amount: tableTotalLateFee, // Usar el total de la tabla directamente
-        total_late_fee: tableTotalLateFee   // Usar el total de la tabla directamente
+        late_fee_amount: totalManualLateFee, // Usar totalManualLateFee directamente (22,900)
+        total_late_fee: totalManualLateFee   // Usar totalManualLateFee directamente (22,900)
       });
       setLateFeeBreakdown(breakdown);
     } catch (error) {
