@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -93,8 +93,18 @@ export const LoansModule = () => {
     setCurrentViewMonth(newMonth);
   };
 
+  const navigateMonths = (months: number) => {
+    const newMonth = new Date(currentViewMonth);
+    newMonth.setMonth(newMonth.getMonth() + months);
+    setCurrentViewMonth(newMonth);
+  };
+
   const resetToCurrentMonth = () => {
     setCurrentViewMonth(new Date());
+  };
+
+  const goToSpecificMonth = (month: number, year: number) => {
+    setCurrentViewMonth(new Date(year, month, 1));
   };
 
   // Detectar parámetros de URL para crear préstamo desde solicitud
@@ -1648,29 +1658,56 @@ export const LoansModule = () => {
                    break;
                }
                
-               // Generar pagos hasta completar el plazo del préstamo
-               let currentPaymentDate = new Date(loan.next_payment_date || startDate);
+               // Usar next_payment_date como punto de partida si existe, sino start_date
+               let currentPaymentDate = new Date(loan.next_payment_date || loan.start_date);
+               console.log('🔍 Agenda: Fecha de inicio del pago:', {
+                 next_payment_date: loan.next_payment_date,
+                 start_date: loan.start_date,
+                 currentPaymentDate: currentPaymentDate.toISOString().split('T')[0],
+                 isValid: !isNaN(currentPaymentDate.getTime())
+               });
                let paymentNumber = 1;
                const maxPayments = loan.term_months || 12;
                
-               // Calcular cuántos pagos ya se han hecho
+               // Calcular cuántos pagos ya se han hecho basado en el balance restante
                const totalAmount = loan.total_amount || 0;
                const remainingBalance = loan.remaining_balance || totalAmount;
                const monthlyPayment = loan.monthly_payment || 0;
                const paidPayments = monthlyPayment > 0 ? Math.floor((totalAmount - remainingBalance) / monthlyPayment) : 0;
                
                // Ajustar el número de pago inicial
-               paymentNumber = paidPayments + 1;
+               paymentNumber = Math.max(1, paidPayments + 1);
                
-               while (paymentNumber <= maxPayments) {
-                 // Solo incluir pagos futuros o del día actual
-                 if (currentPaymentDate >= today || currentPaymentDate.toDateString() === today.toDateString()) {
+               console.log('🔍 Agenda: Generando pagos para préstamo:', {
+                 id: loan.id,
+                 client_name: loan.client?.full_name,
+                 start_date: loan.start_date,
+                 next_payment_date: loan.next_payment_date,
+                 currentPaymentDate: currentPaymentDate.toISOString().split('T')[0],
+                 paymentNumber,
+                 maxPayments,
+                 paidPayments,
+                 remaining_balance: loan.remaining_balance,
+                 monthly_payment: loan.monthly_payment,
+                 frequency: frequency,
+                 intervalDays: intervalDays
+               });
+               
+               // Generar pagos para los próximos 6 meses desde la fecha actual
+               const endDate = new Date(today);
+               endDate.setMonth(endDate.getMonth() + 6);
+               
+               while (paymentNumber <= maxPayments && currentPaymentDate <= endDate) {
+                 // Incluir pagos pasados recientes (últimos 365 días), del día actual y futuros
+                 const daysDiff = Math.floor((currentPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                 if (daysDiff >= -365) { // Incluir pagos de los últimos 365 días
                    payments.push({
                      ...loan,
                      payment_date: new Date(currentPaymentDate),
                      payment_number: paymentNumber,
                      is_last_payment: paymentNumber === maxPayments,
-                     remaining_payments: maxPayments - paymentNumber + 1
+                     remaining_payments: maxPayments - paymentNumber + 1,
+                     is_overdue: daysDiff < 0 // Marcar como vencido si es un día pasado
                    });
                  }
                  
@@ -1688,13 +1725,63 @@ export const LoansModule = () => {
                  paymentNumber++;
                }
                
+               console.log('🔍 Agenda: Pagos generados para préstamo', loan.id, ':', payments.length);
+               if (payments.length > 0) {
+                 console.log('🔍 Agenda: Primeros pagos generados:', payments.slice(0, 3).map(p => ({
+                   payment_date: p.payment_date.toISOString().split('T')[0],
+                   payment_number: p.payment_number,
+                   is_overdue: p.is_overdue
+                 })));
+               }
                return payments;
              };
 
              // Generar todos los pagos futuros de todos los préstamos (excluyendo préstamos pagados)
-             const allPayments = loans
-               .filter(loan => loan.status !== 'paid' && loan.remaining_balance > 0)
-               .flatMap(loan => generateAllPayments(loan));
+             console.log('🔍 Agenda: Total préstamos cargados:', loans.length);
+             console.log('🔍 Agenda: Estados de préstamos:', loans.map(l => ({ 
+               id: l.id, 
+               status: l.status, 
+               remaining_balance: l.remaining_balance,
+               next_payment_date: l.next_payment_date,
+               start_date: l.start_date,
+               monthly_payment: l.monthly_payment,
+               term_months: l.term_months
+             })));
+             
+             // Filtrar préstamos activos (excluir eliminados y pagados)
+             const activeLoans = loans.filter(loan => 
+               loan.remaining_balance > 0 && 
+               loan.status !== 'deleted' && 
+               loan.status !== 'paid'
+             );
+             console.log('🔍 Agenda: Préstamos activos (excluyendo eliminados):', activeLoans.length);
+             
+             // Crear pagos simples basados en next_payment_date
+             const allPayments = [];
+             activeLoans.forEach(loan => {
+               if (loan.next_payment_date) {
+                 const paymentDate = new Date(loan.next_payment_date);
+                 const today = new Date();
+                 const daysDiff = Math.floor((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                 
+                 allPayments.push({
+                   ...loan,
+                   payment_date: paymentDate,
+                   payment_number: 1,
+                   is_last_payment: false,
+                   remaining_payments: 1,
+                   is_overdue: daysDiff < 0
+                 });
+               }
+             });
+             
+             console.log('🔍 Agenda: Total pagos generados (simplificado):', allPayments.length);
+             console.log('🔍 Agenda: Pagos generados:', allPayments.map(p => ({
+               id: p.id,
+               client_name: p.client?.full_name,
+               payment_date: p.payment_date.toISOString().split('T')[0],
+               is_overdue: p.is_overdue
+             })));
 
              return (
                <>
@@ -1709,7 +1796,7 @@ export const LoansModule = () => {
                  <div className="text-2xl font-bold text-blue-600">{loans.filter(loan => {
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
-                   return loan.status !== 'paid' && 
+                   return (loan.status === 'active' || loan.status === 'overdue') && 
                           loan.remaining_balance > 0 &&
                           nextPayment.toDateString() === today.toDateString();
                  }).length}</div>
@@ -1728,7 +1815,7 @@ export const LoansModule = () => {
                    const today = new Date();
                    const endOfWeek = new Date(today);
                    endOfWeek.setDate(today.getDate() + 7);
-                   return loan.status !== 'paid' && 
+                   return (loan.status === 'active' || loan.status === 'overdue') && 
                           loan.remaining_balance > 0 &&
                           nextPayment >= today && nextPayment <= endOfWeek;
                  }).length}</div>
@@ -1746,7 +1833,7 @@ export const LoansModule = () => {
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
                    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                   return loan.status !== 'paid' && 
+                   return (loan.status === 'active' || loan.status === 'overdue') && 
                           loan.remaining_balance > 0 &&
                           nextPayment >= today && nextPayment <= endOfMonth;
                  }).length}</div>
@@ -1764,7 +1851,7 @@ export const LoansModule = () => {
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
                    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                   return loan.status !== 'paid' && 
+                   return (loan.status === 'active' || loan.status === 'overdue') && 
                           loan.remaining_balance > 0 &&
                           nextPayment >= today && nextPayment <= endOfMonth;
                  }).reduce((sum, loan) => sum + loan.monthly_payment, 0).toLocaleString()}</div>
@@ -1810,29 +1897,35 @@ export const LoansModule = () => {
                          break;
                      }
                      
-                     // Generar pagos hasta completar el plazo del préstamo
-                     let currentPaymentDate = new Date(loan.next_payment_date || startDate);
+                     // Usar next_payment_date como punto de partida si existe, sino start_date
+                     let currentPaymentDate = new Date(loan.next_payment_date || loan.start_date);
                      let paymentNumber = 1;
                      const maxPayments = loan.term_months || 12;
                      
-                     // Calcular cuántos pagos ya se han hecho
+                     // Calcular cuántos pagos ya se han hecho basado en el balance restante
                      const totalAmount = loan.total_amount || 0;
                      const remainingBalance = loan.remaining_balance || totalAmount;
                      const monthlyPayment = loan.monthly_payment || 0;
                      const paidPayments = monthlyPayment > 0 ? Math.floor((totalAmount - remainingBalance) / monthlyPayment) : 0;
                      
                      // Ajustar el número de pago inicial
-                     paymentNumber = paidPayments + 1;
+                     paymentNumber = Math.max(1, paidPayments + 1);
                      
-                     while (paymentNumber <= maxPayments) {
-                       // Solo incluir pagos futuros o del día actual
-                       if (currentPaymentDate >= today || currentPaymentDate.toDateString() === today.toDateString()) {
+                     // Generar pagos para los próximos 6 meses desde la fecha actual
+                     const endDate = new Date(today);
+                     endDate.setMonth(endDate.getMonth() + 6);
+                     
+                     while (paymentNumber <= maxPayments && currentPaymentDate <= endDate) {
+                       // Incluir pagos pasados recientes (últimos 365 días), del día actual y futuros
+                       const daysDiff = Math.floor((currentPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                       if (daysDiff >= -365) { // Incluir pagos de los últimos 365 días
                          payments.push({
                            ...loan,
                            payment_date: new Date(currentPaymentDate),
                            payment_number: paymentNumber,
                            is_last_payment: paymentNumber === maxPayments,
-                           remaining_payments: maxPayments - paymentNumber + 1
+                           remaining_payments: maxPayments - paymentNumber + 1,
+                           is_overdue: daysDiff < 0 // Marcar como vencido si es un día pasado
                          });
                        }
                        
@@ -1861,7 +1954,9 @@ export const LoansModule = () => {
                    const firstDayOfMonth = new Date(currentYear, currentMonth, 1).getDay();
                    
                    // Generar todos los pagos futuros de todos los préstamos
-                   const allPayments = loans.flatMap(loan => generateAllPayments(loan));
+                   const allPayments = loans
+                     .filter(loan => (loan.status === 'active' || loan.status === 'overdue') && loan.remaining_balance > 0)
+                     .flatMap(loan => generateAllPayments(loan));
                   
                   // Crear array de días del mes
                   const calendarDays = [];
@@ -1889,44 +1984,101 @@ export const LoansModule = () => {
 
                  return (
                    <div className="space-y-4">
-                     {/* Navegación del mes */}
-                     <div className="flex items-center justify-between">
-                       <div className="flex items-center gap-2">
-                         <Button
-                           variant="outline"
-                           size="sm"
-                           onClick={() => navigateMonth('prev')}
-                           className="h-8 w-8 p-0"
-                         >
-                           <ChevronLeft className="h-4 w-4" />
-                         </Button>
-                         <h3 className="text-lg font-semibold min-w-[200px] text-center">
-                           {currentViewMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-                         </h3>
-                         <Button
-                           variant="outline"
-                           size="sm"
-                           onClick={() => navigateMonth('next')}
-                           className="h-8 w-8 p-0"
-                         >
-                           <ChevronRight className="h-4 w-4" />
-                         </Button>
-              </div>
-                       <div className="flex items-center gap-2">
-                         <Button
-                           variant="outline"
-                           size="sm"
-                           onClick={resetToCurrentMonth}
-                           className="text-xs"
-                         >
-                           Hoy
-                         </Button>
-                         <div className="text-sm text-gray-600">
-                           {allPayments.filter(payment => {
-                             const paymentDate = payment.payment_date;
-                             const endOfMonth = new Date(currentYear, currentMonth + 1, 0);
-                             return paymentDate >= new Date(currentYear, currentMonth, 1) && paymentDate <= endOfMonth;
-                           }).length} cobros programados
+                     {/* Navegación del mes mejorada */}
+                     <div className="bg-white rounded-lg border p-4 shadow-sm">
+                       <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                         {/* Navegación principal */}
+                         <div className="flex items-center gap-2">
+                           {/* Navegación rápida -3M */}
+                           <Button
+                             variant="outline"
+                             size="sm"
+                             onClick={() => navigateMonths(-3)}
+                             className="h-9 px-3 text-xs font-medium hover:bg-blue-50 hover:border-blue-300"
+                           >
+                             -3M
+                           </Button>
+                           
+                           {/* Navegación mensual */}
+                           <Button
+                             variant="outline"
+                             size="sm"
+                             onClick={() => navigateMonth('prev')}
+                             className="h-9 w-9 p-0 hover:bg-blue-50 hover:border-blue-300"
+                           >
+                             <ChevronLeft className="h-4 w-4" />
+                           </Button>
+                           
+                           {/* Mes y año actual */}
+                           <div className="min-w-[200px] text-center">
+                             <h3 className="text-lg font-semibold text-gray-900">
+                               {currentViewMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+                             </h3>
+                             <p className="text-xs text-gray-500">
+                               {currentViewMonth.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}
+                             </p>
+                           </div>
+                           
+                           <Button
+                             variant="outline"
+                             size="sm"
+                             onClick={() => navigateMonth('next')}
+                             className="h-9 w-9 p-0 hover:bg-blue-50 hover:border-blue-300"
+                           >
+                             <ChevronRight className="h-4 w-4" />
+                           </Button>
+                           
+                           {/* Navegación rápida +3M */}
+                           <Button
+                             variant="outline"
+                             size="sm"
+                             onClick={() => navigateMonths(3)}
+                             className="h-9 px-3 text-xs font-medium hover:bg-blue-50 hover:border-blue-300"
+                           >
+                             +3M
+                           </Button>
+                         </div>
+                         
+                         {/* Información y acciones */}
+                         <div className="flex items-center gap-3">
+                           <div className="text-center">
+                             <div className="text-sm font-medium text-gray-900">
+                               {allPayments.filter(payment => {
+                                 const paymentDate = payment.payment_date;
+                                 const endOfMonth = new Date(currentYear, currentMonth + 1, 0);
+                                 return paymentDate >= new Date(currentYear, currentMonth, 1) && paymentDate <= endOfMonth;
+                               }).length}
+                             </div>
+                             <div className="text-xs text-gray-500">cobros</div>
+                           </div>
+                           
+                           <Button
+                             variant="default"
+                             size="sm"
+                             onClick={resetToCurrentMonth}
+                             className="h-9 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                           >
+                             <Calendar className="h-4 w-4 mr-2" />
+                             Hoy
+                           </Button>
+                         </div>
+                       </div>
+                       
+                       {/* Navegación rápida por trimestres */}
+                       <div className="mt-3 pt-3 border-t border-gray-100">
+                         <div className="flex items-center justify-center gap-2">
+                           <span className="text-xs text-gray-500 font-medium">Navegación rápida:</span>
+                           {[-6, -3, 3, 6].map(months => (
+                             <Button
+                               key={months}
+                               variant="ghost"
+                               size="sm"
+                               onClick={() => navigateMonths(months)}
+                               className="h-7 px-2 text-xs hover:bg-gray-100"
+                             >
+                               {months > 0 ? `+${months}M` : `${months}M`}
+                             </Button>
+                           ))}
                          </div>
                        </div>
                      </div>
@@ -1966,15 +2118,17 @@ export const LoansModule = () => {
                                      <div
                                        key={`${payment.id}-${payment.payment_number}`}
                                        className={`text-xs p-1 rounded cursor-pointer hover:opacity-80 transition-colors ${
-                                         payment.is_last_payment 
-                                           ? 'bg-purple-100 text-purple-800' 
-                                           : 'bg-green-100 text-green-800'
+                                         payment.is_overdue
+                                           ? 'bg-red-100 text-red-800 border border-red-200' // Pagos vencidos en rojo
+                                           : payment.is_last_payment 
+                                             ? 'bg-purple-100 text-purple-800' 
+                                             : 'bg-green-100 text-green-800'
                                        }`}
                                        onClick={() => {
                                          setSelectedLoanForPayment(payment);
                                          setShowPaymentForm(true);
                                        }}
-                                       title={`${payment.client?.full_name} - Pago ${payment.payment_number}/${payment.term_months || 12} - $${payment.monthly_payment.toLocaleString()}${payment.is_last_payment ? ' (Último pago)' : ''}`}
+                                       title={`${payment.client?.full_name} - Pago ${payment.payment_number}/${payment.term_months || 12} - $${payment.monthly_payment.toLocaleString()}${payment.is_overdue ? ' (VENCIDO)' : ''}${payment.is_last_payment ? ' (Último pago)' : ''}`}
                                      >
                                        <div className="font-medium truncate">{payment.client?.full_name?.split(' ')[0]}</div>
                                        <div className="text-xs flex justify-between">
@@ -2000,10 +2154,14 @@ export const LoansModule = () => {
                      </div>
 
                      {/* Leyenda */}
-                     <div className="flex items-center justify-center gap-4 text-xs text-gray-600 mt-4">
+                     <div className="flex items-center justify-center gap-4 text-xs text-gray-600 mt-4 flex-wrap">
                        <div className="flex items-center gap-1">
                          <div className="w-3 h-3 bg-blue-50 border border-blue-200 rounded"></div>
                          <span>Hoy</span>
+                       </div>
+                       <div className="flex items-center gap-1">
+                         <div className="w-3 h-3 bg-red-100 border border-red-200 rounded"></div>
+                         <span>Pago vencido</span>
                        </div>
                        <div className="flex items-center gap-1">
                          <div className="w-3 h-3 bg-green-100 rounded"></div>
@@ -2054,7 +2212,7 @@ export const LoansModule = () => {
                      {upcomingPayments.map((payment) => {
                        const paymentDate = payment.payment_date;
                        const today = new Date();
-                       const diffDays = Math.ceil((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                       const diffDays = Math.floor((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                        const isToday = diffDays === 0;
                        const isTomorrow = diffDays === 1;
 
@@ -2064,12 +2222,14 @@ export const LoansModule = () => {
                              <div className="flex items-center gap-3">
                                <h4 className="font-medium">{payment.client?.full_name}</h4>
                                <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                 payment.is_overdue ? 'bg-red-100 text-red-800' :
                                  payment.is_last_payment ? 'bg-purple-100 text-purple-800' :
                                  isToday ? 'bg-blue-100 text-blue-800' :
                                  isTomorrow ? 'bg-orange-100 text-orange-800' :
                                  'bg-gray-100 text-gray-800'
                                }`}>
-                                 {payment.is_last_payment ? 'Último pago' :
+                                 {payment.is_overdue ? 'VENCIDO' :
+                                  payment.is_last_payment ? 'Último pago' :
                                   isToday ? 'Hoy' : 
                                   isTomorrow ? 'Mañana' : 
                                   `En ${diffDays} días`}
@@ -2114,15 +2274,37 @@ export const LoansModule = () => {
          <TabsContent value="configuracion-mora" className="space-y-6">
            <div className="space-y-6">
              <div className="text-center">
-               <h2 className="text-2xl font-bold text-gray-900 mb-2">Configuración de Mora</h2>
-               <p className="text-gray-600">Gestiona la configuración de mora para tus préstamos</p>
+               <h2 className="text-2xl font-bold text-gray-900 mb-2">Gestión de Mora</h2>
+               <p className="text-gray-600">Configura y analiza la mora en tus préstamos</p>
              </div>
              
-             <GlobalLateFeeConfig onConfigUpdated={refetch} />
+             {/* Configuración Global */}
+             <Card>
+               <CardHeader>
+                 <CardTitle className="flex items-center gap-2">
+                   <AlertTriangle className="h-5 w-5 text-orange-600" />
+                   Configuración Global de Mora
+                 </CardTitle>
+                 <p className="text-sm text-gray-600">Establece los parámetros por defecto para nuevos préstamos</p>
+               </CardHeader>
+               <CardContent>
+                 <GlobalLateFeeConfig onConfigUpdated={refetch} />
+               </CardContent>
+             </Card>
              
-             <div className="mt-8">
-               <LateFeeReports />
-             </div>
+             {/* Reportes y Estadísticas */}
+             <Card>
+               <CardHeader>
+                 <CardTitle className="flex items-center gap-2">
+                   <BarChart3 className="h-5 w-5 text-blue-600" />
+                   Reportes y Estadísticas de Mora
+                 </CardTitle>
+                 <p className="text-sm text-gray-600">Análisis detallado del comportamiento de mora en tu cartera</p>
+               </CardHeader>
+               <CardContent>
+                 <LateFeeReports />
+               </CardContent>
+             </Card>
            </div>
          </TabsContent>
        </Tabs>

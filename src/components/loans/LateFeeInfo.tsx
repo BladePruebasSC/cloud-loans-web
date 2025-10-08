@@ -517,7 +517,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
               )}
                <span className="text-lg font-bold text-red-700">
-                 ${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
+                 ${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
                </span>
             </div>
           </div>
@@ -534,7 +534,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
               </div>
               <div className="flex justify-between">
                  <span>Mora calculada:</span>
-                 <span>${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}</span>
+                 <span>${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}</span>
               </div>
             </div>
           )}
@@ -597,7 +597,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                     <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
                       <span className="text-red-800 font-medium">Mora Actual:</span>
                        <span className="text-red-700 font-bold text-lg">
-                         ${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
+                         ${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
                        </span>
                     </div>
                     
@@ -608,7 +608,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                       </div>
                       <div>
                         <span className="text-gray-600">Mora calculada:</span>
-                         <div className="font-semibold">${(currentLateFee > 0 ? currentLateFee : lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}</div>
+                         <div className="font-semibold">${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}</div>
                       </div>
                     </div>
                   </div>

@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useLateFee } from '@/hooks/useLateFee';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { toast } from 'sonner';
 import { 
   FileText, 
@@ -59,7 +61,7 @@ export const LateFeeReports: React.FC = () => {
   const [filteredReports, setFilteredReports] = useState<LateFeeReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState<ReportFilters>({
-    dateFrom: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
+    dateFrom: '2025-01-01', // Cambiar a fecha anterior para incluir préstamos de mayo
     dateTo: new Date().toISOString().split('T')[0],
     status: 'all',
     amountRange: 'all',
@@ -71,6 +73,7 @@ export const LateFeeReports: React.FC = () => {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [viewMode, setViewMode] = useState<'table' | 'chart'>('table');
   const { companyId } = useAuth();
+  const { calculateLateFee } = useLateFee();
 
   // Cargar reportes
   useEffect(() => {
@@ -95,10 +98,15 @@ export const LateFeeReports: React.FC = () => {
           late_fee_rate,
           grace_period_days,
           next_payment_date,
-          last_payment_date,
           late_fee_enabled,
           late_fee_calculation_type,
           total_late_fee_paid,
+          loan_officer_id,
+          term_months,
+          payment_frequency,
+          monthly_payment,
+          interest_rate,
+          start_date,
           clients!inner(
             full_name,
             dni,
@@ -106,15 +114,51 @@ export const LateFeeReports: React.FC = () => {
           ),
           late_fee_history(count)
         `)
-        .eq('clients.company_id', companyId)
-        .eq('late_fee_enabled', true);
+        .eq('loan_officer_id', companyId) // Cambiar a filtrar por loan_officer_id
+        .in('status', ['active', 'overdue']);
 
       if (error) throw error;
 
-      const reportData: LateFeeReport[] = (data || []).map(loan => {
+      console.log('🔍 LateFeeReports: Datos cargados:', data?.length || 0, 'préstamos');
+      console.log('🔍 LateFeeReports: Todos los préstamos:', data);
+      console.log('🔍 LateFeeReports: CompanyId:', companyId);
+      console.log('🔍 LateFeeReports: Estados de préstamos:', data?.map(l => ({ id: l.id, next_payment_date: l.next_payment_date })));
+
+      const reportData: LateFeeReport[] = await Promise.all((data || []).map(async (loan) => {
         const today = new Date();
         const nextPayment = new Date(loan.next_payment_date);
-        const daysOverdue = Math.max(0, Math.ceil((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0));
+        const daysOverdue = Math.max(0, Math.floor((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0));
+
+        // Calcular la mora correctamente usando el mismo método que LateFeeInfo
+        let calculatedLateFee = 0;
+        if (loan.late_fee_enabled && daysOverdue > 0) {
+          try {
+            // Usar la misma función que LateFeeInfo.tsx
+            const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, {
+              id: loan.id,
+              amount: loan.amount,
+              remaining_balance: loan.remaining_balance,
+              next_payment_date: loan.next_payment_date,
+              late_fee_enabled: loan.late_fee_enabled,
+              late_fee_rate: loan.late_fee_rate,
+              grace_period_days: loan.grace_period_days,
+              late_fee_calculation_type: loan.late_fee_calculation_type,
+              term: loan.term_months || 4,
+              payment_frequency: loan.payment_frequency || 'monthly',
+              monthly_payment: loan.monthly_payment || 0,
+              interest_rate: loan.interest_rate || 0,
+              start_date: loan.start_date || new Date().toISOString().split('T')[0]
+            });
+            calculatedLateFee = breakdown.totalLateFee || 0;
+            console.log(`🔍 LateFeeReports: Préstamo ${loan.id} - Mora calculada: ${calculatedLateFee}, Mora BD: ${loan.current_late_fee}`);
+          } catch (error) {
+            console.error('Error calculando mora para préstamo:', loan.id, error);
+            calculatedLateFee = loan.current_late_fee || 0; // Fallback al valor de la base de datos
+          }
+        } else {
+          // Si no hay mora habilitada o no hay días de atraso, usar 0
+          calculatedLateFee = 0;
+        }
 
         return {
           loan_id: loan.id,
@@ -122,19 +166,21 @@ export const LateFeeReports: React.FC = () => {
           client_dni: (loan.clients as any).dni,
           loan_amount: loan.amount,
           remaining_balance: loan.remaining_balance,
-          current_late_fee: loan.current_late_fee || 0,
+          current_late_fee: calculatedLateFee,
           late_fee_rate: loan.late_fee_rate || 0,
           grace_period_days: loan.grace_period_days || 0,
           days_overdue: daysOverdue,
           next_payment_date: loan.next_payment_date,
-          last_payment_date: loan.last_payment_date,
+          last_payment_date: null, // Se calculará desde la tabla payments si es necesario
           late_fee_enabled: loan.late_fee_enabled,
           late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
           total_late_fee_paid: loan.total_late_fee_paid || 0,
           late_fee_history_count: loan.late_fee_history?.[0]?.count || 0
         };
-      });
+      }));
 
+      console.log('🔍 LateFeeReports: Datos procesados:', reportData);
+      console.log('🔍 LateFeeReports: Total mora calculado:', reportData.reduce((sum, r) => sum + r.current_late_fee, 0));
       setReports(reportData);
     } catch (error) {
       console.error('Error loading late fee reports:', error);
@@ -263,6 +309,9 @@ export const LateFeeReports: React.FC = () => {
   const totalLateFee = filteredReports.reduce((sum, report) => sum + report.current_late_fee, 0);
   const totalOverdueLoans = filteredReports.filter(report => report.days_overdue > 0).length;
   const averageLateFee = filteredReports.length > 0 ? totalLateFee / filteredReports.length : 0;
+  const criticalOverdueLoans = filteredReports.filter(report => report.days_overdue > 7).length;
+  const totalLateFeePaid = filteredReports.reduce((sum, report) => sum + report.total_late_fee_paid, 0);
+  const overdueRate = filteredReports.length > 0 ? (totalOverdueLoans / filteredReports.length) * 100 : 0;
 
   return (
     <div className="space-y-6">
@@ -272,16 +321,16 @@ export const LateFeeReports: React.FC = () => {
           <h2 className="text-2xl font-bold text-gray-900">Reportes de Mora</h2>
           <p className="text-gray-600">Análisis y seguimiento de mora en préstamos</p>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={loadReports} disabled={loading} variant="outline">
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={loadReports} disabled={loading} variant="outline" size="sm">
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Actualizar
           </Button>
-          <Button onClick={exportToCSV} variant="outline">
+          <Button onClick={exportToCSV} variant="outline" size="sm">
             <Download className="h-4 w-4 mr-2" />
             Exportar CSV
           </Button>
-          <Button onClick={printReport} variant="outline">
+          <Button onClick={printReport} variant="outline" size="sm">
             <Printer className="h-4 w-4 mr-2" />
             Imprimir
           </Button>
@@ -315,7 +364,7 @@ export const LateFeeReports: React.FC = () => {
               {totalOverdueLoans}
             </div>
             <p className="text-xs text-muted-foreground">
-              {filteredReports.length > 0 ? Math.round((totalOverdueLoans / filteredReports.length) * 100) : 0}% del total
+              {Math.round(overdueRate)}% del total
             </p>
           </CardContent>
         </Card>
@@ -337,12 +386,27 @@ export const LateFeeReports: React.FC = () => {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Críticos (&gt;7 días)</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">
+              {criticalOverdueLoans}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Requieren atención urgente
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Pagado</CardTitle>
             <FileText className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              RD${filteredReports.reduce((sum, report) => sum + report.total_late_fee_paid, 0).toLocaleString()}
+              RD${totalLateFeePaid.toLocaleString()}
             </div>
             <p className="text-xs text-muted-foreground">
               En mora cobrada
@@ -360,7 +424,7 @@ export const LateFeeReports: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
             <div className="space-y-2">
               <Label htmlFor="search">Buscar Cliente</Label>
               <div className="relative">
@@ -494,22 +558,24 @@ export const LateFeeReports: React.FC = () => {
                           <h3 className="font-semibold text-lg">{report.client_name}</h3>
                           {getStatusBadge(report)}
                         </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 text-sm">
                           <div>
-                            <span className="text-gray-600">DNI:</span>
-                            <div className="font-medium">{report.client_dni}</div>
+                            <span className="text-gray-600 text-xs">DNI:</span>
+                            <div className="font-medium text-sm">{report.client_dni}</div>
                           </div>
                           <div>
-                            <span className="text-gray-600">Monto:</span>
-                            <div className="font-medium">RD${report.loan_amount.toLocaleString()}</div>
+                            <span className="text-gray-600 text-xs">Monto:</span>
+                            <div className="font-medium text-sm">RD${report.loan_amount.toLocaleString()}</div>
                           </div>
                           <div>
-                            <span className="text-gray-600">Balance:</span>
-                            <div className="font-medium">RD${report.remaining_balance.toLocaleString()}</div>
+                            <span className="text-gray-600 text-xs">Balance:</span>
+                            <div className="font-medium text-sm">RD${report.remaining_balance.toLocaleString()}</div>
                           </div>
                           <div>
-                            <span className="text-gray-600">Días Vencidos:</span>
-                            <div className="font-medium text-red-600">{report.days_overdue}</div>
+                            <span className="text-gray-600 text-xs">Días Vencidos:</span>
+                            <div className={`font-medium text-sm ${report.days_overdue > 7 ? 'text-red-600' : report.days_overdue > 0 ? 'text-orange-600' : 'text-green-600'}`}>
+                              {report.days_overdue}
+                            </div>
                           </div>
                         </div>
                       </div>
