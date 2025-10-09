@@ -11,7 +11,7 @@ import {
   getOriginalLateFeeBreakdown
 } from '@/utils/lateFeeCalculator';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
-import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/dateUtils';
+import { getCurrentDateInSantoDomingo, getCurrentDateString, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { LateFeeConfigModal } from './LateFeeConfigModal';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -570,7 +570,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   </div>
                   <div>
                     <span className="text-gray-600">Fecha de pago:</span>
-                    <div className="font-semibold">{new Date(nextPaymentDate).toLocaleDateString()}</div>
+                    <div className="font-semibold">{formatDateStringForSantoDomingo(nextPaymentDate)}</div>
                   </div>
                   <div>
                     <span className="text-gray-600">Días vencidos:</span>
@@ -649,7 +649,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                                 {item.isPaid && <span className="ml-2 text-green-600 text-xs">✅ PAGADA</span>}
                               </span>
                               <div className="text-xs text-gray-600">
-                                Vence: {new Date(item.dueDate).toLocaleDateString()} |
+                                Vence: {formatDateStringForSantoDomingo(item.dueDate)} |
                                 {item.daysOverdue} días de atraso
                               </div>
                             </div>
@@ -746,7 +746,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                             <TrendingUp className="h-4 w-4 text-red-600" />
                           )}
                           <span className="font-semibold">
-                            {new Date(record.date).toLocaleDateString()}
+                            {formatDateStringForSantoDomingo(record.date)}
                           </span>
                           <Badge variant={record.type === 'payment' ? 'default' : 'destructive'}>
                             {record.description}

@@ -7,19 +7,21 @@
 export const getCurrentDateInSantoDomingo = (): Date => {
   const now = new Date();
   
+  // Convertir a la zona horaria de Santo Domingo
+  const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
+  
   // DEBUG: Verificar la fecha actual
   if (process.env.NODE_ENV === 'development') {
     console.log('🔍 DEBUG getCurrentDateInSantoDomingo - Fecha actual:', {
       now: now.toISOString(),
       nowLocal: now.toLocaleString(),
       nowSantoDomingo: now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}),
-      currentDateString: now.toISOString().split('T')[0]
+      santoDomingoDate: santoDomingoDate.toISOString(),
+      currentDateString: santoDomingoDate.toISOString().split('T')[0]
     });
   }
   
-  // Usar directamente la fecha actual sin conversión de zona horaria
-  // para evitar problemas de cálculo
-  return now;
+  return santoDomingoDate;
 };
 
 /**
@@ -93,4 +95,29 @@ export const formatDateForSantoDomingo = (date: Date): string => {
     month: '2-digit',
     day: '2-digit'
   });
+};
+
+/**
+ * Formatea una fecha string (YYYY-MM-DD) para mostrar en la zona horaria de Santo Domingo
+ */
+export const formatDateStringForSantoDomingo = (dateString: string): string => {
+  const date = new Date(dateString + 'T00:00:00');
+  return date.toLocaleDateString('es-DO', {
+    timeZone: 'America/Santo_Domingo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+};
+
+/**
+ * Obtiene la fecha actual en formato YYYY-MM-DD para Santo Domingo
+ */
+export const getCurrentDateStringForSantoDomingo = (): string => {
+  const now = getCurrentDateInSantoDomingo();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}`;
 };

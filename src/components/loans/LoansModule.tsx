@@ -22,6 +22,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useLateFee } from '@/hooks/useLateFee';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { 
   CreditCard, 
   Plus, 
@@ -859,7 +860,7 @@ export const LoansModule = () => {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                           <div className="text-center p-3 bg-gray-50 rounded-lg">
                             <div className="text-lg font-bold text-gray-800 mb-1">
-                              {loan.next_payment_date}
+                              {formatDateStringForSantoDomingo(loan.next_payment_date)}
                             </div>
                             <div className="text-xs text-gray-600">Próximo Pago</div>
                           </div>
@@ -1229,7 +1230,7 @@ export const LoansModule = () => {
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Próximo Pago:</span> 
-                               <span className="text-xs sm:text-sm">{loan.next_payment_date}</span>
+                               <span className="text-xs sm:text-sm">{formatDateStringForSantoDomingo(loan.next_payment_date)}</span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Plazo:</span> 
@@ -1372,8 +1373,8 @@ export const LoansModule = () => {
                </CardHeader>
                <CardContent>
                  <div className="text-2xl font-bold text-orange-600">{loans.filter(loan => {
-                   const nextPayment = new Date(loan.next_payment_date);
-                   const today = new Date();
+                   const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
+                   const today = getCurrentDateInSantoDomingo();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                    return loan.status === 'pending' || 
                           loan.status === 'overdue' || 
@@ -1402,8 +1403,8 @@ export const LoansModule = () => {
                </CardHeader>
                <CardContent>
                  <div className="text-2xl font-bold text-yellow-600">{loans.filter(loan => {
-                   const nextPayment = new Date(loan.next_payment_date);
-                   const today = new Date();
+                   const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
+                   const today = getCurrentDateInSantoDomingo();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                    return loan.status === 'active' && diffDays <= 7 && diffDays > 0;
                  }).length}</div>
@@ -1444,8 +1445,8 @@ export const LoansModule = () => {
                  <div className="text-center py-8 text-gray-500">Cargando préstamos pendientes...</div>
                ) : (() => {
                  const pendingLoans = loans.filter(loan => {
-                   const nextPayment = new Date(loan.next_payment_date);
-                   const today = new Date();
+                   const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
+                   const today = getCurrentDateInSantoDomingo();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                    
                    // Incluir préstamos que:
@@ -1472,8 +1473,8 @@ export const LoansModule = () => {
                  return (
                    <div className="space-y-4">
                      {pendingLoans.map((loan) => {
-                                               const nextPayment = new Date(loan.next_payment_date);
-                        const today = new Date();
+                                               const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
+                        const today = getCurrentDateInSantoDomingo();
                         const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                         const isPending = loan.status === 'pending';
                         const isOverdue = loan.status === 'overdue' || nextPayment < today;
@@ -1533,7 +1534,7 @@ export const LoansModule = () => {
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Vence:</span> 
-                                   <span className="text-xs sm:text-sm font-semibold">{loan.next_payment_date}</span>
+                                   <span className="text-xs sm:text-sm font-semibold">{formatDateStringForSantoDomingo(loan.next_payment_date)}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Tasa:</span> 
@@ -1760,8 +1761,8 @@ export const LoansModule = () => {
              const allPayments = [];
              activeLoans.forEach(loan => {
                if (loan.next_payment_date) {
-                 const paymentDate = new Date(loan.next_payment_date);
-                 const today = new Date();
+                 const paymentDate = new Date(loan.next_payment_date + 'T00:00:00');
+                 const today = getCurrentDateInSantoDomingo();
                  const daysDiff = Math.floor((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                  
                  allPayments.push({
@@ -1794,8 +1795,8 @@ export const LoansModule = () => {
                </CardHeader>
                <CardContent>
                  <div className="text-2xl font-bold text-blue-600">{loans.filter(loan => {
-                   const nextPayment = new Date(loan.next_payment_date);
-                   const today = new Date();
+                   const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
+                   const today = getCurrentDateInSantoDomingo();
                    return (loan.status === 'active' || loan.status === 'overdue') && 
                           loan.remaining_balance > 0 &&
                           nextPayment.toDateString() === today.toDateString();
@@ -1898,7 +1899,7 @@ export const LoansModule = () => {
                      }
                      
                      // Usar next_payment_date como punto de partida si existe, sino start_date
-                     let currentPaymentDate = new Date(loan.next_payment_date || loan.start_date);
+                     let currentPaymentDate = new Date((loan.next_payment_date || loan.start_date) + 'T00:00:00');
                      let paymentNumber = 1;
                      const maxPayments = loan.term_months || 12;
                      
@@ -1947,7 +1948,7 @@ export const LoansModule = () => {
                    };
 
                    // Generar fechas para el mes seleccionado
-                   const today = new Date();
+                   const today = getCurrentDateInSantoDomingo();
                    const currentMonth = currentViewMonth.getMonth();
                    const currentYear = currentViewMonth.getFullYear();
                    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -2211,7 +2212,7 @@ export const LoansModule = () => {
                    <div className="space-y-3">
                      {upcomingPayments.map((payment) => {
                        const paymentDate = payment.payment_date;
-                       const today = new Date();
+                       const today = getCurrentDateInSantoDomingo();
                        const diffDays = Math.floor((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                        const isToday = diffDays === 0;
                        const isTomorrow = diffDays === 1;
