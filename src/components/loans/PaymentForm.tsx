@@ -941,14 +941,36 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         status: newBalance <= 0 ? 'paid' : 'active'
       });
 
+      // Preparar datos de actualización del préstamo
+      const loanUpdateData: any = {
+        remaining_balance: newBalance,
+        next_payment_date: nextPaymentDate,
+        status: newBalance <= 0 ? 'paid' : 'active',
+        paid_installments: updatedPaidInstallments,
+      };
+
+      // Si se pagó mora, actualizar el campo total_late_fee_paid
+      if (data.late_fee_amount && data.late_fee_amount > 0) {
+        const { data: currentLoan, error: loanError } = await supabase
+          .from('loans')
+          .select('total_late_fee_paid')
+          .eq('id', data.loan_id)
+          .single();
+
+        if (!loanError && currentLoan) {
+          const currentTotalPaid = currentLoan.total_late_fee_paid || 0;
+          loanUpdateData.total_late_fee_paid = currentTotalPaid + data.late_fee_amount;
+          console.log('🔍 PaymentForm: Actualizando total_late_fee_paid:', {
+            anterior: currentTotalPaid,
+            pago: data.late_fee_amount,
+            nuevo: loanUpdateData.total_late_fee_paid
+          });
+        }
+      }
+
       const { data: updatedLoan, error: loanError } = await supabase
         .from('loans')
-        .update({
-          remaining_balance: newBalance,
-          next_payment_date: nextPaymentDate,
-          status: newBalance <= 0 ? 'paid' : 'active',
-          paid_installments: updatedPaidInstallments,
-        })
+        .update(loanUpdateData)
         .eq('id', data.loan_id)
         .select();
 

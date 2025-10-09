@@ -160,6 +160,34 @@ export const LateFeeReports: React.FC = () => {
           calculatedLateFee = 0;
         }
 
+        // Calcular la mora pagada desde la tabla payments como respaldo
+        let actualLateFeePaid = loan.total_late_fee_paid || 0;
+        try {
+          const { data: paymentsData, error: paymentsError } = await supabase
+            .from('payments')
+            .select('late_fee')
+            .eq('loan_id', loan.id)
+            .not('late_fee', 'is', null)
+            .gt('late_fee', 0);
+
+          if (!paymentsError && paymentsData) {
+            const calculatedLateFeePaid = paymentsData.reduce((sum, payment) => sum + (payment.late_fee || 0), 0);
+            // Usar el valor calculado si es diferente del valor en la base de datos
+            if (calculatedLateFeePaid !== actualLateFeePaid) {
+              console.log(`🔍 LateFeeReports: Mora pagada - BD: ${actualLateFeePaid}, Calculada: ${calculatedLateFeePaid} para préstamo ${loan.id}`);
+              actualLateFeePaid = calculatedLateFeePaid;
+              
+              // Actualizar el campo en la base de datos para futuras consultas
+              await supabase
+                .from('loans')
+                .update({ total_late_fee_paid: calculatedLateFeePaid })
+                .eq('id', loan.id);
+            }
+          }
+        } catch (error) {
+          console.error('Error calculando mora pagada desde payments:', error);
+        }
+
         return {
           loan_id: loan.id,
           client_name: (loan.clients as any).full_name,
@@ -174,7 +202,7 @@ export const LateFeeReports: React.FC = () => {
           last_payment_date: null, // Se calculará desde la tabla payments si es necesario
           late_fee_enabled: loan.late_fee_enabled,
           late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
-          total_late_fee_paid: loan.total_late_fee_paid || 0,
+          total_late_fee_paid: actualLateFeePaid,
           late_fee_history_count: loan.late_fee_history?.[0]?.count || 0
         };
       }));

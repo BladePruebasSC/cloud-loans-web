@@ -75,6 +75,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
   const [pendingCapital, setPendingCapital] = useState<number>(0);
   const [detectedPaidInstallments, setDetectedPaidInstallments] = useState<number[]>([]);
   const [manualBreakdownState, setManualBreakdownState] = useState<any[]>([]);
+  const [totalLateFeePaid, setTotalLateFeePaid] = useState<number>(0);
   const { calculateLateFee, getLateFeeHistory, loading } = useLateFee();
 
   // Función para obtener pagos de mora previos
@@ -84,7 +85,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         .from('payments')
         .select('late_fee')
         .eq('loan_id', loanId)
-        .not('late_fee', 'is', null);
+        .not('late_fee', 'is', null)
+        .gt('late_fee', 0);
 
       if (error) throw error;
       
@@ -346,6 +348,10 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         const capital = await calculatePendingCapital();
         setPendingCapital(capital);
         
+        // Cargar la mora pagada
+        const paidLateFee = await getPreviousLateFeePayments();
+        setTotalLateFeePaid(paidLateFee);
+        
         const localCalculation = await calculateLocalLateFee();
         if (localCalculation) {
           console.log('🔍 LateFeeInfo: Estableciendo cálculo local:', localCalculation);
@@ -361,6 +367,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         // Aún así calcular el capital pendiente para la proyección
         const capital = await calculatePendingCapital();
         setPendingCapital(capital);
+        setTotalLateFeePaid(0);
       }
     };
 
@@ -567,7 +574,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   </div>
                   <div>
                     <span className="text-gray-600">Días vencidos:</span>
-                    <div className="font-semibold text-red-600">{manualBreakdownState?.[0]?.daysOverdue || 0} días</div>
+                    <div className="font-semibold text-red-600">{calculatedDaysOverdue || 0} días</div>
                   </div>
                   <div>
                     <span className="text-gray-600">Días de gracia:</span>
@@ -583,6 +590,10 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   <div>
                     <span className="text-gray-600">Tasa de mora:</span>
                     <div className="font-semibold">{lateFeeRate}%</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Mora pagada:</span>
+                    <div className="font-semibold text-green-600">RD${totalLateFeePaid.toLocaleString()}</div>
                   </div>
                 </div>
               </CardContent>
