@@ -911,7 +911,7 @@ export const LoansModule = () => {
                         {/* Botones de acción mejorados */}
                         <div className="border-t border-gray-100 pt-6">
                           {loan.status === 'pending' ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               <Button
                                 variant="default"
                                 size="lg"
@@ -920,18 +920,6 @@ export const LoansModule = () => {
                               >
                                 <CheckCircle className="h-5 w-5 mr-2" />
                                 Aprobar Préstamo
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="lg"
-                                onClick={() => {
-                                  setSelectedLoan(loan);
-                                  setShowUpdateForm(true);
-                                }}
-                                className="h-12 text-base font-semibold border-2 hover:bg-gray-50 transition-all duration-200"
-                              >
-                                <Edit className="h-5 w-5 mr-2" />
-                                <span>{EDIT_BUTTON_TEXT}</span>
                               </Button>
                               <Button
                                 variant="destructive"
@@ -1263,19 +1251,6 @@ export const LoansModule = () => {
                                  <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
                                  <span className="sm:hidden">Aprobar</span>
                                  <span className="hidden sm:inline">Aprobar</span>
-                               </Button>
-                               <Button
-                                 variant="outline"
-                                 size="sm"
-                                 onClick={() => {
-                                   setSelectedLoan(loan);
-                                   setShowUpdateForm(true);
-                                 }}
-                                 className="w-full sm:w-auto text-xs"
-                               >
-                                 <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                 <span className="sm:hidden">{EDIT_BUTTON_TEXT}</span>
-                                 <span className="hidden sm:inline">{EDIT_BUTTON_TEXT}</span>
                                </Button>
                                <Button
                                  variant="destructive"
