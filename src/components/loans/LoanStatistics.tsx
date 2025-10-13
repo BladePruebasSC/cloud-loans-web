@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { 
   BarChart3,
   DollarSign, 
@@ -128,7 +129,55 @@ export const LoanStatistics: React.FC<LoanStatisticsProps> = ({
       const totalPaid = paymentsData.reduce((sum, payment) => sum + payment.amount, 0);
       const totalPrincipalPaid = paymentsData.reduce((sum, payment) => sum + payment.principal_amount, 0);
       const totalInterestPaid = paymentsData.reduce((sum, payment) => sum + payment.interest_amount, 0);
-      const totalLateFees = paymentsData.reduce((sum, payment) => sum + payment.late_fee, 0);
+      
+      // Calcular mora actual acumulada en tiempo real
+      let totalLateFees = 0;
+      
+      try {
+        // Usar la función de cálculo de mora que considera pagos parciales
+        const loanDataForCalculation = {
+          id: loanData.id,
+          amount: loanData.amount,
+          interest_rate: loanData.interest_rate,
+          monthly_payment: loanData.monthly_payment,
+          remaining_balance: loanData.remaining_balance,
+          next_payment_date: loanData.next_payment_date,
+          term_months: loanData.term_months,
+          payment_frequency: loanData.payment_frequency || 'monthly',
+          late_fee_enabled: loanData.late_fee_enabled || false,
+          late_fee_rate: loanData.late_fee_rate || 2.0,
+          grace_period_days: loanData.grace_period_days || 0,
+          max_late_fee: loanData.max_late_fee || 0,
+          late_fee_calculation_type: loanData.late_fee_calculation_type || 'daily'
+        };
+
+        console.log('🔍 LoanStatistics: Calculando mora en tiempo real...', loanDataForCalculation);
+        
+        const lateFeeBreakdown = await getLateFeeBreakdownFromInstallments(loanData.id, loanDataForCalculation);
+        totalLateFees = lateFeeBreakdown?.totalLateFee || 0;
+        
+        console.log('🔍 LoanStatistics: Resultado del cálculo de mora:', {
+          breakdown: lateFeeBreakdown,
+          totalLateFees
+        });
+        
+      } catch (error) {
+        console.error('🔍 LoanStatistics: Error calculando mora:', error);
+        // Si falla el cálculo en tiempo real, usar el valor de la base de datos como respaldo
+        totalLateFees = loanData.current_late_fee || 0;
+      }
+      
+      // Información adicional para debugging
+      const totalLateFeesPaid = paymentsData.reduce((sum, payment) => sum + (payment.late_fee || 0), 0);
+      
+      console.log('🔍 LoanStatistics: Resumen de mora:', {
+        currentLateFeeFromDB: loanData.current_late_fee,
+        totalLateFeePaidFromLoan: loanData.total_late_fee_paid,
+        totalLateFeesFromPayments: totalLateFeesPaid,
+        calculatedLateFee: totalLateFees,
+        finalTotalLateFees: totalLateFees,
+        note: 'Mora calculada en tiempo real usando getLateFeeBreakdownFromInstallments'
+      });
 
       // Calcular días de atraso
       const today = new Date();
@@ -388,7 +437,7 @@ export const LoanStatistics: React.FC<LoanStatisticsProps> = ({
                     <span className="font-semibold">{formatCurrency(stats.totalInterestPaid)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Cargos por Mora:</span>
+                    <span>Mora Actual:</span>
                     <span className="font-semibold text-red-600">{formatCurrency(stats.totalLateFees)}</span>
                   </div>
                   <div className="flex justify-between">
