@@ -55,6 +55,9 @@ interface Loan {
   next_payment_date: string;
   start_date: string;
   status: string;
+  paid_installments?: number[];
+  payment_frequency?: string;
+  first_payment_date?: string;
   client: {
     full_name: string;
     dni: string;
@@ -208,11 +211,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         // Validaciones para pagos
         if (data.amount > loan.remaining_balance) {
           toast.error(`El pago no puede exceder el balance restante de RD$${loan.remaining_balance.toLocaleString()}`);
+          setLoading(false);
           return;
         }
-        
+
         if (data.amount <= 0) {
           toast.error('El monto del pago debe ser mayor a 0');
+          setLoading(false);
           return;
         }
 
@@ -265,29 +270,159 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             remaining_balance: calculatedValues.newBalance,
             status: calculatedValues.newBalance <= 0 ? 'paid' : loan.status,
           };
-          
-          // Solo actualizar next_payment_date si es un pago completo
+
+          // IMPORTANTE: Solo actualizar next_payment_date y paid_installments si es un pago COMPLETO
+          // Los abonos parciales (partial_payment) NO marcan cuotas como pagadas
+          // ni avanzan la fecha de próximo pago
           if (updateType === 'payment' && calculatedValues.newBalance > 0) {
-            const nextPaymentDate = new Date(loan.next_payment_date);
-            nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
-            loanUpdates.next_payment_date = nextPaymentDate.toISOString().split('T')[0];
+            // Actualizar next_payment_date según la frecuencia de pago
+            const nextDate = new Date(loan.next_payment_date);
+            const frequency = loan.payment_frequency || 'monthly';
+
+            switch (frequency) {
+              case 'daily':
+                nextDate.setDate(nextDate.getDate() + 1);
+                break;
+              case 'weekly':
+                nextDate.setDate(nextDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                nextDate.setDate(nextDate.getDate() + 14);
+                break;
+              case 'monthly':
+                nextDate.setMonth(nextDate.getMonth() + 1);
+                break;
+              case 'quarterly':
+                nextDate.setMonth(nextDate.getMonth() + 3);
+                break;
+              case 'yearly':
+                nextDate.setFullYear(nextDate.getFullYear() + 1);
+                break;
+              default:
+                nextDate.setMonth(nextDate.getMonth() + 1);
+            }
+
+            loanUpdates.next_payment_date = nextDate.toISOString().split('T')[0];
+
+            // Actualizar paid_installments: marcar la primera cuota NO pagada
+            const updatedPaidInstallments = [...(loan.paid_installments || [])];
+            const totalInstallments = loan.term_months || 4;
+            let firstUnpaidInstallment = null;
+
+            for (let i = 1; i <= totalInstallments; i++) {
+              if (!updatedPaidInstallments.includes(i)) {
+                firstUnpaidInstallment = i;
+                break;
+              }
+            }
+
+            if (firstUnpaidInstallment) {
+              updatedPaidInstallments.push(firstUnpaidInstallment);
+              updatedPaidInstallments.sort((a, b) => a - b);
+              loanUpdates.paid_installments = updatedPaidInstallments;
+
+              // Marcar la cuota como pagada en la tabla installments
+              try {
+                await supabase
+                  .from('installments')
+                  .update({
+                    is_paid: true,
+                    paid_date: new Date().toISOString().split('T')[0],
+                    late_fee_paid: 0
+                  })
+                  .eq('loan_id', loan.id)
+                  .eq('installment_number', firstUnpaidInstallment);
+
+                console.log(`✅ Cuota ${firstUnpaidInstallment} marcada como pagada`);
+              } catch (error) {
+                console.error('Error marcando cuota como pagada:', error);
+              }
+            }
           }
           break;
           
 
           
         case 'term_extension':
-          loanUpdates = {
-            term_months: loan.term_months + (data.additional_months || 0),
-            monthly_payment: calculatedValues.newPayment,
-            end_date: calculatedValues.newEndDate,
-          };
+          {
+            const additionalMonths = data.additional_months || 0;
+            const newTermMonths = loan.term_months + additionalMonths;
+
+            loanUpdates = {
+              term_months: newTermMonths,
+              monthly_payment: calculatedValues.newPayment,
+              end_date: calculatedValues.newEndDate,
+            };
+
+            // Crear las nuevas cuotas en la tabla installments
+            try {
+              const newInstallments = [];
+              const startDate = new Date(loan.first_payment_date || loan.next_payment_date);
+              const frequency = loan.payment_frequency || 'monthly';
+
+              for (let i = loan.term_months + 1; i <= newTermMonths; i++) {
+                const dueDate = new Date(startDate);
+                const periodsToAdd = i - 1;
+
+                switch (frequency) {
+                  case 'daily':
+                    dueDate.setDate(dueDate.getDate() + periodsToAdd);
+                    break;
+                  case 'weekly':
+                    dueDate.setDate(dueDate.getDate() + periodsToAdd * 7);
+                    break;
+                  case 'biweekly':
+                    dueDate.setDate(dueDate.getDate() + periodsToAdd * 14);
+                    break;
+                  case 'monthly':
+                    dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
+                    break;
+                  case 'quarterly':
+                    dueDate.setMonth(dueDate.getMonth() + periodsToAdd * 3);
+                    break;
+                  case 'yearly':
+                    dueDate.setFullYear(dueDate.getFullYear() + periodsToAdd);
+                    break;
+                  default:
+                    dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
+                }
+
+                newInstallments.push({
+                  loan_id: loan.id,
+                  installment_number: i,
+                  due_date: dueDate.toISOString().split('T')[0],
+                  amount: calculatedValues.newPayment,
+                  is_paid: false,
+                  principal_amount: 0,
+                  interest_amount: 0,
+                  late_fee_paid: 0
+                });
+              }
+
+              if (newInstallments.length > 0) {
+                const { error: installmentsError } = await supabase
+                  .from('installments')
+                  .insert(newInstallments);
+
+                if (installmentsError) {
+                  console.error('Error creando nuevas cuotas:', installmentsError);
+                } else {
+                  console.log(`✅ ${newInstallments.length} nuevas cuotas creadas`);
+                }
+              }
+            } catch (error) {
+              console.error('Error en extensión de plazo:', error);
+            }
+          }
           break;
           
         case 'balance_adjustment':
           loanUpdates = {
             remaining_balance: calculatedValues.newBalance,
           };
+          // NOTA: El ajuste de balance no afecta paid_installments ni installments
+          // porque solo modifica el balance restante sin marcar cuotas como pagadas
+          // La mora se recalculará automáticamente basándose en las cuotas pendientes
           break;
           
         case 'late_fee_config':
