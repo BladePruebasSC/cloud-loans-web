@@ -272,12 +272,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             status: calculatedValues.newBalance <= 0 ? 'paid' : loan.status,
           };
 
-          // Si es un abono parcial, distribuir el pago entre las cuotas con mora pendiente
+          // Si es un abono parcial, distribuir el pago entre las cuotas completas
           if (updateType === 'partial_payment' && data.amount) {
             try {
               console.log('🔍 LoanUpdateForm: Distribuyendo abono parcial entre cuotas...');
               
-              // Obtener cuotas no pagadas del préstamo
+              // Obtener cuotas no pagadas del préstamo ordenadas por número
               const { data: installments, error: installmentsError } = await supabase
                 .from('installments')
                 .select('*')
@@ -290,75 +290,63 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               if (installments && installments.length > 0) {
                 let remainingAmount = data.amount;
                 
+                console.log(`💰 Monto a distribuir: RD$${remainingAmount.toLocaleString()}`);
+                
                 // Distribuir el abono comenzando por las cuotas más antiguas
                 for (const installment of installments) {
                   if (remainingAmount <= 0) break;
                   
-                  // Calcular mora total de esta cuota
-                  const daysOverdue = Math.max(0, 
-                    Math.floor((new Date().getTime() - new Date(installment.due_date).getTime()) / (1000 * 60 * 60 * 24))
-                  );
+                  // El total de la cuota es total_amount (principal + interés)
+                  const installmentTotal = installment.total_amount;
                   
-                  let totalLateFee = 0;
-                  if (daysOverdue > 0) {
-                    // Calcular mora según el tipo configurado
-                    const loanData = await supabase
-                      .from('loans')
-                      .select('late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type')
-                      .eq('id', loan.id)
-                      .single();
-                    
-                    if (loanData.data) {
-                      const gracePeriod = loanData.data.grace_period_days || 0;
-                      const effectiveDays = Math.max(0, daysOverdue - gracePeriod);
-                      
-                      if (effectiveDays > 0) {
-                        const rate = loanData.data.late_fee_rate || 0;
-                        const calcType = loanData.data.late_fee_calculation_type || 'daily';
-                        
-                        switch (calcType) {
-                          case 'daily':
-                            totalLateFee = (installment.principal_amount * rate / 100) * effectiveDays;
-                            break;
-                          case 'monthly':
-                            const monthsOverdue = Math.ceil(effectiveDays / 30);
-                            totalLateFee = (installment.principal_amount * rate / 100) * monthsOverdue;
-                            break;
-                          case 'compound':
-                            totalLateFee = installment.principal_amount * (Math.pow(1 + rate / 100, effectiveDays) - 1);
-                            break;
-                        }
-                        
-                        if (loanData.data.max_late_fee && loanData.data.max_late_fee > 0) {
-                          totalLateFee = Math.min(totalLateFee, loanData.data.max_late_fee);
-                        }
-                      }
-                    }
-                  }
+                  console.log(`📋 Cuota ${installment.installment_number}: Total RD$${installmentTotal.toLocaleString()}, Restante: RD$${remainingAmount.toLocaleString()}`);
                   
-                  const currentLateFeePaid = installment.late_fee_paid || 0;
-                  const remainingLateFee = Math.max(0, totalLateFee - currentLateFeePaid);
-                  
-                  if (remainingLateFee > 0) {
-                    const paymentToApply = Math.min(remainingAmount, remainingLateFee);
-                    const newLateFeePaid = currentLateFeePaid + paymentToApply;
-                    
+                  if (remainingAmount >= installmentTotal) {
+                    // Pago completo de la cuota - marcar como pagada
                     await supabase
                       .from('installments')
-                      .update({ late_fee_paid: newLateFeePaid })
+                      .update({ 
+                        is_paid: true, 
+                        paid_date: new Date().toISOString().split('T')[0],
+                        late_fee_paid: 0 // Resetear mora pagada ya que la cuota está completa
+                      })
                       .eq('loan_id', loan.id)
                       .eq('installment_number', installment.installment_number);
                     
-                    console.log(`✅ Cuota ${installment.installment_number}: abono de RD$${paymentToApply.toLocaleString()} (${currentLateFeePaid} → ${newLateFeePaid})`);
+                    remainingAmount -= installmentTotal;
+                    console.log(`✅ Cuota ${installment.installment_number} PAGADA COMPLETA (RD$${installmentTotal.toLocaleString()}). Restante: RD$${remainingAmount.toLocaleString()}`);
                     
-                    remainingAmount -= paymentToApply;
+                    // Actualizar paid_installments en el préstamo
+                    const updatedPaidInstallments = [...(loan.paid_installments || [])];
+                    if (!updatedPaidInstallments.includes(installment.installment_number)) {
+                      updatedPaidInstallments.push(installment.installment_number);
+                      updatedPaidInstallments.sort((a, b) => a - b);
+                      
+                      await supabase
+                        .from('loans')
+                        .update({ paid_installments: updatedPaidInstallments })
+                        .eq('id', loan.id);
+                    }
+                  } else if (remainingAmount > 0) {
+                    // Pago parcial de la cuota - NO marcar como pagada, solo registrar el abono
+                    console.log(`💵 Cuota ${installment.installment_number} ABONO PARCIAL: RD$${remainingAmount.toLocaleString()} de RD$${installmentTotal.toLocaleString()}`);
+                    
+                    // El abono parcial se registrará en la tabla de pagos pero la cuota sigue pendiente
+                    // No actualizamos installments aquí porque no está pagada completamente
+                    toast.info(`Abono de RD$${remainingAmount.toLocaleString()} aplicado a cuota ${installment.installment_number}. Faltan RD$${(installmentTotal - remainingAmount).toLocaleString()}`);
+                    
+                    remainingAmount = 0;
+                    break;
                   }
                 }
                 
-                console.log(`🔍 LoanUpdateForm: Abono parcial distribuido. Restante: RD$${remainingAmount.toLocaleString()}`);
+                if (remainingAmount > 0) {
+                  console.log(`ℹ️ Sobrante de RD$${remainingAmount.toLocaleString()} - todas las cuotas pendientes están pagadas`);
+                }
               }
             } catch (error) {
               console.error('Error distribuyendo abono parcial:', error);
+              toast.error('Error al distribuir el abono entre las cuotas');
             }
           }
 
@@ -1054,7 +1042,23 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           <span className="font-semibold text-blue-600">${form.watch('amount')?.toLocaleString()}</span>
                         </div>
                         
-                        {calculatedValues.interestAmount > 0 && (
+                        {form.watch('update_type') === 'partial_payment' && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2">
+                            <div className="text-sm text-blue-800">
+                              <strong>💡 Distribución del Abono</strong>
+                              <p className="mt-1 text-xs">
+                                El abono se aplicará a las cuotas pendientes en orden. 
+                                Si el monto cubre cuotas completas (RD${loan.monthly_payment.toLocaleString()} c/u), 
+                                se marcarán como pagadas y desaparecerá su mora.
+                              </p>
+                              <p className="mt-1 text-xs">
+                                Ejemplo: Con RD${(loan.monthly_payment * 2).toLocaleString()} pagas 2 cuotas completas.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {calculatedValues.interestAmount > 0 && form.watch('update_type') !== 'partial_payment' && (
                           <div className="flex justify-between">
                             <span className="text-gray-600">A Intereses:</span>
                             <span className="font-semibold text-orange-600">${calculatedValues.interestAmount.toLocaleString()}</span>
