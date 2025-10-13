@@ -439,6 +439,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             const additionalMonths = data.additional_months || 0;
             const newTermMonths = loan.term_months + additionalMonths;
 
+            console.log('🔍 LoanUpdateForm: Iniciando extensión de plazo:', {
+              additionalMonths,
+              currentTermMonths: loan.term_months,
+              newTermMonths,
+              newPayment: calculatedValues.newPayment
+            });
+
             loanUpdates = {
               term_months: newTermMonths,
               monthly_payment: calculatedValues.newPayment,
@@ -448,8 +455,25 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // Crear las nuevas cuotas en la tabla installments
             try {
               const newInstallments = [];
-              const startDate = new Date(loan.first_payment_date || loan.next_payment_date);
+              const startDate = new Date(loan.first_payment_date || loan.start_date || loan.next_payment_date);
               const frequency = loan.payment_frequency || 'monthly';
+
+              console.log('🔍 LoanUpdateForm: Fecha base para cuotas:', {
+                first_payment_date: loan.first_payment_date,
+                start_date: loan.start_date,
+                next_payment_date: loan.next_payment_date,
+                startDate: startDate.toISOString()
+              });
+
+              // Calcular el monto de capital e interés para cada cuota nueva
+              const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+              const principalPerPayment = calculatedValues.newPayment - fixedInterestPerPayment;
+
+              console.log('🔍 LoanUpdateForm: Distribución por cuota:', {
+                totalPayment: calculatedValues.newPayment,
+                interest: fixedInterestPerPayment,
+                principal: principalPerPayment
+              });
 
               for (let i = loan.term_months + 1; i <= newTermMonths; i++) {
                 const dueDate = new Date(startDate);
@@ -478,33 +502,41 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
                 }
 
-                newInstallments.push({
+                const installmentData = {
                   loan_id: loan.id,
                   installment_number: i,
                   due_date: dueDate.toISOString().split('T')[0],
-                  amount: calculatedValues.newPayment,
+                  total_amount: calculatedValues.newPayment,
+                  principal_amount: principalPerPayment,
+                  interest_amount: fixedInterestPerPayment,
                   is_paid: false,
-                  principal_amount: 0,
-                  interest_amount: 0,
                   late_fee_paid: 0
-                });
+                };
+
+                newInstallments.push(installmentData);
+                
+                console.log(`🔍 LoanUpdateForm: Cuota ${i} programada:`, installmentData);
               }
 
               if (newInstallments.length > 0) {
-                const { error: installmentsError } = await supabase
+                console.log(`🔍 LoanUpdateForm: Insertando ${newInstallments.length} cuotas nuevas...`);
+                
+                const { data: insertedData, error: installmentsError } = await supabase
                   .from('installments')
-                  .insert(newInstallments);
+                  .insert(newInstallments)
+                  .select();
 
                 if (installmentsError) {
-                  console.error('Error creando nuevas cuotas:', installmentsError);
+                  console.error('❌ Error creando nuevas cuotas:', installmentsError);
                   toast.error('Error creando nuevas cuotas');
                 } else {
-                  console.log(`✅ ${newInstallments.length} nuevas cuotas creadas`);
+                  console.log(`✅ ${newInstallments.length} nuevas cuotas creadas exitosamente:`, insertedData);
                   toast.success(`${newInstallments.length} cuotas adicionales agregadas al préstamo`);
                 }
               }
             } catch (error) {
-              console.error('Error en extensión de plazo:', error);
+              console.error('❌ Error en extensión de plazo:', error);
+              toast.error('Error procesando extensión de plazo');
             }
           }
           break;
@@ -1051,15 +1083,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       <>
                         <div className="flex justify-between">
                           <span className="text-gray-600">Plazo Actual:</span>
-                          <span className="font-semibold">{loan.term_months} meses</span>
+                          <span className="font-semibold">{loan.term_months} cuotas</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Meses Adicionales:</span>
-                          <span className="font-semibold text-blue-600">+{form.watch('additional_months')} meses</span>
+                          <span className="text-gray-600">Cuotas Adicionales:</span>
+                          <span className="font-semibold text-blue-600">+{form.watch('additional_months')} cuotas</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Nueva Cuota:</span>
-                          <span className="font-bold text-green-600">${calculatedValues.newPayment.toLocaleString()}</span>
+                          <span className="text-gray-600">Nuevo Total:</span>
+                          <span className="font-bold text-purple-600">{(loan.term_months || 0) + (form.watch('additional_months') || 0)} cuotas</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Nueva Cuota Mensual:</span>
+                          <span className="font-bold text-green-600">RD${calculatedValues.newPayment.toLocaleString()}</span>
                         </div>
                         {calculatedValues.newEndDate && (
                           <div className="flex justify-between">
@@ -1067,6 +1103,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             <span className="font-semibold">{new Date(calculatedValues.newEndDate).toLocaleDateString()}</span>
                           </div>
                         )}
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2">
+                          <div className="text-sm text-blue-800">
+                            <strong>📋 Se crearán {form.watch('additional_months')} cuotas nuevas</strong>
+                            <p className="mt-1 text-xs">
+                              Las nuevas cuotas se agregarán a la tabla de desglose después de guardar
+                            </p>
+                          </div>
+                        </div>
                       </>
                     )}
                   </div>
