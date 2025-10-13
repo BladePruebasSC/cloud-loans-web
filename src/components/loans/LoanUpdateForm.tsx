@@ -26,6 +26,7 @@ import {
   Receipt,
   Trash2
 } from 'lucide-react';
+import { LateFeeInfo } from './LateFeeInfo';
 
 const updateSchema = z.object({
   update_type: z.enum(['payment', 'partial_payment', 'term_extension', 'balance_adjustment', 'delete_loan', 'late_fee_config']),
@@ -271,6 +272,96 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             status: calculatedValues.newBalance <= 0 ? 'paid' : loan.status,
           };
 
+          // Si es un abono parcial, distribuir el pago entre las cuotas con mora pendiente
+          if (updateType === 'partial_payment' && data.amount) {
+            try {
+              console.log('🔍 LoanUpdateForm: Distribuyendo abono parcial entre cuotas...');
+              
+              // Obtener cuotas no pagadas del préstamo
+              const { data: installments, error: installmentsError } = await supabase
+                .from('installments')
+                .select('*')
+                .eq('loan_id', loan.id)
+                .eq('is_paid', false)
+                .order('installment_number', { ascending: true });
+              
+              if (installmentsError) throw installmentsError;
+              
+              if (installments && installments.length > 0) {
+                let remainingAmount = data.amount;
+                
+                // Distribuir el abono comenzando por las cuotas más antiguas
+                for (const installment of installments) {
+                  if (remainingAmount <= 0) break;
+                  
+                  // Calcular mora total de esta cuota
+                  const daysOverdue = Math.max(0, 
+                    Math.floor((new Date().getTime() - new Date(installment.due_date).getTime()) / (1000 * 60 * 60 * 24))
+                  );
+                  
+                  let totalLateFee = 0;
+                  if (daysOverdue > 0) {
+                    // Calcular mora según el tipo configurado
+                    const loanData = await supabase
+                      .from('loans')
+                      .select('late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type')
+                      .eq('id', loan.id)
+                      .single();
+                    
+                    if (loanData.data) {
+                      const gracePeriod = loanData.data.grace_period_days || 0;
+                      const effectiveDays = Math.max(0, daysOverdue - gracePeriod);
+                      
+                      if (effectiveDays > 0) {
+                        const rate = loanData.data.late_fee_rate || 0;
+                        const calcType = loanData.data.late_fee_calculation_type || 'daily';
+                        
+                        switch (calcType) {
+                          case 'daily':
+                            totalLateFee = (installment.principal_amount * rate / 100) * effectiveDays;
+                            break;
+                          case 'monthly':
+                            const monthsOverdue = Math.ceil(effectiveDays / 30);
+                            totalLateFee = (installment.principal_amount * rate / 100) * monthsOverdue;
+                            break;
+                          case 'compound':
+                            totalLateFee = installment.principal_amount * (Math.pow(1 + rate / 100, effectiveDays) - 1);
+                            break;
+                        }
+                        
+                        if (loanData.data.max_late_fee && loanData.data.max_late_fee > 0) {
+                          totalLateFee = Math.min(totalLateFee, loanData.data.max_late_fee);
+                        }
+                      }
+                    }
+                  }
+                  
+                  const currentLateFeePaid = installment.late_fee_paid || 0;
+                  const remainingLateFee = Math.max(0, totalLateFee - currentLateFeePaid);
+                  
+                  if (remainingLateFee > 0) {
+                    const paymentToApply = Math.min(remainingAmount, remainingLateFee);
+                    const newLateFeePaid = currentLateFeePaid + paymentToApply;
+                    
+                    await supabase
+                      .from('installments')
+                      .update({ late_fee_paid: newLateFeePaid })
+                      .eq('loan_id', loan.id)
+                      .eq('installment_number', installment.installment_number);
+                    
+                    console.log(`✅ Cuota ${installment.installment_number}: abono de RD$${paymentToApply.toLocaleString()} (${currentLateFeePaid} → ${newLateFeePaid})`);
+                    
+                    remainingAmount -= paymentToApply;
+                  }
+                }
+                
+                console.log(`🔍 LoanUpdateForm: Abono parcial distribuido. Restante: RD$${remainingAmount.toLocaleString()}`);
+              }
+            } catch (error) {
+              console.error('Error distribuyendo abono parcial:', error);
+            }
+          }
+
           // IMPORTANTE: Solo actualizar next_payment_date y paid_installments si es un pago COMPLETO
           // Los abonos parciales (partial_payment) NO marcan cuotas como pagadas
           // ni avanzan la fecha de próximo pago
@@ -406,8 +497,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
                 if (installmentsError) {
                   console.error('Error creando nuevas cuotas:', installmentsError);
+                  toast.error('Error creando nuevas cuotas');
                 } else {
                   console.log(`✅ ${newInstallments.length} nuevas cuotas creadas`);
+                  toast.success(`${newInstallments.length} cuotas adicionales agregadas al préstamo`);
                 }
               }
             } catch (error) {
@@ -1005,6 +1098,31 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 </div>
               </CardContent>
             </Card>
+
+            {/* Desglose de Mora - mostrar en todas las actualizaciones excepto eliminar */}
+            {form.watch('update_type') !== 'delete_loan' && (
+              <div className="mt-4">
+                <LateFeeInfo
+                  loanId={loan.id}
+                  nextPaymentDate={loan.next_payment_date}
+                  currentLateFee={0}
+                  lateFeeEnabled={true}
+                  lateFeeRate={2}
+                  gracePeriodDays={0}
+                  maxLateFee={0}
+                  lateFeeCalculationType="daily"
+                  remainingBalance={loan.remaining_balance}
+                  clientName={loan.client.full_name}
+                  amount={loan.amount}
+                  term={loan.term_months || 4}
+                  payment_frequency={loan.payment_frequency || 'monthly'}
+                  interest_rate={loan.interest_rate}
+                  monthly_payment={loan.monthly_payment}
+                  paid_installments={loan.paid_installments}
+                  start_date={loan.start_date}
+                />
+              </div>
+            )}
 
             {/* Información del Préstamo */}
             <Card className="mt-4">
