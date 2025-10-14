@@ -17,6 +17,7 @@ import { CollectionTracking } from './CollectionTracking';
 import { LateFeeInfo } from './LateFeeInfo';
 import { GlobalLateFeeConfig } from './GlobalLateFeeConfig';
 import { LateFeeReports } from './LateFeeReports';
+import { AccountStatement } from './AccountStatement';
 import { useLoans } from '@/hooks/useLoans';
 import { useAuth } from '@/hooks/useAuth';
 import { useLateFee } from '@/hooks/useLateFee';
@@ -67,6 +68,11 @@ export const LoansModule = () => {
   const [isCancelling, setIsCancelling] = useState(false);
   const [showCollectionTracking, setShowCollectionTracking] = useState(false);
   const [selectedLoanForTracking, setSelectedLoanForTracking] = useState(null);
+  const [showAccountStatement, setShowAccountStatement] = useState(false);
+  const [selectedLoanForStatement, setSelectedLoanForStatement] = useState(null);
+  const [statementSearchTerm, setStatementSearchTerm] = useState('');
+  const [statementStatusFilter, setStatementStatusFilter] = useState('all');
+  const [statementAmountFilter, setStatementAmountFilter] = useState('all');
   
      // Estados para filtros y búsqueda
    const [searchTerm, setSearchTerm] = useState('');
@@ -553,7 +559,7 @@ export const LoansModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1 h-auto">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-1 h-auto">
           <TabsTrigger 
             value="mis-prestamos" 
             className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
@@ -601,6 +607,14 @@ export const LoansModule = () => {
             <AlertTriangle className="h-4 w-4" />
             <span className="hidden xs:inline">Mora</span>
             <span className="xs:hidden">Mora</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="estado-cuenta" 
+            className="text-xs sm:text-sm py-3 px-2 sm:px-4 min-h-[48px] flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 touch-manipulation"
+          >
+            <FileText className="h-4 w-4" />
+            <span className="hidden xs:inline">Estado</span>
+            <span className="xs:hidden">Estado</span>
           </TabsTrigger>
         </TabsList>
 
@@ -2283,6 +2297,199 @@ export const LoansModule = () => {
              </Card>
            </div>
          </TabsContent>
+
+         <TabsContent value="estado-cuenta" className="space-y-6">
+           <div className="space-y-6">
+             <div className="text-center">
+               <h2 className="text-2xl font-bold text-gray-900 mb-2">Estado de Cuenta</h2>
+               <p className="text-gray-600">Consulta el historial detallado de pagos de tus préstamos</p>
+             </div>
+             
+             {/* Lista de préstamos para seleccionar */}
+             <Card>
+               <CardHeader>
+                 <CardTitle className="flex items-center gap-2">
+                   <FileText className="h-5 w-5 text-blue-600" />
+                   Seleccionar Préstamo
+                 </CardTitle>
+                 <p className="text-sm text-gray-600">Elige un préstamo para ver su estado de cuenta completo</p>
+                 
+                 {/* Filtros para la lista de préstamos */}
+                 <div className="flex flex-col sm:flex-row gap-4 mt-4">
+                   {/* Búsqueda */}
+                   <div className="flex-1">
+                     <div className="relative">
+                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                       <Input
+                         placeholder="Buscar por nombre del cliente..."
+                         value={statementSearchTerm}
+                         onChange={(e) => setStatementSearchTerm(e.target.value)}
+                         className="pl-10"
+                       />
+                     </div>
+                   </div>
+                   
+                   {/* Filtros */}
+                   <div className="flex flex-col sm:flex-row gap-2">
+                     <Select value={statementStatusFilter} onValueChange={setStatementStatusFilter}>
+                       <SelectTrigger className="w-full sm:w-[140px]">
+                         <SelectValue placeholder="Estado" />
+                       </SelectTrigger>
+                       <SelectContent>
+                         <SelectItem value="all">Todos los Estados</SelectItem>
+                         <SelectItem value="active">Activo</SelectItem>
+                         <SelectItem value="overdue">Vencido</SelectItem>
+                         <SelectItem value="paid">Pagado</SelectItem>
+                         <SelectItem value="pending">Pendiente</SelectItem>
+                       </SelectContent>
+                     </Select>
+
+                     <Select value={statementAmountFilter} onValueChange={setStatementAmountFilter}>
+                       <SelectTrigger className="w-full sm:w-[140px]">
+                         <SelectValue placeholder="Monto" />
+                       </SelectTrigger>
+                       <SelectContent>
+                         <SelectItem value="all">Todos los Montos</SelectItem>
+                         <SelectItem value="0-5000">RD$0 - RD$5,000</SelectItem>
+                         <SelectItem value="5000-10000">RD$5,000 - RD$10,000</SelectItem>
+                         <SelectItem value="10000-25000">RD$10,000 - RD$25,000</SelectItem>
+                         <SelectItem value="25000+">RD$25,000+</SelectItem>
+                       </SelectContent>
+                     </Select>
+                   </div>
+                 </div>
+               </CardHeader>
+               <CardContent>
+                 {loading ? (
+                   <div className="flex items-center justify-center py-8">
+                     <div className="text-center">
+                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                       <p className="text-gray-600">Cargando préstamos...</p>
+                     </div>
+                   </div>
+                 ) : loans.length === 0 ? (
+                   <div className="text-center py-8">
+                     <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                     <p className="text-gray-600">No tienes préstamos registrados</p>
+                   </div>
+                 ) : (() => {
+                   const filteredLoans = loans.filter(loan => {
+                         // Filtrar préstamos eliminados
+                         if (loan.status === 'deleted') return false;
+                         
+                         // Filtro por búsqueda
+                         if (statementSearchTerm) {
+                           const searchLower = statementSearchTerm.toLowerCase();
+                           if (!loan.client?.full_name?.toLowerCase().includes(searchLower)) {
+                             return false;
+                           }
+                         }
+                         
+                         // Filtro por estado
+                         if (statementStatusFilter !== 'all') {
+                           if (loan.status !== statementStatusFilter) {
+                             return false;
+                           }
+                         }
+                         
+                         // Filtro por monto
+                         if (statementAmountFilter !== 'all') {
+                           const amount = loan.amount;
+                           switch (statementAmountFilter) {
+                             case '0-5000':
+                               if (amount > 5000) return false;
+                               break;
+                             case '5000-10000':
+                               if (amount < 5000 || amount > 10000) return false;
+                               break;
+                             case '10000-25000':
+                               if (amount < 10000 || amount > 25000) return false;
+                               break;
+                             case '25000+':
+                               if (amount < 25000) return false;
+                               break;
+                           }
+                         }
+                         
+                         return true;
+                       });
+                       
+                   return filteredLoans.length === 0 ? (
+                     <div className="text-center py-8">
+                       <Search className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                       <p className="text-gray-600">No se encontraron préstamos con los filtros aplicados</p>
+                       <Button 
+                         variant="outline" 
+                         onClick={() => {
+                           setStatementSearchTerm('');
+                           setStatementStatusFilter('all');
+                           setStatementAmountFilter('all');
+                         }}
+                         className="mt-2"
+                       >
+                         Limpiar Filtros
+                       </Button>
+                     </div>
+                   ) : (
+                     <div className="grid gap-4">
+                       {filteredLoans.map((loan) => (
+                       <Card key={loan.id} className="hover:bg-gray-50 cursor-pointer transition-colors">
+                         <CardContent className="p-4">
+                           <div className="flex justify-between items-start">
+                             <div className="space-y-2 flex-1">
+                               <div className="flex items-center space-x-3">
+                                 <CreditCard className="h-4 w-4 text-gray-500" />
+                                 <h3 className="font-medium">{loan.client?.full_name}</h3>
+                                 <Badge variant={
+                                   loan.status === 'active' ? 'default' :
+                                   loan.status === 'overdue' ? 'destructive' :
+                                   loan.status === 'paid' ? 'secondary' : 'outline'
+                                 }>
+                                   {loan.status === 'active' ? 'Activo' :
+                                    loan.status === 'overdue' ? 'Vencido' :
+                                    loan.status === 'paid' ? 'Pagado' : loan.status}
+                                 </Badge>
+                               </div>
+                               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                                 <div className="flex items-center">
+                                   <DollarSign className="h-3 w-3 mr-1" />
+                                   Monto: ${loan.amount.toLocaleString()}
+                                 </div>
+                                 <div className="flex items-center">
+                                   <DollarSign className="h-3 w-3 mr-1" />
+                                   Balance: ${loan.remaining_balance.toLocaleString()}
+                                 </div>
+                                 <div className="flex items-center">
+                                   <Calendar className="h-3 w-3 mr-1" />
+                                   Inicio: {new Date(loan.start_date).toLocaleDateString()}
+                                 </div>
+                                 <div className="flex items-center">
+                                   <Clock className="h-3 w-3 mr-1" />
+                                   Próximo: {new Date(loan.next_payment_date).toLocaleDateString()}
+                                 </div>
+                               </div>
+                             </div>
+                             <Button 
+                               onClick={() => {
+                                 setSelectedLoanForStatement(loan);
+                                 setShowAccountStatement(true);
+                               }}
+                               className="ml-4"
+                             >
+                               <FileText className="h-4 w-4 mr-1" />
+                               Ver Estado
+                             </Button>
+                           </div>
+                         </CardContent>
+                       </Card>
+                     ))}
+                   </div>
+                   );
+                 })()}
+               </CardContent>
+             </Card>
+           </div>
+         </TabsContent>
        </Tabs>
 
            {/* Loan History View */}
@@ -2448,6 +2655,18 @@ export const LoansModule = () => {
          onClose={() => {
            setShowCollectionTracking(false);
            setSelectedLoanForTracking(null);
+         }}
+       />
+     )}
+
+     {/* Modal de Estado de Cuenta */}
+     {selectedLoanForStatement && (
+       <AccountStatement
+         loanId={selectedLoanForStatement.id}
+         isOpen={showAccountStatement}
+         onClose={() => {
+           setShowAccountStatement(false);
+           setSelectedLoanForStatement(null);
          }}
        />
      )}

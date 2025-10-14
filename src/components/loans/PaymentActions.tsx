@@ -1244,8 +1244,8 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                Cancelar
              </Button>
            </div>
-         </DialogContent>
-       </Dialog>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

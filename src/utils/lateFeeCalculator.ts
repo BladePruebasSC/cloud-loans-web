@@ -1769,6 +1769,59 @@ export const getFixedLateFeeBreakdown = (
  * @param lateFeePayment - Monto del abono de mora
  * @returns Desglose actualizado después del abono
  */
+/**
+ * Función simplificada para obtener el desglose de mora desde cuotas
+ * Compatible con el componente AccountStatement
+ */
+export const getLateFeeBreakdownFromInstallments = async (loanData: {
+  id: string;
+  amount: number;
+  interest_rate: number;
+  term_months: number;
+  monthly_payment: number;
+  remaining_balance: number;
+  next_payment_date: string;
+  start_date: string;
+  payment_frequency: string;
+  paid_installments: number[];
+  late_fee_enabled: boolean;
+  late_fee_rate: number;
+  grace_period_days: number;
+  max_late_fee: number;
+  late_fee_calculation_type: string;
+}): Promise<{
+  totalLateFee: number;
+  breakdown: Array<{
+    installment: number;
+    dueDate: string;
+    daysOverdue: number;
+    principal: number;
+    lateFee: number;
+    isPaid: boolean;
+  }>;
+}> => {
+  // Convertir los datos al formato esperado por calculateFixedLateFeeBreakdown
+  const loan: LoanData = {
+    remaining_balance: loanData.remaining_balance,
+    next_payment_date: loanData.next_payment_date,
+    late_fee_rate: loanData.late_fee_rate,
+    grace_period_days: loanData.grace_period_days,
+    max_late_fee: loanData.max_late_fee,
+    late_fee_calculation_type: loanData.late_fee_calculation_type as 'daily' | 'monthly' | 'compound',
+    late_fee_enabled: loanData.late_fee_enabled,
+    amount: loanData.amount,
+    term: loanData.term_months,
+    payment_frequency: loanData.payment_frequency,
+    interest_rate: loanData.interest_rate,
+    monthly_payment: loanData.monthly_payment,
+    paid_installments: loanData.paid_installments,
+    start_date: loanData.start_date
+  };
+
+  // Usar la función existente para calcular la mora
+  return calculateFixedLateFeeBreakdown(loan);
+};
+
 export const applyLateFeePayment = (
   originalBreakdown: any,
   lateFeePayment: number
