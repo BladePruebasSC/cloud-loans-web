@@ -561,36 +561,58 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           <head>
             <title>Estado de Cuenta - ${loan.clients.full_name}</title>
             <style>
-              body { font-family: Arial, sans-serif; margin: 20px; }
-              .header { text-align: center; margin-bottom: 30px; }
-              .header h1 { color: #2563eb; margin: 0; }
-              .header h2 { color: #666; margin: 5px 0; }
-              .info { margin-bottom: 20px; }
-              .info table { width: 100%; border-collapse: collapse; }
-              .info td { padding: 5px; border-bottom: 1px solid #eee; }
-              .info td:first-child { font-weight: bold; width: 30%; }
-              .summary { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
-              .summary h3 { margin-top: 0; color: #2563eb; }
-              .summary table { width: 100%; }
-              .summary td { padding: 5px; }
-              .summary .total { font-weight: bold; font-size: 1.1em; }
-              .payments { margin-top: 20px; }
-              .payments h3 { color: #2563eb; }
-              .payments table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-              .payments th, .payments td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-              .payments th { background-color: #f8f9fa; font-weight: bold; }
-              .footer { margin-top: 30px; text-align: center; color: #666; font-size: 0.9em; }
+              body { font-family: Arial, sans-serif; margin: 20px; font-size: 12px; }
+              .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #2563eb; padding-bottom: 15px; }
+              .header h1 { color: #2563eb; margin: 0; font-size: 24px; }
+              .header h2 { color: #666; margin: 5px 0; font-size: 18px; }
+              .header p { color: #888; margin: 5px 0; }
+              
+              .section { margin-bottom: 25px; page-break-inside: avoid; }
+              .section h3 { color: #2563eb; margin-bottom: 10px; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+              
+              .info-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+              .info-table td { padding: 8px; border-bottom: 1px solid #eee; }
+              .info-table td:first-child { font-weight: bold; width: 30%; background-color: #f8f9fa; }
+              
+              .summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+              .summary-card { background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center; }
+              .summary-card .amount { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+              .summary-card .label { font-size: 12px; color: #666; }
+              .summary-card.total-paid .amount { color: #2563eb; }
+              .summary-card.principal .amount { color: #059669; }
+              .summary-card.interest .amount { color: #ea580c; }
+              .summary-card.late-fee-paid .amount { color: #dc2626; }
+              .summary-card.current-late-fee .amount { color: #d97706; }
+              .summary-card.payment-count .amount { color: #7c3aed; }
+              
+              .table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+              .table th, .table td { padding: 6px; text-align: left; border: 1px solid #ddd; }
+              .table th { background-color: #f8f9fa; font-weight: bold; }
+              .table tr:nth-child(even) { background-color: #f9f9f9; }
+              
+              .status-badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; }
+              .status-paid { background-color: #dcfce7; color: #166534; }
+              .status-pending { background-color: #fef3c7; color: #92400e; }
+              .status-failed { background-color: #fee2e2; color: #991b1b; }
+              
+              .footer { margin-top: 30px; text-align: center; color: #666; font-size: 10px; border-top: 1px solid #ddd; padding-top: 15px; }
+              
+              @media print {
+                body { margin: 10px; }
+                .section { page-break-inside: avoid; }
+              }
             </style>
           </head>
           <body>
             <div class="header">
               <h1>ESTADO DE CUENTA</h1>
               <h2>${loan.clients.full_name}</h2>
-              <p>Fecha de emisión: ${formatDate(statementDate)}</p>
+              <p>Cédula: ${loan.clients.dni} | Fecha de emisión: ${formatDate(statementDate)}</p>
             </div>
 
-            <div class="info">
-              <table>
+            <div class="section">
+              <h3>Información del Préstamo</h3>
+              <table class="info-table">
                 <tr><td>Cliente:</td><td>${loan.clients.full_name}</td></tr>
                 <tr><td>Cédula:</td><td>${loan.clients.dni}</td></tr>
                 <tr><td>Monto Original:</td><td>${formatCurrency(loan.amount)}</td></tr>
@@ -599,60 +621,249 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 <tr><td>Tasa de Interés:</td><td>${loan.interest_rate}%</td></tr>
                 <tr><td>Fecha de Inicio:</td><td>${formatDate(loan.start_date)}</td></tr>
                 <tr><td>Próximo Pago:</td><td>${formatDate(loan.next_payment_date)}</td></tr>
+                <tr><td>Estado:</td><td>${loan.status}</td></tr>
               </table>
             </div>
 
-            <div class="summary">
+            <div class="section">
               <h3>Resumen de Pagos</h3>
-              <table>
-                <tr><td>Total Pagado:</td><td class="total">${formatCurrency(totals.totalPaid)}</td></tr>
-                <tr><td>Total a Principal:</td><td>${formatCurrency(totals.totalPrincipal)}</td></tr>
-                <tr><td>Total a Intereses:</td><td>${formatCurrency(totals.totalInterest)}</td></tr>
-                <tr><td>Total de Mora:</td><td>${formatCurrency(totals.totalLateFee)}</td></tr>
-                <tr><td>Número de Pagos:</td><td>${payments.length}</td></tr>
-              </table>
+              <div class="summary-grid">
+                <div class="summary-card total-paid">
+                  <div class="amount">${formatCurrency(totals.totalPaid)}</div>
+                  <div class="label">Total Pagado</div>
+                </div>
+                <div class="summary-card principal">
+                  <div class="amount">${formatCurrency(totals.totalPrincipal)}</div>
+                  <div class="label">A Principal</div>
+                </div>
+                <div class="summary-card interest">
+                  <div class="amount">${formatCurrency(totals.totalInterest)}</div>
+                  <div class="label">A Intereses</div>
+                </div>
+                <div class="summary-card late-fee-paid">
+                  <div class="amount">${formatCurrency(totals.totalLateFee)}</div>
+                  <div class="label">Mora Pagada</div>
+                </div>
+                <div class="summary-card current-late-fee">
+                  <div class="amount">${formatCurrency(currentLateFee)}</div>
+                  <div class="label">Mora Actual</div>
+                </div>
+                <div class="summary-card payment-count">
+                  <div class="amount">${payments.length}</div>
+                  <div class="label">Número de Pagos</div>
+                </div>
+              </div>
             </div>
 
-            <div class="payments">
-              <h3>Historial de Pagos</h3>
-              <table>
+            <div class="section">
+              <h3>Tabla de Amortización</h3>
+              <table class="table">
                 <thead>
                   <tr>
-                    <th>Fecha</th>
-                    <th>Monto</th>
-                    <th>Principal</th>
+                    <th>Cuota</th>
+                    <th>Fecha Vencimiento</th>
+                    <th>Cuota Mensual</th>
+                    <th>Capital</th>
                     <th>Interés</th>
-                    <th>Mora</th>
-                    <th>Método</th>
+                    <th>Balance Pendiente</th>
                     <th>Estado</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${payments.map(payment => `
+                  ${amortizationSchedule.map(installment => `
                     <tr>
-                      <td>${formatDate(payment.payment_date)}</td>
-                      <td>${formatCurrency(payment.amount)}</td>
-                      <td>${formatCurrency(payment.principal_amount)}</td>
-                      <td>${formatCurrency(payment.interest_amount)}</td>
-                      <td>${formatCurrency(payment.late_fee)}</td>
-                      <td>${getPaymentMethodLabel(payment.payment_method)}</td>
-                      <td>${payment.status}</td>
+                      <td>${installment.installment}</td>
+                      <td>${formatDate(installment.dueDate)}</td>
+                      <td>${formatCurrency(installment.monthlyPayment)}</td>
+                      <td>${formatCurrency(installment.principalPayment)}</td>
+                      <td>${formatCurrency(installment.interestPayment)}</td>
+                      <td>${formatCurrency(installment.remainingBalance)}</td>
+                      <td>
+                        <span class="status-badge ${installment.isPaid ? 'status-paid' : 'status-pending'}">
+                          ${installment.isPaid ? 'Pagado' : 'Pendiente'}
+                        </span>
+                      </td>
                     </tr>
                   `).join('')}
                 </tbody>
               </table>
             </div>
 
+            <div class="section">
+              <h3>Historial de Pagos</h3>
+              ${payments.length > 0 ? `
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Monto</th>
+                      <th>Principal</th>
+                      <th>Interés</th>
+                      <th>Mora</th>
+                      <th>Método</th>
+                      <th>Estado</th>
+                      <th>Referencia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${payments.map(payment => `
+                      <tr>
+                        <td>${formatDate(payment.payment_date)}</td>
+                        <td>${formatCurrency(payment.amount)}</td>
+                        <td>${formatCurrency(payment.principal_amount)}</td>
+                        <td>${formatCurrency(payment.interest_amount)}</td>
+                        <td>${formatCurrency(payment.late_fee)}</td>
+                        <td>${getPaymentMethodLabel(payment.payment_method)}</td>
+                        <td>
+                          <span class="status-badge status-${payment.status}">
+                            ${payment.status === 'completed' ? 'Completado' : 
+                              payment.status === 'pending' ? 'Pendiente' : 
+                              payment.status === 'failed' ? 'Fallido' : payment.status}
+                          </span>
+                        </td>
+                        <td>${payment.reference_number || '-'}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              ` : `
+                <p style="text-align: center; color: #666; font-style: italic; padding: 20px;">
+                  No se han registrado pagos para este préstamo
+                </p>
+              `}
+            </div>
+
             <div class="footer">
-              <p>Este documento fue generado automáticamente el ${formatDate(statementDate)}</p>
-              <p>Sistema de Gestión de Préstamos</p>
+              <p><strong>ESTADO DE CUENTA GENERADO AUTOMÁTICAMENTE</strong></p>
+              <p>Fecha de emisión: ${formatDate(statementDate)} | Sistema de Gestión de Préstamos</p>
+              <p>Este documento es válido únicamente en la fecha de emisión</p>
             </div>
           </body>
         </html>
       `);
       printWindow.document.close();
-      printWindow.print();
+      
+      // Esperar a que el contenido se cargue antes de imprimir
+      setTimeout(() => {
+        printWindow.print();
+      }, 500);
     }
+  };
+
+  const printStatement = () => {
+    if (!loan) return;
+
+    const totals = calculateTotals();
+    
+    // Crear un elemento temporal para el contenido de impresión
+    const printContent = document.createElement('div');
+    printContent.style.position = 'absolute';
+    printContent.style.left = '-9999px';
+    printContent.style.top = '-9999px';
+    printContent.innerHTML = `
+      <div style="font-family: Arial, sans-serif; margin: 20px; font-size: 12px;">
+        <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #2563eb; padding-bottom: 15px;">
+          <h1 style="color: #2563eb; margin: 0; font-size: 24px;">ESTADO DE CUENTA</h1>
+          <h2 style="color: #666; margin: 5px 0; font-size: 18px;">${loan.clients.full_name}</h2>
+          <p style="color: #888; margin: 5px 0;">Cédula: ${loan.clients.dni} | Fecha de emisión: ${formatDate(statementDate)}</p>
+        </div>
+
+        <div style="margin-bottom: 25px;">
+          <h3 style="color: #2563eb; margin-bottom: 10px; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Información del Préstamo</h3>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; width: 30%; background-color: #f8f9fa;">Cliente:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.clients.full_name}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Cédula:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.clients.dni}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Monto Original:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.amount)}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Balance Restante:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.remaining_balance)}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Cuota Mensual:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.monthly_payment)}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Tasa de Interés:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.interest_rate}%</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Fecha de Inicio:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatDate(loan.start_date)}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Próximo Pago:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatDate(loan.next_payment_date)}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Estado:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.status}</td></tr>
+          </table>
+        </div>
+
+        <div style="margin-bottom: 25px;">
+          <h3 style="color: #2563eb; margin-bottom: 10px; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Resumen de Pagos</h3>
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center;">
+              <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #2563eb;">${formatCurrency(totals.totalPaid)}</div>
+              <div style="font-size: 12px; color: #666;">Total Pagado</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center;">
+              <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #059669;">${formatCurrency(totals.totalPrincipal)}</div>
+              <div style="font-size: 12px; color: #666;">A Principal</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center;">
+              <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #ea580c;">${formatCurrency(totals.totalInterest)}</div>
+              <div style="font-size: 12px; color: #666;">A Intereses</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center;">
+              <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #dc2626;">${formatCurrency(totals.totalLateFee)}</div>
+              <div style="font-size: 12px; color: #666;">Mora Pagada</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center;">
+              <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #d97706;">${formatCurrency(currentLateFee)}</div>
+              <div style="font-size: 12px; color: #666;">Mora Actual</div>
+            </div>
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center;">
+              <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #7c3aed;">${payments.length}</div>
+              <div style="font-size: 12px; color: #666;">Número de Pagos</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 25px;">
+          <h3 style="color: #2563eb; margin-bottom: 10px; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Historial de Pagos</h3>
+          ${payments.length > 0 ? `
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px;">
+              <thead>
+                <tr>
+                  <th style="padding: 6px; text-align: left; border: 1px solid #ddd; background-color: #f8f9fa; font-weight: bold;">Fecha</th>
+                  <th style="padding: 6px; text-align: left; border: 1px solid #ddd; background-color: #f8f9fa; font-weight: bold;">Monto</th>
+                  <th style="padding: 6px; text-align: left; border: 1px solid #ddd; background-color: #f8f9fa; font-weight: bold;">Principal</th>
+                  <th style="padding: 6px; text-align: left; border: 1px solid #ddd; background-color: #f8f9fa; font-weight: bold;">Interés</th>
+                  <th style="padding: 6px; text-align: left; border: 1px solid #ddd; background-color: #f8f9fa; font-weight: bold;">Mora</th>
+                  <th style="padding: 6px; text-align: left; border: 1px solid #ddd; background-color: #f8f9fa; font-weight: bold;">Método</th>
+                  <th style="padding: 6px; text-align: left; border: 1px solid #ddd; background-color: #f8f9fa; font-weight: bold;">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${payments.map(payment => `
+                  <tr style="background-color: #f9f9f9;">
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatDate(payment.payment_date)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.amount)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.principal_amount)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.interest_amount)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.late_fee)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${getPaymentMethodLabel(payment.payment_method)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${payment.status}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          ` : `
+            <p style="text-align: center; color: #666; font-style: italic; padding: 20px;">
+              No se han registrado pagos para este préstamo
+            </p>
+          `}
+        </div>
+
+        <div style="margin-top: 30px; text-align: center; color: #666; font-size: 10px; border-top: 1px solid #ddd; padding-top: 15px;">
+          <p><strong>ESTADO DE CUENTA GENERADO AUTOMÁTICAMENTE</strong></p>
+          <p>Fecha de emisión: ${formatDate(statementDate)} | Sistema de Gestión de Préstamos</p>
+          <p>Este documento es válido únicamente en la fecha de emisión</p>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(printContent);
+    
+    // Imprimir
+    window.print();
+    
+    // Limpiar
+    document.body.removeChild(printContent);
   };
 
   const totals = calculateTotals();
@@ -685,11 +896,20 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               <Button
                 variant="outline"
                 size="sm"
+                onClick={printStatement}
+                className="flex items-center gap-2"
+              >
+                <Printer className="h-4 w-4" />
+                Imprimir
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={exportToPDF}
                 className="flex items-center gap-2"
               >
                 <Download className="h-4 w-4" />
-                Exportar
+                Exportar PDF
               </Button>
             </div>
           </DialogTitle>
