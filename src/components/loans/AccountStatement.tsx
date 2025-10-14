@@ -169,13 +169,17 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     setFilteredPayments(filtered);
   }, [payments, searchTerm, statusFilter, methodFilter, dateFilter]);
 
-  // Calcular tabla de amortización cuando se cargan los datos del préstamo
+  // Calcular tabla de amortización cuando se cargan los datos del préstamo y las cuotas
   useEffect(() => {
-    if (loan) {
-      const schedule = calculateAmortizationSchedule(loan);
-      setAmortizationSchedule(schedule);
-    }
-  }, [loan]);
+    const calculateSchedule = async () => {
+      if (loan && installments.length > 0) {
+        const schedule = await calculateAmortizationSchedule(loan, installments);
+        setAmortizationSchedule(schedule);
+      }
+    };
+    
+    calculateSchedule();
+  }, [loan, installments]);
 
   // Debug: Log cuando currentLateFee cambia
   useEffect(() => {
@@ -364,46 +368,145 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     }
   };
 
-  const calculateAmortizationSchedule = (loanData: any) => {
-    if (!loanData) return [];
+  const calculateAmortizationSchedule = async (loanData: any, installmentsData: any[]) => {
+    if (!loanData || !installmentsData) return [];
+
+    console.log('🔍 AccountStatement: Calculando tabla de amortización interactiva...');
+    console.log('🔍 AccountStatement: Datos de cuotas:', installmentsData);
 
     const schedule = [];
     const numberOfPayments = loanData.term_months;
     const principal = loanData.amount;
     
     // Modelo de préstamo con capital e interés fijos
-    const monthlyPayment = loanData.monthly_payment; // RD$3,500
-    const fixedPrincipal = principal / numberOfPayments; // RD$2,500 por cuota
-    const fixedInterest = monthlyPayment - fixedPrincipal; // RD$1,000 por cuota
+    const monthlyPayment = loanData.monthly_payment;
+    const fixedPrincipal = principal / numberOfPayments;
+    const fixedInterest = monthlyPayment - fixedPrincipal;
 
-    let remainingBalance = principal;
     const startDate = new Date(loanData.start_date);
 
+    // Crear un mapa de cuotas para acceso rápido
+    const installmentsMap = new Map();
+    installmentsData.forEach(installment => {
+      installmentsMap.set(installment.installment_number, installment);
+    });
+
+    // Obtener todos los pagos del préstamo para calcular saldos pendientes
+    const { data: payments, error } = await supabase
+      .from('payments')
+      .select('principal_amount, interest_amount, payment_date')
+      .eq('loan_id', loanData.id)
+      .order('payment_date', { ascending: true });
+
+    if (error) {
+      console.error('Error obteniendo pagos:', error);
+    }
+
+    // Calcular el capital total pagado para determinar el balance general
+    const totalPrincipalPaid = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
+    let remainingBalance = principal - totalPrincipalPaid;
+
+    console.log('🔍 AccountStatement: Mapa de cuotas creado:', installmentsMap);
+    console.log('🔍 AccountStatement: Pagos encontrados:', payments);
+    console.log('🔍 AccountStatement: Capital total pagado:', totalPrincipalPaid);
+
     for (let i = 1; i <= numberOfPayments; i++) {
-      // Usar capital e interés fijos
-      const principalPayment = fixedPrincipal;
-      const interestPayment = fixedInterest;
-      remainingBalance -= principalPayment;
+      // Usar capital e interés fijos como base
+      const originalPrincipal = fixedPrincipal;
+      const originalInterest = fixedInterest;
 
       // Calcular fecha de vencimiento
       const dueDate = new Date(startDate);
       dueDate.setMonth(dueDate.getMonth() + i);
 
-      // Determinar si la cuota está pagada basándose en el balance restante
-      const totalPaid = principal - loanData.remaining_balance;
-      const isPaid = (i * monthlyPayment) <= totalPaid;
+      // Obtener datos reales de la cuota si existe
+      const realInstallment = installmentsMap.get(i);
+      const isPaid = realInstallment ? realInstallment.is_paid : false;
+      const paidDate = realInstallment ? realInstallment.paid_date : null;
+
+      // Calcular cuánto se ha pagado de esta cuota específica
+      // Asumimos que los pagos se aplican en orden de cuotas
+      let principalPaidForThisInstallment = 0;
+      let interestPaidForThisInstallment = 0;
+      
+      // Sumar pagos hasta cubrir esta cuota
+      let accumulatedPrincipal = 0;
+      let accumulatedInterest = 0;
+      
+      if (payments) {
+        for (const payment of payments) {
+          accumulatedPrincipal += payment.principal_amount || 0;
+          accumulatedInterest += payment.interest_amount || 0;
+          
+          // Si hemos cubierto hasta esta cuota
+          if (accumulatedPrincipal >= i * originalPrincipal) {
+            break;
+          }
+          
+          // Si estamos en el rango de esta cuota
+          if (accumulatedPrincipal > (i - 1) * originalPrincipal) {
+            const previousAccumulated = Math.max(0, accumulatedPrincipal - (payment.principal_amount || 0) - (i - 1) * originalPrincipal);
+            const currentPayment = Math.min(payment.principal_amount || 0, i * originalPrincipal - (i - 1) * originalPrincipal - previousAccumulated);
+            principalPaidForThisInstallment += currentPayment;
+          }
+          
+          if (accumulatedInterest > (i - 1) * originalInterest) {
+            const previousInterestAccumulated = Math.max(0, accumulatedInterest - (payment.interest_amount || 0) - (i - 1) * originalInterest);
+            const currentInterestPayment = Math.min(payment.interest_amount || 0, i * originalInterest - (i - 1) * originalInterest - previousInterestAccumulated);
+            interestPaidForThisInstallment += currentInterestPayment;
+          }
+        }
+      }
+
+      // Calcular saldos pendientes
+      const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
+      const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
+      const remainingPayment = remainingPrincipal + remainingInterest;
+
+      // Determinar estado de la cuota
+      let paymentStatus = 'pending';
+      if (remainingPayment <= 0) {
+        paymentStatus = 'paid';
+      } else if (remainingPayment < monthlyPayment) {
+        paymentStatus = 'partial';
+      }
+
+      console.log(`🔍 Cuota ${i}:`, {
+        exists: !!realInstallment,
+        isPaid,
+        paidDate,
+        dueDate: dueDate.toISOString().split('T')[0],
+        originalPrincipal,
+        originalInterest,
+        principalPaidForThisInstallment,
+        interestPaidForThisInstallment,
+        remainingPrincipal,
+        remainingInterest,
+        remainingPayment,
+        paymentStatus
+      });
 
       schedule.push({
         installment: i,
         dueDate: dueDate.toISOString().split('T')[0],
         monthlyPayment: monthlyPayment,
-        principalPayment: principalPayment,
-        interestPayment: interestPayment,
+        principalPayment: originalPrincipal,
+        interestPayment: originalInterest,
+        principalPaid: principalPaidForThisInstallment,
+        interestPaid: interestPaidForThisInstallment,
+        remainingPrincipal: remainingPrincipal,
+        remainingInterest: remainingInterest,
+        remainingPayment: remainingPayment,
         remainingBalance: Math.max(0, remainingBalance),
-        isPaid: isPaid
+        isPaid: paymentStatus === 'paid',
+        isPartial: paymentStatus === 'partial',
+        paidDate: paidDate,
+        hasRealData: !!realInstallment,
+        paymentStatus
       });
     }
 
+    console.log('🔍 AccountStatement: Tabla de amortización generada:', schedule);
     return schedule;
   };
 
@@ -592,6 +695,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               
               .status-badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; }
               .status-paid { background-color: #dcfce7; color: #166534; }
+              .status-partial { background-color: #fed7aa; color: #c2410c; }
               .status-pending { background-color: #fef3c7; color: #92400e; }
               .status-failed { background-color: #fee2e2; color: #991b1b; }
               
@@ -671,16 +775,49 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 </thead>
                 <tbody>
                   ${amortizationSchedule.map(installment => `
-                    <tr>
-                      <td>${installment.installment}</td>
-                      <td>${formatDate(installment.dueDate)}</td>
-                      <td>${formatCurrency(installment.monthlyPayment)}</td>
-                      <td>${formatCurrency(installment.principalPayment)}</td>
-                      <td>${formatCurrency(installment.interestPayment)}</td>
-                      <td>${formatCurrency(installment.remainingBalance)}</td>
-                      <td>
-                        <span class="status-badge ${installment.isPaid ? 'status-paid' : 'status-pending'}">
-                          ${installment.isPaid ? 'Pagado' : 'Pendiente'}
+                    <tr style="${installment.isPaid ? 'background-color: #f0fdf4;' : installment.isPartial ? 'background-color: #fef3c7;' : ''}">
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; font-weight: bold;">
+                        ${installment.installment}
+                        ${installment.isPaid ? ' ✅' : installment.isPartial ? ' ⚠️' : ''}
+                      </td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatDate(installment.dueDate)}</td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">
+                        <div style="${installment.isPaid ? 'color: #16a34a; text-decoration: line-through;' : installment.isPartial ? 'color: #ea580c;' : 'color: #2563eb; font-weight: bold;'}">
+                          ${formatCurrency(installment.monthlyPayment)}
+                        </div>
+                        ${installment.isPaid && installment.paidDate ? `
+                          <div style="font-size: 10px; color: #16a34a; margin-top: 2px;">
+                            Pagado: ${formatDate(installment.paidDate)}
+                          </div>
+                        ` : ''}
+                        ${installment.isPartial && installment.remainingPayment > 0 ? `
+                          <div style="font-size: 10px; color: #ea580c; margin-top: 2px;">
+                            Falta: ${formatCurrency(installment.remainingPayment)}
+                          </div>
+                        ` : ''}
+                      </td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; ${installment.isPaid ? 'color: #16a34a; text-decoration: line-through;' : installment.isPartial ? 'color: #ea580c;' : ''}">
+                        ${formatCurrency(installment.principalPayment)}
+                        ${installment.isPartial && installment.remainingPrincipal > 0 ? `
+                          <div style="font-size: 10px; color: #ea580c; margin-top: 2px;">
+                            Falta: ${formatCurrency(installment.remainingPrincipal)}
+                          </div>
+                        ` : ''}
+                      </td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; ${installment.isPaid ? 'color: #16a34a; text-decoration: line-through;' : installment.isPartial ? 'color: #ea580c;' : ''}">
+                        ${formatCurrency(installment.interestPayment)}
+                        ${installment.isPartial && installment.remainingInterest > 0 ? `
+                          <div style="font-size: 10px; color: #ea580c; margin-top: 2px;">
+                            Falta: ${formatCurrency(installment.remainingInterest)}
+                          </div>
+                        ` : ''}
+                      </td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; ${installment.isPaid ? 'color: #16a34a; text-decoration: line-through;' : ''}">
+                        ${formatCurrency(installment.remainingBalance)}
+                      </td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">
+                        <span class="status-badge ${installment.isPaid ? 'status-paid' : installment.isPartial ? 'status-partial' : 'status-pending'}">
+                          ${installment.isPaid ? 'Pagado' : installment.isPartial ? 'Parcial' : 'Pendiente'}
                         </span>
                       </td>
                     </tr>
@@ -1030,6 +1167,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                     </Select>
                   </div>
                 </div>
+                <div className="mt-2 text-sm text-gray-600 bg-blue-50 p-3 rounded-lg border border-blue-200">
+                  💡 <strong>Tabla Interactiva:</strong> Las cuotas pagadas se marcan en verde y mantienen su numeración original. 
+                  Al pagar una cuota, se actualiza automáticamente el estado sin cambiar las fechas de vencimiento.
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
@@ -1053,20 +1194,66 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                           return index < limit;
                         })
                         .map((installment) => (
-                          <tr key={installment.installment} className="border-b hover:bg-gray-50">
-                            <td className="p-3">{installment.installment}</td>
-                            <td className="p-3">{formatDate(installment.dueDate)}</td>
-                            <td className="p-3 font-semibold text-blue-600">
-                              {formatCurrency(installment.monthlyPayment)}
+                          <tr key={installment.installment} className={`border-b hover:bg-gray-50 ${installment.isPaid ? 'bg-green-50' : ''}`}>
+                            <td className="p-3">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{installment.installment}</span>
+                                {installment.isPaid && (
+                                  <CheckCircle className="h-4 w-4 text-green-600" />
+                                )}
+                              </div>
                             </td>
-                            <td className="p-3">{formatCurrency(installment.principalPayment)}</td>
-                            <td className="p-3">{formatCurrency(installment.interestPayment)}</td>
-                            <td className="p-3">{formatCurrency(installment.remainingBalance)}</td>
+                            <td className="p-3">{formatDate(installment.dueDate)}</td>
+                            <td className="p-3">
+                              <div className={`font-semibold ${installment.isPaid ? 'text-green-600 line-through' : installment.isPartial ? 'text-orange-600' : 'text-blue-600'}`}>
+                                {formatCurrency(installment.monthlyPayment)}
+                              </div>
+                              {installment.isPaid && installment.paidDate && (
+                                <div className="text-xs text-green-600 mt-1">
+                                  Pagado: {formatDate(installment.paidDate)}
+                                </div>
+                              )}
+                              {installment.isPartial && installment.remainingPayment > 0 && (
+                                <div className="text-xs text-orange-600 mt-1">
+                                  Falta: {formatCurrency(installment.remainingPayment)}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <div className={installment.isPaid ? 'text-green-600 line-through' : installment.isPartial ? 'text-orange-600' : ''}>
+                                {formatCurrency(installment.principalPayment)}
+                              </div>
+                              {installment.isPartial && installment.remainingPrincipal > 0 && (
+                                <div className="text-xs text-orange-600 mt-1">
+                                  Falta: {formatCurrency(installment.remainingPrincipal)}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <div className={installment.isPaid ? 'text-green-600 line-through' : installment.isPartial ? 'text-orange-600' : ''}>
+                                {formatCurrency(installment.interestPayment)}
+                              </div>
+                              {installment.isPartial && installment.remainingInterest > 0 && (
+                                <div className="text-xs text-orange-600 mt-1">
+                                  Falta: {formatCurrency(installment.remainingInterest)}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <div className={installment.isPaid ? 'text-green-600 line-through' : ''}>
+                                {formatCurrency(installment.remainingBalance)}
+                              </div>
+                            </td>
                             <td className="p-3">
                               {installment.isPaid ? (
-                                <Badge variant="secondary" className="bg-green-100 text-green-800">
+                                <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200">
                                   <CheckCircle className="h-3 w-3 mr-1" />
                                   Pagado
+                                </Badge>
+                              ) : installment.isPartial ? (
+                                <Badge variant="outline" className="border-orange-200 text-orange-800 bg-orange-50">
+                                  <Clock className="h-3 w-3 mr-1" />
+                                  Parcial
                                 </Badge>
                               ) : (
                                 <Badge variant="outline" className="border-orange-200 text-orange-800">

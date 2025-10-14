@@ -73,6 +73,7 @@ export const LoansModule = () => {
   const [statementSearchTerm, setStatementSearchTerm] = useState('');
   const [statementStatusFilter, setStatementStatusFilter] = useState('all');
   const [statementAmountFilter, setStatementAmountFilter] = useState('all');
+  const [dynamicLateFees, setDynamicLateFees] = useState<{[key: string]: number}>({});
   
      // Estados para filtros y búsqueda
    const [searchTerm, setSearchTerm] = useState('');
@@ -85,6 +86,96 @@ export const LoansModule = () => {
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
+
+  // Función para calcular la mora actual de un préstamo
+  const calculateCurrentLateFee = async (loan: any) => {
+    try {
+      if (!loan.late_fee_enabled || !loan.late_fee_rate) {
+        return 0;
+      }
+
+      // Obtener las cuotas del préstamo
+      const { data: installments, error } = await supabase
+        .from('installments')
+        .select('*')
+        .eq('loan_id', loan.id)
+        .order('installment_number', { ascending: true });
+
+      if (error || !installments) {
+        console.error('Error obteniendo cuotas:', error);
+        return loan.current_late_fee || 0;
+      }
+
+      // Calcular mora actual basándose en las cuotas reales
+      const currentDate = new Date();
+      let totalCurrentLateFee = 0;
+
+      installments.forEach((installment: any) => {
+        const dueDate = new Date(installment.due_date);
+        const daysOverdue = Math.max(0, Math.floor((currentDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
+        
+        // Solo calcular mora para cuotas vencidas y no pagadas
+        if (daysOverdue > 0 && !installment.is_paid) {
+          const gracePeriod = loan.grace_period_days || 0;
+          const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
+          
+          if (effectiveDaysOverdue > 0) {
+            const principalPerPayment = installment.principal_amount;
+            const lateFeeRate = loan.late_fee_rate || 2;
+            
+            let lateFee = 0;
+            switch (loan.late_fee_calculation_type) {
+              case 'daily':
+                lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
+                break;
+              case 'monthly':
+                const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
+                lateFee = (principalPerPayment * lateFeeRate / 100) * monthsOverdue;
+                break;
+              case 'compound':
+                lateFee = principalPerPayment * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
+                break;
+              default:
+                lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
+            }
+            
+            // Aplicar límite máximo de mora si está configurado
+            if (loan.max_late_fee && loan.max_late_fee > 0) {
+              lateFee = Math.min(lateFee, loan.max_late_fee);
+            }
+            
+            // Restar la mora ya pagada de esta cuota
+            const remainingLateFee = Math.max(0, lateFee - installment.late_fee_paid);
+            totalCurrentLateFee += remainingLateFee;
+          }
+        }
+      });
+
+      return Math.round(totalCurrentLateFee * 100) / 100;
+    } catch (error) {
+      console.error('Error calculando mora actual:', error);
+      return loan.current_late_fee || 0;
+    }
+  };
+
+  // Función para actualizar las moras dinámicas
+  const updateDynamicLateFees = async () => {
+    const newLateFees: {[key: string]: number} = {};
+    
+    for (const loan of loans) {
+      const currentLateFee = await calculateCurrentLateFee(loan);
+      newLateFees[loan.id] = currentLateFee;
+    }
+    
+    setDynamicLateFees(newLateFees);
+  };
+
+  // Actualizar moras dinámicas cuando cambien los préstamos
+  useEffect(() => {
+    if (loans && loans.length > 0) {
+      updateDynamicLateFees();
+    }
+  }, [loans]);
   
   // Constante para el texto del botón Editar
   const EDIT_BUTTON_TEXT = 'Actualizar';
@@ -847,7 +938,7 @@ export const LoansModule = () => {
                       {/* Contenido principal */}
                       <div className="p-6">
                         {/* Información financiera destacada */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
                           <div className="text-center p-4 bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-100">
                             <div className="text-2xl font-bold text-green-700 mb-1">
                               ${loan.amount.toLocaleString()}
@@ -860,6 +951,16 @@ export const LoansModule = () => {
                               ${loan.remaining_balance.toLocaleString()}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
+                          </div>
+
+                          <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl border border-purple-100">
+                            <div className="text-2xl font-bold text-purple-700 mb-1">
+                              ${(loan.remaining_balance + (dynamicLateFees[loan.id] || loan.current_late_fee || 0)).toLocaleString()}
+                            </div>
+                            <div className="text-sm text-purple-600 font-medium">Balance Total Pendiente</div>
+                            <div className="text-xs text-purple-500 mt-1">
+                              Balance + Mora Actual
+                            </div>
                           </div>
                           
                           <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl border border-blue-100">
