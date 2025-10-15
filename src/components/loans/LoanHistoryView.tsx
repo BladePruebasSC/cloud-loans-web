@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { PaymentActions } from './PaymentActions';
 import { formatInTimeZone } from 'date-fns-tz';
+import { addHours } from 'date-fns';
 
 interface LoanHistoryEntry {
   id: string;
@@ -345,7 +346,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                           <span className="font-semibold">{getChangeTypeLabel(entry.change_type)}</span>
                           <span className="text-sm text-gray-500">
                             {formatInTimeZone(
-                              new Date(entry.created_at),
+                              addHours(new Date(entry.created_at), 2),
                               'America/Santo_Domingo',
                               'dd MMM yyyy, hh:mm a'
                             )}

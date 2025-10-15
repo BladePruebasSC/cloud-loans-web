@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/lateFeeCalculator';
 import { formatInTimeZone } from 'date-fns-tz';
+import { addHours } from 'date-fns';
 
 interface Payment {
   id: string;
@@ -372,8 +373,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   const formatDateTime = (dateString: string) => {
     if (!dateString) return '-';
     try {
+      const date = addHours(new Date(dateString), 2);
       return formatInTimeZone(
-        new Date(dateString),
+        date,
         'America/Santo_Domingo',
         'dd MMM yyyy, hh:mm a'
       );
