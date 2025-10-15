@@ -174,8 +174,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     const calculateSchedule = async () => {
       if (loan && installments.length > 0) {
         const schedule = await calculateAmortizationSchedule(loan, installments);
-        setAmortizationSchedule(schedule);
-      }
+      setAmortizationSchedule(schedule);
+    }
     };
     
     calculateSchedule();
@@ -404,7 +404,6 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
     // Calcular el capital total pagado para determinar el balance general
     const totalPrincipalPaid = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
-    let remainingBalance = principal - totalPrincipalPaid;
 
     console.log('🔍 AccountStatement: Mapa de cuotas creado:', installmentsMap);
     console.log('🔍 AccountStatement: Pagos encontrados:', payments);
@@ -425,35 +424,40 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const paidDate = realInstallment ? realInstallment.paid_date : null;
 
       // Calcular cuánto se ha pagado de esta cuota específica
-      // Asumimos que los pagos se aplican en orden de cuotas
+      // Aplicar pagos en orden secuencial, considerando pagos parciales
       let principalPaidForThisInstallment = 0;
       let interestPaidForThisInstallment = 0;
       
-      // Sumar pagos hasta cubrir esta cuota
-      let accumulatedPrincipal = 0;
-      let accumulatedInterest = 0;
-      
       if (payments) {
-        for (const payment of payments) {
-          accumulatedPrincipal += payment.principal_amount || 0;
-          accumulatedInterest += payment.interest_amount || 0;
-          
-          // Si hemos cubierto hasta esta cuota
-          if (accumulatedPrincipal >= i * originalPrincipal) {
-            break;
-          }
-          
-          // Si estamos en el rango de esta cuota
-          if (accumulatedPrincipal > (i - 1) * originalPrincipal) {
-            const previousAccumulated = Math.max(0, accumulatedPrincipal - (payment.principal_amount || 0) - (i - 1) * originalPrincipal);
-            const currentPayment = Math.min(payment.principal_amount || 0, i * originalPrincipal - (i - 1) * originalPrincipal - previousAccumulated);
-            principalPaidForThisInstallment += currentPayment;
-          }
-          
-          if (accumulatedInterest > (i - 1) * originalInterest) {
-            const previousInterestAccumulated = Math.max(0, accumulatedInterest - (payment.interest_amount || 0) - (i - 1) * originalInterest);
-            const currentInterestPayment = Math.min(payment.interest_amount || 0, i * originalInterest - (i - 1) * originalInterest - previousInterestAccumulated);
-            interestPaidForThisInstallment += currentInterestPayment;
+        let remainingPrincipalToAllocate = totalPrincipalPaid;
+        let remainingInterestToAllocate = payments.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0);
+        
+        // Aplicar pagos a las cuotas en orden secuencial
+        for (let j = 1; j <= i; j++) {
+          if (j === i) {
+            // Esta es la cuota actual
+            if (remainingPrincipalToAllocate > 0 || remainingInterestToAllocate > 0) {
+              // Calcular cuánto se puede asignar a esta cuota
+              const principalNeeded = originalPrincipal;
+              const interestNeeded = originalInterest;
+              
+              // Asignar capital disponible
+              const principalToAssign = Math.min(remainingPrincipalToAllocate, principalNeeded);
+              principalPaidForThisInstallment = principalToAssign;
+              remainingPrincipalToAllocate -= principalToAssign;
+              
+              // Asignar interés disponible
+              const interestToAssign = Math.min(remainingInterestToAllocate, interestNeeded);
+              interestPaidForThisInstallment = interestToAssign;
+              remainingInterestToAllocate -= interestToAssign;
+            }
+          } else {
+            // Cuotas anteriores - restar lo que se les asignó
+            const principalForPreviousCuota = Math.min(remainingPrincipalToAllocate, originalPrincipal);
+            const interestForPreviousCuota = Math.min(remainingInterestToAllocate, originalInterest);
+            
+            remainingPrincipalToAllocate -= principalForPreviousCuota;
+            remainingInterestToAllocate -= interestForPreviousCuota;
           }
         }
       }
@@ -465,11 +469,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
       // Determinar estado de la cuota
       let paymentStatus = 'pending';
-      if (remainingPayment <= 0) {
+      const totalPaidForThisInstallment = principalPaidForThisInstallment + interestPaidForThisInstallment;
+      
+      // Una cuota está pagada si se ha pagado al menos el monto total de la cuota
+      if (totalPaidForThisInstallment >= monthlyPayment) {
         paymentStatus = 'paid';
-      } else if (remainingPayment < monthlyPayment) {
+      } else if (totalPaidForThisInstallment > 0) {
         paymentStatus = 'partial';
       }
+
+      // Calcular el balance pendiente del préstamo después de esta cuota
+      // El balance pendiente es el capital total menos el capital pagado hasta esta cuota
+      const capitalPaidUpToThisInstallment = Math.min(totalPrincipalPaid, i * originalPrincipal);
+      const remainingBalanceAfterThisInstallment = Math.max(0, principal - capitalPaidUpToThisInstallment);
 
       console.log(`🔍 Cuota ${i}:`, {
         exists: !!realInstallment,
@@ -480,10 +492,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         originalInterest,
         principalPaidForThisInstallment,
         interestPaidForThisInstallment,
+        totalPaidForThisInstallment,
+        monthlyPayment,
         remainingPrincipal,
         remainingInterest,
         remainingPayment,
-        paymentStatus
+        paymentStatus,
+        capitalPaidUpToThisInstallment,
+        remainingBalanceAfterThisInstallment
       });
 
       schedule.push({
@@ -497,7 +513,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         remainingPrincipal: remainingPrincipal,
         remainingInterest: remainingInterest,
         remainingPayment: remainingPayment,
-        remainingBalance: Math.max(0, remainingBalance),
+        remainingBalance: remainingBalanceAfterThisInstallment,
         isPaid: paymentStatus === 'paid',
         isPartial: paymentStatus === 'partial',
         paidDate: paidDate,
@@ -830,27 +846,27 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               <h3>Historial de Pagos</h3>
               ${payments.length > 0 ? `
                 <table class="table">
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Monto</th>
-                      <th>Principal</th>
-                      <th>Interés</th>
-                      <th>Mora</th>
-                      <th>Método</th>
-                      <th>Estado</th>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Monto</th>
+                    <th>Principal</th>
+                    <th>Interés</th>
+                    <th>Mora</th>
+                    <th>Método</th>
+                    <th>Estado</th>
                       <th>Referencia</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${payments.map(payment => `
-                      <tr>
-                        <td>${formatDate(payment.payment_date)}</td>
-                        <td>${formatCurrency(payment.amount)}</td>
-                        <td>${formatCurrency(payment.principal_amount)}</td>
-                        <td>${formatCurrency(payment.interest_amount)}</td>
-                        <td>${formatCurrency(payment.late_fee)}</td>
-                        <td>${getPaymentMethodLabel(payment.payment_method)}</td>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${payments.map(payment => `
+                    <tr>
+                      <td>${formatDate(payment.payment_date)}</td>
+                      <td>${formatCurrency(payment.amount)}</td>
+                      <td>${formatCurrency(payment.principal_amount)}</td>
+                      <td>${formatCurrency(payment.interest_amount)}</td>
+                      <td>${formatCurrency(payment.late_fee)}</td>
+                      <td>${getPaymentMethodLabel(payment.payment_method)}</td>
                         <td>
                           <span class="status-badge status-${payment.status}">
                             ${payment.status === 'completed' ? 'Completado' : 
@@ -859,10 +875,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                           </span>
                         </td>
                         <td>${payment.reference_number || '-'}</td>
-                      </tr>
-                    `).join('')}
-                  </tbody>
-                </table>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
               ` : `
                 <p style="text-align: center; color: #666; font-style: italic; padding: 20px;">
                   No se han registrado pagos para este préstamo
@@ -882,7 +898,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       
       // Esperar a que el contenido se cargue antes de imprimir
       setTimeout(() => {
-        printWindow.print();
+      printWindow.print();
       }, 500);
     }
   };
@@ -1206,7 +1222,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                             <td className="p-3">{formatDate(installment.dueDate)}</td>
                             <td className="p-3">
                               <div className={`font-semibold ${installment.isPaid ? 'text-green-600 line-through' : installment.isPartial ? 'text-orange-600' : 'text-blue-600'}`}>
-                                {formatCurrency(installment.monthlyPayment)}
+                              {formatCurrency(installment.monthlyPayment)}
                               </div>
                               {installment.isPaid && installment.paidDate && (
                                 <div className="text-xs text-green-600 mt-1">

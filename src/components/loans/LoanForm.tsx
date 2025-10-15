@@ -20,10 +20,33 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
   try {
     const installments = [];
     const baseDate = new Date(loan.start_date);
-    const principalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
-    const interestPerPayment = loan.amount * loan.interest_rate / 100;
+    
+    // Calcular cuotas según el tipo de amortización
+    let principalPerPayment, interestPerPayment;
+    
+    if (loan.amortization_type === 'french') {
+      // Amortización francesa - cuota fija, capital creciente, interés decreciente
+      const periodRate = loan.interest_rate / 100;
+      const totalPeriods = loan.term_months;
+      
+      if (periodRate > 0) {
+        const fixedPayment = loan.amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
+        // Para la primera cuota
+        interestPerPayment = loan.amount * periodRate;
+        principalPerPayment = fixedPayment - interestPerPayment;
+      } else {
+        principalPerPayment = loan.amount / totalPeriods;
+        interestPerPayment = 0;
+      }
+    } else {
+      // Amortización simple (por defecto)
+      principalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
+      interestPerPayment = loan.amount * loan.interest_rate / 100;
+    }
     
     // Generar cada cuota
+    let remainingBalance = loan.amount;
+    
     for (let i = 1; i <= loan.term_months; i++) {
       const installmentDate = new Date(baseDate);
       const periodsToAdd = i - 1;
@@ -52,15 +75,43 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
           installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
       }
       
+      // Calcular cuota específica según el tipo de amortización
+      let currentPrincipalAmount, currentInterestAmount, currentTotalAmount;
+      
+      if (loan.amortization_type === 'french') {
+        // Amortización francesa - cuota fija, capital creciente, interés decreciente
+        const periodRate = loan.interest_rate / 100;
+        const totalPeriods = loan.term_months;
+        
+        if (periodRate > 0) {
+          const fixedPayment = loan.amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
+          currentInterestAmount = remainingBalance * periodRate;
+          currentPrincipalAmount = fixedPayment - currentInterestAmount;
+          currentTotalAmount = fixedPayment;
+        } else {
+          currentPrincipalAmount = loan.amount / totalPeriods;
+          currentInterestAmount = 0;
+          currentTotalAmount = currentPrincipalAmount;
+        }
+      } else {
+        // Amortización simple (por defecto)
+        currentPrincipalAmount = principalPerPayment;
+        currentInterestAmount = interestPerPayment;
+        currentTotalAmount = loan.monthly_payment;
+      }
+      
       installments.push({
         loan_id: loan.id,
         installment_number: i,
         due_date: installmentDate.toISOString().split('T')[0],
-        principal_amount: principalPerPayment,
-        interest_amount: interestPerPayment,
-        total_amount: loan.monthly_payment,
+        principal_amount: currentPrincipalAmount,
+        interest_amount: currentInterestAmount,
+        total_amount: currentTotalAmount,
         is_paid: false
       });
+      
+      // Actualizar el balance restante para la siguiente cuota
+      remainingBalance -= currentPrincipalAmount;
     }
     
     // Insertar las cuotas en la base de datos
@@ -86,7 +137,7 @@ const loanSchema = z.object({
   interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0'),
   term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes'),
   loan_type: z.string().min(1, 'Debe seleccionar un tipo de préstamo'),
-  amortization_type: z.string().default('simple').refine((val) => ['simple', 'german', 'american', 'indefinite'].includes(val), {
+  amortization_type: z.string().default('simple').refine((val) => ['simple', 'french', 'german', 'american', 'indefinite'].includes(val), {
     message: 'Tipo de amortización no válido'
   }),
   payment_frequency: z.string().default('monthly'),
@@ -508,6 +559,15 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
        const totalInterest = amount * (interest_rate / 100) * monthsEquivalent;
        const totalAmount = amount + totalInterest;
        minimumPayment = totalAmount / totalPeriods;
+     } else if (amortization_type === 'french') {
+       // Amortización francesa - Cuota fija, capital creciente, interés decreciente
+       // Usar la fórmula de anualidad para calcular la cuota fija
+       if (periodRate > 0) {
+         minimumPayment = amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
+       } else {
+         // Si no hay interés, es simplemente el capital dividido por períodos
+         minimumPayment = amount / totalPeriods;
+       }
      } else if (amortization_type === 'german') {
        // Amortización alemana - Cuota decreciente, usar la primera cuota como mínimo
        const principalPerPayment = amount / totalPeriods;
@@ -749,6 +809,53 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
            remainingBalance -= principalPerPayment;
          }
        }
+     } else if (amortization_type === 'french') {
+       // Amortización francesa - Cuota fija, capital creciente, interés decreciente
+       // Calcular la cuota fija usando la fórmula de anualidad
+       if (periodRate > 0) {
+         monthlyPayment = amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
+       } else {
+         // Si no hay interés, es simplemente el capital dividido por períodos
+         monthlyPayment = amount / totalPeriods;
+       }
+       
+       let remainingBalance = amount;
+       let totalPaid = 0;
+       
+       for (let i = 1; i <= totalPeriods; i++) {
+         let paymentDate: Date;
+         
+         if (i === 1) {
+           // Para la primera fecha, verificar si cae en día excluido
+           const firstDate = createLocalDate(first_payment_date);
+           paymentDate = adjustDateForExcludedDays(firstDate);
+         } else {
+           // Usar la función para calcular el siguiente día hábil
+           const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
+           paymentDate = getNextBusinessDay(previousDate, payment_frequency);
+         }
+         
+         const interestPayment = remainingBalance * periodRate;
+         const principalPayment = monthlyPayment - interestPayment;
+         const actualPayment = monthlyPayment;
+         const isLastPayment = i === totalPeriods;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
+         
+         totalPaid += totalPaymentWithClosingCosts;
+         
+         schedule.push({
+           payment: i,
+           date: paymentDate.toISOString().split('T')[0],
+           interest: interestPayment,
+           principal: principalPayment,
+           totalPayment: totalPaymentWithClosingCosts,
+           remainingBalance: Math.max(0, remainingBalance - principalPayment)
+         });
+         
+         remainingBalance -= principalPayment;
+       }
+       
+       totalAmount = totalPaid;
      } else if (amortization_type === 'german') {
        // Amortización alemana (insoluto) - Cuota decreciente
        // El capital se paga en partes iguales, el interés se calcula sobre el saldo insoluto
@@ -1424,6 +1531,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                                </FormControl>
                                <SelectContent>
                                  <SelectItem value="simple">SIMPLE | ABSOLUTO</SelectItem>
+                                 <SelectItem value="french">FRANCÉS | INSOLUTO FIJO</SelectItem>
                                  <SelectItem value="german">ALEMÁN | INSOLUTO</SelectItem>
                                  <SelectItem value="american">AMERICANO | LÍNEA DE CRÉDITO</SelectItem>
                                  <SelectItem value="indefinite">PLAZO INDEFINIDO</SelectItem>
@@ -1432,6 +1540,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                              <FormMessage />
                              <div className="text-xs text-gray-500 mt-1">
                                <p><strong>Simple:</strong> Cuota fija, interés y capital distribuidos</p>
+                               <p><strong>Francés:</strong> Cuota fija, capital creciente, interés decreciente</p>
                                <p><strong>Alemán:</strong> Cuota decreciente, capital fijo</p>
                                <p><strong>Americano:</strong> Solo intereses, capital al final</p>
                                <p><strong>Indefinido:</strong> Solo intereses, sin vencimiento</p>
