@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/lateFeeCalculator';
+import { formatInTimeZone } from 'date-fns-tz';
 
 interface Payment {
   id: string;
@@ -371,15 +372,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   const formatDateTime = (dateString: string) => {
     if (!dateString) return '-';
     try {
-      const date = new Date(dateString);
-      return date.toLocaleString('es-DO', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: 'America/Santo_Domingo'
-      });
+      return formatInTimeZone(
+        new Date(dateString),
+        'America/Santo_Domingo',
+        'dd MMM yyyy, hh:mm a',
+        { locale: require('date-fns/locale/es') }
+      );
     } catch (error) {
       return '-';
     }
