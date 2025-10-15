@@ -347,8 +347,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                             {formatInTimeZone(
                               new Date(entry.created_at),
                               'America/Santo_Domingo',
-                              'dd MMM yyyy, hh:mm a',
-                              { locale: require('date-fns/locale/es') }
+                              'dd MMM yyyy, hh:mm a'
                             )}
                           </span>
                         </div>

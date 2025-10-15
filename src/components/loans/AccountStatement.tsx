@@ -375,8 +375,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       return formatInTimeZone(
         new Date(dateString),
         'America/Santo_Domingo',
-        'dd MMM yyyy, hh:mm a',
-        { locale: require('date-fns/locale/es') }
+        'dd MMM yyyy, hh:mm a'
       );
     } catch (error) {
       return '-';
@@ -542,7 +541,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   };
 
   const formatCurrency = (amount: number) => {
-    return `RD$${amount.toLocaleString()}`;
+    return `RD$${amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
   };
 
   const getPaymentMethodLabel = (method: string) => {
