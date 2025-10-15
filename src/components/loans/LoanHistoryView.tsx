@@ -348,7 +348,8 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                               month: 'short',
                               day: 'numeric',
                               hour: '2-digit',
-                              minute: '2-digit'
+                              minute: '2-digit',
+                              timeZone: 'America/Santo_Domingo'
                             })}
                           </span>
                         </div>
