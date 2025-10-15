@@ -368,6 +368,22 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     }
   };
 
+  const formatDateTime = (dateString: string) => {
+    if (!dateString) return '-';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleString('es-DO', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      return '-';
+    }
+  };
+
   const calculateAmortizationSchedule = async (loanData: any, installmentsData: any[]) => {
     if (!loanData || !installmentsData) return [];
 
@@ -631,7 +647,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               <table>
                 <tr><td>Cliente:</td><td>${loan.clients.full_name}</td></tr>
                 <tr><td>Cédula:</td><td>${loan.clients.dni}</td></tr>
-                <tr><td>Fecha de Pago:</td><td>${formatDate(payment.payment_date)}</td></tr>
+                <tr><td>Fecha de Pago:</td><td>${formatDateTime(payment.created_at)}</td></tr>
                 <tr><td>Método de Pago:</td><td>${getPaymentMethodLabel(payment.payment_method)}</td></tr>
                 ${payment.reference_number ? `<tr><td>Referencia:</td><td>${payment.reference_number}</td></tr>` : ''}
               </table>
@@ -861,7 +877,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 <tbody>
                   ${payments.map(payment => `
                     <tr>
-                      <td>${formatDate(payment.payment_date)}</td>
+                      <td>${formatDateTime(payment.created_at)}</td>
                       <td>${formatCurrency(payment.amount)}</td>
                       <td>${formatCurrency(payment.principal_amount)}</td>
                       <td>${formatCurrency(payment.interest_amount)}</td>
@@ -984,7 +1000,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               <tbody>
                 ${payments.map(payment => `
                   <tr style="background-color: #f9f9f9;">
-                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatDate(payment.payment_date)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatDateTime(payment.created_at)}</td>
                     <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.amount)}</td>
                     <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.principal_amount)}</td>
                     <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.interest_amount)}</td>
@@ -1373,7 +1389,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                         <div key={payment.id} className="border rounded-lg p-4 bg-white">
                           <div className="flex justify-between items-start mb-3">
                             <div className="flex items-center gap-2">
-                              <span className="font-semibold text-lg">{formatDate(payment.payment_date)}</span>
+                              <span className="font-semibold text-lg">{formatDateTime(payment.created_at)}</span>
                               {getStatusBadge(payment.status)}
                             </div>
                             <div className="text-right">
@@ -1448,7 +1464,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                         <tbody>
                           {filteredPayments.map((payment) => (
                             <tr key={payment.id} className="border-b hover:bg-gray-50">
-                              <td className="p-3">{formatDate(payment.payment_date)}</td>
+                              <td className="p-3">{formatDateTime(payment.created_at)}</td>
                               <td className="p-3 font-semibold text-green-600">
                                 {formatCurrency(payment.amount)}
                               </td>

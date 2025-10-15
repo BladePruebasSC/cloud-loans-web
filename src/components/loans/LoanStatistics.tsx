@@ -143,6 +143,7 @@ export const LoanStatistics: React.FC<LoanStatisticsProps> = ({
           remaining_balance: loanData.remaining_balance,
           next_payment_date: loanData.next_payment_date,
           term_months: loanData.term_months,
+          term: loanData.term_months,
           payment_frequency: loanData.payment_frequency || 'monthly',
           late_fee_enabled: loanData.late_fee_enabled || false,
           late_fee_rate: loanData.late_fee_rate || 2.0,

@@ -343,7 +343,13 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                           {getChangeTypeIcon(entry.change_type)}
                           <span className="font-semibold">{getChangeTypeLabel(entry.change_type)}</span>
                           <span className="text-sm text-gray-500">
-                            {new Date(entry.created_at).toLocaleDateString()}
+                            {new Date(entry.created_at).toLocaleString('es-DO', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
                           </span>
                         </div>
                         
