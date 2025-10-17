@@ -20,6 +20,7 @@ import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/date
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
 import { Search, User } from 'lucide-react';
+import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 
 const paymentSchema = z.object({
   loan_id: z.string().min(1, 'Debe seleccionar un préstamo'),
@@ -66,6 +67,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   preselectedLoan?: Loan;
   onPaymentSuccess?: () => void;
 }) => {
+  // Función helper para redondear a 2 decimales
+  const roundToTwoDecimals = (value: number): number => {
+    return Math.round(value * 100) / 100;
+  };
   const [loans, setLoans] = useState<Loan[]>([]);
   const [filteredLoans, setFilteredLoans] = useState<Loan[]>([]);
   const [loanSearch, setLoanSearch] = useState('');
@@ -416,12 +421,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     if (selectedLoan && paymentStatus.currentPaymentRemaining > 0) {
       // Si hay un saldo pendiente menor a la cuota mensual, pre-llenar con ese monto
       if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
-        form.setValue('amount', paymentStatus.currentPaymentRemaining);
-        setPaymentAmount(paymentStatus.currentPaymentRemaining);
+        const roundedAmount = Math.round(paymentStatus.currentPaymentRemaining);
+        form.setValue('amount', roundedAmount);
+        setPaymentAmount(roundedAmount);
       } else {
         // Si no hay pagos previos, usar la cuota mensual completa
-        form.setValue('amount', selectedLoan.monthly_payment);
-        setPaymentAmount(selectedLoan.monthly_payment);
+        const roundedAmount = Math.round(selectedLoan.monthly_payment);
+        form.setValue('amount', roundedAmount);
+        setPaymentAmount(roundedAmount);
       }
     }
   }, [paymentStatus.currentPaymentRemaining, selectedLoan, form]);
@@ -639,13 +646,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       // Validación 1: No permitir que la cuota exceda el balance restante
       if (data.amount > remainingBalance) {
-        toast.error(`El pago de cuota no puede exceder el balance restante de RD$${remainingBalance.toLocaleString()}`);
+        toast.error(`El pago de cuota no puede exceder el balance restante de ${formatCurrency(remainingBalance)}`);
         return;
       }
       
       // Validación 1b: No permitir que la mora exceda la mora actual
       if (data.late_fee_amount && data.late_fee_amount > lateFeeAmount) {
-        toast.error(`El pago de mora no puede exceder la mora actual de RD$${lateFeeAmount.toLocaleString()}`);
+        toast.error(`El pago de mora no puede exceder la mora actual de ${formatCurrency(lateFeeAmount)}`);
         return;
       }
       
@@ -664,8 +671,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Validación 3: No permitir pagos que excedan lo que falta de la cuota actual (solo si hay pago de cuota)
       if (data.amount > 0) {
         const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
-        if (data.amount > maxAllowedPayment) {
-          toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: RD$${maxAllowedPayment.toLocaleString()}`);
+        const roundedMaxAllowed = Math.round(maxAllowedPayment);
+        if (data.amount > roundedMaxAllowed) {
+          toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: ${formatCurrency(roundedMaxAllowed)}`);
           return;
         }
       }
@@ -679,50 +687,86 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       let remainingInterest = 0;
       
       if (data.amount > 0) {
-        distribution = await calculatePaymentDistribution(data.amount);
+        distribution = await calculatePaymentDistribution(Math.round(data.amount));
         interestPayment = distribution.interestPayment;
         principalPayment = distribution.principalPayment;
         remainingInterest = distribution.remainingInterest;
         
         // Determinar si es un pago completo o parcial
         const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
-        isFullPayment = data.amount >= maxAllowedPayment;
+        const roundedMaxAllowed = Math.round(maxAllowedPayment);
+        isFullPayment = Math.round(data.amount) >= roundedMaxAllowed;
         paymentStatusValue = isFullPayment ? 'completed' : 'pending';
         
         // Si es pago parcial, mostrar advertencia
         if (!isFullPayment) {
-          const remainingAmount = maxAllowedPayment - data.amount;
-          toast.warning(`Pago parcial registrado. Queda pendiente RD$${remainingAmount.toLocaleString()} de la cuota mensual.`);
+          const remainingAmount = roundedMaxAllowed - Math.round(data.amount);
+          toast.warning(`Pago parcial registrado. Queda pendiente ${formatCurrency(remainingAmount)} de la cuota mensual.`);
         }
 
         // Mostrar información sobre la distribución del pago
         const distributionMessage = principalPayment > 0 
-          ? `Pago aplicado: RD$${interestPayment.toLocaleString()} al interés, RD$${principalPayment.toLocaleString()} al capital`
-          : `Pago aplicado: RD$${interestPayment.toLocaleString()} al interés (pendiente interés: RD$${(remainingInterest - interestPayment).toLocaleString()})`;
+          ? `Pago aplicado: ${formatCurrency(interestPayment)} al interés, ${formatCurrency(principalPayment)} al capital`
+          : `Pago aplicado: ${formatCurrency(interestPayment)} al interés (pendiente interés: ${formatCurrency(remainingInterest - interestPayment)})`;
         
         toast.info(distributionMessage);
       } else {
         // Solo pago de mora, no hay distribución de cuota
-        toast.info(`Pago de mora registrado: RD$${data.late_fee_amount?.toLocaleString()}`);
+        toast.info(`Pago de mora registrado: ${formatCurrency(data.late_fee_amount || 0)}`);
       }
 
-      // Ajustar fecha para zona horaria de Santo Domingo antes de enviar
+      // CORREGIR: Crear fecha y hora correcta para Santo Domingo
       const now = new Date();
-      const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
-      const paymentDate = santoDomingoDate.toISOString().split('T')[0]; // YYYY-MM-DD en Santo Domingo
       
-      console.log('🔍 PaymentForm: Fecha actual UTC:', now.toISOString());
-      console.log('🔍 PaymentForm: Fecha en Santo Domingo:', santoDomingoDate.toISOString());
-      console.log('🔍 PaymentForm: Fecha del pago que se enviará:', paymentDate);
+      // Crear fecha en zona horaria de Santo Domingo usando Intl.DateTimeFormat
+      const santoDomingoFormatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Santo_Domingo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      const parts = santoDomingoFormatter.formatToParts(now);
+      const year = parts.find(part => part.type === 'year')?.value;
+      const month = parts.find(part => part.type === 'month')?.value;
+      const day = parts.find(part => part.type === 'day')?.value;
+      const hour = parts.find(part => part.type === 'hour')?.value;
+      const minute = parts.find(part => part.type === 'minute')?.value;
+      const second = parts.find(part => part.type === 'second')?.value;
+      
+      // Crear fecha local en Santo Domingo
+      const santoDomingoDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+      const paymentDate = `${year}-${month}-${day}`; // YYYY-MM-DD
+      
+      // Crear timestamp con zona horaria local (sin conversión UTC)
+      const paymentTimeLocal = santoDomingoDate.toISOString();
+      const paymentTimezone = 'America/Santo_Domingo';
+      
+      console.log('🔍 PaymentForm: DEBUGGING HORA LOCAL:', {
+        nowUTC: now.toISOString(),
+        nowLocal: now.toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo' }),
+        santoDomingoDate: santoDomingoDate.toISOString(),
+        santoDomingoLocal: santoDomingoDate.toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo' }),
+        paymentDate,
+        paymentTimeLocal,
+        paymentTimezone,
+        parts: { year, month, day, hour, minute, second }
+      });
       
       const paymentData = {
         loan_id: data.loan_id,
-        amount: data.amount, // Solo el monto de la cuota, sin incluir la mora
-        principal_amount: principalPayment,
-        interest_amount: interestPayment,
-        late_fee: data.late_fee_amount || 0, // Mora como concepto separado
+        amount: Math.round(data.amount), // Solo el monto de la cuota, sin incluir la mora (redondeado)
+        principal_amount: Math.round(principalPayment),
+        interest_amount: Math.round(interestPayment),
+        late_fee: Math.round(data.late_fee_amount || 0), // Mora como concepto separado (redondeado)
         due_date: selectedLoan.next_payment_date,
         payment_date: paymentDate, // Usar fecha actual en zona horaria de Santo Domingo
+        payment_time_local: paymentTimeLocal, // Timestamp con zona horaria local
+        payment_timezone: paymentTimezone, // Zona horaria del pago
         payment_method: data.payment_method,
         reference_number: data.reference_number,
         notes: data.notes,
@@ -841,14 +885,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         }
         
         if (remainingLateFeePayment > 0) {
-          console.log(`⚠️ PaymentForm: Quedó mora sin aplicar: RD$${remainingLateFeePayment.toLocaleString()}`);
+          console.log(`⚠️ PaymentForm: Quedó mora sin aplicar: ${formatCurrency(remainingLateFeePayment)}`);
         }
         
         console.log('🔍 PaymentForm: Distribución de mora completada');
       }
 
       // CORREGIR: El balance se reduce por el pago completo (capital + interés), no solo por el capital
-      const newBalance = Math.max(0, remainingBalance - data.amount);
+      const newBalance = Math.max(0, remainingBalance - Math.round(data.amount));
       
       // Solo actualizar la fecha del próximo pago si es un pago completo
       let nextPaymentDate = selectedLoan.next_payment_date;
@@ -986,7 +1030,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         : 'Pago parcial registrado exitosamente';
       
       if (data.late_fee_amount && data.late_fee_amount > 0) {
-        successMessage += ` + Mora de RD$${data.late_fee_amount.toLocaleString()}`;
+        successMessage += ` + Mora de ${formatCurrency(data.late_fee_amount)}`;
       }
       
       console.log('🔍 PaymentForm: Resumen del pago registrado:', {
@@ -1107,7 +1151,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                             >
                               <div className="font-medium">{loan.client?.full_name}</div>
                               <div className="text-sm text-gray-600">
-                                {loan.client?.dni} • Balance: ${loan.remaining_balance.toLocaleString()}
+                                {loan.client?.dni} • Balance: ${formatCurrencyNumber(loan.remaining_balance)}
                               </div>
                             </div>
                           ))}
@@ -1127,7 +1171,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                             <div>
                               <span className="font-medium text-gray-600">Balance Restante:</span>
                               <div className="text-lg font-bold text-green-600">
-                                ${selectedLoan.remaining_balance.toLocaleString()}
+                                ${formatCurrencyNumber(selectedLoan.remaining_balance)}
                               </div>
                             </div>
                             <div>
@@ -1146,39 +1190,39 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         {selectedLoan && paymentAmount > 0 && paymentDistribution && (
           <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="text-sm font-medium text-green-800 mb-2">
-              📊 Distribución del Pago (RD${paymentAmount.toLocaleString()})
+              📊 Distribución del Pago (${formatCurrency(paymentAmount)})
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <span className="text-green-700">Interés fijo por cuota:</span>
-                <span className="font-semibold">RD${paymentDistribution.monthlyInterestAmount.toLocaleString()}</span>
+                <span className="font-semibold">{formatCurrency(paymentDistribution.monthlyInterestAmount)}</span>
               </div>
               {paymentDistribution.alreadyPaidInterest > 0 && (
                 <div className="flex justify-between items-center">
                   <span className="text-green-700">Interés ya pagado:</span>
-                  <span className="font-semibold text-gray-600">RD${paymentDistribution.alreadyPaidInterest.toLocaleString()}</span>
+                  <span className="font-semibold text-gray-600">{formatCurrency(paymentDistribution.alreadyPaidInterest)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center">
                 <span className="text-green-700">Interés pendiente:</span>
-                <span className="font-semibold text-orange-600">RD${paymentDistribution.remainingInterest.toLocaleString()}</span>
+                <span className="font-semibold text-orange-600">{formatCurrency(paymentDistribution.remainingInterest)}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-green-700">Se aplica al interés:</span>
-                <span className="font-semibold text-orange-600">RD${paymentDistribution.interestPayment.toLocaleString()}</span>
+                <span className="font-semibold text-orange-600">{formatCurrency(paymentDistribution.interestPayment)}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-green-700">Se aplica al capital:</span>
-                <span className="font-semibold text-blue-600">RD${paymentDistribution.principalPayment.toLocaleString()}</span>
+                <span className="font-semibold text-blue-600">{formatCurrency(paymentDistribution.principalPayment)}</span>
               </div>
               {paymentDistribution.interestPayment < paymentDistribution.remainingInterest && (
                 <div className="mt-2 p-2 bg-yellow-100 border border-yellow-300 rounded text-xs text-yellow-800">
-                  ⚠️ Pago parcial al interés. Queda pendiente: RD${(paymentDistribution.remainingInterest - paymentDistribution.interestPayment).toLocaleString()}
+                  ⚠️ Pago parcial al interés. Queda pendiente: {formatCurrency(paymentDistribution.remainingInterest - paymentDistribution.interestPayment)}
                 </div>
               )}
               {paymentDistribution.principalPayment > 0 && (
                 <div className="mt-2 p-2 bg-blue-100 border border-blue-300 rounded text-xs text-blue-800">
-                  ✅ El balance del préstamo se reducirá en RD${paymentDistribution.principalPayment.toLocaleString()}
+                  ✅ El balance del préstamo se reducirá en {formatCurrency(paymentDistribution.principalPayment)}
                 </div>
               )}
               {paymentDistribution.interestPayment === paymentDistribution.remainingInterest && paymentDistribution.interestPayment > 0 && (
@@ -1199,18 +1243,18 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <span className="text-blue-700">Pago de cuota:</span>
-                <span className="font-semibold">RD${paymentAmount.toLocaleString()}</span>
+                <span className="font-semibold">{formatCurrency(paymentAmount)}</span>
               </div>
               {form.watch('late_fee_amount') && form.watch('late_fee_amount') > 0 && (
                 <div className="flex justify-between items-center">
                   <span className="text-blue-700">Pago de mora:</span>
-                  <span className="font-semibold text-orange-600">RD${form.watch('late_fee_amount').toLocaleString()}</span>
+                  <span className="font-semibold text-orange-600">{formatCurrency(form.watch('late_fee_amount'))}</span>
                 </div>
               )}
               <div className="border-t pt-2 flex justify-between items-center">
                 <span className="text-blue-800 font-medium">Total a pagar:</span>
                 <span className="font-bold text-lg text-blue-800">
-                  RD${(paymentAmount + (form.watch('late_fee_amount') || 0)).toLocaleString()}
+                  {formatCurrency(paymentAmount + (form.watch('late_fee_amount') || 0))}
                 </span>
               </div>
             </div>
@@ -1235,12 +1279,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               onChange={async (e) => {
                                 const value = e.target.value;
                                 const numValue = value === '' ? 0 : parseFloat(value) || 0;
-                                field.onChange(numValue);
-                                setPaymentAmount(numValue);
+                                const roundedValue = roundToTwoDecimals(numValue);
+                                field.onChange(roundedValue);
+                                setPaymentAmount(roundedValue);
                                 
                                 // Calcular distribución en tiempo real
-                                if (selectedLoan && numValue > 0) {
-                                  const distribution = await calculatePaymentDistribution(numValue);
+                                if (selectedLoan && roundedValue > 0) {
+                                  const distribution = await calculatePaymentDistribution(roundedValue);
                                   setPaymentDistribution(distribution);
                                 } else {
                                   setPaymentDistribution(null);
@@ -1282,7 +1327,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                   onChange={(e) => {
                                     const value = e.target.value;
                                     const numValue = value === '' ? 0 : parseFloat(value) || 0;
-                                    field.onChange(numValue);
+                                    const roundedValue = roundToTwoDecimals(numValue);
+                                    field.onChange(roundedValue);
                                   }}
                                 />
                               </FormControl>
@@ -1290,14 +1336,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                onClick={() => field.onChange(lateFeeAmount)}
+                                onClick={() => field.onChange(roundToTwoDecimals(lateFeeAmount))}
                                 className="whitespace-nowrap"
                               >
                                 Pagar Toda
                               </Button>
                             </div>
                             <div className="text-xs text-orange-600 mt-1">
-                              💡 Mora pendiente: RD${lateFeeAmount.toLocaleString()}
+                              💡 Mora pendiente: {formatCurrency(lateFeeAmount)}
                             </div>
                             <FormMessage />
                           </FormItem>
@@ -1395,13 +1441,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Balance Pendiente:</span>
                     <span className="font-bold text-red-600">
-                      ${selectedLoan.remaining_balance.toLocaleString()}
+                      ${formatCurrencyNumber(selectedLoan.remaining_balance)}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Cuota Mensual:</span>
                     <span className="font-semibold">
-                      ${selectedLoan.monthly_payment.toLocaleString()}
+                      ${formatCurrencyNumber(selectedLoan.monthly_payment)}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -1444,7 +1490,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                             <div className="flex justify-between">
                               <span className="text-sm text-gray-600">Mora Pendiente:</span>
                               <span className="font-bold text-red-600">
-                                RD${lateFeeAmount.toLocaleString()}
+                                {formatCurrency(lateFeeAmount)}
                               </span>
                             </div>
                             {lateFeeCalculation && (
@@ -1470,13 +1516,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                         {item.isPaid && ' ✅ PAGADA'}
                                       </span>
                                       <span className={`font-semibold ${item.isPaid ? 'text-green-700' : 'text-orange-800'}`}>
-                                        RD${item.lateFee.toLocaleString()}
+                                        {formatCurrency(item.lateFee)}
                                       </span>
                                     </div>
                                   ))}
                                   <div className="border-t pt-1 mt-2 flex justify-between items-center font-bold text-orange-900">
                                     <span>Total Mora Pendiente:</span>
-                                    <span>RD${lateFeeBreakdown.totalLateFee.toLocaleString()}</span>
+                                    <span>{formatCurrency(lateFeeBreakdown.totalLateFee)}</span>
                                   </div>
                                 </div>
                                  <div className="mt-2 text-xs text-gray-600">
@@ -1492,13 +1538,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Interés Fijo por Cuota:</span>
                   <span className="font-semibold text-orange-600">
-                    RD${((selectedLoan.amount * selectedLoan.interest_rate) / 100).toLocaleString()}
+                    {formatCurrency((selectedLoan.amount * selectedLoan.interest_rate) / 100)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Capital por Cuota:</span>
                   <span className="font-semibold text-blue-600">
-                    RD${(selectedLoan.monthly_payment - ((selectedLoan.amount * selectedLoan.interest_rate) / 100)).toLocaleString()}
+                    {formatCurrency(selectedLoan.monthly_payment - ((selectedLoan.amount * selectedLoan.interest_rate) / 100))}
                   </span>
                 </div>
                 {paymentDistribution && paymentDistribution.alreadyPaidInterest > 0 && (
@@ -1533,7 +1579,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                           <div className="flex justify-between">
                             <span>Falta por pagar:</span>
                             <span className="font-semibold text-red-600">
-                              ${paymentStatus.currentPaymentRemaining.toLocaleString()}
+                              ${formatCurrencyNumber(paymentStatus.currentPaymentRemaining)}
                             </span>
                           </div>
                         </div>
@@ -1545,11 +1591,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     <div className="text-sm text-yellow-800">
                       <div className="font-medium mb-1">💡 Información importante:</div>
                       <ul className="text-xs space-y-1">
-                        <li>• Pago completo: ${(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment).toLocaleString()} o más</li>
-                        <li>• Pago parcial: Menos de ${(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment).toLocaleString()}</li>
-                        <li>• Máximo permitido: ${selectedLoan.remaining_balance.toLocaleString()}</li>
+                        <li>• Pago completo: ${formatCurrencyNumber(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment)} o más</li>
+                        <li>• Pago parcial: Menos de ${formatCurrencyNumber(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment)}</li>
+                        <li>• Máximo permitido: ${formatCurrencyNumber(selectedLoan.remaining_balance)}</li>
                         {selectedLoan.late_fee_enabled && lateFeeAmount > 0 && (
-                          <li>• Mora pendiente: ${lateFeeAmount.toLocaleString()} (opcional pagar)</li>
+                          <li>• Mora pendiente: ${formatCurrencyNumber(lateFeeAmount)} (opcional pagar)</li>
                         )}
                       </ul>
                     </div>
@@ -1559,8 +1605,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     <div className="text-sm text-blue-800">
                       <div className="font-medium mb-1">🎯 Lógica de Aplicación de Pagos:</div>
                       <ul className="text-xs space-y-1">
-                        <li>• <strong>Cuota mensual:</strong> RD${selectedLoan.monthly_payment.toLocaleString()} (interés + capital)</li>
-                        <li>• <strong>Interés fijo:</strong> RD${((selectedLoan.amount * selectedLoan.interest_rate) / 100).toLocaleString()} por cuota</li>
+                        <li>• <strong>Cuota mensual:</strong> {formatCurrency(selectedLoan.monthly_payment)} (interés + capital)</li>
+                        <li>• <strong>Interés fijo:</strong> {formatCurrency((selectedLoan.amount * selectedLoan.interest_rate) / 100)} por cuota</li>
                         <li>• <strong>Primero:</strong> Se paga el interés fijo de la cuota</li>
                         <li>• <strong>Después:</strong> El resto se aplica al capital</li>
                         <li>• <strong>Balance:</strong> Solo se reduce con pagos al capital</li>

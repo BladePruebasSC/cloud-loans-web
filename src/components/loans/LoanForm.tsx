@@ -14,6 +14,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer, Plus } from 'lucide-react';
 import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 
 // Función para generar las cuotas originales del préstamo
 const generateOriginalInstallments = async (loan: any, formData: LoanFormData) => {
@@ -1082,9 +1083,9 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         purpose: data.comments || null,
         collateral: data.guarantor_required ? 'Garantía requerida' : null,
         loan_officer_id: companyId,
-        monthly_payment: calculatedValues.monthlyPayment,
-        total_amount: calculatedValues.totalAmount,
-        remaining_balance: calculatedValues.totalAmount,
+        monthly_payment: Math.round(calculatedValues.monthlyPayment),
+        total_amount: Math.round(calculatedValues.totalAmount),
+        remaining_balance: Math.round(calculatedValues.totalAmount),
         start_date: firstPaymentDate.toISOString().split('T')[0], // CRÍTICO: start_date debe ser la fecha del primer pago
         end_date: endDate.toISOString().split('T')[0],
         next_payment_date: firstPaymentDate.toISOString().split('T')[0], // La primera cuota también es la próxima cuota
@@ -1096,7 +1097,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         notes: data.notes || null,
         // Campos de información adicional
         excluded_days: excludedDays,
-        closing_costs: data.closing_costs,
+        closing_costs: Math.round(data.closing_costs || 0),
         portfolio_id: data.portfolio === 'none' || data.portfolio === '' ? null : data.portfolio,
         amortization_type: data.amortization_type,
         payment_frequency: data.payment_frequency,
@@ -1106,11 +1107,11 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         late_fee_enabled: data.late_fee_enabled,
         late_fee_rate: data.late_fee_rate,
         grace_period_days: data.grace_period_days,
-        max_late_fee: data.max_late_fee,
+        max_late_fee: Math.round(data.max_late_fee || 0),
         late_fee_calculation_type: data.late_fee_calculation_type,
         add_expense_enabled: data.add_expense,
         fixed_payment_enabled: data.fixed_payment_enabled,
-        fixed_payment_amount: data.fixed_payment_amount || 0,
+        fixed_payment_amount: Math.round(data.fixed_payment_amount || 0),
       };
 
       console.log('Loan data to insert:', loanData);
@@ -1151,10 +1152,10 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
     const rows = amortizationSchedule.map(row => [
       typeof row.payment === 'string' ? row.payment : `${row.payment}/${amortizationSchedule.length}`,
       row.date,
-      `RD$${row.interest.toFixed(2)}`,
-      `RD$${row.principal.toFixed(2)}`,
-      `RD$${row.totalPayment.toFixed(2)}`,
-      `RD$${row.remainingBalance.toFixed(2)}`
+      formatCurrency(row.interest),
+      formatCurrency(row.principal),
+      formatCurrency(row.totalPayment),
+      formatCurrency(row.remainingBalance)
     ]);
     
     const tableText = [headers.join('\t'), ...rows.map(row => row.join('\t'))].join('\n');
@@ -1182,7 +1183,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
             <div class="header">
               <h1>Tabla de Amortización</h1>
               <p>Cliente: ${selectedClient?.full_name}</p>
-              <p>Monto: RD$${form.getValues('amount').toLocaleString()}</p>
+              <p>Monto: {formatCurrency(form.getValues('amount'))}</p>
               <p>Tasa: ${form.getValues('interest_rate')}% | Plazo: ${form.getValues('term_months')} meses</p>
             </div>
             <table>
@@ -1201,18 +1202,18 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                   <tr>
                     <td>${typeof row.payment === 'string' ? row.payment : `${row.payment}/${amortizationSchedule.length}`}</td>
                     <td>${row.date}</td>
-                    <td>RD$${row.interest.toFixed(2)}</td>
-                    <td>RD$${row.principal.toFixed(2)}</td>
-                    <td>RD$${row.totalPayment.toFixed(2)}</td>
-                    <td>RD$${row.remainingBalance.toFixed(2)}</td>
+                    <td>${formatCurrencyNumber(row.interest)}</td>
+                    <td>${formatCurrencyNumber(row.principal)}</td>
+                    <td>${formatCurrencyNumber(row.totalPayment)}</td>
+                    <td>${formatCurrencyNumber(row.remainingBalance)}</td>
                   </tr>
                 `).join('')}
                 ${form.getValues('amortization_type') !== 'indefinite' ? `
                 <tr class="totals">
                   <td colspan="2">TOTALES</td>
-                  <td>RD$${calculatedValues.totalInterest.toFixed(2)}</td>
-                  <td>RD$${form.getValues('amount').toFixed(2)}</td>
-                  <td>RD$${calculatedValues.totalAmount.toFixed(2)}</td>
+                  <td>${formatCurrencyNumber(calculatedValues.totalInterest)}</td>
+                  <td>${formatCurrencyNumber(form.getValues('amount'))}</td>
+                  <td>${formatCurrencyNumber(calculatedValues.totalAmount)}</td>
                   <td>RD$0.00</td>
                 </tr>
                 ` : ''}
@@ -1250,7 +1251,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       form.setValue('interest_rate', newInterestRate);
       
       // Mostrar mensaje informativo
-      toast.success(`Tasa de interés ajustada automáticamente a ${newInterestRate.toFixed(2)}% para la cuota fija de RD$${fixedPaymentAmount.toLocaleString()}`);
+      toast.success(`Tasa de interés ajustada automáticamente a ${newInterestRate.toFixed(2)}% para la cuota fija de ${formatCurrency(fixedPaymentAmount)}`);
     } else if (!fixedPaymentEnabled) {
       // Si se desactiva la cuota fija, limpiar el campo de cuota fija
       form.setValue('fixed_payment_amount', 0);
@@ -1843,7 +1844,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                               <FormMessage />
                               {field.value > 0 && calculatedValues.monthlyPayment > 0 && (
                                 <div className="text-xs text-gray-500">
-                                  Pago mínimo: RD${((field.value / 100) * calculatedValues.monthlyPayment).toFixed(2)}
+                                  Pago mínimo: {formatCurrency((field.value / 100) * calculatedValues.monthlyPayment)}
                                 </div>
                               )}
                             </FormItem>
@@ -2107,19 +2108,19 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                           <div className="grid grid-cols-3 gap-4 text-center">
                             <div className="p-3 bg-blue-100 rounded-lg">
                               <div className="text-lg font-bold text-blue-700">
-                                ${(100000 * (form.watch('late_fee_rate') || 0) / 100).toLocaleString()}
+                                ${formatCurrencyNumber(100000 * (form.watch('late_fee_rate') || 0) / 100)}
                               </div>
                               <div className="text-sm text-blue-600">Por día</div>
                             </div>
                             <div className="p-3 bg-orange-100 rounded-lg">
                               <div className="text-lg font-bold text-orange-700">
-                                ${(100000 * (form.watch('late_fee_rate') || 0) / 100 * 7).toLocaleString()}
+                                ${formatCurrencyNumber(100000 * (form.watch('late_fee_rate') || 0) / 100 * 7)}
                               </div>
                               <div className="text-sm text-orange-600">Por semana</div>
                             </div>
                             <div className="p-3 bg-red-100 rounded-lg">
                               <div className="text-lg font-bold text-red-700">
-                                ${(100000 * (form.watch('late_fee_rate') || 0) / 100 * 30).toLocaleString()}
+                                ${formatCurrencyNumber(100000 * (form.watch('late_fee_rate') || 0) / 100 * 30)}
                               </div>
                               <div className="text-sm text-red-600">Por mes</div>
                             </div>
@@ -2193,18 +2194,18 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                         <tr key={index} className="hover:bg-gray-50">
                           <td className="p-1 sm:p-2 border">{typeof row.payment === 'string' ? row.payment : `${row.payment}/${amortizationSchedule.length}`}</td>
                           <td className="p-1 sm:p-2 border">{row.date}</td>
-                          <td className="p-1 sm:p-2 text-right border">RD${row.interest.toFixed(2)}</td>
-                          <td className="p-1 sm:p-2 text-right border">RD${row.principal.toFixed(2)}</td>
-                          <td className="p-1 sm:p-2 text-right border font-semibold">RD${row.totalPayment.toFixed(2)}</td>
-                          <td className="p-1 sm:p-2 text-right border">RD${row.remainingBalance.toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(row.interest)}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(row.principal)}</td>
+                          <td className="p-1 sm:p-2 text-right border font-semibold">{formatCurrency(row.totalPayment)}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(row.remainingBalance)}</td>
                         </tr>
                       ))}
                       {form.getValues('amortization_type') !== 'indefinite' && (
                         <tr className="bg-blue-50 font-bold">
                           <td className="p-1 sm:p-2 border" colSpan={2}>TOTALES</td>
-                          <td className="p-1 sm:p-2 text-right border">RD${calculatedValues.totalInterest.toFixed(2)}</td>
-                          <td className="p-1 sm:p-2 text-right border">RD${form.getValues('amount').toFixed(2)}</td>
-                          <td className="p-1 sm:p-2 text-right border">RD${calculatedValues.totalAmount.toFixed(2)}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(calculatedValues.totalInterest)}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(form.getValues('amount'))}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(calculatedValues.totalAmount)}</td>
                           <td className="p-1 sm:p-2 text-right border">RD$0.00</td>
                         </tr>
                       )}
@@ -2223,7 +2224,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                   )}
                   {form.getValues('closing_costs') > 0 && (
                     <p className="text-xs text-orange-600 mt-1">
-                      <strong>Gastos de cierre:</strong> RD${form.getValues('closing_costs').toFixed(2)} (aplicado al último pago)
+                      <strong>Gastos de cierre:</strong> {formatCurrency(form.getValues('closing_costs'))} (aplicado al último pago)
                     </p>
                   )}
                 </div>

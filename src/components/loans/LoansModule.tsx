@@ -24,6 +24,7 @@ import { useLateFee } from '@/hooks/useLateFee';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { formatCurrencyNumber } from '@/lib/utils';
 import { 
   CreditCard, 
   Plus, 
@@ -757,7 +758,7 @@ export const LoansModule = () => {
                 <DollarSign className="h-5 w-5 text-muted-foreground" />
               </CardHeader>
               <CardContent className="pt-0">
-                <div className="text-2xl sm:text-3xl font-bold">${totalBalance.toLocaleString()}</div>
+                <div className="text-2xl sm:text-3xl font-bold">${formatCurrencyNumber(totalBalance)}</div>
                 <p className="text-xs sm:text-sm text-muted-foreground mt-1">Balance pendiente</p>
               </CardContent>
             </Card>
@@ -941,21 +942,21 @@ export const LoansModule = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
                           <div className="text-center p-4 bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-100">
                             <div className="text-2xl font-bold text-green-700 mb-1">
-                              ${loan.amount.toLocaleString()}
+                              ${formatCurrencyNumber(loan.amount)}
                             </div>
                             <div className="text-sm text-green-600 font-medium">Monto Total</div>
                           </div>
                           
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
-                              ${loan.remaining_balance.toLocaleString()}
+                              ${formatCurrencyNumber(loan.remaining_balance)}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
                           </div>
 
                           <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl border border-purple-100">
                             <div className="text-2xl font-bold text-purple-700 mb-1">
-                              ${(loan.remaining_balance + (dynamicLateFees[loan.id] || loan.current_late_fee || 0)).toLocaleString()}
+                              ${formatCurrencyNumber(loan.remaining_balance + (dynamicLateFees[loan.id] || loan.current_late_fee || 0))}
                             </div>
                             <div className="text-sm text-purple-600 font-medium">Balance Total Pendiente</div>
                             <div className="text-xs text-purple-500 mt-1">
@@ -965,7 +966,7 @@ export const LoansModule = () => {
                           
                           <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl border border-blue-100">
                             <div className="text-2xl font-bold text-blue-700 mb-1">
-                              ${loan.monthly_payment.toLocaleString()}
+                              ${formatCurrencyNumber(loan.monthly_payment)}
                             </div>
                             <div className="text-sm text-blue-600 font-medium">Cuota Mensual</div>
                           </div>
@@ -1321,15 +1322,15 @@ export const LoansModule = () => {
                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Monto:</span> 
-                               <span className="text-xs sm:text-sm">${loan.amount.toLocaleString()}</span>
+                               <span className="text-xs sm:text-sm">${formatCurrencyNumber(loan.amount)}</span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Balance:</span> 
-                               <span className="text-xs sm:text-sm">${loan.remaining_balance.toLocaleString()}</span>
+                               <span className="text-xs sm:text-sm">${formatCurrencyNumber(loan.remaining_balance)}</span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Cuota:</span> 
-                               <span className="text-xs sm:text-sm">${loan.monthly_payment.toLocaleString()}</span>
+                               <span className="text-xs sm:text-sm">${formatCurrencyNumber(loan.monthly_payment)}</span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Próximo Pago:</span> 
@@ -1508,7 +1509,7 @@ export const LoansModule = () => {
                  <DollarSign className="h-4 w-4 text-muted-foreground" />
                </CardHeader>
                <CardContent>
-                 <div className="text-2xl font-bold">${loans.filter(loan => {
+                 <div className="text-2xl font-bold">${formatCurrencyNumber(loans.filter(loan => {
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -1516,7 +1517,7 @@ export const LoansModule = () => {
                           loan.status === 'overdue' || 
                           nextPayment <= today ||
                           (loan.status === 'active' && diffDays <= 7 && diffDays >= 0);
-                 }).reduce((sum, loan) => sum + loan.remaining_balance, 0).toLocaleString()}</div>
+                 }).reduce((sum, loan) => sum + loan.remaining_balance, 0))}</div>
                  <p className="text-xs text-muted-foreground">Capital por cobrar</p>
                </CardContent>
              </Card>
@@ -1607,11 +1608,11 @@ export const LoansModule = () => {
                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 sm:gap-4 text-sm text-gray-600">
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Balance Total:</span> 
-                                   <span className="text-xs sm:text-sm font-semibold text-red-600">${loan.remaining_balance.toLocaleString()}</span>
+                                   <span className="text-xs sm:text-sm font-semibold text-red-600">${formatCurrencyNumber(loan.remaining_balance)}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Cuota Mensual:</span> 
-                                   <span className="text-xs sm:text-sm">${loan.monthly_payment.toLocaleString()}</span>
+                                   <span className="text-xs sm:text-sm">${formatCurrencyNumber(loan.monthly_payment)}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Estado Cuota:</span> 
@@ -1938,14 +1939,14 @@ export const LoansModule = () => {
                  <DollarSign className="h-4 w-4 text-muted-foreground" />
                </CardHeader>
                <CardContent>
-                 <div className="text-2xl font-bold">${loans.filter(loan => {
+                 <div className="text-2xl font-bold">${formatCurrencyNumber(loans.filter(loan => {
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
                    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
                    return (loan.status === 'active' || loan.status === 'overdue') && 
                           loan.remaining_balance > 0 &&
                           nextPayment >= today && nextPayment <= endOfMonth;
-                 }).reduce((sum, loan) => sum + loan.monthly_payment, 0).toLocaleString()}</div>
+                 }).reduce((sum, loan) => sum + loan.monthly_payment, 0))}</div>
                  <p className="text-xs text-muted-foreground">Este mes</p>
                </CardContent>
              </Card>
@@ -2219,11 +2220,11 @@ export const LoansModule = () => {
                                          setSelectedLoanForPayment(payment);
                                          setShowPaymentForm(true);
                                        }}
-                                       title={`${payment.client?.full_name} - Pago ${payment.payment_number}/${payment.term_months || 12} - $${payment.monthly_payment.toLocaleString()}${payment.is_overdue ? ' (VENCIDO)' : ''}${payment.is_last_payment ? ' (Último pago)' : ''}`}
+                                       title={`${payment.client?.full_name} - Pago ${payment.payment_number}/${payment.term_months || 12} - $${formatCurrencyNumber(payment.monthly_payment)}${payment.is_overdue ? ' (VENCIDO)' : ''}${payment.is_last_payment ? ' (Último pago)' : ''}`}
                                      >
                                        <div className="font-medium truncate">{payment.client?.full_name?.split(' ')[0]}</div>
                                        <div className="text-xs flex justify-between">
-                                         <span>${payment.monthly_payment.toLocaleString()}</span>
+                                         <span>${formatCurrencyNumber(payment.monthly_payment)}</span>
                                          <span className="opacity-70">#{payment.payment_number}</span>
                                        </div>
                                        {payment.is_last_payment && (
@@ -2327,7 +2328,7 @@ export const LoansModule = () => {
                                </span>
                              </div>
                              <div className="text-sm text-gray-600 mt-1">
-                               <span className="font-medium">${payment.monthly_payment.toLocaleString()}</span> • 
+                               <span className="font-medium">${formatCurrencyNumber(payment.monthly_payment)}</span> • 
                                Pago {payment.payment_number}/{payment.term_months || 12} • 
                                {paymentDate.toLocaleDateString('es-ES', { 
                                  weekday: 'long', 
@@ -2554,11 +2555,11 @@ export const LoansModule = () => {
                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm text-gray-600">
                                  <div className="flex items-center">
                                    <DollarSign className="h-3 w-3 mr-1" />
-                                   Monto: ${loan.amount.toLocaleString()}
+                                   Monto: ${formatCurrencyNumber(loan.amount)}
                                  </div>
                                  <div className="flex items-center">
                                    <DollarSign className="h-3 w-3 mr-1" />
-                                   Balance: ${loan.remaining_balance.toLocaleString()}
+                                   Balance: ${formatCurrencyNumber(loan.remaining_balance)}
                                  </div>
                                  <div className="flex items-center">
                                    <Calendar className="h-3 w-3 mr-1" />
@@ -2706,7 +2707,7 @@ export const LoansModule = () => {
                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
                            <div className="flex items-center">
                              <DollarSign className="h-3 w-3 mr-1" />
-                             Solicita: ${request.requested_amount.toLocaleString()}
+                             Solicita: ${formatCurrencyNumber(request.requested_amount)}
                            </div>
                            <div className="flex items-center">
                              <Clock className="h-3 w-3 mr-1" />
@@ -2726,7 +2727,7 @@ export const LoansModule = () => {
                          )}
                          {request.monthly_income && (
                            <p className="text-sm text-gray-600">
-                             <strong>Ingresos:</strong> ${request.monthly_income.toLocaleString()}/mes
+                             <strong>Ingresos:</strong> ${formatCurrencyNumber(request.monthly_income)}/mes
                            </p>
                          )}
                        </div>

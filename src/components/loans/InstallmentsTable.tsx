@@ -15,6 +15,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatCurrencyNumber } from '@/lib/utils';
 
 interface Installment {
   id: string;
@@ -333,15 +334,15 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                     </div>
                     <div>
                       <span className="text-gray-600">Monto Original:</span>
-                      <div className="font-semibold">RD${loanInfo.amount?.toLocaleString()}</div>
+                      <div className="font-semibold">RD${formatCurrencyNumber(loanInfo.amount || 0)}</div>
                     </div>
                     <div>
                       <span className="text-gray-600">Balance Restante:</span>
-                      <div className="font-semibold">RD${loanInfo.remaining_balance?.toLocaleString()}</div>
+                      <div className="font-semibold">RD${formatCurrencyNumber(loanInfo.remaining_balance || 0)}</div>
                     </div>
                     <div>
                       <span className="text-gray-600">Cuota Mensual:</span>
-                      <div className="font-semibold">RD${loanInfo.monthly_payment?.toLocaleString()}</div>
+                      <div className="font-semibold">RD${formatCurrencyNumber(loanInfo.monthly_payment || 0)}</div>
                     </div>
                   </div>
                 </CardContent>
@@ -405,7 +406,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                           </div>
                           <div className="text-right">
                             <div className="font-bold text-green-600">
-                              RD${(installment.amount || 0).toLocaleString()}
+                              RD${formatCurrencyNumber(installment.amount || 0)}
                             </div>
                           </div>
                         </div>
@@ -417,15 +418,15 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                           </div>
                           <div>
                             <span className="font-medium">Capital:</span>
-                            <div>RD${(installment.principal_amount || 0).toLocaleString()}</div>
+                            <div>RD${formatCurrencyNumber(installment.principal_amount || 0)}</div>
                           </div>
                           <div>
                             <span className="font-medium">Interés:</span>
-                            <div>RD${(installment.interest_amount || 0).toLocaleString()}</div>
+                            <div>RD${formatCurrencyNumber(installment.interest_amount || 0)}</div>
                           </div>
                           <div>
                             <span className="font-medium">Mora Pagada:</span>
-                            <div>RD${(installment.late_fee_paid || 0).toLocaleString()}</div>
+                            <div>RD${formatCurrencyNumber(installment.late_fee_paid || 0)}</div>
                           </div>
                         </div>
 
@@ -466,11 +467,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                             <td className="p-3 font-semibold">#{installment.installment_number}</td>
                             <td className="p-3">{formatDate(installment.due_date)}</td>
                             <td className="p-3 font-semibold text-green-600">
-                              RD${(installment.amount || 0).toLocaleString()}
+                              RD${formatCurrencyNumber(installment.amount || 0)}
                             </td>
-                            <td className="p-3">RD${(installment.principal_amount || 0).toLocaleString()}</td>
-                            <td className="p-3">RD${(installment.interest_amount || 0).toLocaleString()}</td>
-                            <td className="p-3">RD${(installment.late_fee_paid || 0).toLocaleString()}</td>
+                            <td className="p-3">RD${formatCurrencyNumber(installment.principal_amount || 0)}</td>
+                            <td className="p-3">RD${formatCurrencyNumber(installment.interest_amount || 0)}</td>
+                            <td className="p-3">RD${formatCurrencyNumber(installment.late_fee_paid || 0)}</td>
                             <td className="p-3">{getStatusBadge(installment)}</td>
                             <td className="p-3">
                               {installment.paid_date ? formatDate(installment.paid_date) : '-'}
@@ -499,19 +500,19 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                   <div>
                     <div className="text-lg font-bold text-blue-600">
-                      RD${totalAmount.toLocaleString()}
+                      RD${formatCurrencyNumber(totalAmount)}
                     </div>
                     <div className="text-sm text-gray-600">Total a Pagar</div>
                   </div>
                   <div>
                     <div className="text-lg font-bold text-green-600">
-                      RD${totalPaid.toLocaleString()}
+                      RD${formatCurrencyNumber(totalPaid)}
                     </div>
                     <div className="text-sm text-gray-600">Total Pagado</div>
                   </div>
                   <div>
                     <div className="text-lg font-bold text-orange-600">
-                      RD${totalPending.toLocaleString()}
+                      RD${formatCurrencyNumber(totalPending)}
                     </div>
                     <div className="text-sm text-gray-600">Total Pendiente</div>
                   </div>
