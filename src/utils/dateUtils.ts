@@ -10,17 +10,6 @@ export const getCurrentDateInSantoDomingo = (): Date => {
   // Convertir a la zona horaria de Santo Domingo
   const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
   
-  // DEBUG: Verificar la fecha actual
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔍 DEBUG getCurrentDateInSantoDomingo - Fecha actual:', {
-      now: now.toISOString(),
-      nowLocal: now.toLocaleString(),
-      nowSantoDomingo: now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}),
-      santoDomingoDate: santoDomingoDate.toISOString(),
-      currentDateString: santoDomingoDate.toISOString().split('T')[0]
-    });
-  }
-  
   return santoDomingoDate;
 };
 
@@ -51,19 +40,6 @@ export const calculateDaysDifference = (date1: Date, date2: Date): number => {
   const diffInMs = date2.getTime() - date1.getTime();
   const daysDiff = diffInMs / (1000 * 60 * 60 * 24);
   const finalDays = Math.floor(daysDiff);
-  
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔍 DEBUG calculateDaysDifference (CORREGIDO):', {
-      date1: date1.toISOString().split('T')[0],
-      date2: date2.toISOString().split('T')[0],
-      date1Time: date1.getTime(),
-      date2Time: date2.getTime(),
-      diffInMs,
-      daysDiff,
-      finalDays,
-      currentDate: new Date().toISOString().split('T')[0]
-    });
-  }
   
   // Usar Math.floor para obtener días completos
   return finalDays;

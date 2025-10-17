@@ -70,6 +70,7 @@ interface Loan {
   start_date: string;
   next_payment_date: string;
   status: string;
+  amortization_type?: string;
   clients: {
     full_name: string;
     dni: string;
@@ -176,9 +177,18 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   useEffect(() => {
     const calculateSchedule = async () => {
       if (loan && installments.length > 0) {
+        console.log('🔍 AccountStatement: Loan data for amortization:', {
+          id: loan.id,
+          amount: loan.amount,
+          term_months: loan.term_months,
+          interest_rate: loan.interest_rate,
+          monthly_payment: loan.monthly_payment,
+          amortization_type: loan.amortization_type,
+          start_date: loan.start_date,
+        });
         const schedule = await calculateAmortizationSchedule(loan, installments);
-      setAmortizationSchedule(schedule);
-    }
+        setAmortizationSchedule(schedule);
+      }
     };
     
     calculateSchedule();
@@ -211,7 +221,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           late_fee_rate,
           grace_period_days,
           max_late_fee,
-          late_fee_calculation_type
+          late_fee_calculation_type,
+          amortization_type
         `)
         .eq('id', loanId)
         .single();
@@ -416,19 +427,137 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     const schedule = [];
     const numberOfPayments = loanData.term_months;
     const principal = loanData.amount;
+    const amortizationType = loanData.amortization_type || 'simple';
+    const interestRate = loanData.interest_rate;
     
-    // Modelo de préstamo con capital e interés fijos
-    const monthlyPayment = loanData.monthly_payment;
-    const fixedPrincipal = principal / numberOfPayments;
-    const fixedInterest = monthlyPayment - fixedPrincipal;
-
-    console.log('🔍 CÁLCULOS BASE:', {
-      monthlyPayment,
-      fixedPrincipal,
-      fixedInterest,
+    console.log('🔍 TIPO DE AMORTIZACIÓN DETECTADO:', {
+      amortizationType,
       principal,
-      numberOfPayments
+      numberOfPayments,
+      interestRate,
+      monthlyPayment: loanData.monthly_payment,
+      rawAmortizationType: loanData.amortization_type
     });
+
+    // Calcular tabla según el tipo de amortización
+    let amortizationData = [];
+    
+    if (amortizationType === 'simple') {
+      console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica SIMPLE/ABSOLUTO');
+      // Amortización Simple/Absoluto - Capital e interés fijos
+      const monthlyPayment = loanData.monthly_payment;
+      const fixedPrincipal = principal / numberOfPayments;
+      const fixedInterest = monthlyPayment - fixedPrincipal;
+      
+      amortizationData = Array(numberOfPayments).fill(null).map((_, i) => ({
+        installment: i + 1,
+        principalPayment: fixedPrincipal,
+        interestPayment: fixedInterest,
+        monthlyPayment: monthlyPayment
+      }));
+      
+      console.log('🔍 AMORTIZACIÓN SIMPLE:', {
+        monthlyPayment,
+        fixedPrincipal,
+        fixedInterest
+      });
+      
+    } else if (amortizationType === 'french') {
+      console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica FRANCESA/INSOLUTO');
+      // Amortización Francesa - Cuota fija, capital creciente, interés decreciente
+      const monthlyPayment = loanData.monthly_payment;
+      const periodRate = interestRate / 100;
+      let remainingBalance = principal;
+      
+      for (let i = 1; i <= numberOfPayments; i++) {
+        const interestPayment = remainingBalance * periodRate;
+        const principalPayment = monthlyPayment - interestPayment;
+        remainingBalance -= principalPayment;
+        
+        amortizationData.push({
+          installment: i,
+          principalPayment: principalPayment,
+          interestPayment: interestPayment,
+          monthlyPayment: monthlyPayment
+        });
+      }
+      
+      console.log('🔍 AMORTIZACIÓN FRANCESA:', {
+        monthlyPayment,
+        periodRate,
+        totalInstallments: amortizationData.length,
+        firstInstallment: amortizationData[0],
+        lastInstallment: amortizationData[amortizationData.length - 1]
+      });
+      
+    } else if (amortizationType === 'german') {
+      console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica ALEMANA');
+      // Amortización Alemana - Cuota decreciente, capital fijo
+      const fixedPrincipal = principal / numberOfPayments;
+      let remainingBalance = principal;
+      
+      for (let i = 1; i <= numberOfPayments; i++) {
+        const interestPayment = remainingBalance * (interestRate / 100);
+        const principalPayment = fixedPrincipal;
+        const monthlyPayment = principalPayment + interestPayment;
+        remainingBalance -= principalPayment;
+        
+        amortizationData.push({
+          installment: i,
+          principalPayment: principalPayment,
+          interestPayment: interestPayment,
+          monthlyPayment: monthlyPayment
+        });
+      }
+      
+      console.log('🔍 AMORTIZACIÓN ALEMANA:', {
+        fixedPrincipal,
+        totalInstallments: amortizationData.length
+      });
+      
+    } else if (amortizationType === 'american') {
+      console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica AMERICANA');
+      // Amortización Americana - Solo intereses, capital al final
+      const interestPayment = principal * (interestRate / 100);
+      
+      for (let i = 1; i <= numberOfPayments; i++) {
+        const principalPayment = i === numberOfPayments ? principal : 0;
+        const monthlyPayment = principalPayment + interestPayment;
+        
+        amortizationData.push({
+          installment: i,
+          principalPayment: principalPayment,
+          interestPayment: interestPayment,
+          monthlyPayment: monthlyPayment
+        });
+      }
+      
+      console.log('🔍 AMORTIZACIÓN AMERICANA:', {
+        interestPayment,
+        totalInstallments: amortizationData.length
+      });
+      
+    } else {
+      console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica FALLBACK (SIMPLE) - Tipo no reconocido:', amortizationType);
+      // Fallback a simple si no se reconoce el tipo
+      const monthlyPayment = loanData.monthly_payment;
+      const fixedPrincipal = principal / numberOfPayments;
+      const fixedInterest = monthlyPayment - fixedPrincipal;
+      
+      amortizationData = Array(numberOfPayments).fill(null).map((_, i) => ({
+        installment: i + 1,
+        principalPayment: fixedPrincipal,
+        interestPayment: fixedInterest,
+        monthlyPayment: monthlyPayment
+      }));
+      
+      console.log('🔍 AMORTIZACIÓN FALLBACK (SIMPLE):', {
+        monthlyPayment,
+        fixedPrincipal,
+        fixedInterest,
+        unrecognizedType: amortizationType
+      });
+    }
 
     const startDate = new Date(loanData.start_date);
 
@@ -451,15 +580,21 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
     // Calcular el capital total pagado para determinar el balance general
     const totalPrincipalPaid = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
+    
+    // Calcular el capital promedio por cuota para determinar pagos completos
+    const averagePrincipalPerInstallment = principal / numberOfPayments;
 
     console.log('🔍 AccountStatement: Mapa de cuotas creado:', installmentsMap);
     console.log('🔍 AccountStatement: Pagos encontrados:', payments);
     console.log('🔍 AccountStatement: Capital total pagado:', totalPrincipalPaid);
+    console.log('🔍 AccountStatement: Capital promedio por cuota:', averagePrincipalPerInstallment);
 
     for (let i = 1; i <= numberOfPayments; i++) {
-      // Usar capital e interés fijos como base
-      const originalPrincipal = fixedPrincipal;
-      const originalInterest = fixedInterest;
+      // Usar datos calculados según el tipo de amortización
+      const installmentData = amortizationData[i - 1];
+      const originalPrincipal = installmentData.principalPayment;
+      const originalInterest = installmentData.interestPayment;
+      const monthlyPayment = installmentData.monthlyPayment;
 
       // Calcular fecha de vencimiento
       const dueDate = new Date(startDate);
@@ -487,7 +622,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         });
         
         // Calcular cuántas cuotas completas se han pagado
-        const completeInstallmentsPaid = Math.floor(totalPrincipalPaid / originalPrincipal);
+        const completeInstallmentsPaid = Math.floor(totalPrincipalPaid / averagePrincipalPerInstallment);
         
         console.log(`🔍 Cuota ${i} - Análisis de pagos:`, {
           totalPrincipalPaid,
@@ -505,8 +640,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           interestPaidForThisInstallment = originalInterest;
         } else if (i === completeInstallmentsPaid + 1) {
           // Esta es la siguiente cuota que podría tener un pago parcial
-          const remainingPrincipal = totalPrincipalPaid - (completeInstallmentsPaid * originalPrincipal);
-          const remainingInterest = totalInterestPaid - (completeInstallmentsPaid * originalInterest);
+          const remainingPrincipal = totalPrincipalPaid - (completeInstallmentsPaid * averagePrincipalPerInstallment);
+          const remainingInterest = totalInterestPaid - (completeInstallmentsPaid * (loanData.monthly_payment - averagePrincipalPerInstallment));
           
           principalPaidForThisInstallment = Math.min(remainingPrincipal, originalPrincipal);
           interestPaidForThisInstallment = Math.min(remainingInterest, originalInterest);
@@ -553,7 +688,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
       // Calcular el balance pendiente del préstamo después de esta cuota
       // El balance pendiente es el capital total menos el capital pagado hasta esta cuota
-      const capitalPaidUpToThisInstallment = Math.min(totalPrincipalPaid, i * originalPrincipal);
+      const capitalPaidUpToThisInstallment = Math.min(totalPrincipalPaid, i * averagePrincipalPerInstallment);
       const remainingBalanceAfterThisInstallment = Math.max(0, principal - capitalPaidUpToThisInstallment);
 
       console.log(`🔍 RESUMEN FINAL - Cuota ${i}:`, {
