@@ -25,7 +25,6 @@ import {
   Trash2,
   ChevronLeft
 } from 'lucide-react';
-import { formatDateTimeWithOffset } from '@/utils/dateUtils';
 
 interface CollectionTracking {
   id: string;
@@ -453,7 +452,7 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
                                 </Badge>
                               </div>
                               <div className="text-sm text-gray-500 font-medium">
-                                {formatDateTimeWithOffset(`${record.contact_date}T${record.contact_time}`, 'dd MMM yyyy, hh:mm a')}
+                                {new Date(record.contact_date).toLocaleDateString()} a las {record.contact_time}
                               </div>
                             </div>
 

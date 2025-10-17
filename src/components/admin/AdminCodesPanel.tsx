@@ -9,7 +9,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Plus, Copy, RefreshCw, Calendar, Building, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { formatDateTimeWithOffset } from '@/utils/dateUtils';
+
 interface RegistrationCode {
   id: string;
   code: string;
@@ -92,7 +92,15 @@ const AdminCodesPanel = () => {
     }
   };
 
-const formatDate = (dateString: string) => formatDateTimeWithOffset(dateString);
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('es-ES', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
 
   const goBack = () => {
     navigate('/');

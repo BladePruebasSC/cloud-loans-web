@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { formatDateTimeWithOffset } from '@/utils/dateUtils';
+
 interface Payment {
   id: string;
   amount: number;
@@ -581,7 +581,13 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
               <div class="receipt-title">${getFormatTitle(format)}</div>
               <div class="receipt-number">Recibo #${payment.id.slice(0, 8).toUpperCase()}</div>
               <div style="margin-top: 10px; font-size: ${format.includes('POS') ? '10px' : '14px'};">
-                ${formatDateTimeWithOffset(payment.created_at)}
+                ${new Date(payment.created_at).toLocaleDateString('es-ES', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
               </div>
             </div>
 
