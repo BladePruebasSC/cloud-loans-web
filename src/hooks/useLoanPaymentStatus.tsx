@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { round2, approxZero } from '@/utils/numberUtils';
 
 interface Payment {
   id: string;
@@ -79,10 +80,11 @@ export const useLoanPaymentStatus = (loan: Loan | null) => {
         payment.due_date === loan.next_payment_date
       );
 
-      const currentPaymentDue = loan.monthly_payment;
-      const currentPaymentPaid = currentPayments.reduce((sum, payment) => sum + payment.amount, 0);
-      const currentPaymentRemaining = Math.max(0, currentPaymentDue - currentPaymentPaid);
-      const isCurrentPaymentComplete = currentPaymentRemaining === 0;
+      const currentPaymentDue = round2(loan.monthly_payment);
+      const currentPaymentPaid = round2(currentPayments.reduce((sum, payment) => sum + payment.amount, 0));
+      let currentPaymentRemaining = round2(currentPaymentDue - currentPaymentPaid);
+      if (currentPaymentRemaining < 0) currentPaymentRemaining = 0; // Evitar negativos por redondeo
+      const isCurrentPaymentComplete = approxZero(currentPaymentRemaining);
       const hasPartialPayments = currentPayments.length > 0 && !isCurrentPaymentComplete;
 
       console.log('Payment Status Debug:', {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
+import { round2, approxZero, formatMoney } from '@/utils/numberUtils';
 
 interface PaymentStatusBadgeProps {
   loanId: string;
@@ -56,10 +57,11 @@ export const PaymentStatusBadge: React.FC<PaymentStatusBadgeProps> = ({
         payment.due_date === nextPaymentDate
       );
 
-      const currentPaymentDue = monthlyPayment;
-      const currentPaymentPaid = currentPayments.reduce((sum, payment) => sum + payment.amount, 0);
-      const currentPaymentRemaining = Math.max(0, currentPaymentDue - currentPaymentPaid);
-      const isCurrentPaymentComplete = currentPaymentRemaining === 0;
+      const currentPaymentDue = round2(monthlyPayment);
+      const currentPaymentPaid = round2(currentPayments.reduce((sum, payment) => sum + payment.amount, 0));
+      let currentPaymentRemaining = round2(currentPaymentDue - currentPaymentPaid);
+      if (currentPaymentRemaining < 0) currentPaymentRemaining = 0;
+      const isCurrentPaymentComplete = approxZero(currentPaymentRemaining);
       const hasPartialPayments = currentPayments.length > 0 && !isCurrentPaymentComplete;
 
       setPaymentStatus({
@@ -83,11 +85,11 @@ export const PaymentStatusBadge: React.FC<PaymentStatusBadgeProps> = ({
   if (paymentStatus.hasPartialPayments) {
     return (
       <div className="flex flex-col gap-1">
-        <Badge variant="secondary" className="text-xs">
-          Pagado: ${paymentStatus.currentPaymentPaid.toLocaleString()}
+          <Badge variant="secondary" className="text-xs">
+          Pagado: ${formatMoney(paymentStatus.currentPaymentPaid)}
         </Badge>
         <Badge variant="destructive" className="text-xs">
-          Falta: ${paymentStatus.currentPaymentRemaining.toLocaleString()}
+          Falta: ${formatMoney(paymentStatus.currentPaymentRemaining)}
         </Badge>
       </div>
     );
@@ -99,7 +101,7 @@ export const PaymentStatusBadge: React.FC<PaymentStatusBadgeProps> = ({
 
   return (
     <Badge variant="outline" className="text-xs">
-      Falta: ${paymentStatus.currentPaymentRemaining.toLocaleString()}
+      Falta: ${formatMoney(paymentStatus.currentPaymentRemaining)}
     </Badge>
   );
 };
