@@ -50,6 +50,8 @@ interface Payment {
   notes?: string;
   status: string;
   created_at: string;
+  payment_time_local?: string;
+  payment_timezone?: string;
   loan_id: string;
 }
 
@@ -86,6 +88,26 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   const [loan, setLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Función para formatear fecha y hora de pagos
+  const formatPaymentDateTime = (payment: Payment) => {
+    // Priorizar payment_time_local si existe, sino usar created_at
+    const dateString = payment.payment_time_local || payment.created_at;
+    if (!dateString) return '-';
+    
+    try {
+      const date = new Date(dateString);
+      const formatted = formatInTimeZone(
+        date,
+        'America/Santo_Domingo',
+        'dd MMM yyyy, hh:mm a'
+      );
+      
+      return formatted;
+    } catch (error) {
+      console.error('Error in formatPaymentDateTime:', error);
+      return '-';
+    }
+  };
 
   useEffect(() => {
     if (isOpen && loanId) {
@@ -283,7 +305,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                             
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
                               <div>
-                                <span className="font-medium">Fecha:</span> {payment.payment_date}
+                                <span className="font-medium">Fecha:</span> {formatPaymentDateTime(payment)}
                               </div>
                               <div>
                                 <span className="font-medium">Principal:</span> ${payment.principal_amount.toLocaleString()}
