@@ -1,6 +1,8 @@
+import { formatInTimeZone } from 'date-fns-tz';
+import { addHours } from 'date-fns';
+
 // Utilidades para manejo de fechas con zona horaria de República Dominicana
 // Zona horaria: America/Santo_Domingo (UTC-4)
-
 /**
  * Obtiene la fecha actual en la zona horaria de Santo Domingo
  */
@@ -120,4 +122,25 @@ export const getCurrentDateStringForSantoDomingo = (): string => {
   const day = String(now.getDate()).padStart(2, '0');
   
   return `${year}-${month}-${day}`;
+};
+
+// Formatea fecha y hora sumando +2 horas y usando la zona horaria de Santo Domingo
+export const formatDateTimeWithOffset = (
+  dateInput: string | Date,
+  format: string = 'dd MMM yyyy, hh:mm a'
+): string => {
+  const baseDate = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  const adjusted = addHours(baseDate, 2);
+  try {
+    return formatInTimeZone(adjusted, 'America/Santo_Domingo', format);
+  } catch {
+    // Fallback básico si falla date-fns-tz
+    return adjusted.toLocaleString('es-DO', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
 };

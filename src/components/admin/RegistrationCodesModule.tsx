@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Plus, Copy, RefreshCw, Calendar, Building } from 'lucide-react';
-
+import { formatDateTimeWithOffset } from '@/utils/dateUtils';
 interface RegistrationCode {
   id: string;
   code: string;
@@ -90,15 +90,7 @@ const RegistrationCodesModule = () => {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+const formatDate = (dateString: string) => formatDateTimeWithOffset(dateString);
 
   useEffect(() => {
     loadCodes();
