@@ -20,7 +20,28 @@ import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 const generateOriginalInstallments = async (loan: any, formData: LoanFormData) => {
   try {
     const installments = [];
-    const baseDate = new Date(loan.start_date);
+    // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+    const startDate = new Date(loan.start_date);
+    const firstPaymentDate = new Date(startDate);
+    
+    // Ajustar la primera fecha de cobro según la frecuencia
+    switch (loan.payment_frequency) {
+      case 'daily':
+        firstPaymentDate.setDate(startDate.getDate() + 1);
+        break;
+      case 'weekly':
+        firstPaymentDate.setDate(startDate.getDate() + 7);
+        break;
+      case 'biweekly':
+        firstPaymentDate.setDate(startDate.getDate() + 14);
+        break;
+      case 'monthly':
+      default:
+        firstPaymentDate.setMonth(startDate.getMonth() + 1);
+        break;
+    }
+    
+    const baseDate = firstPaymentDate;
     
     // Calcular cuotas según el tipo de amortización
     let principalPerPayment, interestPerPayment;
@@ -50,7 +71,7 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
     
     for (let i = 1; i <= loan.term_months; i++) {
       const installmentDate = new Date(baseDate);
-      const periodsToAdd = i - 1;
+      const periodsToAdd = i - 1; // Volver a i-1 porque baseDate ya es la fecha de primera cuota
       
       // Ajustar fecha según la frecuencia de pago
       switch (loan.payment_frequency) {
@@ -311,6 +332,30 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
     return createDateInSantoDomingo(year, month, day);
   };
 
+  // Función para calcular la primera fecha de pago basada en la frecuencia y fecha de inicio
+  const calculateFirstPaymentDate = (frequency: string, startDate?: string) => {
+    const baseDate = startDate ? new Date(startDate) : new Date();
+    const firstPaymentDate = new Date(baseDate);
+    
+    switch (frequency) {
+      case 'daily':
+        firstPaymentDate.setDate(baseDate.getDate() + 1);
+        break;
+      case 'weekly':
+        firstPaymentDate.setDate(baseDate.getDate() + 7);
+        break;
+      case 'biweekly':
+        firstPaymentDate.setDate(baseDate.getDate() + 14);
+        break;
+      case 'monthly':
+      default:
+        firstPaymentDate.setMonth(baseDate.getMonth() + 1);
+        break;
+    }
+    
+    return firstPaymentDate.toISOString().split('T')[0];
+  };
+
   const form = useForm<LoanFormData>({
     resolver: zodResolver(loanSchema),
     defaultValues: {
@@ -320,7 +365,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       loan_type: 'personal',
       amortization_type: 'simple',
       payment_frequency: 'monthly',
-      first_payment_date: getCurrentDateString(),
+      first_payment_date: getCurrentDateString(), // Fecha de inicio del préstamo
       closing_costs: 0,
       minimum_payment_percentage: 100,
       minimum_payment_type: 'interest',
@@ -751,11 +796,30 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
          for (let i = 1; i <= totalPeriods; i++) {
            let paymentDate: Date;
            
-           if (i === 1) {
-             // Para la primera fecha, verificar si cae en día excluido
-             const firstDate = createLocalDate(first_payment_date);
-             paymentDate = adjustDateForExcludedDays(firstDate);
-           } else {
+          if (i === 1) {
+            // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            const startDate = createLocalDate(first_payment_date);
+            const firstPaymentDate = new Date(startDate);
+            
+            // Ajustar la primera fecha de cobro según la frecuencia
+            switch (payment_frequency) {
+              case 'daily':
+                firstPaymentDate.setDate(startDate.getDate() + 1);
+                break;
+              case 'weekly':
+                firstPaymentDate.setDate(startDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                firstPaymentDate.setDate(startDate.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                firstPaymentDate.setMonth(startDate.getMonth() + 1);
+                break;
+            }
+            
+            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+          } else {
              // Usar la función para calcular el siguiente día hábil
              const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
              paymentDate = getNextBusinessDay(previousDate, payment_frequency);
@@ -785,11 +849,30 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
          for (let i = 1; i <= totalPeriods; i++) {
            let paymentDate: Date;
            
-           if (i === 1) {
-             // Para la primera fecha, verificar si cae en día excluido
-             const firstDate = createLocalDate(first_payment_date);
-             paymentDate = adjustDateForExcludedDays(firstDate);
-           } else {
+          if (i === 1) {
+            // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            const startDate = createLocalDate(first_payment_date);
+            const firstPaymentDate = new Date(startDate);
+            
+            // Ajustar la primera fecha de cobro según la frecuencia
+            switch (payment_frequency) {
+              case 'daily':
+                firstPaymentDate.setDate(startDate.getDate() + 1);
+                break;
+              case 'weekly':
+                firstPaymentDate.setDate(startDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                firstPaymentDate.setDate(startDate.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                firstPaymentDate.setMonth(startDate.getMonth() + 1);
+                break;
+            }
+            
+            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+          } else {
              // Usar la función para calcular el siguiente día hábil
              const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
              paymentDate = getNextBusinessDay(previousDate, payment_frequency, originalDay);
@@ -826,11 +909,30 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
        for (let i = 1; i <= totalPeriods; i++) {
          let paymentDate: Date;
          
-         if (i === 1) {
-           // Para la primera fecha, verificar si cae en día excluido
-           const firstDate = createLocalDate(first_payment_date);
-           paymentDate = adjustDateForExcludedDays(firstDate);
-         } else {
+          if (i === 1) {
+            // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            const startDate = createLocalDate(first_payment_date);
+            const firstPaymentDate = new Date(startDate);
+            
+            // Ajustar la primera fecha de cobro según la frecuencia
+            switch (payment_frequency) {
+              case 'daily':
+                firstPaymentDate.setDate(startDate.getDate() + 1);
+                break;
+              case 'weekly':
+                firstPaymentDate.setDate(startDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                firstPaymentDate.setDate(startDate.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                firstPaymentDate.setMonth(startDate.getMonth() + 1);
+                break;
+            }
+            
+            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+          } else {
            // Usar la función para calcular el siguiente día hábil
            const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
            paymentDate = getNextBusinessDay(previousDate, payment_frequency);
@@ -867,11 +969,30 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
        for (let i = 1; i <= totalPeriods; i++) {
          let paymentDate: Date;
          
-         if (i === 1) {
-           // Para la primera fecha, verificar si cae en día excluido
-           const firstDate = createLocalDate(first_payment_date);
-           paymentDate = adjustDateForExcludedDays(firstDate);
-         } else {
+          if (i === 1) {
+            // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            const startDate = createLocalDate(first_payment_date);
+            const firstPaymentDate = new Date(startDate);
+            
+            // Ajustar la primera fecha de cobro según la frecuencia
+            switch (payment_frequency) {
+              case 'daily':
+                firstPaymentDate.setDate(startDate.getDate() + 1);
+                break;
+              case 'weekly':
+                firstPaymentDate.setDate(startDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                firstPaymentDate.setDate(startDate.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                firstPaymentDate.setMonth(startDate.getMonth() + 1);
+                break;
+            }
+            
+            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+          } else {
            // Usar la función para calcular el siguiente día hábil
            const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
            paymentDate = getNextBusinessDay(previousDate, payment_frequency);
@@ -907,11 +1028,30 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
        for (let i = 1; i <= totalPeriods; i++) {
          let paymentDate: Date;
          
-         if (i === 1) {
-           // Para la primera fecha, verificar si cae en día excluido
-           const firstDate = createLocalDate(first_payment_date);
-           paymentDate = adjustDateForExcludedDays(firstDate);
-         } else {
+          if (i === 1) {
+            // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            const startDate = createLocalDate(first_payment_date);
+            const firstPaymentDate = new Date(startDate);
+            
+            // Ajustar la primera fecha de cobro según la frecuencia
+            switch (payment_frequency) {
+              case 'daily':
+                firstPaymentDate.setDate(startDate.getDate() + 1);
+                break;
+              case 'weekly':
+                firstPaymentDate.setDate(startDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                firstPaymentDate.setDate(startDate.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                firstPaymentDate.setMonth(startDate.getMonth() + 1);
+                break;
+            }
+            
+            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+          } else {
            // Usar la función para calcular el siguiente día hábil
            const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
            paymentDate = getNextBusinessDay(previousDate, payment_frequency, originalDay);
@@ -1063,16 +1203,43 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
 
     setLoading(true);
     try {
-      // Ajustar fechas para zona horaria de Santo Domingo
-      const now = new Date();
-      const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
-      const startDate = santoDomingoDate;
-      const endDate = new Date(santoDomingoDate);
+      // Usar la fecha de inicio seleccionada por el usuario
+      const startDate = createLocalDate(data.first_payment_date);
+      const endDate = new Date(startDate);
       endDate.setMonth(endDate.getMonth() + data.term_months);
       
-      const firstPaymentDate = createLocalDate(data.first_payment_date);
+      // Calcular la primera fecha de pago basándose en la fecha de inicio + frecuencia
+      const startDateForCalculation = createLocalDate(data.first_payment_date);
+      const firstPaymentDate = new Date(startDateForCalculation);
       
+      // Ajustar la primera fecha de cobro según la frecuencia
+      switch (data.payment_frequency) {
+        case 'daily':
+          firstPaymentDate.setDate(startDateForCalculation.getDate() + 1);
+          break;
+        case 'weekly':
+          firstPaymentDate.setDate(startDateForCalculation.getDate() + 7);
+          break;
+        case 'biweekly':
+          firstPaymentDate.setDate(startDateForCalculation.getDate() + 14);
+          break;
+        case 'monthly':
+          firstPaymentDate.setMonth(startDateForCalculation.getMonth() + 1);
+          break;
+        case 'quarterly':
+          firstPaymentDate.setMonth(startDateForCalculation.getMonth() + 3);
+          break;
+        case 'yearly':
+          firstPaymentDate.setFullYear(startDateForCalculation.getFullYear() + 1);
+          break;
+        default:
+          firstPaymentDate.setMonth(startDateForCalculation.getMonth() + 1);
+      }
+      
+      console.log('🔍 LoanForm: Fecha de inicio seleccionada:', data.first_payment_date);
       console.log('🔍 LoanForm: Fecha de inicio que se enviará:', startDate.toISOString().split('T')[0]);
+      console.log('🔍 LoanForm: Fecha de primera cuota calculada:', firstPaymentDate.toISOString().split('T')[0]);
+      console.log('🔍 LoanForm: Frecuencia de pago:', data.payment_frequency);
 
       const loanData = {
         client_id: data.client_id,
@@ -1086,10 +1253,10 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         monthly_payment: Math.round(calculatedValues.monthlyPayment),
         total_amount: Math.round(calculatedValues.totalAmount),
         remaining_balance: Math.round(calculatedValues.totalAmount),
-        start_date: firstPaymentDate.toISOString().split('T')[0], // CRÍTICO: start_date debe ser la fecha del primer pago
+        start_date: startDate.toISOString().split('T')[0], // Fecha de creación del préstamo
         end_date: endDate.toISOString().split('T')[0],
-        next_payment_date: firstPaymentDate.toISOString().split('T')[0], // La primera cuota también es la próxima cuota
-        first_payment_date: firstPaymentDate.toISOString().split('T')[0], // NUEVO: Base fija para cálculos de mora
+        next_payment_date: firstPaymentDate.toISOString().split('T')[0], // Fecha de la primera cuota (calculada según frecuencia)
+        first_payment_date: data.first_payment_date, // Fecha de inicio del préstamo (lo que seleccionó el usuario)
         status: data.loan_started ? 'active' : 'pending',
         guarantor_name: data.guarantor_name || null,
         guarantor_phone: data.guarantor_phone || null,
@@ -1262,6 +1429,17 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   useEffect(() => {
     form.setValue('excluded_days', excludedDays);
   }, [excludedDays, form]);
+
+  // Actualizar la fecha de primera cuota cuando cambie la frecuencia
+  useEffect(() => {
+    const frequency = form.watch('payment_frequency');
+    const startDate = form.watch('first_payment_date');
+    if (startDate) {
+      const newFirstPaymentDate = calculateFirstPaymentDate(frequency, startDate);
+      // No actualizar automáticamente, solo mostrar la fecha calculada
+      console.log('🔍 Fecha de primera cuota calculada:', newFirstPaymentDate);
+    }
+  }, [form.watch('payment_frequency'), form.watch('first_payment_date')]);
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -1578,7 +1756,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                     </div>
 
                     <div>
-                      <FormLabel>Primera cuota:</FormLabel>
+                      <FormLabel>Inicio de Préstamo:</FormLabel>
                       <FormField
                         control={form.control}
                         name="first_payment_date"

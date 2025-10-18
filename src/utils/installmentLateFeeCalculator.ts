@@ -38,6 +38,8 @@ export const getLateFeeBreakdownFromInstallments = async (
   }>;
 }> => {
   try {
+    console.log('🔍 getLateFeeBreakdownFromInstallments: Fecha de cálculo:', calculationDate.toISOString().split('T')[0]);
+    console.log('🔍 getLateFeeBreakdownFromInstallments: Fecha actual del sistema:', new Date().toISOString().split('T')[0]);
     // Obtener las cuotas de la tabla installments
     const { data: installments, error } = await supabase
       .from('installments')
@@ -79,6 +81,14 @@ export const getLateFeeBreakdownFromInstallments = async (
         const dueDate = new Date(installment.due_date);
         const daysSinceDue = Math.floor((calculationDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
         daysOverdue = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
+        
+        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number}:`, {
+          dueDate: installment.due_date,
+          calculationDate: calculationDate.toISOString().split('T')[0],
+          daysSinceDue,
+          gracePeriodDays: loan.grace_period_days || 0,
+          daysOverdue
+        });
         
         // Calcular mora si hay días de atraso
         if (daysOverdue > 0) {
