@@ -108,7 +108,11 @@ const RequestsModule = () => {
     payment_frequency: 'monthly',
     first_payment_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
     closing_costs: 0,
-    late_fee: false,
+    late_fee_enabled: false,
+    late_fee_rate: 2.0,
+    grace_period_days: 0,
+    max_late_fee: 0,
+    late_fee_calculation_type: 'daily',
     minimum_payment_type: 'interest',
     minimum_payment_percentage: 100,
     guarantor_required: false,
@@ -328,7 +332,11 @@ const RequestsModule = () => {
       payment_frequency: 'monthly',
       first_payment_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
       closing_costs: 0,
-      late_fee: false,
+      late_fee_enabled: false,
+      late_fee_rate: 2.0,
+      grace_period_days: 0,
+      max_late_fee: 0,
+      late_fee_calculation_type: 'daily',
       minimum_payment_type: 'interest',
       minimum_payment_percentage: 100,
       guarantor_required: false,
@@ -1026,6 +1034,7 @@ const RequestsModule = () => {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="simple">Simple</SelectItem>
+                      <SelectItem value="french">Francés</SelectItem>
                       <SelectItem value="german">Alemán</SelectItem>
                       <SelectItem value="american">Americano</SelectItem>
                       <SelectItem value="indefinite">Indefinido</SelectItem>
@@ -1071,16 +1080,76 @@ const RequestsModule = () => {
                   />
                 </div>
                 
+              {/* Configuración de Mora */}
+              <div className="space-y-4">
                 <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
-                    id="late_fee"
-                    checked={formData.late_fee}
-                    onChange={(e) => setFormData({...formData, late_fee: e.target.checked})}
+                    id="late_fee_enabled"
+                    checked={formData.late_fee_enabled}
+                    onChange={(e) => setFormData({...formData, late_fee_enabled: e.target.checked})}
                     className="rounded"
                   />
-                  <Label htmlFor="late_fee">Incluir cargo por mora</Label>
+                  <Label htmlFor="late_fee_enabled">Incluir cargo por mora</Label>
                 </div>
+                
+                {formData.late_fee_enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+                    <div>
+                      <Label htmlFor="late_fee_rate">Tasa de Mora por Día (%)</Label>
+                      <Input
+                        id="late_fee_rate"
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="100"
+                        value={formData.late_fee_rate}
+                        onChange={(e) => setFormData({...formData, late_fee_rate: Number(e.target.value)})}
+                        placeholder="2.0"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor="grace_period_days">Días de Gracia</Label>
+                      <Input
+                        id="grace_period_days"
+                        type="number"
+                        min="0"
+                        max="30"
+                        value={formData.grace_period_days}
+                        onChange={(e) => setFormData({...formData, grace_period_days: Number(e.target.value)})}
+                        placeholder="0"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor="max_late_fee">Mora Máxima (RD$)</Label>
+                      <Input
+                        id="max_late_fee"
+                        type="number"
+                        min="0"
+                        value={formData.max_late_fee}
+                        onChange={(e) => setFormData({...formData, max_late_fee: Number(e.target.value)})}
+                        placeholder="0"
+                      />
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor="late_fee_calculation_type">Tipo de Cálculo</Label>
+                      <Select value={formData.late_fee_calculation_type} onValueChange={(value) => setFormData({...formData, late_fee_calculation_type: value})}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccionar tipo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="daily">Diario</SelectItem>
+                          <SelectItem value="monthly">Mensual</SelectItem>
+                          <SelectItem value="compound">Compuesto</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+              </div>
               </div>
               
               {/* Sección de Garantía */}
