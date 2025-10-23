@@ -97,3 +97,21 @@ export const getCurrentDateStringForSantoDomingo = (): string => {
   
   return `${year}-${month}-${day}`;
 };
+
+/**
+ * Formatea una fecha con hora aplicando un offset de +2 horas para corrección de zona horaria
+ */
+export const formatDateTimeWithOffset = (dateString: string): string => {
+  const date = new Date(dateString);
+  // Agregar 2 horas al timestamp
+  date.setHours(date.getHours() + 2);
+  
+  return date.toLocaleString('es-DO', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+};

@@ -20,6 +20,7 @@ import { ReportsModule } from '@/components/reports/ReportsModule';
 import { CompanyModule } from '@/components/company/CompanyModule';
 import RegistrationCodesModule from '@/components/admin/RegistrationCodesModule';
 import RegistrationCodeModal from '@/components/RegistrationCodeModal';
+import { PawnShopModule } from '@/components/pawnshop/PawnShopModule';
 import { Building, CreditCard, Package, Users, BarChart3, Key } from 'lucide-react';
 
 // Componente para mostrar acceso restringido
@@ -115,6 +116,12 @@ const Index = () => {
           return <RestrictedAccess module="inventory" />;
         }
         return <InventoryModule />;
+      
+      case '/compra-venta':
+        if (!hasPermission('inventory.view')) {
+          return <RestrictedAccess module="inventory" />;
+        }
+        return <PawnShopModule />;
       
       case '/solicitudes':
         return <RequestsModule />;

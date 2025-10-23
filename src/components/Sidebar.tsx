@@ -80,6 +80,12 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       permission: 'portfolios.view'
     },
     { 
+      name: 'Compra/Venta', 
+      path: '/compra-venta', 
+      icon: CreditCard,
+      permission: 'inventory.view'
+    },
+    { 
       name: 'Inventario', 
       path: '/inventario', 
       icon: Package,

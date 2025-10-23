@@ -128,7 +128,7 @@ export type Database = {
           action: string
           created_at: string | null
           id: string
-          ip_address: unknown | null
+          ip_address: unknown
           new_values: Json | null
           old_values: Json | null
           record_id: string | null
@@ -140,7 +140,7 @@ export type Database = {
           action: string
           created_at?: string | null
           id?: string
-          ip_address?: unknown | null
+          ip_address?: unknown
           new_values?: Json | null
           old_values?: Json | null
           record_id?: string | null
@@ -152,7 +152,7 @@ export type Database = {
           action?: string
           created_at?: string | null
           id?: string
-          ip_address?: unknown | null
+          ip_address?: unknown
           new_values?: Json | null
           old_values?: Json | null
           record_id?: string | null
@@ -1191,6 +1191,113 @@ export type Database = {
         }
         Relationships: []
       }
+      pawn_payments: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          notes: string | null
+          pawn_transaction_id: string | null
+          payment_date: string
+          payment_type: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          notes?: string | null
+          pawn_transaction_id?: string | null
+          payment_date?: string
+          payment_type: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          notes?: string | null
+          pawn_transaction_id?: string | null
+          payment_date?: string
+          payment_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pawn_payments_pawn_transaction_id_fkey"
+            columns: ["pawn_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "pawn_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pawn_transactions: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          due_date: string
+          estimated_value: number
+          id: string
+          interest_rate: number
+          loan_amount: number
+          notes: string | null
+          product_description: string | null
+          product_id: string | null
+          product_name: string
+          start_date: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          due_date: string
+          estimated_value: number
+          id?: string
+          interest_rate?: number
+          loan_amount: number
+          notes?: string | null
+          product_description?: string | null
+          product_id?: string | null
+          product_name: string
+          start_date?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          due_date?: string
+          estimated_value?: number
+          id?: string
+          interest_rate?: number
+          loan_amount?: number
+          notes?: string | null
+          product_description?: string | null
+          product_id?: string | null
+          product_name?: string
+          start_date?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pawn_transactions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pawn_transactions_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_agreements: {
         Row: {
           agreed_amount: number
@@ -1287,6 +1394,8 @@ export type Database = {
           notes: string | null
           payment_date: string
           payment_method: string | null
+          payment_time_local: string | null
+          payment_timezone: string | null
           principal_amount: number
           reference_number: string | null
           status: string | null
@@ -1305,6 +1414,8 @@ export type Database = {
           notes?: string | null
           payment_date?: string
           payment_method?: string | null
+          payment_time_local?: string | null
+          payment_timezone?: string | null
           principal_amount: number
           reference_number?: string | null
           status?: string | null
@@ -1323,6 +1434,8 @@ export type Database = {
           notes?: string | null
           payment_date?: string
           payment_method?: string | null
+          payment_time_local?: string | null
+          payment_timezone?: string | null
           principal_amount?: number
           reference_number?: string | null
           status?: string | null
@@ -2023,34 +2136,13 @@ export type Database = {
           total_late_fee: number
         }[]
       }
-      current_santo_domingo_date: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      current_santo_domingo_timestamp: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      generate_company_code: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      generate_registration_code: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      get_santo_domingo_date: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      get_santo_domingo_timestamp: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
-      get_user_company_id: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
+      current_santo_domingo_date: { Args: never; Returns: string }
+      current_santo_domingo_timestamp: { Args: never; Returns: string }
+      generate_company_code: { Args: never; Returns: string }
+      generate_registration_code: { Args: never; Returns: string }
+      get_santo_domingo_date: { Args: never; Returns: string }
+      get_santo_domingo_timestamp: { Args: never; Returns: string }
+      get_user_company_id: { Args: never; Returns: string }
       recalculate_late_fee_from_scratch: {
         Args: { p_calculation_date?: string; p_loan_id: string }
         Returns: {
