@@ -88,21 +88,25 @@ export const PawnShopModule = () => {
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
   const [showTransactionDetails, setShowTransactionDetails] = useState(false);
-  const [showSaleForm, setShowSaleForm] = useState(false);
+3  const [showRateUpdateForm, setShowRateUpdateForm] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<PawnTransaction | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
     client_id: '',
-    product_id: '',
     product_name: '',
     product_description: '',
+    item_category: '',
+    item_condition: 'excellent',
+    item_brand: '',
+    item_model: '',
     estimated_value: 0,
     loan_amount: 0,
-    interest_rate: 5.0,
+    interest_rate: 20.0,
     interest_rate_type: 'monthly' as 'monthly' | 'annual' | 'daily' | 'weekly' | 'biweekly' | 'quarterly' | 'yearly',
-    period_days: 60,
+    period_days: 90,
+    start_date: new Date().toISOString().split('T')[0],
     due_date: '',
     notes: ''
   });
@@ -113,28 +117,11 @@ export const PawnShopModule = () => {
     notes: ''
   });
 
-  const [saleData, setSaleData] = useState({
-    product_id: '',
-    customer_name: 'Cliente General',
-    customer_phone: '',
-    customer_email: '',
-    customer_rnc: '',
-    customer_address: '',
-    quantity: 1,
-    unit_price: 0,
-    total_price: 0,
-    payment_method: 'cash' as 'cash' | 'card' | 'transfer' | 'check',
-    sale_type: 'cash' as 'cash' | 'credit',
-    ncf_type: '01' as '01' | '02' | '03' | '04' | '14' | '15',
-    ncf_number: '',
-    notes: ''
+  const [rateUpdateData, setRateUpdateData] = useState({
+    new_rate: 0,
+    reason: '',
+    effective_date: ''
   });
-
-  const [quickSaleMode, setQuickSaleMode] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [productSearchTerm, setProductSearchTerm] = useState('');
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
-  const [saleType, setSaleType] = useState<'cash' | 'credit'>('cash');
   
   // Estados para búsqueda en cascada de clientes
   const [clientSearch, setClientSearch] = useState('');
@@ -148,19 +135,17 @@ export const PawnShopModule = () => {
     }
   }, [user]);
 
-  // Filtrar productos para búsqueda
+  // Inicializar fecha de vencimiento cuando se abre el formulario
   useEffect(() => {
-    if (productSearchTerm.trim() === '') {
-      setFilteredProducts(products.filter(p => p.current_stock > 0));
-    } else {
-      setFilteredProducts(
-        products.filter(p => 
-          p.current_stock > 0 && 
-          p.name.toLowerCase().includes(productSearchTerm.toLowerCase())
-        )
-      );
+    if (showTransactionForm && formData.start_date && !formData.due_date) {
+      const dueDate = calculateDueDate(formData.start_date, formData.period_days);
+      setFormData(prev => ({
+        ...prev,
+        due_date: dueDate
+      }));
     }
-  }, [products, productSearchTerm]);
+  }, [showTransactionForm, formData.start_date, formData.period_days]);
+
 
   // Función para búsqueda en cascada de clientes
   const handleClientSearch = (searchTerm: string) => {
@@ -240,14 +225,18 @@ export const PawnShopModule = () => {
       const transactionData = {
         user_id: user.id,
         client_id: formData.client_id,
-        product_id: formData.product_id || null,
         product_name: formData.product_name,
         product_description: formData.product_description,
+        item_category: formData.item_category,
+        item_condition: formData.item_condition,
+        item_brand: formData.item_brand,
+        item_model: formData.item_model,
         estimated_value: formData.estimated_value,
         loan_amount: formData.loan_amount,
         interest_rate: formData.interest_rate,
         interest_rate_type: formData.interest_rate_type,
         period_days: formData.period_days,
+        start_date: formData.start_date,
         due_date: formData.due_date,
         notes: formData.notes,
         status: 'active'
@@ -274,10 +263,17 @@ export const PawnShopModule = () => {
     if (!selectedTransaction) return;
 
     try {
+      const paymentDate = new Date().toISOString();
+      const paymentBreakdown = processPayment(selectedTransaction, paymentData.amount, paymentDate);
+      
       const payment = {
         pawn_transaction_id: selectedTransaction.id,
         amount: paymentData.amount,
         payment_type: paymentData.payment_type,
+        interest_payment: paymentBreakdown.interestPayment,
+        principal_payment: paymentBreakdown.principalPayment,
+        remaining_balance: paymentBreakdown.remainingBalance,
+        payment_date: paymentDate,
         notes: paymentData.notes
       };
 
@@ -288,7 +284,7 @@ export const PawnShopModule = () => {
       if (paymentError) throw paymentError;
 
       // Update transaction status if full payment
-      if (paymentData.payment_type === 'full') {
+      if (paymentData.payment_type === 'full' || paymentBreakdown.remainingBalance <= 0) {
         const { error: updateError } = await supabase
           .from('pawn_transactions')
           .update({ status: 'redeemed' })
@@ -297,7 +293,7 @@ export const PawnShopModule = () => {
         if (updateError) throw updateError;
       }
 
-      toast.success('Pago registrado exitosamente');
+      toast.success(`Pago registrado exitosamente. Interés: $${paymentBreakdown.interestPayment.toFixed(2)}, Capital: $${paymentBreakdown.principalPayment.toFixed(2)}`);
       setShowPaymentForm(false);
       setSelectedTransaction(null);
       resetPaymentForm();
@@ -377,17 +373,26 @@ export const PawnShopModule = () => {
   };
 
   const resetForm = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 90);
+    const dueDateString = dueDate.toISOString().split('T')[0];
+    
     setFormData({
       client_id: '',
-      product_id: '',
       product_name: '',
       product_description: '',
+      item_category: '',
+      item_condition: 'excellent',
+      item_brand: '',
+      item_model: '',
       estimated_value: 0,
       loan_amount: 0,
-      interest_rate: 5.0,
+      interest_rate: 20.0,
       interest_rate_type: 'monthly',
-      period_days: 60,
-      due_date: '',
+      period_days: 90,
+      start_date: today,
+      due_date: dueDateString,
       notes: ''
     });
     setClientSearch('');
@@ -395,20 +400,79 @@ export const PawnShopModule = () => {
     setShowClientDropdown(false);
   };
 
-  const calculateDueDate = (periodDays: number) => {
-    const today = new Date();
-    const dueDate = new Date(today);
-    dueDate.setDate(today.getDate() + periodDays);
+  const calculateDueDate = (startDate: string, periodDays: number) => {
+    if (!startDate) return '';
+    const start = new Date(startDate);
+    const dueDate = new Date(start);
+    dueDate.setDate(start.getDate() + periodDays);
     return dueDate.toISOString().split('T')[0];
   };
 
+  const calculateDaysDifference = (startDate: string, endDate: string) => {
+    if (!startDate || !endDate) return 0;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const diffTime = end.getTime() - start.getTime();
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  };
+
   const handlePeriodChange = (periodDays: number) => {
-    const newDueDate = calculateDueDate(periodDays);
+    const newDueDate = calculateDueDate(formData.start_date, periodDays);
     setFormData({
       ...formData,
       period_days: periodDays,
       due_date: newDueDate
     });
+  };
+
+  const handleStartDateChange = (startDate: string) => {
+    const newDueDate = calculateDueDate(startDate, formData.period_days);
+    setFormData({
+      ...formData,
+      start_date: startDate,
+      due_date: newDueDate
+    });
+  };
+
+  const handleDueDateChange = (dueDate: string) => {
+    const daysDiff = calculateDaysDifference(formData.start_date, dueDate);
+    setFormData({
+      ...formData,
+      due_date: dueDate,
+      period_days: daysDiff
+    });
+  };
+
+  // Función para calcular interés diario
+  const calculateDailyInterest = (principal: number, monthlyRate: number, days: number) => {
+    const dailyRate = monthlyRate / 30; // Convertir tasa mensual a diaria
+    return principal * (dailyRate / 100) * days;
+  };
+
+  // Función para calcular el interés acumulado hasta una fecha específica
+  const calculateAccumulatedInterest = (transaction: PawnTransaction, currentDate: string) => {
+    const startDate = new Date(transaction.start_date);
+    const endDate = new Date(currentDate);
+    const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+    
+    return calculateDailyInterest(
+      Number(transaction.loan_amount), 
+      Number(transaction.interest_rate), 
+      daysDiff
+    );
+  };
+
+  // Función para procesar pagos con lógica de interés primero, luego capital
+  const processPayment = (transaction: PawnTransaction, paymentAmount: number, paymentDate: string) => {
+    const accumulatedInterest = calculateAccumulatedInterest(transaction, paymentDate);
+    const interestPayment = Math.min(paymentAmount, accumulatedInterest);
+    const principalPayment = Math.max(0, paymentAmount - interestPayment);
+    
+    return {
+      interestPayment,
+      principalPayment,
+      remainingBalance: Number(transaction.loan_amount) - principalPayment
+    };
   };
 
   const resetPaymentForm = () => {
@@ -419,152 +483,58 @@ export const PawnShopModule = () => {
     });
   };
 
-  const resetSaleForm = () => {
-    setSaleData({
-      product_id: '',
-      customer_name: 'Cliente General',
-      customer_phone: '',
-      customer_email: '',
-      customer_rnc: '',
-      customer_address: '',
-      quantity: 1,
-      unit_price: 0,
-      total_price: 0,
-      payment_method: 'cash',
-      sale_type: 'cash',
-      ncf_type: '01',
-      ncf_number: '',
-      notes: ''
+  const resetRateUpdateForm = () => {
+    setRateUpdateData({
+      new_rate: 0,
+      reason: '',
+      effective_date: ''
     });
-    setSelectedProduct(null);
-    setQuickSaleMode(false);
-    setSaleType('cash');
-    setProductSearchTerm('');
   };
 
-  const handleQuickSale = (product: Product) => {
-    setSelectedProduct(product);
-    setSaleData({
-      ...saleData,
-      product_id: product.id,
-      unit_price: 0, // Usuario puede ingresar precio
-      total_price: 0
-    });
-    setQuickSaleMode(true);
-    setSaleType('cash'); // Por defecto venta al contado
-  };
-
-  const handleQuickSaleSubmit = async () => {
-    if (!selectedProduct || !user) return;
-
-    try {
-      const saleRecord = {
-        user_id: user.id,
-        product_id: selectedProduct.id,
-        customer_name: saleData.customer_name,
-        customer_phone: saleData.customer_phone || '',
-        customer_email: saleData.customer_email || '',
-        customer_rnc: saleData.customer_rnc || '',
-        customer_address: saleData.customer_address || '',
-        quantity: saleData.quantity,
-        unit_price: saleData.unit_price,
-        total_price: saleData.total_price,
-        payment_method: saleData.payment_method,
-        sale_type: saleType,
-        notes: saleData.notes,
-        sale_date: new Date().toISOString()
-      };
-
-      const { error: saleError } = await supabase
-        .from('sales')
-        .insert([saleRecord]);
-
-      if (saleError) {
-        console.error('Error creating sale:', saleError);
-        if (saleError.code === 'PGRST204' || saleError.message.includes('relation "sales" does not exist')) {
-          toast.error('La tabla de ventas no está disponible. Ejecute las migraciones primero.');
-          return;
-        }
-        throw saleError;
-      }
-
-      // Actualizar stock
-      const { error: stockError } = await supabase
-        .from('products')
-        .update({ 
-          current_stock: selectedProduct.current_stock - saleData.quantity 
-        })
-        .eq('id', selectedProduct.id);
-
-      if (stockError) throw stockError;
-
-      toast.success(`Venta registrada: ${selectedProduct.name} x${saleData.quantity}`);
-      resetSaleForm();
-      fetchData();
-    } catch (error) {
-      console.error('Error creating quick sale:', error);
-      toast.error('Error al registrar venta');
-    }
-  };
-
-  const handleSaleSubmit = async (e: React.FormEvent) => {
+  const handleRateUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!selectedTransaction) return;
 
     try {
-      // Crear el registro de venta
-      const saleRecord = {
-        user_id: user.id,
-        product_id: saleData.product_id,
-        customer_name: saleData.customer_name,
-        customer_phone: saleData.customer_phone,
-        customer_email: saleData.customer_email,
-        customer_rnc: saleData.customer_rnc || '',
-        customer_address: saleData.customer_address || '',
-        quantity: saleData.quantity,
-        unit_price: saleData.unit_price,
-        total_price: saleData.total_price,
-        payment_method: saleData.payment_method,
-        sale_type: saleData.sale_type,
-        ncf_type: saleData.ncf_type,
-        ncf_number: saleData.ncf_number,
-        notes: saleData.notes,
-        sale_date: new Date().toISOString()
+      const { error } = await supabase
+        .from('pawn_transactions')
+        .update({ 
+          interest_rate: rateUpdateData.new_rate,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', selectedTransaction.id);
+
+      if (error) throw error;
+
+      // Registrar el cambio de tasa en el historial
+      const rateChangeRecord = {
+        pawn_transaction_id: selectedTransaction.id,
+        old_rate: selectedTransaction.interest_rate,
+        new_rate: rateUpdateData.new_rate,
+        reason: rateUpdateData.reason,
+        effective_date: rateUpdateData.effective_date,
+        changed_at: new Date().toISOString()
       };
 
-      const { error: saleError } = await supabase
-        .from('sales')
-        .insert([saleRecord]);
+      const { error: historyError } = await supabase
+        .from('pawn_rate_changes')
+        .insert([rateChangeRecord]);
 
-      if (saleError) {
-        console.error('Error creating sale:', saleError);
-        // Si la tabla sales no existe, mostrar mensaje informativo
-        if (saleError.code === 'PGRST204' || saleError.message.includes('relation "sales" does not exist')) {
-          toast.error('La tabla de ventas no está disponible. Ejecute las migraciones primero.');
-          return;
-        }
-        throw saleError;
+      if (historyError) {
+        console.warn('Error saving rate change history:', historyError);
       }
 
-      // Actualizar el stock del producto
-      const { error: stockError } = await supabase
-        .from('products')
-        .update({ 
-          current_stock: products.find(p => p.id === saleData.product_id)?.current_stock - saleData.quantity 
-        })
-        .eq('id', saleData.product_id);
-
-      if (stockError) throw stockError;
-
-      toast.success('Venta registrada exitosamente');
-      setShowSaleForm(false);
-      resetSaleForm();
+      toast.success('Tasa de interés actualizada exitosamente');
+      setShowRateUpdateForm(false);
+      setSelectedTransaction(null);
+      resetRateUpdateForm();
       fetchData();
     } catch (error) {
-      console.error('Error creating sale:', error);
-      toast.error('Error al registrar venta');
+      console.error('Error updating rate:', error);
+      toast.error('Error al actualizar tasa de interés');
     }
   };
+
 
   const fetchPaymentHistory = async (transactionId: string) => {
     try {
@@ -827,10 +797,6 @@ export const PawnShopModule = () => {
             <Plus className="h-4 w-4 mr-2" />
             Nueva Transacción
           </Button>
-          <Button onClick={() => setShowSaleForm(true)} variant="outline" className="w-full sm:w-auto">
-            <DollarSign className="h-4 w-4 mr-2" />
-            Punto de Venta
-          </Button>
         </div>
       </div>
 
@@ -885,7 +851,6 @@ export const PawnShopModule = () => {
         <TabsList>
           <TabsTrigger value="activas">Activas</TabsTrigger>
           <TabsTrigger value="todas">Todas</TabsTrigger>
-          <TabsTrigger value="ventas">Punto de Venta</TabsTrigger>
           <TabsTrigger value="reportes">Reportes</TabsTrigger>
         </TabsList>
 
@@ -1021,6 +986,21 @@ export const PawnShopModule = () => {
                         >
                           Marcar como Perdido
                         </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedTransaction(transaction);
+                            setRateUpdateData({
+                              new_rate: transaction.interest_rate,
+                              reason: '',
+                              effective_date: new Date().toISOString().split('T')[0]
+                            });
+                            setShowRateUpdateForm(true);
+                          }}
+                        >
+                          Actualizar Tasa
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -1133,73 +1113,6 @@ export const PawnShopModule = () => {
           </div>
         </TabsContent>
 
-        <TabsContent value="ventas">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <DollarSign className="h-5 w-5" />
-                Punto de Venta - República Dominicana
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {/* Barra de búsqueda */}
-              <div className="mb-6">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                  <Input
-                    placeholder="Buscar producto por nombre..."
-                    value={productSearchTerm}
-                    onChange={(e) => setProductSearchTerm(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-                {productSearchTerm && (
-                  <p className="text-sm text-gray-600 mt-2">
-                    {filteredProducts.length} producto(s) encontrado(s)
-                  </p>
-                )}
-              </div>
-
-              {loading ? (
-                <div className="text-center py-8">Cargando productos...</div>
-              ) : filteredProducts.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>
-                    {productSearchTerm 
-                      ? `No se encontraron productos que coincidan con "${productSearchTerm}"`
-                      : "No hay productos disponibles para la venta"
-                    }
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {filteredProducts.map((product) => (
-                    <div key={product.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-white">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-lg mb-1 line-clamp-2">{product.name}</h3>
-                          <p className="text-sm text-gray-600">Stock: {product.current_stock}</p>
-                        </div>
-                        <Badge className="bg-green-500 text-white">Disponible</Badge>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button 
-                          size="sm" 
-                          onClick={() => handleQuickSale(product)}
-                          className="flex-1 bg-green-600 hover:bg-green-700"
-                        >
-                          <DollarSign className="h-4 w-4 mr-1" />
-                          Vender
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
       {/* Transaction Form Dialog */}
@@ -1237,37 +1150,6 @@ export const PawnShopModule = () => {
                 </div>
               </div>
 
-              <div className="md:col-span-2">
-                <Label htmlFor="product_id">Producto del Inventario (Opcional)</Label>
-                <Select value={formData.product_id || "none"} onValueChange={(value) => {
-                  if (value === "none") {
-                    setFormData({
-                      ...formData, 
-                      product_id: '',
-                      product_name: ''
-                    });
-                  } else {
-                    const product = products.find(p => p.id === value);
-                    setFormData({
-                      ...formData, 
-                      product_id: value,
-                      product_name: product?.name || ''
-                    });
-                  }
-                }}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar producto (opcional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Ninguno</SelectItem>
-                    {products.map(product => (
-                      <SelectItem key={product.id} value={product.id}>
-                        {product.name} (Stock: {product.current_stock})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
 
               <div className="md:col-span-2">
                 <Label htmlFor="product_name">Nombre del Artículo *</Label>
@@ -1288,6 +1170,54 @@ export const PawnShopModule = () => {
                   onChange={(e) => setFormData({...formData, product_description: e.target.value})}
                   placeholder="Detalles, marca, modelo, estado, etc."
                   rows={3}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <Label htmlFor="item_category">Categoría del Artículo</Label>
+                <Input
+                  id="item_category"
+                  value={formData.item_category}
+                  onChange={(e) => setFormData({...formData, item_category: e.target.value})}
+                  placeholder="Ej: Electrónicos, Joyería, Herramientas, etc."
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <Label htmlFor="item_condition">Estado del Artículo</Label>
+                <Select 
+                  value={formData.item_condition} 
+                  onValueChange={(value) => setFormData({...formData, item_condition: value})}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="excellent">Excelente</SelectItem>
+                    <SelectItem value="good">Bueno</SelectItem>
+                    <SelectItem value="fair">Regular</SelectItem>
+                    <SelectItem value="poor">Malo</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="md:col-span-2">
+                <Label htmlFor="item_brand">Marca del Artículo</Label>
+                <Input
+                  id="item_brand"
+                  value={formData.item_brand}
+                  onChange={(e) => setFormData({...formData, item_brand: e.target.value})}
+                  placeholder="Ej: Apple, Samsung, Dell, etc."
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <Label htmlFor="item_model">Modelo del Artículo</Label>
+                <Input
+                  id="item_model"
+                  value={formData.item_model}
+                  onChange={(e) => setFormData({...formData, item_model: e.target.value})}
+                  placeholder="Ej: iPhone 13, Galaxy S21, XPS 15, etc."
                 />
               </div>
 
@@ -1316,7 +1246,7 @@ export const PawnShopModule = () => {
               </div>
 
               <div>
-                <Label htmlFor="interest_rate">Tasa de Interés (%) *</Label>
+                <Label htmlFor="interest_rate">Tasa de Interés Mensual (%) *</Label>
                 <Input
                   id="interest_rate"
                   type="number"
@@ -1325,6 +1255,9 @@ export const PawnShopModule = () => {
                   onChange={(e) => setFormData({...formData, interest_rate: parseFloat(e.target.value)})}
                   required
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  El interés se cobra diariamente
+                </p>
               </div>
 
               <div>
@@ -1351,22 +1284,31 @@ export const PawnShopModule = () => {
 
               <div>
                 <Label htmlFor="period_days">Período (días) *</Label>
-                <Select 
-                  value={formData.period_days.toString()} 
-                  onValueChange={(value) => handlePeriodChange(parseInt(value))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="30">30 días</SelectItem>
-                    <SelectItem value="60">60 días</SelectItem>
-                    <SelectItem value="90">90 días</SelectItem>
-                    <SelectItem value="120">120 días</SelectItem>
-                    <SelectItem value="180">180 días</SelectItem>
-                    <SelectItem value="365">365 días</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Input
+                  id="period_days"
+                  type="number"
+                  min="1"
+                  value={formData.period_days}
+                  onChange={(e) => handlePeriodChange(parseInt(e.target.value) || 0)}
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Se actualiza automáticamente al cambiar las fechas
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="start_date">Fecha de Inicio *</Label>
+                <Input
+                  id="start_date"
+                  type="date"
+                  value={formData.start_date}
+                  onChange={(e) => handleStartDateChange(e.target.value)}
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Fecha desde la cual se calcula el interés
+                </p>
               </div>
 
               <div>
@@ -1375,7 +1317,7 @@ export const PawnShopModule = () => {
                   id="due_date"
                   type="date"
                   value={formData.due_date}
-                  onChange={(e) => setFormData({...formData, due_date: e.target.value})}
+                  onChange={(e) => handleDueDateChange(e.target.value)}
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1">
@@ -1791,446 +1733,64 @@ export const PawnShopModule = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Sale Form Dialog */}
-      <Dialog open={showSaleForm} onOpenChange={setShowSaleForm}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      {/* Rate Update Form Dialog */}
+      <Dialog open={showRateUpdateForm} onOpenChange={setShowRateUpdateForm}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5" />
-              Punto de Venta
-            </DialogTitle>
+            <DialogTitle>Actualizar Tasa de Interés</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSaleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <Label htmlFor="product_id">Producto a Vender *</Label>
-                <div className="relative">
-                  <Input
-                    placeholder="Buscar producto por nombre..."
-                    value={productSearchTerm}
-                    onChange={(e) => setProductSearchTerm(e.target.value)}
-                    className="w-full"
-                  />
-                  
-                  {productSearchTerm && filteredProducts.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
-                      {filteredProducts.map((product) => (
-                        <div
-                          key={product.id}
-                          className="p-3 hover:bg-gray-100 cursor-pointer border-b"
-                          onClick={() => {
-                            setSaleData({
-                              ...saleData, 
-                              product_id: product.id,
-                              unit_price: 0,
-                              total_price: 0
-                            });
-                            setProductSearchTerm(product.name);
-                          }}
-                        >
-                          <div className="font-medium">{product.name}</div>
-                          <div className="text-sm text-gray-600">Stock: {product.current_stock}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+          {selectedTransaction && (
+            <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+              <p><strong>Artículo:</strong> {selectedTransaction.product_name}</p>
+              <p><strong>Cliente:</strong> {selectedTransaction.clients?.full_name}</p>
+              <p><strong>Tasa Actual:</strong> {selectedTransaction.interest_rate}%</p>
+            </div>
+          )}
+          <form onSubmit={handleRateUpdate} className="space-y-4">
+            <div>
+              <Label htmlFor="new_rate">Nueva Tasa de Interés Mensual (%) *</Label>
+              <Input
+                id="new_rate"
+                type="number"
+                step="0.01"
+                value={rateUpdateData.new_rate}
+                onChange={(e) => setRateUpdateData({...rateUpdateData, new_rate: parseFloat(e.target.value)})}
+                required
+              />
+            </div>
 
-              <div>
-                <Label htmlFor="customer_name">Nombre del Cliente *</Label>
-                <Input
-                  id="customer_name"
-                  value={saleData.customer_name}
-                  onChange={(e) => setSaleData({...saleData, customer_name: e.target.value})}
-                  placeholder="Nombre completo"
-                  required
-                />
-              </div>
+            <div>
+              <Label htmlFor="effective_date">Fecha Efectiva *</Label>
+              <Input
+                id="effective_date"
+                type="date"
+                value={rateUpdateData.effective_date}
+                onChange={(e) => setRateUpdateData({...rateUpdateData, effective_date: e.target.value})}
+                required
+              />
+            </div>
 
-              <div>
-                <Label htmlFor="customer_phone">Teléfono</Label>
-                <Input
-                  id="customer_phone"
-                  value={saleData.customer_phone}
-                  onChange={(e) => setSaleData({...saleData, customer_phone: e.target.value})}
-                  placeholder="Número de teléfono"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="customer_email">Email</Label>
-                <Input
-                  id="customer_email"
-                  type="email"
-                  value={saleData.customer_email}
-                  onChange={(e) => setSaleData({...saleData, customer_email: e.target.value})}
-                  placeholder="correo@ejemplo.com"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="quantity">Cantidad *</Label>
-                <Input
-                  id="quantity"
-                  type="number"
-                  min="1"
-                  max={products.find(p => p.id === saleData.product_id)?.current_stock || 1}
-                  value={saleData.quantity}
-                  onChange={(e) => {
-                    const quantity = parseInt(e.target.value) || 1;
-                    setSaleData({
-                      ...saleData, 
-                      quantity,
-                      total_price: quantity * saleData.unit_price
-                    });
-                  }}
-                  required
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="unit_price">Precio Unitario *</Label>
-                <Input
-                  id="unit_price"
-                  type="number"
-                  step="0.01"
-                  value={saleData.unit_price}
-                  onChange={(e) => {
-                    const unitPrice = parseFloat(e.target.value) || 0;
-                    setSaleData({
-                      ...saleData, 
-                      unit_price: unitPrice,
-                      total_price: saleData.quantity * unitPrice
-                    });
-                  }}
-                  required
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="total_price">Total</Label>
-                <Input
-                  id="total_price"
-                  type="number"
-                  step="0.01"
-                  value={saleData.total_price}
-                  readOnly
-                  className="bg-gray-50"
-                />
-              </div>
-
-              <div>
-                <Label>Tipo de Venta *</Label>
-                <div className="flex gap-2 mt-2">
-                  <Button
-                    type="button"
-                    variant={saleData.sale_type === 'cash' ? 'default' : 'outline'}
-                    onClick={() => setSaleData({...saleData, sale_type: 'cash'})}
-                    className="flex-1"
-                  >
-                    💵 Contado
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={saleData.sale_type === 'credit' ? 'default' : 'outline'}
-                    onClick={() => setSaleData({...saleData, sale_type: 'credit'})}
-                    className="flex-1"
-                  >
-                    📋 Crédito
-                  </Button>
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="payment_method">Método de Pago *</Label>
-                <Select 
-                  value={saleData.payment_method} 
-                  onValueChange={(value: 'cash' | 'card' | 'transfer' | 'check') => 
-                    setSaleData({...saleData, payment_method: value})
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash">Efectivo</SelectItem>
-                    <SelectItem value="card">Tarjeta</SelectItem>
-                    <SelectItem value="transfer">Transferencia</SelectItem>
-                    <SelectItem value="check">Cheque</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {saleData.sale_type === 'credit' && (
-                <>
-                  <div>
-                    <Label htmlFor="customer_rnc">RNC del Cliente *</Label>
-                    <Input
-                      id="customer_rnc"
-                      value={saleData.customer_rnc}
-                      onChange={(e) => setSaleData({...saleData, customer_rnc: e.target.value})}
-                      placeholder="123456789"
-                      required={saleData.sale_type === 'credit'}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="customer_address">Dirección del Cliente</Label>
-                    <Input
-                      id="customer_address"
-                      value={saleData.customer_address}
-                      onChange={(e) => setSaleData({...saleData, customer_address: e.target.value})}
-                      placeholder="Dirección completa"
-                    />
-                  </div>
-                </>
-              )}
-
-              <div>
-                <Label htmlFor="ncf_type">Tipo de NCF *</Label>
-                <Select 
-                  value={saleData.ncf_type} 
-                  onValueChange={(value: '01' | '02' | '03' | '04' | '14' | '15') => 
-                    setSaleData({...saleData, ncf_type: value})
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="01">01 - Factura de Venta</SelectItem>
-                    <SelectItem value="02">02 - Nota de Débito</SelectItem>
-                    <SelectItem value="03">03 - Nota de Crédito</SelectItem>
-                    <SelectItem value="04">04 - Comprobante de Pago</SelectItem>
-                    <SelectItem value="14">14 - Factura de Exportación</SelectItem>
-                    <SelectItem value="15">15 - Factura de Importación</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label htmlFor="ncf_number">Número de NCF</Label>
-                <Input
-                  id="ncf_number"
-                  value={saleData.ncf_number}
-                  onChange={(e) => setSaleData({...saleData, ncf_number: e.target.value})}
-                  placeholder="B0100000001"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <Label htmlFor="sale_notes">Notas</Label>
-                <Textarea
-                  id="sale_notes"
-                  value={saleData.notes}
-                  onChange={(e) => setSaleData({...saleData, notes: e.target.value})}
-                  placeholder="Notas adicionales de la venta..."
-                  rows={2}
-                />
-              </div>
+            <div>
+              <Label htmlFor="reason">Razón del Cambio</Label>
+              <Textarea
+                id="reason"
+                value={rateUpdateData.reason}
+                onChange={(e) => setRateUpdateData({...rateUpdateData, reason: e.target.value})}
+                placeholder="Explique la razón del cambio de tasa..."
+                rows={3}
+              />
             </div>
 
             <div className="flex gap-2 justify-end">
-              <Button type="button" variant="outline" onClick={() => setShowSaleForm(false)}>
+              <Button type="button" variant="outline" onClick={() => setShowRateUpdateForm(false)}>
                 Cancelar
               </Button>
-              <Button type="submit">
-                Registrar Venta
-              </Button>
+              <Button type="submit">Actualizar Tasa</Button>
             </div>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* Quick Sale Modal */}
-      <Dialog open={quickSaleMode} onOpenChange={setQuickSaleMode}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5" />
-              Venta Rápida - República Dominicana
-            </DialogTitle>
-          </DialogHeader>
-          
-          {selectedProduct && (
-            <div className="space-y-4">
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <h3 className="font-semibold">{selectedProduct.name}</h3>
-                <p className="text-sm text-gray-600">Stock disponible: {selectedProduct.current_stock}</p>
-              </div>
-
-              {/* Tipo de Venta */}
-              <div>
-                <Label>Tipo de Venta</Label>
-                <div className="flex gap-2 mt-2">
-                  <Button
-                    type="button"
-                    variant={saleType === 'cash' ? 'default' : 'outline'}
-                    onClick={() => setSaleType('cash')}
-                    className="flex-1"
-                  >
-                    💵 Contado
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={saleType === 'credit' ? 'default' : 'outline'}
-                    onClick={() => setSaleType('credit')}
-                    className="flex-1"
-                  >
-                    📋 Crédito
-                  </Button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="quick_quantity">Cantidad</Label>
-                  <Input
-                    id="quick_quantity"
-                    type="number"
-                    min="1"
-                    max={selectedProduct.current_stock}
-                    value={saleData.quantity}
-                    onChange={(e) => {
-                      const quantity = parseInt(e.target.value) || 1;
-                      setSaleData({
-                        ...saleData, 
-                        quantity,
-                        total_price: quantity * saleData.unit_price
-                      });
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="quick_price">Precio Unitario (RD$)</Label>
-                  <Input
-                    id="quick_price"
-                    type="number"
-                    step="0.01"
-                    value={saleData.unit_price}
-                    onChange={(e) => {
-                      const unitPrice = parseFloat(e.target.value) || 0;
-                      setSaleData({
-                        ...saleData, 
-                        unit_price: unitPrice,
-                        total_price: saleData.quantity * unitPrice
-                      });
-                    }}
-                    placeholder="0.00"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="quick_total">Total (RD$)</Label>
-                <Input
-                  id="quick_total"
-                  type="number"
-                  step="0.01"
-                  value={saleData.total_price}
-                  readOnly
-                  className="bg-gray-50 font-semibold text-lg"
-                />
-              </div>
-
-              {/* Información del Cliente */}
-              <div className="space-y-3">
-                <h4 className="font-semibold text-sm text-gray-700">Información del Cliente</h4>
-                
-                <div>
-                  <Label htmlFor="quick_customer">Nombre del Cliente</Label>
-                  <Input
-                    id="quick_customer"
-                    value={saleData.customer_name}
-                    onChange={(e) => setSaleData({...saleData, customer_name: e.target.value})}
-                    placeholder="Cliente General"
-                  />
-                </div>
-
-                {saleType === 'credit' && (
-                  <>
-                    <div>
-                      <Label htmlFor="quick_rnc">RNC (Obligatorio para crédito)</Label>
-                      <Input
-                        id="quick_rnc"
-                        value={saleData.customer_rnc}
-                        onChange={(e) => setSaleData({...saleData, customer_rnc: e.target.value})}
-                        placeholder="123456789"
-                        required={saleType === 'credit'}
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="quick_address">Dirección</Label>
-                      <Input
-                        id="quick_address"
-                        value={saleData.customer_address}
-                        onChange={(e) => setSaleData({...saleData, customer_address: e.target.value})}
-                        placeholder="Dirección del cliente"
-                      />
-                    </div>
-                  </>
-                )}
-
-                <div>
-                  <Label htmlFor="quick_phone">Teléfono</Label>
-                  <Input
-                    id="quick_phone"
-                    value={saleData.customer_phone}
-                    onChange={(e) => setSaleData({...saleData, customer_phone: e.target.value})}
-                    placeholder="(809) 123-4567"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="quick_payment">Método de Pago</Label>
-                <Select 
-                  value={saleData.payment_method} 
-                  onValueChange={(value: 'cash' | 'card' | 'transfer' | 'check') => 
-                    setSaleData({...saleData, payment_method: value})
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash">💵 Efectivo</SelectItem>
-                    <SelectItem value="card">💳 Tarjeta</SelectItem>
-                    <SelectItem value="transfer">🏦 Transferencia</SelectItem>
-                    <SelectItem value="check">📝 Cheque</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex gap-2 pt-4">
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  onClick={() => setQuickSaleMode(false)}
-                  className="flex-1"
-                >
-                  Cancelar
-                </Button>
-                <Button 
-                  onClick={handleQuickSaleSubmit}
-                  disabled={
-                    saleData.unit_price <= 0 || 
-                    saleData.quantity <= 0 ||
-                    (saleType === 'credit' && !saleData.customer_rnc.trim())
-                  }
-                  className="flex-1"
-                >
-                  <DollarSign className="h-4 w-4 mr-2" />
-                  {saleType === 'credit' ? 'Vender a Crédito' : 'Vender'}
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
