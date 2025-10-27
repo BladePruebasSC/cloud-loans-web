@@ -88,9 +88,23 @@ export const PawnShopModule = () => {
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
   const [showTransactionDetails, setShowTransactionDetails] = useState(false);
-3  const [showRateUpdateForm, setShowRateUpdateForm] = useState(false);
+  const [showRateUpdateForm, setShowRateUpdateForm] = useState(false);
+  const [showInterestPreview, setShowInterestPreview] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<PawnTransaction | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
+  const [interestPreviewData, setInterestPreviewData] = useState<{
+    principal: number;
+    rate: number;
+    days: number;
+    startDate: string;
+    dailyBreakdown: Array<{
+      day: number;
+      date: string;
+      dailyInterest: number;
+      accumulatedInterest: number;
+      totalAmount: number;
+    }>;
+  } | null>(null);
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -227,10 +241,6 @@ export const PawnShopModule = () => {
         client_id: formData.client_id,
         product_name: formData.product_name,
         product_description: formData.product_description,
-        item_category: formData.item_category,
-        item_condition: formData.item_condition,
-        item_brand: formData.item_brand,
-        item_model: formData.item_model,
         estimated_value: formData.estimated_value,
         loan_amount: formData.loan_amount,
         interest_rate: formData.interest_rate,
@@ -270,9 +280,6 @@ export const PawnShopModule = () => {
         pawn_transaction_id: selectedTransaction.id,
         amount: paymentData.amount,
         payment_type: paymentData.payment_type,
-        interest_payment: paymentBreakdown.interestPayment,
-        principal_payment: paymentBreakdown.principalPayment,
-        remaining_balance: paymentBreakdown.remainingBalance,
         payment_date: paymentDate,
         notes: paymentData.notes
       };
@@ -293,7 +300,7 @@ export const PawnShopModule = () => {
         if (updateError) throw updateError;
       }
 
-      toast.success(`Pago registrado exitosamente. Interés: $${paymentBreakdown.interestPayment.toFixed(2)}, Capital: $${paymentBreakdown.principalPayment.toFixed(2)}`);
+      toast.success('Pago registrado exitosamente');
       setShowPaymentForm(false);
       setSelectedTransaction(null);
       resetPaymentForm();
@@ -460,6 +467,53 @@ export const PawnShopModule = () => {
       Number(transaction.interest_rate), 
       daysDiff
     );
+  };
+
+  // Función para generar previsualización de interés diario
+  const generateInterestPreview = (principal: number, monthlyRate: number, days: number, startDate: string) => {
+    const dailyRate = monthlyRate / 30;
+    const dailyBreakdown = [];
+    let accumulatedInterest = 0;
+    
+    for (let day = 1; day <= days; day++) {
+      const currentDate = new Date(startDate);
+      currentDate.setDate(currentDate.getDate() + day - 1);
+      
+      const dailyInterest = principal * (dailyRate / 100);
+      accumulatedInterest += dailyInterest;
+      const totalAmount = principal + accumulatedInterest;
+      
+      dailyBreakdown.push({
+        day,
+        date: currentDate.toISOString().split('T')[0],
+        dailyInterest,
+        accumulatedInterest,
+        totalAmount
+      });
+    }
+    
+    return {
+      principal,
+      rate: monthlyRate,
+      days,
+      startDate,
+      dailyBreakdown
+    };
+  };
+
+  const handleShowInterestPreview = () => {
+    if (formData.loan_amount > 0 && formData.interest_rate > 0 && formData.period_days > 0 && formData.start_date) {
+      const preview = generateInterestPreview(
+        formData.loan_amount,
+        formData.interest_rate,
+        formData.period_days,
+        formData.start_date
+      );
+      setInterestPreviewData(preview);
+      setShowInterestPreview(true);
+    } else {
+      toast.error('Por favor completa todos los campos requeridos para ver la previsualización');
+    }
   };
 
   // Función para procesar pagos con lógica de interés primero, luego capital
@@ -1335,6 +1389,20 @@ export const PawnShopModule = () => {
                   rows={2}
                 />
               </div>
+
+              <div className="md:col-span-2">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={handleShowInterestPreview}
+                  className="w-full"
+                >
+                  📊 Ver Previsualización de Interés Diario
+                </Button>
+                <p className="text-xs text-gray-500 mt-1 text-center">
+                  Ve cómo aumenta el monto día a día según la tasa de interés
+                </p>
+              </div>
             </div>
 
             <div className="flex gap-2 justify-end">
@@ -1744,35 +1812,35 @@ export const PawnShopModule = () => {
               <p><strong>Artículo:</strong> {selectedTransaction.product_name}</p>
               <p><strong>Cliente:</strong> {selectedTransaction.clients?.full_name}</p>
               <p><strong>Tasa Actual:</strong> {selectedTransaction.interest_rate}%</p>
-            </div>
-          )}
+                    </div>
+                  )}
           <form onSubmit={handleRateUpdate} className="space-y-4">
-            <div>
+              <div>
               <Label htmlFor="new_rate">Nueva Tasa de Interés Mensual (%) *</Label>
-              <Input
+                <Input
                 id="new_rate"
-                type="number"
+                  type="number"
                 step="0.01"
                 value={rateUpdateData.new_rate}
                 onChange={(e) => setRateUpdateData({...rateUpdateData, new_rate: parseFloat(e.target.value)})}
-                required
-              />
-            </div>
+                  required
+                />
+              </div>
 
-            <div>
+              <div>
               <Label htmlFor="effective_date">Fecha Efectiva *</Label>
-              <Input
+                <Input
                 id="effective_date"
                 type="date"
                 value={rateUpdateData.effective_date}
                 onChange={(e) => setRateUpdateData({...rateUpdateData, effective_date: e.target.value})}
-                required
-              />
-            </div>
+                  required
+                />
+              </div>
 
-            <div>
+              <div>
               <Label htmlFor="reason">Razón del Cambio</Label>
-              <Textarea
+                <Textarea
                 id="reason"
                 value={rateUpdateData.reason}
                 onChange={(e) => setRateUpdateData({...rateUpdateData, reason: e.target.value})}
@@ -1788,6 +1856,144 @@ export const PawnShopModule = () => {
               <Button type="submit">Actualizar Tasa</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Interest Preview Modal */}
+      <Dialog open={showInterestPreview} onOpenChange={setShowInterestPreview}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              📊 Previsualización de Interés Diario
+            </DialogTitle>
+          </DialogHeader>
+          
+          {interestPreviewData && (
+            <div className="space-y-6">
+              {/* Resumen */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Resumen del Cálculo</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">
+                        ${interestPreviewData.principal.toLocaleString()}
+                      </div>
+                      <div className="text-sm text-gray-600">Capital Inicial</div>
+                    </div>
+                    
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">
+                        {interestPreviewData.rate}%
+                      </div>
+                      <div className="text-sm text-gray-600">Tasa Mensual</div>
+                    </div>
+                    
+                    <div className="text-center p-4 bg-yellow-50 rounded-lg">
+                      <div className="text-2xl font-bold text-yellow-600">
+                        {(interestPreviewData.rate / 30).toFixed(4)}%
+                      </div>
+                      <div className="text-sm text-gray-600">Tasa Diaria</div>
+                    </div>
+                    
+                    <div className="text-center p-4 bg-purple-50 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-600">
+                        {interestPreviewData.days}
+                      </div>
+                      <div className="text-sm text-gray-600">Días Totales</div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <span className="text-sm font-medium text-gray-600">Interés Total:</span>
+                        <div className="text-lg font-semibold text-red-600">
+                          ${interestPreviewData.dailyBreakdown[interestPreviewData.dailyBreakdown.length - 1]?.accumulatedInterest.toFixed(2) || '0.00'}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-600">Monto Final:</span>
+                        <div className="text-lg font-semibold text-green-600">
+                          ${interestPreviewData.dailyBreakdown[interestPreviewData.dailyBreakdown.length - 1]?.totalAmount.toFixed(2) || '0.00'}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-sm font-medium text-gray-600">Interés Diario:</span>
+                        <div className="text-lg font-semibold text-blue-600">
+                          ${interestPreviewData.dailyBreakdown[0]?.dailyInterest.toFixed(2) || '0.00'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Tabla Detallada */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Desglose Día por Día</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left p-2">Día</th>
+                          <th className="text-left p-2">Fecha</th>
+                          <th className="text-right p-2">Interés Diario</th>
+                          <th className="text-right p-2">Interés Acumulado</th>
+                          <th className="text-right p-2">Total a Pagar</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {interestPreviewData.dailyBreakdown.map((day, index) => (
+                          <tr key={day.day} className={`border-b hover:bg-gray-50 ${
+                            day.day % 7 === 0 ? 'bg-blue-50' : ''
+                          }`}>
+                            <td className="p-2 font-medium">
+                              Día {day.day}
+                              {day.day % 7 === 0 && (
+                                <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                  Semana {Math.ceil(day.day / 7)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2 text-gray-600">
+                              {new Date(day.date).toLocaleDateString('es-DO')}
+                            </td>
+                            <td className="p-2 text-right font-mono">
+                              ${day.dailyInterest.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-right font-mono text-orange-600">
+                              ${day.accumulatedInterest.toFixed(2)}
+                            </td>
+                            <td className="p-2 text-right font-mono font-semibold text-green-600">
+                              ${day.totalAmount.toFixed(2)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  
+                  <div className="mt-4 text-xs text-gray-500">
+                    <p>• Las filas azules marcan el final de cada semana</p>
+                    <p>• El interés se calcula diariamente sobre el capital inicial</p>
+                    <p>• Al final del período, el interés total será exactamente {interestPreviewData.rate}% del capital</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => setShowInterestPreview(false)}>
+              Cerrar
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

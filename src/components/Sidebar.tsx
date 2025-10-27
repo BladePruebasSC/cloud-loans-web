@@ -19,7 +19,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Calculator,
-  Lock
+  Lock,
+  ShoppingCart,
+  Scale
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -80,15 +82,21 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       permission: 'portfolios.view'
     },
     { 
-      name: 'Compra/Venta', 
-      path: '/compra-venta', 
-      icon: CreditCard,
-      permission: 'inventory.view'
-    },
-    { 
       name: 'Inventario', 
       path: '/inventario', 
       icon: Package,
+      permission: 'inventory.view'
+    },
+    { 
+      name: 'Punto de Venta', 
+      path: '/punto-venta', 
+      icon: ShoppingCart,
+      permission: 'inventory.view'
+    },
+    { 
+      name: 'Compra/Venta', 
+      path: '/compra-venta', 
+      icon: Scale,
       permission: 'inventory.view'
     },
     { 
@@ -187,7 +195,7 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
           <div className="mb-8">
             {isOpen ? (
               <div>
-                <h1 className="text-xl font-bold text-gray-800">PrestamosPro</h1>
+                <h1 className="text-xl font-bold text-gray-800">Prestamos Facil</h1>
                 {profile?.is_employee && (
                   <p className="text-xs text-blue-600 mt-1">
                     {profile.role === 'admin' ? 'Administrador' :

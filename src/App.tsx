@@ -162,6 +162,7 @@ function App() {
       <Route path="/clientes/editar/:id" element={<Index />} />
       <Route path="/inventario" element={<Index />} />
       <Route path="/compra-venta" element={<Index />} />
+      <Route path="/punto-venta" element={<Index />} />
       <Route path="/documentos" element={<Index />} />
       <Route path="/solicitudes" element={<Index />} />
       <Route path="/bancos" element={<Index />} />
