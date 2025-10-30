@@ -484,6 +484,22 @@ export const PawnShopModule = () => {
     });
   };
 
+  // Previsualización desde una transacción existente (Detalles)
+  const previewInterestFromTransaction = (transaction: PawnTransaction) => {
+    if (!transaction) return;
+    const principal = Number(transaction.loan_amount || 0);
+    const monthlyRate = Number(transaction.interest_rate || 0);
+    const startDate = transaction.start_date;
+    const days = calculateDaysDifference(transaction.start_date, transaction.due_date);
+    if (principal > 0 && monthlyRate > 0 && days > 0 && startDate) {
+      const preview = generateInterestPreview(principal, monthlyRate, days, startDate);
+      setInterestPreviewData(preview);
+      setShowInterestPreview(true);
+    } else {
+      toast.error('Faltan datos para previsualizar el interés');
+    }
+  };
+
   // Función para calcular interés diario
   const calculateDailyInterest = (principal: number, monthlyRate: number, days: number) => {
     const dailyRate = monthlyRate / 30; // Convertir tasa mensual a diaria
@@ -1714,6 +1730,15 @@ export const PawnShopModule = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
+                  <div className="flex justify-end mb-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => selectedTransaction && previewInterestFromTransaction(selectedTransaction)}
+                    >
+                      📊 Ver Previsualización de Interés
+                    </Button>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="text-center p-4 bg-green-50 rounded-lg">
                       <div className="text-2xl font-bold text-green-600">
