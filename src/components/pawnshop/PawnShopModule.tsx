@@ -91,6 +91,8 @@ export const PawnShopModule = () => {
   const [showRateUpdateForm, setShowRateUpdateForm] = useState(false);
   const [showQuickUpdate, setShowQuickUpdate] = useState(false);
   const [showInterestPreview, setShowInterestPreview] = useState(false);
+  const [showExtendForm, setShowExtendForm] = useState(false);
+  const [extendDays, setExtendDays] = useState<number>(30);
   const [selectedTransaction, setSelectedTransaction] = useState<PawnTransaction | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
   const [interestPreviewData, setInterestPreviewData] = useState<{
@@ -377,6 +379,37 @@ export const PawnShopModule = () => {
     } catch (error) {
       console.error('Error updating status:', error);
       toast.error('Error al actualizar estado');
+    }
+  };
+
+  const handleExtendDays = async (transaction: PawnTransaction, daysToAdd: number) => {
+    try {
+      const baseDate = transaction.due_date ? new Date(transaction.due_date) : new Date();
+      const newDue = new Date(baseDate);
+      newDue.setDate(baseDate.getDate() + Math.max(1, daysToAdd));
+      const newDueStr = newDue.toISOString().split('T')[0];
+      const newPeriod = (transaction.period_days || 0) + Math.max(1, daysToAdd);
+
+      const { error } = await supabase
+        .from('pawn_transactions')
+        .update({
+          due_date: newDueStr,
+          period_days: newPeriod,
+          // Mantener activo: solo se extiende el plazo
+          status: 'active',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', transaction.id);
+
+      if (error) throw error;
+
+      toast.success(`Plazo extendido ${daysToAdd} día(s). Nueva fecha: ${newDueStr}`);
+      setShowExtendForm(false);
+      setSelectedTransaction(null);
+      fetchData();
+    } catch (e) {
+      console.error('Error extending term:', e);
+      toast.error('Error al extender el plazo');
     }
   };
 
@@ -1396,6 +1429,36 @@ export const PawnShopModule = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Extend Term Dialog */}
+      <Dialog open={showExtendForm} onOpenChange={setShowExtendForm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Extender Plazo</DialogTitle>
+          </DialogHeader>
+          {selectedTransaction && (
+            <div className="space-y-4">
+              <div className="p-3 bg-gray-50 rounded">
+                <div className="text-sm">Artículo: <strong>{selectedTransaction.product_name}</strong></div>
+                <div className="text-sm">Vence: <strong>{formatDateTimeWithOffset(selectedTransaction.due_date)}</strong></div>
+              </div>
+              <div>
+                <Label>Días a agregar</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={extendDays}
+                  onChange={(e) => setExtendDays(parseInt(e.target.value) || 1)}
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setShowExtendForm(false)}>Cancelar</Button>
+                <Button onClick={() => handleExtendDays(selectedTransaction, extendDays)}>Extender</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Payment Form Dialog */}
       <Dialog open={showPaymentForm} onOpenChange={setShowPaymentForm}>
         <DialogContent>
@@ -1817,7 +1880,7 @@ export const PawnShopModule = () => {
                 variant="outline"
                 onClick={() => {
                   setShowQuickUpdate(false);
-                  handleStatusChange(selectedTransaction.id, 'extended');
+                  setShowExtendForm(true);
                 }}
               >
                 Extender Plazo
