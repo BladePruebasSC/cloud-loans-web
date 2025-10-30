@@ -16,7 +16,7 @@ import { CarterasModule } from '@/components/carteras/CarterasModule';
 import { DocumentsModule } from '@/components/documents/DocumentsModule';
 import { MapModule } from '@/components/map/MapModule';
 import { PaymentAgreementsModule } from '@/components/agreements/PaymentAgreementsModule';
-import { ReportsModule } from '@/components/reports/ReportsModule';
+import { ReportsModule as ReportsModuleImproved } from '@/components/reports/ReportsModuleImproved';
 import { CompanyModule } from '@/components/company/CompanyModule';
 import RegistrationCodesModule from '@/components/admin/RegistrationCodesModule';
 import RegistrationCodeModal from '@/components/RegistrationCodeModal';
@@ -158,7 +158,7 @@ const Index = () => {
         if (!hasPermission('reports.view')) {
           return <RestrictedAccess module="reports" />;
         }
-        return <ReportsModule />;
+        return <ReportsModuleImproved />;
       
       case '/empresa':
       case '/mi-empresa':

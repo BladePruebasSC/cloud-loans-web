@@ -36,7 +36,7 @@ const Notifications: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
   const navigate = useNavigate();
 
   // Función para navegar a la acción específica de la notificación
@@ -242,7 +242,7 @@ const Notifications: React.FC = () => {
             company_id
           )
         `)
-        .eq('clients.company_id', user.user_metadata.company_id)
+        .eq('loan_officer_id', companyId as string)
         .eq('late_fee_enabled', true)
         .gt('current_late_fee', 0);
 

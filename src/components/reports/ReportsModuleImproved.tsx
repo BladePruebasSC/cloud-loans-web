@@ -34,6 +34,10 @@ interface ReportData {
   loans: any[];
   payments: any[];
   expenses: any[];
+  pawnTransactions: any[];
+  pawnPayments: any[];
+  products: any[];
+  sales: any[];
 }
 
 export const ReportsModule = () => {
@@ -43,7 +47,11 @@ export const ReportsModule = () => {
     clients: [],
     loans: [],
     payments: [],
-    expenses: []
+    expenses: [],
+    pawnTransactions: [],
+    pawnPayments: [],
+    products: [],
+    sales: []
   });
   const [dateRange, setDateRange] = useState({
     startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
@@ -120,11 +128,63 @@ export const ReportsModule = () => {
 
       if (expensesError) throw expensesError;
 
+      // Fetch products (inventario)
+      const { data: productsData, error: productsError } = await supabase
+        .from('products')
+        .select('id, name, current_stock, selling_price, status, category, sku, brand')
+        .order('name');
+
+      if (productsError) throw productsError;
+
+      // Fetch pawn transactions
+      const { data: pawnTxData, error: pawnTxError } = await supabase
+        .from('pawn_transactions')
+        .select(`
+          *,
+          clients(id, full_name, phone)
+        `)
+        .gte('created_at', dateRange.startDate)
+        .lte('created_at', dateRange.endDate + 'T23:59:59')
+        .order('created_at', { ascending: false });
+
+      if (pawnTxError) throw pawnTxError;
+
+      // Fetch pawn payments
+      const { data: pawnPaymentsData, error: pawnPaymentsError } = await supabase
+        .from('pawn_payments')
+        .select(`
+          *,
+          pawn_transactions!inner(
+            id,
+            product_name,
+            clients(id, full_name)
+          )
+        `)
+        .gte('payment_date', dateRange.startDate)
+        .lte('payment_date', dateRange.endDate)
+        .order('payment_date', { ascending: false });
+
+      if (pawnPaymentsError) throw pawnPaymentsError;
+
+      // Fetch POS sales
+      const { data: salesData, error: salesError } = await supabase
+        .from('sales')
+        .select('*')
+        .gte('sale_date', dateRange.startDate)
+        .lte('sale_date', dateRange.endDate)
+        .order('sale_date', { ascending: false });
+
+      if (salesError) throw salesError;
+
       setReportData({
         clients: clientsData || [],
         loans: loansData || [],
         payments: paymentsData || [],
-        expenses: expensesData || []
+        expenses: expensesData || [],
+        pawnTransactions: pawnTxData || [],
+        pawnPayments: pawnPaymentsData || [],
+        products: productsData || [],
+        sales: salesData || []
       });
 
     } catch (error) {
@@ -361,12 +421,18 @@ export const ReportsModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-11">
           <TabsTrigger value="prestamos">Préstamos</TabsTrigger>
           <TabsTrigger value="pagos">Pagos</TabsTrigger>
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
           <TabsTrigger value="financiero">Financiero</TabsTrigger>
           <TabsTrigger value="operativo">Operativo</TabsTrigger>
+          <TabsTrigger value="facturas">Facturas</TabsTrigger>
+          <TabsTrigger value="ventas">Ventas</TabsTrigger>
+          <TabsTrigger value="compra_venta">Compra-Venta</TabsTrigger>
+          <TabsTrigger value="inventario">Inventario</TabsTrigger>
+          <TabsTrigger value="moras">Moras</TabsTrigger>
+          <TabsTrigger value="clientes_top">Clientes Top</TabsTrigger>
         </TabsList>
 
         <TabsContent value="prestamos" className="space-y-6">
@@ -437,6 +503,352 @@ export const ReportsModule = () => {
                     </div>
                   ))
                 )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="inventario" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Inventario de Productos</CardTitle>
+                <Button onClick={() => exportToCSV(reportData.products, 'reporte_inventario')}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar CSV
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div className="text-center p-3 bg-blue-50 rounded">
+                  <div className="text-xl font-bold text-blue-700">{reportData.products.length}</div>
+                  <div className="text-xs text-gray-600">Productos</div>
+                </div>
+                <div className="text-center p-3 bg-green-50 rounded">
+                  <div className="text-xl font-bold text-green-700">{reportData.products.reduce((s,p)=>s+(p.current_stock||0),0)}</div>
+                  <div className="text-xs text-gray-600">Unidades en stock</div>
+                </div>
+                <div className="text-center p-3 bg-purple-50 rounded">
+                  <div className="text-xl font-bold text-purple-700">{reportData.products.filter(p=>p.status==='active').length}</div>
+                  <div className="text-xs text-gray-600">Activos</div>
+                </div>
+                <div className="text-center p-3 bg-yellow-50 rounded">
+                  <div className="text-xl font-bold text-yellow-700">{reportData.products.filter(p=> (p.current_stock||0) <= 5).length}</div>
+                  <div className="text-xs text-gray-600">Stock bajo</div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {reportData.products.map(p => (
+                  <div key={p.id} className="border rounded p-3 flex items-center justify-between text-sm">
+                    <div>
+                      <div className="font-medium">{p.name}</div>
+                      <div className="text-gray-600">{p.category || 'Sin categoría'} · {p.brand || '—'} · {p.sku || '—'}</div>
+                    </div>
+                    <div className="text-right">
+                      <div>Stock: {p.current_stock}</div>
+                      <div className="text-gray-600">Precio: ${Number(p.selling_price||0).toLocaleString()}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="moras" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Préstamos con Mora</CardTitle>
+                <Button onClick={() => exportToCSV(reportData.loans.filter(l=> (l.current_late_fee||0)>0), 'reporte_moras')}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar CSV
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div className="text-center p-3 bg-red-50 rounded">
+                  <div className="text-xl font-bold text-red-700">{reportData.loans.filter(l=> (l.current_late_fee||0)>0).length}</div>
+                  <div className="text-xs text-gray-600">Préstamos en mora</div>
+                </div>
+                <div className="text-center p-3 bg-yellow-50 rounded">
+                  <div className="text-xl font-bold text-yellow-700">${reportData.loans.reduce((s,l)=> s + (l.current_late_fee||0), 0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">Mora acumulada</div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {reportData.loans.filter(l=> (l.current_late_fee||0)>0).map(l => (
+                  <div key={l.id} className="border rounded p-3 flex items-start justify-between text-sm">
+                    <div>
+                      <div className="font-medium">{l.clients?.full_name || 'Cliente'}</div>
+                      <div className="text-gray-600">Próximo pago: {l.next_payment_date ? new Date(l.next_payment_date).toLocaleDateString() : '—'}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-red-600">Mora: ${Number(l.current_late_fee||0).toLocaleString()}</div>
+                      <div className="text-gray-600">Tasa mora: {l.late_fee_rate ? `${l.late_fee_rate}%` : '—'}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="clientes_top" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Clientes Top (por monto pagado)</CardTitle>
+                <Button onClick={() => {
+                  const rows = Object.values(reportData.payments.reduce((acc: any, p: any) => {
+                    const name = p.loans?.clients?.full_name || 'Cliente';
+                    acc[name] = acc[name] || { cliente: name, total_pagado: 0, pagos: 0 };
+                    acc[name].total_pagado += (p.amount||0);
+                    acc[name].pagos += 1;
+                    return acc;
+                  }, {} as any));
+                  exportToCSV(rows as any[], 'reporte_clientes_top');
+                }}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar CSV
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const rows = Object.values(reportData.payments.reduce((acc: any, p: any) => {
+                  const name = p.loans?.clients?.full_name || 'Cliente';
+                  acc[name] = acc[name] || { name, total: 0, count: 0 };
+                  acc[name].total += (p.amount||0);
+                  acc[name].count += 1;
+                  return acc;
+                }, {} as any)) as Array<any>;
+                const sorted = rows.sort((a,b) => b.total - a.total).slice(0, 20);
+                return (
+                  <div className="space-y-2">
+                    {sorted.map((r) => (
+                      <div key={r.name} className="border rounded p-3 flex items-center justify-between text-sm">
+                        <div className="font-medium">{r.name}</div>
+                        <div className="text-right">
+                          <div>Total pagado: ${Number(r.total).toLocaleString()}</div>
+                          <div className="text-gray-600">Pagos: {r.count}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="facturas" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Reporte de Facturas</CardTitle>
+                <Button onClick={() => exportToCSV([...reportData.payments, ...reportData.sales], 'reporte_facturas')}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar CSV
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div className="text-center p-3 bg-blue-50 rounded">
+                  <div className="text-xl font-bold text-blue-700">{reportData.payments.length + reportData.sales.length}</div>
+                  <div className="text-xs text-gray-600">Facturas</div>
+                </div>
+                <div className="text-center p-3 bg-green-50 rounded">
+                  <div className="text-xl font-bold text-green-700">${(reportData.payments.reduce((s,p)=>s+(p.amount||0),0) + reportData.sales.reduce((s,x)=> s + (x.total_amount||0), 0)).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">Total Pagado</div>
+                </div>
+                <div className="text-center p-3 bg-yellow-50 rounded">
+                  <div className="text-xl font-bold text-yellow-700">${reportData.payments.reduce((s,p)=>s+(p.interest_amount||0),0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">Intereses</div>
+                </div>
+                <div className="text-center p-3 bg-red-50 rounded">
+                  <div className="text-xl font-bold text-red-700">${reportData.payments.reduce((s,p)=>s+(p.late_fee||0),0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">Mora</div>
+                </div>
+              </div>
+
+              <div className="font-semibold mb-2">Facturas POS</div>
+              {reportData.sales.length === 0 ? (
+                <div className="text-sm text-gray-500 mb-4">No hay ventas de POS en el período.</div>
+              ) : (
+                <div className="space-y-2 mb-6">
+                  {reportData.sales.map((s) => (
+                    <div key={s.id} className="border rounded p-3 flex items-start justify-between">
+                      <div className="text-sm">
+                        <div className="font-medium">#{s.sale_number}</div>
+                        <div className="text-gray-600">{new Date(s.sale_date || s.created_at).toLocaleDateString()} · Método: {s.payment_method || 'N/A'}</div>
+                      </div>
+                      <div className="text-right text-sm">
+                        <div><strong>Total:</strong> ${Number(s.total_amount||0).toLocaleString()}</div>
+                        <div className="text-gray-600">Estado: {s.status || 'completed'}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="font-semibold mb-2">Facturas de Préstamos (Pagos)</div>
+              {loading ? (
+                <div className="text-center py-8">Cargando facturas...</div>
+              ) : reportData.payments.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">No hay facturas en el período</div>
+              ) : (
+                <div className="space-y-3">
+                  {reportData.payments.map((payment) => (
+                    <div key={payment.id} className="border rounded-lg p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <Receipt className="h-4 w-4" />
+                            <span className="font-medium">{payment.loans?.clients?.full_name || 'Cliente'}</span>
+                          </div>
+                          <div className="text-sm text-gray-600">
+                            {new Date(payment.payment_date).toLocaleDateString()} · Recibo #{payment.id}
+                          </div>
+                        </div>
+                        <div className="text-right text-sm">
+                          <div><strong>Total:</strong> ${payment.amount.toLocaleString()}</div>
+                          <div className="text-gray-600">Interés: ${Number(payment.interest_amount||0).toLocaleString()}</div>
+                          {payment.late_fee > 0 && (
+                            <div className="text-red-600">Mora: ${Number(payment.late_fee).toLocaleString()}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="ventas" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Ventas (Pagos + POS)</CardTitle>
+                <Button onClick={() => exportToCSV([...reportData.payments, ...reportData.sales], 'reporte_ventas')}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar CSV
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="text-center py-8">Cargando ventas...</div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="text-center p-3 bg-green-50 rounded">
+                      <div className="text-xl font-bold text-green-700">${(reportData.payments.reduce((s,p)=>s+(p.amount||0),0) + reportData.sales.reduce((s,x)=> s + (x.total_amount||0), 0)).toLocaleString()}</div>
+                      <div className="text-xs text-gray-600">Total Cobrado</div>
+                    </div>
+                    <div className="text-center p-3 bg-blue-50 rounded">
+                      <div className="text-xl font-bold text-blue-700">{new Set([
+                        ...reportData.payments.map(p=> (p.loans?.clients?.full_name||'N/A')),
+                        ...reportData.sales.map(s=> s.customer_name || 'Cliente')
+                      ]).size}</div>
+                      <div className="text-xs text-gray-600">Clientes</div>
+                    </div>
+                    <div className="text-center p-3 bg-purple-50 rounded">
+                      <div className="text-xl font-bold text-purple-700">{reportData.payments.length + reportData.sales.length}</div>
+                      <div className="text-xs text-gray-600">Pagos</div>
+                    </div>
+                    <div className="text-center p-3 bg-yellow-50 rounded">
+                      <div className="text-xl font-bold text-yellow-700">${reportData.payments.reduce((s,p)=>s+(p.interest_amount||0),0).toLocaleString()}</div>
+                      <div className="text-xs text-gray-600">Intereses</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="compra_venta" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Compra-Venta (Empeño)</CardTitle>
+                <Button onClick={() => exportToCSV(reportData.pawnTransactions, 'reporte_compra_venta')}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar CSV
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div className="text-center p-3 bg-blue-50 rounded">
+                  <div className="text-xl font-bold text-blue-700">{reportData.pawnTransactions.length}</div>
+                  <div className="text-xs text-gray-600">Transacciones</div>
+                </div>
+                <div className="text-center p-3 bg-green-50 rounded">
+                  <div className="text-xl font-bold text-green-700">${reportData.pawnTransactions.reduce((s,t)=>s+Number(t.loan_amount||0),0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">Total Prestado</div>
+                </div>
+                <div className="text-center p-3 bg-purple-50 rounded">
+                  <div className="text-xl font-bold text-purple-700">${reportData.pawnTransactions.reduce((s,t)=>s+Number(t.estimated_value||0),0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">Valor Estimado</div>
+                </div>
+                <div className="text-center p-3 bg-yellow-50 rounded">
+                  <div className="text-xl font-bold text-yellow-700">${reportData.pawnPayments.reduce((s,p)=>s+Number(p.amount||0),0).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">Pagos en período</div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <div className="font-semibold mb-2">Transacciones</div>
+                  {reportData.pawnTransactions.length === 0 ? (
+                    <div className="text-sm text-gray-500">Sin transacciones en el período.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {reportData.pawnTransactions.map((tx) => (
+                        <div key={tx.id} className="border rounded p-3 flex items-start justify-between">
+                          <div className="text-sm">
+                            <div className="font-medium">{tx.product_name}</div>
+                            <div className="text-gray-600">{tx.clients?.full_name || 'Cliente'} · {new Date(tx.created_at).toLocaleDateString()}</div>
+                          </div>
+                          <div className="text-right text-sm">
+                            <div>Préstamo: ${Number(tx.loan_amount||0).toLocaleString()}</div>
+                            <div className="text-gray-600">Valor: ${Number(tx.estimated_value||0).toLocaleString()}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="font-semibold mb-2">Pagos</div>
+                  {reportData.pawnPayments.length === 0 ? (
+                    <div className="text-sm text-gray-500">Sin pagos en el período.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {reportData.pawnPayments.map((pp) => (
+                        <div key={pp.id} className="border rounded p-3 flex items-start justify-between">
+                          <div className="text-sm">
+                            <div className="font-medium">{pp.pawn_transactions?.product_name || 'Artículo'}</div>
+                            <div className="text-gray-600">{pp.pawn_transactions?.clients?.full_name || 'Cliente'} · {new Date(pp.payment_date).toLocaleDateString()}</div>
+                          </div>
+                          <div className="text-right text-sm">
+                            <div>Monto: ${Number(pp.amount||0).toLocaleString()}</div>
+                            <div className="text-gray-600">Tipo: {pp.payment_type}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>

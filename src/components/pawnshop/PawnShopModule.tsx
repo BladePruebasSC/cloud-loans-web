@@ -89,6 +89,7 @@ export const PawnShopModule = () => {
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
   const [showTransactionDetails, setShowTransactionDetails] = useState(false);
   const [showRateUpdateForm, setShowRateUpdateForm] = useState(false);
+  const [showQuickUpdate, setShowQuickUpdate] = useState(false);
   const [showInterestPreview, setShowInterestPreview] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<PawnTransaction | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
@@ -1026,34 +1027,14 @@ export const PawnShopModule = () => {
                           <History className="h-4 w-4 mr-1" />
                           Historial
                         </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline"
-                          onClick={() => handleStatusChange(transaction.id, 'extended')}
-                        >
-                          Extender
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="destructive"
-                          onClick={() => handleStatusChange(transaction.id, 'forfeited')}
-                        >
-                          Marcar como Perdido
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline"
+                        <Button
+                          size="sm"
                           onClick={() => {
                             setSelectedTransaction(transaction);
-                            setRateUpdateData({
-                              new_rate: transaction.interest_rate,
-                              reason: '',
-                              effective_date: new Date().toISOString().split('T')[0]
-                            });
-                            setShowRateUpdateForm(true);
+                            setShowQuickUpdate(true);
                           }}
                         >
-                          Actualizar Tasa
+                          Actualizar
                         </Button>
                       </div>
                     </div>
@@ -1760,42 +1741,7 @@ export const PawnShopModule = () => {
                 </CardContent>
               </Card>
 
-              {/* Action Buttons */}
-              <div className="flex gap-2 flex-wrap justify-center">
-                <Button 
-                  onClick={() => {
-                    setShowTransactionDetails(false);
-                    setSelectedTransaction(selectedTransaction);
-                    setShowPaymentForm(true);
-                  }}
-                >
-                  Registrar Pago
-                </Button>
-                <Button 
-                  variant="outline"
-                  onClick={() => {
-                    setShowTransactionDetails(false);
-                    setSelectedTransaction(selectedTransaction);
-                    fetchPaymentHistory(selectedTransaction.id);
-                    setShowPaymentHistory(true);
-                  }}
-                >
-                  <History className="h-4 w-4 mr-2" />
-                  Ver Historial
-                </Button>
-                <Button 
-                  variant="outline"
-                  onClick={() => handleStatusChange(selectedTransaction.id, 'extended')}
-                >
-                  Extender Plazo
-                </Button>
-                <Button 
-                  variant="destructive"
-                  onClick={() => handleStatusChange(selectedTransaction.id, 'forfeited')}
-                >
-                  Marcar como Perdido
-                </Button>
-              </div>
+              {/* No action buttons inside Detalles */}
             </div>
           )}
         </DialogContent>
@@ -1856,6 +1802,51 @@ export const PawnShopModule = () => {
               <Button type="submit">Actualizar Tasa</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Update Dialog */}
+      <Dialog open={showQuickUpdate} onOpenChange={setShowQuickUpdate}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Actualizar Transacción</DialogTitle>
+          </DialogHeader>
+          {selectedTransaction && (
+            <div className="space-y-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowQuickUpdate(false);
+                  handleStatusChange(selectedTransaction.id, 'extended');
+                }}
+              >
+                Extender Plazo
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowQuickUpdate(false);
+                  setRateUpdateData({
+                    new_rate: selectedTransaction.interest_rate,
+                    reason: '',
+                    effective_date: new Date().toISOString().split('T')[0]
+                  });
+                  setShowRateUpdateForm(true);
+                }}
+              >
+                Actualizar Tasa
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setShowQuickUpdate(false);
+                  handleStatusChange(selectedTransaction.id, 'forfeited');
+                }}
+              >
+                Marcar como Perdido
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

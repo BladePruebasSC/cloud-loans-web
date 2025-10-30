@@ -58,7 +58,7 @@ interface CartItem {
   product: Product;
   quantity: number;
   unitPrice: number;
-  discount: number;
+  discountPercent: number; // porcentaje por ítem
   subtotal: number;
 }
 
@@ -82,7 +82,7 @@ interface SaleData {
   customer: Customer | null;
   items: CartItem[];
   subtotal: number;
-  discount: number;
+  discount: number; // monto total de descuento aplicado
   tax: number;
   total: number;
   paymentMethod: PaymentMethod | null;
@@ -94,6 +94,8 @@ interface SaleData {
   saleType: 'cash' | 'credit' | 'financing';
   financingMonths?: number;
   financingRate?: number;
+  discountMode?: 'item' | 'total';
+  discountPercentTotal?: number; // % aplicado al total cuando discountMode = 'total'
 }
 
 export const PointOfSaleModule = () => {
@@ -126,7 +128,9 @@ export const PointOfSaleModule = () => {
     notes: '',
     saleType: 'cash',
     financingMonths: 12,
-    financingRate: 20
+    financingRate: 20,
+    discountMode: 'item',
+    discountPercentTotal: 0
   });
 
   const paymentMethods: PaymentMethod[] = [
@@ -199,18 +203,30 @@ export const PointOfSaleModule = () => {
 
   // Actualizar totales cuando cambia el carrito
   useEffect(() => {
-    const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
+    const subtotalBase = cart.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+    const subtotalItems = cart.reduce((sum, item) => sum + item.subtotal, 0);
+
+    let subtotal = subtotalItems;
+    let discountAmount = Math.max(0, subtotalBase - subtotalItems);
+
+    if (saleData.discountMode === 'total') {
+      // aplicar descuento sobre el total del carrito (antes de impuestos)
+      discountAmount = (subtotalBase * (saleData.discountPercentTotal || 0)) / 100;
+      subtotal = Math.max(0, subtotalBase - discountAmount);
+    }
+
     const tax = subtotal * 0.18; // 18% ITBIS
-    const total = subtotal + tax - saleData.discount;
+    const total = subtotal + tax;
     
     setSaleData(prev => ({
       ...prev,
       subtotal,
+      discount: Number(discountAmount.toFixed(2)),
       tax,
       total,
       items: cart
     }));
-  }, [cart, saleData.discount]);
+  }, [cart, saleData.discountMode, saleData.discountPercentTotal]);
 
   const fetchData = async () => {
     try {
@@ -241,7 +257,7 @@ export const PointOfSaleModule = () => {
           .order('name'),
         supabase
           .from('clients')
-          .select('id, full_name, phone, email, rnc, address')
+          .select('id, full_name, phone, email, address')
           .eq('user_id', user.id)
           .order('full_name')
       ]);
@@ -262,17 +278,27 @@ export const PointOfSaleModule = () => {
   };
 
   const addToCart = (product: Product) => {
+    // Validar stock disponible
+    if ((product.current_stock || 0) <= 0) {
+      toast.error('Sin stock disponible');
+      return;
+    }
     const existingItem = cart.find(item => item.product.id === product.id);
     
     if (existingItem) {
-      updateCartItemQuantity(product.id, existingItem.quantity + 1);
+      const desiredQty = existingItem.quantity + 1;
+      if (desiredQty > (product.current_stock || 0)) {
+        toast.error('No puedes exceder el stock disponible');
+        return;
+      }
+      updateCartItemQuantity(product.id, desiredQty);
     } else {
       const newItem: CartItem = {
         id: `${product.id}-${Date.now()}`,
         product,
         quantity: 1,
         unitPrice: product.selling_price || 0,
-        discount: 0,
+        discountPercent: 0,
         subtotal: product.selling_price || 0
       };
       setCart([...cart, newItem]);
@@ -288,7 +314,13 @@ export const PointOfSaleModule = () => {
 
     setCart(cart.map(item => {
       if (item.product.id === productId) {
-        const subtotal = (item.unitPrice * quantity) - item.discount;
+        const maxQty = item.product.current_stock || 0;
+        if (quantity > maxQty) {
+          toast.error('Cantidad supera el stock disponible');
+          return item;
+        }
+        const discounted = (item.unitPrice * quantity) * (1 - (item.discountPercent || 0) / 100);
+        const subtotal = Math.max(0, discounted);
         return { ...item, quantity, subtotal };
       }
       return item;
@@ -298,18 +330,21 @@ export const PointOfSaleModule = () => {
   const updateCartItemPrice = (productId: string, price: number) => {
     setCart(cart.map(item => {
       if (item.product.id === productId) {
-        const subtotal = (price * item.quantity) - item.discount;
+        const discounted = (price * item.quantity) * (1 - (item.discountPercent || 0) / 100);
+        const subtotal = Math.max(0, discounted);
         return { ...item, unitPrice: price, subtotal };
       }
       return item;
     }));
   };
 
-  const updateCartItemDiscount = (productId: string, discount: number) => {
+  const updateCartItemDiscount = (productId: string, discountPercent: number) => {
     setCart(cart.map(item => {
       if (item.product.id === productId) {
-        const subtotal = (item.unitPrice * item.quantity) - discount;
-        return { ...item, discount, subtotal };
+        const percent = Math.min(Math.max(discountPercent, 0), 100);
+        const discounted = (item.unitPrice * item.quantity) * (1 - percent / 100);
+        const subtotal = Math.max(0, discounted);
+        return { ...item, discountPercent: percent, subtotal };
       }
       return item;
     }));
@@ -361,116 +396,208 @@ export const PointOfSaleModule = () => {
       return;
     }
 
+    // Persistir venta en base de datos (sales + sale_details)
+    const persistSale = async () => {
+      try {
+        const saleNumber = `POS-${Date.now()}`;
+        const paymentMethod = saleData.paymentMethod?.id || 'cash';
+        // Verificar stock en servidor antes de persistir
+        const productIds = cart.map(ci => ci.product.id);
+        const { data: latestProducts } = await supabase
+          .from('products')
+          .select('id,current_stock')
+          .in('id', productIds);
+        const idToStock = new Map((latestProducts || []).map(p => [p.id, p.current_stock]));
+        for (const ci of cart) {
+          const current = idToStock.get(ci.product.id);
+          if (current === undefined || current < ci.quantity) {
+            toast.error(`Stock insuficiente para ${ci.product.name}`);
+            return;
+          }
+        }
+        const { data: saleInsert, error: saleError } = await supabase
+          .from('sales')
+          .insert([
+            {
+              user_id: user?.id,
+              client_id: saleData.customer ? saleData.customer.id : null,
+              sale_number: saleNumber,
+              sale_date: new Date().toISOString().split('T')[0],
+              total_amount: saleData.total,
+              payment_method: paymentMethod,
+              status: 'completed',
+              notes: saleData.notes || null
+            }
+          ])
+          .select()
+          .single();
+
+        if (saleError) throw saleError;
+
+        // Insertar detalles
+        const details = cart.map(ci => ({
+          sale_id: saleInsert.id,
+          product_id: ci.product.id,
+          quantity: ci.quantity,
+          unit_price: ci.unitPrice,
+          total_price: ci.subtotal
+        }));
+
+        const { error: detailsError } = await supabase.from('sale_details').insert(details);
+        if (detailsError) throw detailsError;
+
+        // Actualizar stock (mejor en serie para asegurar orden)
+        for (const ci of cart) {
+          const newStock = Math.max(0, (idToStock.get(ci.product.id) || ci.product.current_stock || 0) - ci.quantity);
+          await supabase
+            .from('products')
+            .update({ current_stock: newStock })
+            .eq('id', ci.product.id);
+        }
+      } catch (e) {
+        console.error('Error saving sale:', e);
+        // Continuar mostrando recibo aunque falle el guardado, pero notificar
+        toast.error('Venta guardada parcialmente. Verifique conexión.');
+      } finally {
     setShowPaymentModal(false);
     setShowReceiptModal(true);
     toast.success('Venta procesada exitosamente');
+        // Refrescar inventario y limpiar carrito
+        await fetchData();
+        clearCart();
+      }
+    };
+
+    void persistSale();
   };
 
   const generateReceipt = () => {
+    const invoiceNumber = `${saleData.ncfType || '01'}-${saleData.ncfNumber || '0000000000'}`;
+    const companyName = 'Cloud Loans';
+    const companyAddress = 'Dirección de la empresa';
+    const companyPhone = 'Tel.: 000-000-0000';
+    const companyEmail = 'info@empresa.com';
+    const cashier = user?.email || 'Cajero';
+
     const receiptHTML = `
       <!DOCTYPE html>
       <html lang="es">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Recibo de Venta</title>
+        <title>Factura</title>
         <style>
-          @page { size: A4; margin: 0.5in; }
-          body { font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4; color: #333; }
-          .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
-          .company-name { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
-          .receipt-title { font-size: 16px; font-weight: bold; margin: 20px 0; text-align: center; text-decoration: underline; }
-          .info-section { margin-bottom: 15px; }
-          .info-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
-          .info-label { font-weight: bold; }
-          .items-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-          .items-table th, .items-table td { border: 1px solid #333; padding: 8px; text-align: left; }
-          .items-table th { background-color: #f0f0f0; font-weight: bold; }
-          .total-section { text-align: right; margin-top: 20px; }
-          .total-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
-          .total-label { font-weight: bold; }
-          .grand-total { font-size: 16px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; }
-          .footer { margin-top: 30px; text-align: center; font-size: 10px; color: #666; }
+          @page { size: A4; margin: 18mm; }
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #1f2937; }
+          .invoice { max-width: 800px; margin: 0 auto; }
+          .row { display: flex; gap: 16px; }
+          .col { flex: 1; }
+          .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 2px solid #111827; }
+          .brand { display: flex; align-items: center; gap: 12px; }
+          .brand-logo { width: 48px; height: 48px; background: #e5e7eb; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #374151; }
+          .brand-text { line-height: 1.2; }
+          .brand-name { font-size: 18px; font-weight: 700; }
+          .brand-meta { font-size: 11px; color: #6b7280; }
+          .doc-title { text-align: right; }
+          .doc-type { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
+          .doc-number { font-size: 12px; color: #374151; margin-top: 4px; }
+          .section { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+          .section-title { font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 8px; text-transform: uppercase; }
+          .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+          .field { display: flex; justify-content: space-between; gap: 8px; }
+          .label { color: #6b7280; }
+          .value { font-weight: 600; color: #111827; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
+          thead th { background: #f9fafb; font-size: 12px; text-align: left; color: #374151; border-top: 1px solid #e5e7eb; border-bottom: 2px solid #e5e7eb; }
+          tbody td { font-size: 12px; vertical-align: top; }
+          .right { text-align: right; }
+          .totals { width: 100%; margin-top: 10px; display: grid; grid-template-columns: 1fr 260px; gap: 16px; }
+          .notes { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; font-size: 12px; color: #374151; min-height: 72px; }
+          .summary { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+          .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
+          .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
+          .footer { margin-top: 16px; font-size: 11px; color: #6b7280; display: flex; justify-content: space-between; align-items: center; }
         </style>
       </head>
       <body>
+        <div class="invoice">
         <div class="header">
-          <div class="company-name">PUNTO DE VENTA</div>
-          <div>Recibo de Venta</div>
+            <div class="brand">
+              <div class="brand-logo">CL</div>
+              <div class="brand-text">
+                <div class="brand-name">${companyName}</div>
+                <div class="brand-meta">${companyAddress} · ${companyPhone} · ${companyEmail}</div>
+              </div>
+            </div>
+            <div class="doc-title">
+              <div class="doc-type">FACTURA</div>
+              <div class="doc-number">NCF: ${invoiceNumber}</div>
+            </div>
         </div>
 
-        <div class="receipt-title">RECIBO DE VENTA</div>
-
-        <div class="info-section">
-          <div class="info-row">
-            <span class="info-label">Fecha:</span>
-            <span>${new Date().toLocaleDateString('es-DO')}</span>
+          <div class="row" style="margin-top:12px;">
+            <div class="col section">
+              <div class="section-title">Datos del Cliente</div>
+              <div class="grid-2">
+                <div class="field"><span class="label">Nombre</span><span class="value">${saleData.customer?.full_name || 'Cliente General'}</span></div>
+                <div class="field"><span class="label">Fecha</span><span class="value">${new Date().toLocaleDateString('es-DO')}</span></div>
+                <div class="field"><span class="label">Teléfono</span><span class="value">${saleData.customer?.phone || '—'}</span></div>
+                <div class="field"><span class="label">Correo</span><span class="value">${saleData.customer?.email || '—'}</span></div>
+                <div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${saleData.customer?.address || '—'}</span></div>
           </div>
-          <div class="info-row">
-            <span class="info-label">Cliente:</span>
-            <span>${saleData.customer?.full_name || 'Cliente General'}</span>
           </div>
-          <div class="info-row">
-            <span class="info-label">NCF:</span>
-            <span>${saleData.ncfNumber || 'N/A'}</span>
+            <div class="col section">
+              <div class="section-title">Detalles</div>
+              <div class="grid-2">
+                <div class="field"><span class="label">Vendedor</span><span class="value">${cashier}</span></div>
+                <div class="field"><span class="label">Condición</span><span class="value">${saleData.saleType === 'cash' ? 'Contado' : saleData.saleType === 'credit' ? 'Crédito' : 'Financiamiento'}</span></div>
+                <div class="field"><span class="label">Método de pago</span><span class="value">${saleData.paymentMethod?.name || '—'}</span></div>
+                <div class="field"><span class="label">Cambio</span><span class="value">${saleData.paymentMethod?.type === 'cash' ? '$' + saleData.change.toFixed(2) : '—'}</span></div>
           </div>
-          <div class="info-row">
-            <span class="info-label">Método de Pago:</span>
-            <span>${saleData.paymentMethod?.name || 'N/A'}</span>
           </div>
         </div>
 
-        <table class="items-table">
+          <table>
           <thead>
             <tr>
-              <th>Producto</th>
-              <th>Cantidad</th>
-              <th>Precio</th>
-              <th>Descuento</th>
-              <th>Subtotal</th>
+                <th style="width:45%">Descripción</th>
+                <th class="right" style="width:10%">Cant.</th>
+                <th class="right" style="width:15%">Precio</th>
+                <th class="right" style="width:15%">Desc.</th>
+                <th class="right" style="width:15%">Importe</th>
             </tr>
           </thead>
           <tbody>
             ${cart.map(item => `
               <tr>
                 <td>${item.product.name}</td>
-                <td>${item.quantity}</td>
-                <td>$${item.unitPrice.toFixed(2)}</td>
-                <td>$${item.discount.toFixed(2)}</td>
-                <td>$${item.subtotal.toFixed(2)}</td>
+                  <td class="right">${item.quantity}</td>
+                  <td class="right">$${item.unitPrice.toFixed(2)}</td>
+                  <td class="right">${(item.discountPercent || 0).toFixed(2)}%</td>
+                  <td class="right">$${item.subtotal.toFixed(2)}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
 
-        <div class="total-section">
-          <div class="total-row">
-            <span class="total-label">Subtotal:</span>
-            <span>$${saleData.subtotal.toFixed(2)}</span>
+          <div class="totals">
+            <div class="notes">
+              <div style="font-weight:700; margin-bottom:6px;">Notas</div>
+              ${saleData.notes || '—'}
           </div>
-          <div class="total-row">
-            <span class="total-label">Descuento:</span>
-            <span>-$${saleData.discount.toFixed(2)}</span>
+            <div class="summary">
+              <div class="sum-row"><span>Subtotal</span><span>$${saleData.subtotal.toFixed(2)}</span></div>
+              <div class="sum-row"><span>Descuento</span><span>-$${saleData.discount.toFixed(2)}</span></div>
+              <div class="sum-row"><span>ITBIS (18%)</span><span>$${saleData.tax.toFixed(2)}</span></div>
+              <div class="sum-row total"><span>Total a Pagar</span><span>$${saleData.total.toFixed(2)}</span></div>
           </div>
-          <div class="total-row">
-            <span class="total-label">ITBIS (18%):</span>
-            <span>$${saleData.tax.toFixed(2)}</span>
-          </div>
-          <div class="total-row grand-total">
-            <span class="total-label">TOTAL:</span>
-            <span>$${saleData.total.toFixed(2)}</span>
-          </div>
-          ${saleData.paymentMethod?.type === 'cash' && saleData.change > 0 ? `
-          <div class="total-row">
-            <span class="total-label">Cambio:</span>
-            <span>$${saleData.change.toFixed(2)}</span>
-          </div>
-          ` : ''}
         </div>
 
         <div class="footer">
-          <div>Gracias por su compra</div>
-          <div>Impreso el ${new Date().toLocaleDateString('es-DO')} a las ${new Date().toLocaleTimeString('es-DO')}</div>
+            <div>Gracias por su preferencia</div>
+            <div>Generado el ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}</div>
+          </div>
         </div>
       </body>
       </html>
@@ -485,110 +612,132 @@ export const PointOfSaleModule = () => {
   };
 
   const downloadReceipt = () => {
+    const invoiceNumber = `${saleData.ncfType || '01'}-${saleData.ncfNumber || '0000000000'}`;
+    const companyName = 'Cloud Loans';
+    const companyAddress = 'Dirección de la empresa';
+    const companyPhone = 'Tel.: 000-000-0000';
+    const companyEmail = 'info@empresa.com';
+    const cashier = user?.email || 'Cajero';
+
     const receiptHTML = `
       <!DOCTYPE html>
-      <html lang="es">
+      <html lang=\"es\">
       <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Recibo de Venta</title>
+        <meta charset=\"UTF-8\">
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+        <title>Factura</title>
         <style>
-          @page { size: A4; margin: 0.5in; }
-          body { font-family: Arial, sans-serif; font-size: 12px; line-height: 1.4; color: #333; }
-          .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
-          .company-name { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
-          .receipt-title { font-size: 16px; font-weight: bold; margin: 20px 0; text-align: center; text-decoration: underline; }
-          .info-section { margin-bottom: 15px; }
-          .info-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
-          .info-label { font-weight: bold; }
-          .items-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
-          .items-table th, .items-table td { border: 1px solid #333; padding: 8px; text-align: left; }
-          .items-table th { background-color: #f0f0f0; font-weight: bold; }
-          .total-section { text-align: right; margin-top: 20px; }
-          .total-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
-          .total-label { font-weight: bold; }
-          .grand-total { font-size: 16px; font-weight: bold; border-top: 2px solid #333; padding-top: 10px; }
-          .footer { margin-top: 30px; text-align: center; font-size: 10px; color: #666; }
+          @page { size: A4; margin: 18mm; }
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #1f2937; }
+          .invoice { max-width: 800px; margin: 0 auto; }
+          .row { display: flex; gap: 16px; }
+          .col { flex: 1; }
+          .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 2px solid #111827; }
+          .brand { display: flex; align-items: center; gap: 12px; }
+          .brand-logo { width: 48px; height: 48px; background: #e5e7eb; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #374151; }
+          .brand-text { line-height: 1.2; }
+          .brand-name { font-size: 18px; font-weight: 700; }
+          .brand-meta { font-size: 11px; color: #6b7280; }
+          .doc-title { text-align: right; }
+          .doc-type { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
+          .doc-number { font-size: 12px; color: #374151; margin-top: 4px; }
+          .section { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+          .section-title { font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 8px; text-transform: uppercase; }
+          .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+          .field { display: flex; justify-content: space-between; gap: 8px; }
+          .label { color: #6b7280; }
+          .value { font-weight: 600; color: #111827; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
+          thead th { background: #f9fafb; font-size: 12px; text-align: left; color: #374151; border-top: 1px solid #e5e7eb; border-bottom: 2px solid #e5e7eb; }
+          tbody td { font-size: 12px; vertical-align: top; }
+          .right { text-align: right; }
+          .totals { width: 100%; margin-top: 10px; display: grid; grid-template-columns: 1fr 260px; gap: 16px; }
+          .notes { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; font-size: 12px; color: #374151; min-height: 72px; }
+          .summary { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+          .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
+          .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
+          .footer { margin-top: 16px; font-size: 11px; color: #6b7280; display: flex; justify-content: space-between; align-items: center; }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div class="company-name">PUNTO DE VENTA</div>
-          <div>Recibo de Venta</div>
+        <div class=\"invoice\">
+          <div class=\"header\">
+            <div class=\"brand\">
+              <div class=\"brand-logo\">CL</div>
+              <div class=\"brand-text\">
+                <div class=\"brand-name\">${companyName}</div>
+                <div class=\"brand-meta\">${companyAddress} · ${companyPhone} · ${companyEmail}</div>
+              </div>
+            </div>
+            <div class=\"doc-title\">
+              <div class=\"doc-type\">FACTURA</div>
+              <div class=\"doc-number\">NCF: ${invoiceNumber}</div>
+            </div>
         </div>
 
-        <div class="receipt-title">RECIBO DE VENTA</div>
-
-        <div class="info-section">
-          <div class="info-row">
-            <span class="info-label">Fecha:</span>
-            <span>${new Date().toLocaleDateString('es-DO')}</span>
+          <div class=\"row\" style=\"margin-top:12px;\">
+            <div class=\"col section\">
+              <div class=\"section-title\">Datos del Cliente</div>
+              <div class=\"grid-2\">
+                <div class=\"field\"><span class=\"label\">Nombre</span><span class=\"value\">${saleData.customer?.full_name || 'Cliente General'}</span></div>
+                <div class=\"field\"><span class=\"label\">Fecha</span><span class=\"value\">${new Date().toLocaleDateString('es-DO')}</span></div>
+                <div class=\"field\"><span class=\"label\">Teléfono</span><span class=\"value\">${saleData.customer?.phone || '—'}</span></div>
+                <div class=\"field\"><span class=\"label\">Correo</span><span class=\"value\">${saleData.customer?.email || '—'}</span></div>
+                <div class=\"field\" style=\"grid-column: 1 / span 2\"><span class=\"label\">Dirección</span><span class=\"value\">${saleData.customer?.address || '—'}</span></div>
           </div>
-          <div class="info-row">
-            <span class="info-label">Cliente:</span>
-            <span>${saleData.customer?.full_name || 'Cliente General'}</span>
           </div>
-          <div class="info-row">
-            <span class="info-label">NCF:</span>
-            <span>${saleData.ncfNumber || 'N/A'}</span>
+            <div class=\"col section\">
+              <div class=\"section-title\">Detalles</div>
+              <div class=\"grid-2\">
+                <div class=\"field\"><span class=\"label\">Vendedor</span><span class=\"value\">${cashier}</span></div>
+                <div class=\"field\"><span class=\"label\">Condición</span><span class=\"value\">${saleData.saleType === 'cash' ? 'Contado' : saleData.saleType === 'credit' ? 'Crédito' : 'Financiamiento'}</span></div>
+                <div class=\"field\"><span class=\"label\">Método de pago</span><span class=\"value\">${saleData.paymentMethod?.name || '—'}</span></div>
+                <div class=\"field\"><span class=\"label\">Cambio</span><span class=\"value\">${saleData.paymentMethod?.type === 'cash' ? '$' + saleData.change.toFixed(2) : '—'}</span></div>
           </div>
-          <div class="info-row">
-            <span class="info-label">Método de Pago:</span>
-            <span>${saleData.paymentMethod?.name || 'N/A'}</span>
           </div>
         </div>
 
-        <table class="items-table">
+          <table>
           <thead>
             <tr>
-              <th>Producto</th>
-              <th>Cantidad</th>
-              <th>Precio</th>
-              <th>Descuento</th>
-              <th>Subtotal</th>
+                <th style=\"width:45%\">Descripción</th>
+                <th class=\"right\" style=\"width:10%\">Cant.</th>
+                <th class=\"right\" style=\"width:15%\">Precio</th>
+                <th class=\"right\" style=\"width:15%\">Desc.</th>
+                <th class=\"right\" style=\"width:15%\">Importe</th>
             </tr>
           </thead>
           <tbody>
             ${cart.map(item => `
               <tr>
                 <td>${item.product.name}</td>
-                <td>${item.quantity}</td>
-                <td>$${item.unitPrice.toFixed(2)}</td>
-                <td>$${item.discount.toFixed(2)}</td>
-                <td>$${item.subtotal.toFixed(2)}</td>
+                  <td class=\\"right\\">${item.quantity}</td>
+                  <td class=\\"right\\">$${item.unitPrice.toFixed(2)}</td>
+                  <td class=\\"right\\">${(item.discountPercent || 0).toFixed(2)}%</td>
+                  <td class=\\"right\\">$${item.subtotal.toFixed(2)}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
 
-        <div class="total-section">
-          <div class="total-row">
-            <span class="total-label">Subtotal:</span>
-            <span>$${saleData.subtotal.toFixed(2)}</span>
+          <div class=\"totals\">
+            <div class=\"notes\">
+              <div style=\"font-weight:700; margin-bottom:6px;\">Notas</div>
+              ${saleData.notes || '—'}
           </div>
-          <div class="total-row">
-            <span class="total-label">Descuento:</span>
-            <span>-$${saleData.discount.toFixed(2)}</span>
+            <div class=\"summary\">
+              <div class=\"sum-row\"><span>Subtotal</span><span>$${saleData.subtotal.toFixed(2)}</span></div>
+              <div class=\"sum-row\"><span>Descuento</span><span>-$${saleData.discount.toFixed(2)}</span></div>
+              <div class=\"sum-row\"><span>ITBIS (18%)</span><span>$${saleData.tax.toFixed(2)}</span></div>
+              <div class=\"sum-row total\"><span>Total a Pagar</span><span>$${saleData.total.toFixed(2)}</span></div>
           </div>
-          <div class="total-row">
-            <span class="total-label">ITBIS (18%):</span>
-            <span>$${saleData.tax.toFixed(2)}</span>
-          </div>
-          <div class="total-row grand-total">
-            <span class="total-label">TOTAL:</span>
-            <span>$${saleData.total.toFixed(2)}</span>
-          </div>
-          ${saleData.paymentMethod?.type === 'cash' && saleData.change > 0 ? `
-          <div class="total-row">
-            <span class="total-label">Cambio:</span>
-            <span>$${saleData.change.toFixed(2)}</span>
-          </div>
-          ` : ''}
         </div>
 
-        <div class="footer">
-          <div>Gracias por su compra</div>
-          <div>Impreso el ${new Date().toLocaleDateString('es-DO')} a las ${new Date().toLocaleTimeString('es-DO')}</div>
+          <div class=\"footer\">
+            <div>Gracias por su preferencia</div>
+            <div>Generado el ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}</div>
+          </div>
         </div>
       </body>
       </html>
@@ -598,7 +747,7 @@ export const PointOfSaleModule = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `recibo_venta_${new Date().toISOString().split('T')[0]}.html`;
+    a.download = `factura_${new Date().toISOString().split('T')[0]}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -685,7 +834,9 @@ export const PointOfSaleModule = () => {
                         <div className="flex-1">
                           <h3 className="font-semibold text-sm line-clamp-2">{product.name}</h3>
                           <div className="text-xs text-gray-600 space-y-1">
-                            <p>Stock: <span className="font-semibold text-blue-600">{product.current_stock}</span></p>
+                            <p>
+                              Stock: <span className={`font-semibold ${product.current_stock <= 5 ? 'text-orange-600' : 'text-blue-600'}`}>{product.current_stock}</span>
+                            </p>
                             {product.category && (
                               <p>Categoría: <span className="text-gray-500">{product.category}</span></p>
                             )}
@@ -702,7 +853,9 @@ export const PointOfSaleModule = () => {
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1">
-                          <Badge className="bg-green-500 text-white text-xs">En Inventario</Badge>
+                          <Badge className={`${product.current_stock === 0 ? 'bg-gray-400' : 'bg-green-500'} text-white text-xs`}>
+                            {product.current_stock === 0 ? 'Agotado' : 'En Inventario'}
+                          </Badge>
                           {product.current_stock <= 5 && (
                             <Badge variant="outline" className="text-orange-600 border-orange-600 text-xs">
                               Stock Bajo
@@ -816,11 +969,13 @@ export const PointOfSaleModule = () => {
                       
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <Label className="text-xs">Descuento</Label>
+                          <Label className="text-xs">Descuento (%)</Label>
                           <Input 
                             type="number" 
                             step="0.01"
-                            value={item.discount} 
+                            min="0"
+                            max="100"
+                            value={item.discountPercent} 
                             onChange={(e) => updateCartItemDiscount(item.product.id, parseFloat(e.target.value) || 0)}
                             className="text-sm"
                           />
@@ -846,6 +1001,37 @@ export const PointOfSaleModule = () => {
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
                 <span>${saleData.subtotal.toFixed(2)}</span>
+              </div>
+            <div className="grid grid-cols-2 gap-2 items-end">
+              <div>
+                <Label className="text-xs">Modo de Descuento</Label>
+                <Select
+                  value={saleData.discountMode}
+                  onValueChange={(value) => setSaleData(prev => ({ ...prev, discountMode: value as 'item' | 'total' }))}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="item">Por ítem (%)</SelectItem>
+                    <SelectItem value="total">Al total (%)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {saleData.discountMode === 'total' && (
+                <div>
+                  <Label className="text-xs">Descuento Total (%)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={saleData.discountPercentTotal}
+                    onChange={(e) => setSaleData(prev => ({ ...prev, discountPercentTotal: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100) }))}
+                    className="h-9"
+                  />
+                </div>
+              )}
               </div>
               <div className="flex justify-between text-sm">
                 <span>Descuento:</span>
