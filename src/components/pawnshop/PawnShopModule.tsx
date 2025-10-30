@@ -321,15 +321,25 @@ export const PawnShopModule = () => {
         const transaction = transactions.find(t => t.id === transactionId);
         if (transaction && transaction.product_name) {
           // Crear un nuevo producto en el inventario
+          let nextSku: string | undefined = undefined;
+          try {
+            const { count } = await supabase
+              .from('products')
+              .select('id', { count: 'exact', head: true })
+              .eq('user_id', user.id);
+            nextSku = String(((count as number) || 0) + 1).padStart(5, '0');
+          } catch {}
+
           const inventoryProduct = {
             user_id: user.id,
             name: transaction.product_name,
             description: transaction.product_description || '',
             current_stock: 1,
             status: 'active',
+            sku: nextSku,
             source: 'pawn_forfeited',
             original_transaction_id: transactionId
-          };
+          } as any;
 
           const { error: inventoryError } = await supabase
             .from('products')

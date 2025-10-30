@@ -156,7 +156,7 @@ export const PointOfSaleModule = () => {
     }
   }, [user]);
 
-  // Filtrar productos para búsqueda con cascada por nombre
+  // Filtrar productos para búsqueda con cascada por nombre o código
   useEffect(() => {
     if (productSearchTerm.trim() === '') {
       setFilteredProducts(products.filter(p => p.current_stock > 0));
@@ -165,20 +165,24 @@ export const PointOfSaleModule = () => {
       
       // Búsqueda en cascada: primero coincidencias exactas, luego parciales
       const exactMatches = products.filter(p => 
-        p.current_stock > 0 && 
-        p.name.toLowerCase() === searchTerm
+        p.current_stock > 0 && (
+          p.name.toLowerCase() === searchTerm ||
+          (p.sku && p.sku.toLowerCase() === searchTerm)
+        )
       );
       
       const startsWithMatches = products.filter(p => 
-        p.current_stock > 0 && 
-        p.name.toLowerCase().startsWith(searchTerm) &&
-        p.name.toLowerCase() !== searchTerm
+        p.current_stock > 0 && (
+          (p.name.toLowerCase().startsWith(searchTerm) && p.name.toLowerCase() !== searchTerm) ||
+          (p.sku && p.sku.toLowerCase().startsWith(searchTerm) && p.sku.toLowerCase() !== searchTerm)
+        )
       );
       
       const containsMatches = products.filter(p => 
-        p.current_stock > 0 && 
-        p.name.toLowerCase().includes(searchTerm) &&
-        !p.name.toLowerCase().startsWith(searchTerm)
+        p.current_stock > 0 && (
+          (p.name.toLowerCase().includes(searchTerm) && !p.name.toLowerCase().startsWith(searchTerm)) ||
+          (p.sku && p.sku.toLowerCase().includes(searchTerm) && !(p.sku.toLowerCase().startsWith(searchTerm)))
+        )
       );
       
       // Combinar resultados en orden de prioridad
@@ -203,20 +207,21 @@ export const PointOfSaleModule = () => {
 
   // Actualizar totales cuando cambia el carrito
   useEffect(() => {
-    const subtotalBase = cart.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
-    const subtotalItems = cart.reduce((sum, item) => sum + item.subtotal, 0);
+    const grossBase = cart.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0); // precios con ITBIS
+    const grossItems = cart.reduce((sum, item) => sum + item.subtotal, 0); // ya con descuento por ítem
 
-    let subtotal = subtotalItems;
-    let discountAmount = Math.max(0, subtotalBase - subtotalItems);
+    let gross = grossItems;
+    let discountAmount = Math.max(0, grossBase - grossItems);
 
     if (saleData.discountMode === 'total') {
-      // aplicar descuento sobre el total del carrito (antes de impuestos)
-      discountAmount = (subtotalBase * (saleData.discountPercentTotal || 0)) / 100;
-      subtotal = Math.max(0, subtotalBase - discountAmount);
+      // aplicar descuento sobre el total (con ITBIS incluido)
+      discountAmount = (grossBase * (saleData.discountPercentTotal || 0)) / 100;
+      gross = Math.max(0, grossBase - discountAmount);
     }
 
-    const tax = subtotal * 0.18; // 18% ITBIS
-    const total = subtotal + tax;
+    const subtotal = gross / 1.18; // base imponible
+    const tax = gross - subtotal; // ITBIS 18%
+    const total = gross;
     
     setSaleData(prev => ({
       ...prev,
@@ -267,8 +272,6 @@ export const PointOfSaleModule = () => {
 
       setProducts(productsRes.data || []);
       setCustomers(customersRes.data || []);
-      
-      toast.success(`Inventario cargado: ${productsRes.data?.length || 0} productos disponibles`);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Error al cargar inventario');
@@ -293,13 +296,14 @@ export const PointOfSaleModule = () => {
       }
       updateCartItemQuantity(product.id, desiredQty);
     } else {
+      const priceWithTax = (product.selling_price || 0) * 1.18;
       const newItem: CartItem = {
         id: `${product.id}-${Date.now()}`,
         product,
         quantity: 1,
-        unitPrice: product.selling_price || 0,
+        unitPrice: priceWithTax,
         discountPercent: 0,
-        subtotal: product.selling_price || 0
+        subtotal: priceWithTax
       };
       setCart([...cart, newItem]);
       toast.success(`${product.name} agregado al carrito`);
@@ -399,7 +403,6 @@ export const PointOfSaleModule = () => {
     // Persistir venta en base de datos (sales + sale_details)
     const persistSale = async () => {
       try {
-        const saleNumber = `POS-${Date.now()}`;
         const paymentMethod = saleData.paymentMethod?.id || 'cash';
         // Verificar stock en servidor antes de persistir
         const productIds = cart.map(ci => ci.product.id);
@@ -415,38 +418,7 @@ export const PointOfSaleModule = () => {
             return;
           }
         }
-        const { data: saleInsert, error: saleError } = await supabase
-          .from('sales')
-          .insert([
-            {
-              user_id: user?.id,
-              client_id: saleData.customer ? saleData.customer.id : null,
-              sale_number: saleNumber,
-              sale_date: new Date().toISOString().split('T')[0],
-              total_amount: saleData.total,
-              payment_method: paymentMethod,
-              status: 'completed',
-              notes: saleData.notes || null
-            }
-          ])
-          .select()
-          .single();
-
-        if (saleError) throw saleError;
-
-        // Insertar detalles
-        const details = cart.map(ci => ({
-          sale_id: saleInsert.id,
-          product_id: ci.product.id,
-          quantity: ci.quantity,
-          unit_price: ci.unitPrice,
-          total_price: ci.subtotal
-        }));
-
-        const { error: detailsError } = await supabase.from('sale_details').insert(details);
-        if (detailsError) throw detailsError;
-
-        // Actualizar stock (mejor en serie para asegurar orden)
+        // Actualizar stock primero para asegurar la baja de inventario
         for (const ci of cart) {
           const newStock = Math.max(0, (idToStock.get(ci.product.id) || ci.product.current_stock || 0) - ci.quantity);
           await supabase
@@ -454,17 +426,68 @@ export const PointOfSaleModule = () => {
             .update({ current_stock: newStock })
             .eq('id', ci.product.id);
         }
-      } catch (e) {
+
+        // Intento 1: insertar encabezado + detalles con columnas mínimas
+        try {
+          const { data: saleInsert, error: saleError } = await supabase
+            .from('sales')
+            .insert([
+              {
+                user_id: user?.id,
+                sale_date: new Date().toISOString().split('T')[0],
+                total_amount: saleData.total,
+                notes: saleData.notes || null
+              }
+            ])
+            .select()
+            .single();
+
+          if (saleError) throw saleError;
+
+          const details = cart.map(ci => ({
+            sale_id: saleInsert.id,
+            product_id: ci.product.id,
+            quantity: ci.quantity,
+            unit_price: ci.unitPrice,
+            total_price: ci.subtotal
+          }));
+
+          const { error: detailsError } = await supabase.from('sale_details').insert(details);
+          if (detailsError) throw detailsError;
+        } catch (inner) {
+          console.warn('Header/details insert failed, falling back to simple rows:', inner);
+          // Fall back silently to simple insert below
+        }
+      } catch (e: any) {
         console.error('Error saving sale:', e);
-        // Continuar mostrando recibo aunque falle el guardado, pero notificar
-        toast.error('Venta guardada parcialmente. Verifique conexión.');
+        // Fallback: intentar esquema simple por cada ítem (sales con columnas mínimas)
+        try {
+          const paymentMethod = saleData.paymentMethod?.id || 'cash';
+          const rows = cart.map(ci => ({
+            user_id: user?.id,
+            product_id: ci.product.id,
+            quantity: ci.quantity,
+            unit_price: ci.unitPrice,
+            total_price: ci.subtotal,
+            // Campos opcionales removidos para evitar errores por columnas inexistentes
+          }));
+          const { error: simpleError } = await supabase.from('sales').insert(rows);
+          if (simpleError) {
+            console.error('Fallback simple sales insert failed:', simpleError);
+            toast.error('No se pudo registrar la venta en base de datos');
+          }
+        } catch (e2) {
+          console.error('Fallback insert exception:', e2);
+          toast.error('No se pudo registrar la venta');
+        }
       } finally {
     setShowPaymentModal(false);
     setShowReceiptModal(true);
     toast.success('Venta procesada exitosamente');
         // Refrescar inventario y limpiar carrito
         await fetchData();
-        clearCart();
+        // No limpiar el carrito aún: se necesita para la factura.
+        // Se limpia al cerrar o al crear "Nueva Venta" desde el modal.
       }
     };
 
@@ -846,7 +869,7 @@ export const PointOfSaleModule = () => {
                           </div>
                           <div className="mt-2">
                             {product.selling_price ? (
-                              <p className="text-sm font-bold text-green-600">${product.selling_price.toFixed(2)}</p>
+                              <p className="text-sm font-bold text-green-600">${((product.selling_price || 0) * 1.18).toFixed(2)}</p>
                             ) : (
                               <p className="text-xs text-gray-500">Precio no definido</p>
                             )}

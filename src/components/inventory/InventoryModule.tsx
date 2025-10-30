@@ -66,11 +66,40 @@ const InventoryModule = () => {
     status: 'active'
   });
 
+  // Campos vinculados para ITBIS
+  const ITBIS_RATE = 0.18;
+  const [purchaseNoTax, setPurchaseNoTax] = useState(0);
+  const [purchaseWithTax, setPurchaseWithTax] = useState(0);
+  const [sellingNoTax, setSellingNoTax] = useState(0);
+  const [sellingWithTax, setSellingWithTax] = useState(0);
+  const [autoSequential, setAutoSequential] = useState<boolean>(false);
+
   useEffect(() => {
     if (user) {
       fetchProducts();
+      fetchAutoSequentialFlag();
     }
   }, [user]);
+
+  const fetchAutoSequentialFlag = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('company_settings')
+        .select('auto_sequential_codes')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      if (!error && data) {
+        setAutoSequential(!!(data as any).auto_sequential_codes);
+      } else {
+        // Fallback localStorage
+        const local = localStorage.getItem('auto_sequential_codes');
+        if (local) setAutoSequential(JSON.parse(local));
+      }
+    } catch {
+      const local = localStorage.getItem('auto_sequential_codes');
+      if (local) setAutoSequential(JSON.parse(local));
+    }
+  };
 
   const fetchProducts = async () => {
     try {
@@ -95,8 +124,11 @@ const InventoryModule = () => {
     if (!user) return;
 
     try {
+      // Guardar siempre sin ITBIS en BD
       const productData = {
         ...formData,
+        purchase_price: purchaseNoTax,
+        selling_price: sellingNoTax,
         user_id: user.id
       };
 
@@ -143,6 +175,24 @@ const InventoryModule = () => {
       unit_type: product.unit_type,
       status: product.status
     });
+    // Inicializar precios vinculados
+    const sNo = Number(product.selling_price || 0);
+    const pNo = Number(product.purchase_price || 0);
+    setSellingNoTax(sNo);
+    setSellingWithTax(Number((sNo * (1 + ITBIS_RATE)).toFixed(2)));
+    setPurchaseNoTax(pNo);
+    setPurchaseWithTax(Number((pNo * (1 + ITBIS_RATE)).toFixed(2)));
+    setShowProductForm(true);
+  };
+
+  const handleCreate = async () => {
+    setEditingProduct(null);
+    resetForm();
+    // Si está activo auto secuencial, asignar siguiente código basado en conteo
+    if (autoSequential) {
+      const next = String(products.length + 1).padStart(5, '0');
+      setFormData(prev => ({ ...prev, sku: next }));
+    }
     setShowProductForm(true);
   };
 
@@ -179,6 +229,10 @@ const InventoryModule = () => {
       unit_type: 'unit',
       status: 'active'
     });
+    setPurchaseNoTax(0);
+    setPurchaseWithTax(0);
+    setSellingNoTax(0);
+    setSellingWithTax(0);
   };
 
   const filteredProducts = products.filter(product => {
@@ -196,7 +250,7 @@ const InventoryModule = () => {
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Inventario</h1>
-        <Button onClick={() => setShowProductForm(true)} className="w-full sm:w-auto">
+        <Button onClick={handleCreate} className="w-full sm:w-auto">
           <Plus className="h-4 w-4 mr-2" />
           Agregar Producto
         </Button>
@@ -458,7 +512,7 @@ const InventoryModule = () => {
                 />
               </div>
               <div>
-                <Label htmlFor="sku">SKU</Label>
+                <Label htmlFor="sku">Código de producto</Label>
                 <Input
                   id="sku"
                   value={formData.sku}
@@ -516,27 +570,65 @@ const InventoryModule = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="purchase_price">Precio Compra</Label>
-                <Input
-                  id="purchase_price"
-                  type="number"
-                  step="0.01"
-                  value={formData.purchase_price}
-                  onChange={(e) => setFormData({...formData, purchase_price: Number(e.target.value)})}
-                />
+            <div className="grid grid-cols-1 gap-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Precio compra sin ITBIS</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={purchaseNoTax}
+                    onChange={(e) => {
+                      const val = Number(e.target.value) || 0;
+                      setPurchaseNoTax(val);
+                      setPurchaseWithTax(Number((val * (1 + ITBIS_RATE)).toFixed(2)));
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label>Precio compra con ITBIS</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={purchaseWithTax}
+                    onChange={(e) => {
+                      const val = Number(e.target.value) || 0;
+                      setPurchaseWithTax(val);
+                      setPurchaseNoTax(Number((val / (1 + ITBIS_RATE)).toFixed(2)));
+                    }}
+                  />
+                </div>
               </div>
-              <div>
-                <Label htmlFor="selling_price">Precio Venta</Label>
-                <Input
-                  id="selling_price"
-                  type="number"
-                  step="0.01"
-                  value={formData.selling_price}
-                  onChange={(e) => setFormData({...formData, selling_price: Number(e.target.value)})}
-                />
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Precio venta sin ITBIS</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={sellingNoTax}
+                    onChange={(e) => {
+                      const val = Number(e.target.value) || 0;
+                      setSellingNoTax(val);
+                      setSellingWithTax(Number((val * (1 + ITBIS_RATE)).toFixed(2)));
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label>Precio venta con ITBIS</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={sellingWithTax}
+                    onChange={(e) => {
+                      const val = Number(e.target.value) || 0;
+                      setSellingWithTax(val);
+                      setSellingNoTax(Number((val / (1 + ITBIS_RATE)).toFixed(2)));
+                    }}
+                  />
+                </div>
               </div>
+              <p className="text-xs text-gray-500">ITBIS aplicado: 18%. Se guarda en base de datos el precio sin ITBIS.</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">

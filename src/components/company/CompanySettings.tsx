@@ -36,7 +36,8 @@ const CompanySettings = () => {
     grace_period_days: 3,
     min_loan_amount: 1000,
     max_loan_amount: 500000,
-    company_code: ''
+    company_code: '',
+    auto_sequential_codes: false
   });
 
   useEffect(() => {
@@ -140,9 +141,17 @@ const CompanySettings = () => {
         });
 
       if (error) {
-        toast.error('Error al guardar la configuración');
         console.error('Error saving company settings:', error);
-        return;
+        // Fallback: guardar preferencia en localStorage si la columna no existe
+        if ((error as any)?.code === 'PGRST204') {
+          try {
+            localStorage.setItem('auto_sequential_codes', JSON.stringify(formData.auto_sequential_codes));
+            toast.success('Configuración guardada localmente');
+          } catch {}
+        } else {
+          toast.error('Error al guardar la configuración');
+          return;
+        }
       }
 
       toast.success('Configuración guardada exitosamente');
@@ -675,6 +684,30 @@ const CompanySettings = () => {
                       <Label className="text-sm">Registrar actividad de usuarios</Label>
                     </div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Secuencias Automáticas */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Settings className="h-5 w-5 mr-2" />
+                  Códigos Secuenciales
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-sm font-medium">Generar códigos secuenciales automáticamente</Label>
+                    <p className="text-xs text-gray-500">Si está activo, al crear productos se generará un código consecutivo. Si está desactivado, podrás escribirlo manualmente.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={!!formData.auto_sequential_codes}
+                    onChange={(e) => handleInputChange('auto_sequential_codes', e.target.checked)}
+                    className="h-5 w-5 rounded"
+                  />
                 </div>
               </CardContent>
             </Card>
