@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
@@ -108,10 +108,17 @@ export const PointOfSaleModule = () => {
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [receiptFormat, setReceiptFormat] = useState<'A4' | 'POS80' | 'POS58'>('A4');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
+  const [companyInfo, setCompanyInfo] = useState({
+    company_name: 'Cloud Loans',
+    address: 'Dirección de la empresa',
+    phone: 'Tel.: 000-000-0000',
+    email: 'info@empresa.com'
+  });
 
   const [saleData, setSaleData] = useState<SaleData>({
     customer: null,
@@ -207,6 +214,7 @@ export const PointOfSaleModule = () => {
 
   // Actualizar totales cuando cambia el carrito
   useEffect(() => {
+    const round2 = (n: number) => Math.round((n || 0) * 100) / 100;
     const grossBase = cart.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0); // precios con ITBIS
     const grossItems = cart.reduce((sum, item) => sum + item.subtotal, 0); // ya con descuento por ítem
 
@@ -225,10 +233,10 @@ export const PointOfSaleModule = () => {
     
     setSaleData(prev => ({
       ...prev,
-      subtotal,
-      discount: Number(discountAmount.toFixed(2)),
-      tax,
-      total,
+      subtotal: round2(subtotal),
+      discount: round2(discountAmount),
+      tax: round2(tax),
+      total: round2(total),
       items: cart
     }));
   }, [cart, saleData.discountMode, saleData.discountPercentTotal]);
@@ -237,7 +245,7 @@ export const PointOfSaleModule = () => {
     try {
       setLoading(true);
       
-      const [productsRes, customersRes] = await Promise.all([
+      const [productsRes, customersRes, companyRes] = await Promise.all([
         supabase
           .from('products')
           .select(`
@@ -265,6 +273,12 @@ export const PointOfSaleModule = () => {
           .select('id, full_name, phone, email, address')
           .eq('user_id', user.id)
           .order('full_name')
+      ,
+        supabase
+          .from('company_settings')
+          .select('company_name,address,phone,email')
+          .eq('user_id', companyId || user.id)
+          .maybeSingle()
       ]);
 
       if (productsRes.error) throw productsRes.error;
@@ -272,6 +286,14 @@ export const PointOfSaleModule = () => {
 
       setProducts(productsRes.data || []);
       setCustomers(customersRes.data || []);
+      if (!companyRes.error && companyRes.data) {
+        setCompanyInfo({
+          company_name: companyRes.data.company_name || companyInfo.company_name,
+          address: companyRes.data.address || companyInfo.address,
+          phone: companyRes.data.phone || companyInfo.phone,
+          email: companyRes.data.email || companyInfo.email
+        });
+      }
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Error al cargar inventario');
@@ -296,7 +318,7 @@ export const PointOfSaleModule = () => {
       }
       updateCartItemQuantity(product.id, desiredQty);
     } else {
-      const priceWithTax = (product.selling_price || 0) * 1.18;
+      const priceWithTax = Math.round(((product.selling_price || 0) * 1.18) * 100) / 100;
       const newItem: CartItem = {
         id: `${product.id}-${Date.now()}`,
         product,
@@ -334,9 +356,10 @@ export const PointOfSaleModule = () => {
   const updateCartItemPrice = (productId: string, price: number) => {
     setCart(cart.map(item => {
       if (item.product.id === productId) {
-        const discounted = (price * item.quantity) * (1 - (item.discountPercent || 0) / 100);
+        const roundedPrice = Math.round((price || 0) * 100) / 100;
+        const discounted = (roundedPrice * item.quantity) * (1 - (item.discountPercent || 0) / 100);
         const subtotal = Math.max(0, discounted);
-        return { ...item, unitPrice: price, subtotal };
+        return { ...item, unitPrice: roundedPrice, subtotal };
       }
       return item;
     }));
@@ -395,7 +418,8 @@ export const PointOfSaleModule = () => {
       return;
     }
 
-    if (saleData.paymentMethod.type === 'cash' && saleData.paymentAmount < saleData.total) {
+    const epsilon = 0.005; // tolerancia por redondeo a 2 decimales
+    if (saleData.paymentMethod.type === 'cash' && (saleData.paymentAmount + epsilon) < saleData.total) {
       toast.error('El monto pagado es menor al total');
       return;
     }
@@ -469,6 +493,7 @@ export const PointOfSaleModule = () => {
             quantity: ci.quantity,
             unit_price: ci.unitPrice,
             total_price: ci.subtotal,
+            sale_date: new Date().toISOString().split('T')[0],
             // Campos opcionales removidos para evitar errores por columnas inexistentes
           }));
           const { error: simpleError } = await supabase.from('sales').insert(rows);
@@ -494,13 +519,37 @@ export const PointOfSaleModule = () => {
     void persistSale();
   };
 
-  const generateReceipt = () => {
+  const generateReceipt = (format: 'A4' | 'POS80' | 'POS58' = receiptFormat) => {
     const invoiceNumber = `${saleData.ncfType || '01'}-${saleData.ncfNumber || '0000000000'}`;
-    const companyName = 'Cloud Loans';
-    const companyAddress = 'Dirección de la empresa';
-    const companyPhone = 'Tel.: 000-000-0000';
-    const companyEmail = 'info@empresa.com';
-    const cashier = user?.email || 'Cajero';
+    const companyName = companyInfo.company_name;
+    const companyAddress = companyInfo.address;
+    const companyPhone = companyInfo.phone;
+    const companyEmail = companyInfo.email;
+    const cashier = companyName; // Mostrar nombre de la empresa como vendedor
+    const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+    const itemsRows = cart.map(item => `
+              <tr>
+                <td>${item.product.name}</td>
+                <td class="right">${item.quantity}</td>
+                <td class="right">${money(item.unitPrice)}</td>
+                <td class="right">${(item.discountPercent || 0).toFixed(2)}%</td>
+                <td class="right">${money(item.subtotal)}</td>
+              </tr>
+            `).join('');
+    const customerExtra = saleData.ncfNumber
+      ? `
+        <div class="field"><span class="label">Teléfono</span><span class="value">${saleData.customer?.phone || '—'}</span></div>
+        <div class="field"><span class="label">Correo</span><span class="value">${saleData.customer?.email || '—'}</span></div>
+        <div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${saleData.customer?.address || '—'}</span></div>
+      `
+      : '';
+
+    const pageCss = format === 'A4'
+      ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
+      : format === 'POS80'
+        ? '@page { size: 80mm auto; margin: 4mm; } .invoice{width:72mm;margin:0 auto;}'
+        : '@page { size: 58mm auto; margin: 3mm; } .invoice{width:54mm;margin:0 auto;}';
+    const smallCss = format === 'A4' ? '' : '.brand-logo{display:none}.grid-2{grid-template-columns:1fr}.section{padding:8px}.brand-name{font-size:14px}.doc-type{font-size:16px}.summary{padding:6px}.sum-row{padding:4px 0} table th,table td{padding:6px} body{font-size:11px}';
 
     const receiptHTML = `
       <!DOCTYPE html>
@@ -510,9 +559,9 @@ export const PointOfSaleModule = () => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Factura</title>
         <style>
-          @page { size: A4; margin: 18mm; }
+          ${pageCss}
           body { font-family: Arial, sans-serif; font-size: 12px; color: #1f2937; }
-          .invoice { max-width: 800px; margin: 0 auto; }
+          .invoice { }
           .row { display: flex; gap: 16px; }
           .col { flex: 1; }
           .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 2px solid #111827; }
@@ -541,6 +590,7 @@ export const PointOfSaleModule = () => {
           .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
           .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
           .footer { margin-top: 16px; font-size: 11px; color: #6b7280; display: flex; justify-content: space-between; align-items: center; }
+          ${smallCss}
         </style>
       </head>
       <body>
@@ -565,9 +615,7 @@ export const PointOfSaleModule = () => {
               <div class="grid-2">
                 <div class="field"><span class="label">Nombre</span><span class="value">${saleData.customer?.full_name || 'Cliente General'}</span></div>
                 <div class="field"><span class="label">Fecha</span><span class="value">${new Date().toLocaleDateString('es-DO')}</span></div>
-                <div class="field"><span class="label">Teléfono</span><span class="value">${saleData.customer?.phone || '—'}</span></div>
-                <div class="field"><span class="label">Correo</span><span class="value">${saleData.customer?.email || '—'}</span></div>
-                <div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${saleData.customer?.address || '—'}</span></div>
+                ${customerExtra}
           </div>
           </div>
             <div class="col section">
@@ -592,15 +640,7 @@ export const PointOfSaleModule = () => {
             </tr>
           </thead>
           <tbody>
-            ${cart.map(item => `
-              <tr>
-                <td>${item.product.name}</td>
-                  <td class="right">${item.quantity}</td>
-                  <td class="right">$${item.unitPrice.toFixed(2)}</td>
-                  <td class="right">${(item.discountPercent || 0).toFixed(2)}%</td>
-                  <td class="right">$${item.subtotal.toFixed(2)}</td>
-              </tr>
-            `).join('')}
+            ${itemsRows}
           </tbody>
         </table>
 
@@ -610,10 +650,10 @@ export const PointOfSaleModule = () => {
               ${saleData.notes || '—'}
           </div>
             <div class="summary">
-              <div class="sum-row"><span>Subtotal</span><span>$${saleData.subtotal.toFixed(2)}</span></div>
-              <div class="sum-row"><span>Descuento</span><span>-$${saleData.discount.toFixed(2)}</span></div>
-              <div class="sum-row"><span>ITBIS (18%)</span><span>$${saleData.tax.toFixed(2)}</span></div>
-              <div class="sum-row total"><span>Total a Pagar</span><span>$${saleData.total.toFixed(2)}</span></div>
+              <div class="sum-row"><span>Subtotal</span><span>${money(saleData.subtotal)}</span></div>
+              <div class="sum-row"><span>Descuento</span><span>- ${money(saleData.discount)}</span></div>
+              <div class="sum-row"><span>ITBIS (18%)</span><span>${money(saleData.tax)}</span></div>
+              <div class="sum-row total"><span>Total a Pagar</span><span>${money(saleData.total)}</span></div>
           </div>
         </div>
 
@@ -636,11 +676,18 @@ export const PointOfSaleModule = () => {
 
   const downloadReceipt = () => {
     const invoiceNumber = `${saleData.ncfType || '01'}-${saleData.ncfNumber || '0000000000'}`;
-    const companyName = 'Cloud Loans';
-    const companyAddress = 'Dirección de la empresa';
-    const companyPhone = 'Tel.: 000-000-0000';
-    const companyEmail = 'info@empresa.com';
+    const companyName = companyInfo.company_name;
+    const companyAddress = companyInfo.address;
+    const companyPhone = companyInfo.phone;
+    const companyEmail = companyInfo.email;
     const cashier = user?.email || 'Cajero';
+
+    const pageCss = receiptFormat === 'A4'
+      ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
+      : receiptFormat === 'POS80'
+        ? '@page { size: 80mm auto; margin: 4mm; } .invoice{width:72mm;margin:0 auto;}'
+        : '@page { size: 58mm auto; margin: 3mm; } .invoice{width:54mm;margin:0 auto;}';
+    const smallCss = receiptFormat === 'A4' ? '' : '.brand-logo{display:none}.grid-2{grid-template-columns:1fr}.section{padding:8px}.brand-name{font-size:14px}.doc-type{font-size:16px}.summary{padding:6px}.sum-row{padding:4px 0} table th,table td{padding:6px} body{font-size:11px}';
 
     const receiptHTML = `
       <!DOCTYPE html>
@@ -650,9 +697,9 @@ export const PointOfSaleModule = () => {
         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
         <title>Factura</title>
         <style>
-          @page { size: A4; margin: 18mm; }
+          ${pageCss}
           body { font-family: Arial, sans-serif; font-size: 12px; color: #1f2937; }
-          .invoice { max-width: 800px; margin: 0 auto; }
+          .invoice { }
           .row { display: flex; gap: 16px; }
           .col { flex: 1; }
           .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 2px solid #111827; }
@@ -681,6 +728,7 @@ export const PointOfSaleModule = () => {
           .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
           .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
           .footer { margin-top: 16px; font-size: 11px; color: #6b7280; display: flex; justify-content: space-between; align-items: center; }
+          ${smallCss}
         </style>
       </head>
       <body>
@@ -983,7 +1031,7 @@ export const PointOfSaleModule = () => {
                           <Input 
                             type="number" 
                             step="0.01"
-                            value={item.unitPrice} 
+                            value={parseFloat(item.unitPrice.toFixed(2))} 
                             onChange={(e) => updateCartItemPrice(item.product.id, parseFloat(e.target.value) || 0)}
                             className="text-sm h-9"
                           />
@@ -1090,6 +1138,7 @@ export const PointOfSaleModule = () => {
           <DialogHeader>
             <DialogTitle>Seleccionar Cliente</DialogTitle>
           </DialogHeader>
+          <DialogDescription className="sr-only">Busca y selecciona un cliente para la factura</DialogDescription>
           
           <div className="space-y-4">
             <div className="relative">
@@ -1139,6 +1188,7 @@ export const PointOfSaleModule = () => {
           <DialogHeader>
             <DialogTitle>Procesar Pago</DialogTitle>
           </DialogHeader>
+          <DialogDescription className="sr-only">Completa los datos de pago y formato de impresión</DialogDescription>
           
           <div className="space-y-4">
             {/* Payment Methods */}
@@ -1167,8 +1217,9 @@ export const PointOfSaleModule = () => {
                 step="0.01"
                 value={saleData.paymentAmount}
                 onChange={(e) => {
-                  const amount = parseFloat(e.target.value) || 0;
-                  const change = amount - saleData.total;
+                  const round2 = (n: number) => Math.round((n || 0) * 100) / 100;
+                  const amount = round2(parseFloat(e.target.value) || 0);
+                  const change = round2(amount - saleData.total);
                   setSaleData(prev => ({ 
                     ...prev, 
                     paymentAmount: amount,
@@ -1176,7 +1227,13 @@ export const PointOfSaleModule = () => {
                   }));
                 }}
                 placeholder="0.00"
+                aria-label="Monto a pagar"
               />
+              <div className="flex gap-2 mt-2">
+                <Button size="sm" variant="outline" onClick={() => setSaleData(prev=>({ ...prev, paymentAmount: Math.round(prev.total*100)/100, change: 0 }))}>Exacto</Button>
+                <Button size="sm" variant="outline" onClick={() => setSaleData(prev=>{ const round2=(n:number)=>Math.round((n||0)*100)/100; const amt=round2((prev.paymentAmount||0)+500); return { ...prev, paymentAmount: amt, change: Math.max(0, round2(amt - prev.total)) }; })}>+500</Button>
+                <Button size="sm" variant="outline" onClick={() => setSaleData(prev=>{ const round2=(n:number)=>Math.round((n||0)*100)/100; const amt=round2((prev.paymentAmount||0)+1000); return { ...prev, paymentAmount: amt, change: Math.max(0, round2(amt - prev.total)) }; })}>+1000</Button>
+              </div>
             </div>
 
             {/* Change Display */}
@@ -1217,6 +1274,21 @@ export const PointOfSaleModule = () => {
               </div>
             </div>
 
+            {/* Receipt format */}
+            <div>
+              <Label>Formato de Impresión</Label>
+              <Select value={receiptFormat} onValueChange={(v)=>setReceiptFormat(v as any)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="A4">A4</SelectItem>
+                  <SelectItem value="POS80">Punto de Venta 80mm</SelectItem>
+                  <SelectItem value="POS58">Punto de Venta 58mm</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Notes */}
             <div>
               <Label>Notas</Label>
@@ -1233,7 +1305,7 @@ export const PointOfSaleModule = () => {
             <Button variant="outline" onClick={() => setShowPaymentModal(false)}>
               Cancelar
             </Button>
-            <Button onClick={processPayment}>
+            <Button onClick={processPayment} aria-label="Procesar pago">
               <CheckCircle className="h-4 w-4 mr-2" />
               Procesar Pago
             </Button>
@@ -1250,6 +1322,7 @@ export const PointOfSaleModule = () => {
               Recibo de Venta
             </DialogTitle>
           </DialogHeader>
+          <DialogDescription className="sr-only">Comprobante de venta generado</DialogDescription>
           
           <div className="space-y-4">
             <div className="text-center p-4 bg-green-50 rounded-lg">
@@ -1259,7 +1332,7 @@ export const PointOfSaleModule = () => {
             </div>
             
             <div className="grid grid-cols-2 gap-4">
-              <Button onClick={generateReceipt} variant="outline">
+              <Button onClick={() => generateReceipt()} variant="outline">
                 <Printer className="h-4 w-4 mr-2" />
                 Imprimir Recibo
               </Button>

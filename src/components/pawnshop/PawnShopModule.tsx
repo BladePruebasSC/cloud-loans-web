@@ -1105,6 +1105,38 @@ export const PawnShopModule = () => {
         </TabsContent>
 
         <TabsContent value="todas">
+          {/* Filters for Todas */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Filtros</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-4">
+                <div className="flex-1 relative">
+                  <Search className="h-4 w-4 absolute left-3 top-3 text-gray-400" />
+                  <Input
+                    placeholder="Buscar por cliente o artículo..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="Estado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los estados</SelectItem>
+                    <SelectItem value="active">Activo</SelectItem>
+                    <SelectItem value="redeemed">Redimido</SelectItem>
+                    <SelectItem value="forfeited">Perdido</SelectItem>
+                    <SelectItem value="extended">Extendido</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Todas las Transacciones ({filteredTransactions.length})</CardTitle>
@@ -1133,6 +1165,19 @@ export const PawnShopModule = () => {
                             <div><strong>Valor:</strong> ${Number(transaction.estimated_value).toLocaleString()}</div>
                             <div><strong>Vence:</strong> {formatDateTimeWithOffset(transaction.due_date)}</div>
                           </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedTransaction(transaction);
+                              setShowTransactionDetails(true);
+                            }}
+                          >
+                            <Package className="h-4 w-4 mr-1" />
+                            Detalles
+                          </Button>
                         </div>
                       </div>
                     </div>

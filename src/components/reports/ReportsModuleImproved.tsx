@@ -53,6 +53,7 @@ export const ReportsModule = () => {
     products: [],
     sales: []
   });
+  const [posSearch, setPosSearch] = useState('');
   const [dateRange, setDateRange] = useState({
     startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0]
@@ -166,13 +167,12 @@ export const ReportsModule = () => {
 
       if (pawnPaymentsError) throw pawnPaymentsError;
 
-      // Fetch POS sales
+      // Fetch Punto de Venta (POS) sales
       const { data: salesData, error: salesError } = await supabase
         .from('sales')
         .select('*')
-        .gte('sale_date', dateRange.startDate)
-        .lte('sale_date', dateRange.endDate)
-        .order('sale_date', { ascending: false });
+        .eq('user_id', user?.id as any)
+        .order('created_at', { ascending: false });
 
       if (salesError) throw salesError;
 
@@ -657,14 +657,82 @@ export const ReportsModule = () => {
               </div>
             </CardHeader>
             <CardContent>
+              <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <Label>Buscar Facturas de Punto de Venta</Label>
+                  <Input value={posSearch} onChange={(e)=>setPosSearch(e.target.value)} placeholder="Cliente, código, método..." />
+                </div>
+                <div>
+                  <Label>Desde</Label>
+                  <Input type="date" value={dateRange.startDate} onChange={(e)=>setDateRange({...dateRange,startDate:e.target.value})} />
+                </div>
+                <div>
+                  <Label>Hasta</Label>
+                  <Input type="date" value={dateRange.endDate} onChange={(e)=>setDateRange({...dateRange,endDate:e.target.value})} />
+                </div>
+              </div>
+
+              {(() => {
+                const start = new Date(dateRange.startDate);
+                const end = new Date(dateRange.endDate + 'T23:59:59');
+                const inRange = (d?: string) => {
+                  if (!d) return false;
+                  const dt = new Date(d);
+                  return dt >= start && dt <= end;
+                };
+                const posRows = (reportData.sales||[]).filter(s => inRange(s.sale_date || s.created_at))
+                  .filter(s => {
+                    const q = posSearch.toLowerCase();
+                    if (!q) return true;
+                    return (
+                      (s.customer_name||'').toLowerCase().includes(q) ||
+                      (s.payment_method||'').toLowerCase().includes(q) ||
+                      (s.sale_number||'').toLowerCase().includes(q)
+                    );
+                  });
+                const posTotal = posRows.reduce((sum: number, r: any) => sum + (r.total_amount ?? r.total_price ?? 0), 0);
+                return (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div className="text-center p-3 bg-blue-50 rounded">
+                        <div className="text-xl font-bold text-blue-700">{posRows.length}</div>
+                        <div className="text-xs text-gray-600">Facturas Punto de Venta</div>
+                      </div>
+                      <div className="text-center p-3 bg-green-50 rounded">
+                        <div className="text-xl font-bold text-green-700">${posTotal.toLocaleString()}</div>
+                        <div className="text-xs text-gray-600">Total Punto de Venta</div>
+                      </div>
+                    </div>
+
+                    <div className="font-semibold mb-2">Facturas de Punto de Venta</div>
+                    {posRows.length === 0 ? (
+                      <div className="text-sm text-gray-500 mb-6">No hay ventas de Punto de Venta en el período.</div>
+                    ) : (
+                      <div className="space-y-2 mb-6">
+                        {posRows.map((s:any) => (
+                          <div key={s.id} className="border rounded p-3 flex items-start justify-between">
+                            <div className="text-sm">
+                              <div className="font-medium">{s.customer_name || 'Cliente'}</div>
+                              <div className="text-gray-600">{new Date(s.sale_date || s.created_at).toLocaleDateString()} · {s.payment_method || 'Efectivo'}</div>
+                            </div>
+                            <div className="text-right text-sm">
+                              <div><strong>Total:</strong> ${(s.total_amount ?? s.total_price ?? 0).toLocaleString()}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 <div className="text-center p-3 bg-blue-50 rounded">
-                  <div className="text-xl font-bold text-blue-700">{reportData.payments.length + reportData.sales.length}</div>
-                  <div className="text-xs text-gray-600">Facturas</div>
+                  <div className="text-xl font-bold text-blue-700">{reportData.payments.length}</div>
+                  <div className="text-xs text-gray-600">Facturas (Préstamos)</div>
                 </div>
                 <div className="text-center p-3 bg-green-50 rounded">
-                  <div className="text-xl font-bold text-green-700">${(reportData.payments.reduce((s,p)=>s+(p.amount||0),0) + reportData.sales.reduce((s,x)=> s + (x.total_amount||0), 0)).toLocaleString()}</div>
-                  <div className="text-xs text-gray-600">Total Pagado</div>
+                  <div className="text-xl font-bold text-green-700">${(reportData.payments.reduce((s,p)=>s+(p.amount||0),0)).toLocaleString()}</div>
+                  <div className="text-xs text-gray-600">Total Pagado (Préstamos)</div>
                 </div>
                 <div className="text-center p-3 bg-yellow-50 rounded">
                   <div className="text-xl font-bold text-yellow-700">${reportData.payments.reduce((s,p)=>s+(p.interest_amount||0),0).toLocaleString()}</div>
@@ -675,26 +743,6 @@ export const ReportsModule = () => {
                   <div className="text-xs text-gray-600">Mora</div>
                 </div>
               </div>
-
-              <div className="font-semibold mb-2">Facturas POS</div>
-              {reportData.sales.length === 0 ? (
-                <div className="text-sm text-gray-500 mb-4">No hay ventas de POS en el período.</div>
-              ) : (
-                <div className="space-y-2 mb-6">
-                  {reportData.sales.map((s) => (
-                    <div key={s.id} className="border rounded p-3 flex items-start justify-between">
-                      <div className="text-sm">
-                        <div className="font-medium">#{s.sale_number}</div>
-                        <div className="text-gray-600">{new Date(s.sale_date || s.created_at).toLocaleDateString()} · Método: {s.payment_method || 'N/A'}</div>
-                      </div>
-                      <div className="text-right text-sm">
-                        <div><strong>Total:</strong> ${Number(s.total_amount||0).toLocaleString()}</div>
-                        <div className="text-gray-600">Estado: {s.status || 'completed'}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
 
               <div className="font-semibold mb-2">Facturas de Préstamos (Pagos)</div>
               {loading ? (
@@ -735,7 +783,7 @@ export const ReportsModule = () => {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Ventas (Pagos + POS)</CardTitle>
+                <CardTitle>Ventas (Pagos + Punto de Venta)</CardTitle>
                 <Button onClick={() => exportToCSV([...reportData.payments, ...reportData.sales], 'reporte_ventas')}>
                   <Download className="h-4 w-4 mr-2" />
                   Exportar CSV

@@ -1,16 +1,34 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { LogOut, User, Building, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Notifications from './Notifications';
+import { supabase } from '@/integrations/supabase/client';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
 }
 
 const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, companyId, signOut } = useAuth();
+  const [companyName, setCompanyName] = useState<string>('Panel de Control');
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const ownerId = companyId || user?.id;
+        if (!ownerId) return;
+        const { data } = await supabase
+          .from('company_settings')
+          .select('company_name')
+          .eq('user_id', ownerId)
+          .maybeSingle();
+        if (data?.company_name) setCompanyName(data.company_name);
+      } catch {}
+    };
+    loadCompany();
+  }, [user, companyId]);
 
   const handleSignOut = async () => {
     try {
@@ -38,7 +56,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           
           {/* Título */}
           <h1 className="text-lg font-semibold text-gray-900 truncate">
-            {profile?.is_employee ? 'Panel de Empleado' : 'Panel de Control'}
+            {companyName}
           </h1>
         </div>
 

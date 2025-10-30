@@ -37,7 +37,10 @@ const CompanySettings = () => {
     min_loan_amount: 1000,
     max_loan_amount: 500000,
     company_code: '',
-    auto_sequential_codes: false
+    auto_sequential_codes: false,
+    default_late_fee_rate: 2.0,
+    default_grace_period_days: 3,
+    default_pawn_period_days: 90
   });
 
   useEffect(() => {
@@ -533,6 +536,37 @@ const CompanySettings = () => {
                     value={formData.interest_rate_default}
                     onChange={(e) => handleInputChange('interest_rate_default', parseFloat(e.target.value))}
                   />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="default_late_fee_rate">Mora por Defecto (% mensual)</Label>
+                    <Input
+                      id="default_late_fee_rate"
+                      type="number"
+                      step="0.1"
+                      value={formData.default_late_fee_rate}
+                      onChange={(e) => handleInputChange('default_late_fee_rate', parseFloat(e.target.value))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="default_grace_period_days">Días de Gracia (mora)</Label>
+                    <Input
+                      id="default_grace_period_days"
+                      type="number"
+                      value={formData.default_grace_period_days}
+                      onChange={(e) => handleInputChange('default_grace_period_days', parseInt(e.target.value))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="default_pawn_period_days">Días por Defecto (Compra‑Venta)</Label>
+                    <Input
+                      id="default_pawn_period_days"
+                      type="number"
+                      value={formData.default_pawn_period_days}
+                      onChange={(e) => handleInputChange('default_pawn_period_days', parseInt(e.target.value))}
+                    />
+                  </div>
                 </div>
 
                 <div>
