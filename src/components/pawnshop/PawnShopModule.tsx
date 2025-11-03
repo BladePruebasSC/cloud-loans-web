@@ -128,6 +128,12 @@ export const PawnShopModule = () => {
     notes: ''
   });
 
+  // Estados para autocompletado de categoría
+  const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
+  const [categorySuggestions, setCategorySuggestions] = useState<string[]>([]);
+  const [categorySearch, setCategorySearch] = useState('');
+  const [allProducts, setAllProducts] = useState<any[]>([]);
+
   const [paymentData, setPaymentData] = useState({
     amount: 0,
     payment_type: 'partial' as 'partial' | 'full' | 'interest',
@@ -196,7 +202,7 @@ export const PawnShopModule = () => {
     try {
       setLoading(true);
       
-      const [transactionsRes, clientsRes, productsRes] = await Promise.all([
+      const [transactionsRes, clientsRes, productsRes, allProductsRes] = await Promise.all([
          supabase
            .from('pawn_transactions')
            .select(`
@@ -216,7 +222,12 @@ export const PawnShopModule = () => {
            .select('id, name, current_stock')
            .eq('user_id', user.id)
            .eq('status', 'active')
-           .order('name')
+           .order('name'),
+         supabase
+           .from('products')
+           .select('category')
+           .eq('user_id', user.id)
+           .not('category', 'is', null)
       ]);
 
       if (transactionsRes.error) throw transactionsRes.error;
@@ -226,12 +237,61 @@ export const PawnShopModule = () => {
       setTransactions(transactionsRes.data || []);
       setClients(clientsRes.data || []);
       setProducts(productsRes.data || []);
+      setAllProducts(allProductsRes.data || []);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Error al cargar datos');
     } finally {
       setLoading(false);
     }
+  };
+
+  // Obtener categorías únicas de productos existentes
+  const getAllCategories = () => {
+    const uniqueCategories = [...new Set(allProducts.map(p => p.category).filter(Boolean))] as string[];
+    return uniqueCategories.sort();
+  };
+
+  // Manejar búsqueda de categoría con cascada (exacto, empieza con, contiene)
+  const handleCategorySearch = (searchTerm: string) => {
+    setCategorySearch(searchTerm);
+    setFormData({...formData, item_category: searchTerm});
+    
+    if (searchTerm.trim() === '') {
+      setCategorySuggestions([]);
+      setShowCategorySuggestions(false);
+      return;
+    }
+
+    const allCategories = getAllCategories();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    // Búsqueda en cascada: primero coincidencias exactas, luego que empiezan con, luego que contienen
+    const exactMatches = allCategories.filter(cat => 
+      cat.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allCategories.filter(cat => 
+      cat.toLowerCase().startsWith(searchLower) && cat.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allCategories.filter(cat => 
+      cat.toLowerCase().includes(searchLower) && !cat.toLowerCase().startsWith(searchLower)
+    );
+    
+    // Combinar resultados en orden de prioridad
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setCategorySuggestions(filtered);
+    setShowCategorySuggestions(filtered.length > 0);
+  };
+
+  // Seleccionar categoría de sugerencias
+  const selectCategory = (category: string) => {
+    setCategorySearch(category);
+    setFormData({...formData, item_category: category});
+    setShowCategorySuggestions(false);
+    setCategorySuggestions([]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -448,6 +508,9 @@ export const PawnShopModule = () => {
     });
     setClientSearch('');
     setSelectedClient(null);
+    setCategorySearch('');
+    setShowCategorySuggestions(false);
+    setCategorySuggestions([]);
     setShowClientDropdown(false);
   };
 
@@ -1314,12 +1377,44 @@ export const PawnShopModule = () => {
 
               <div className="md:col-span-2">
                 <Label htmlFor="item_category">Categoría del Artículo</Label>
-                <Input
-                  id="item_category"
-                  value={formData.item_category}
-                  onChange={(e) => setFormData({...formData, item_category: e.target.value})}
-                  placeholder="Ej: Electrónicos, Joyería, Herramientas, etc."
-                />
+                <div className="relative">
+                  <Input
+                    id="item_category"
+                    placeholder="Buscar o escribir categoría..."
+                    value={categorySearch}
+                    onChange={(e) => handleCategorySearch(e.target.value)}
+                    onFocus={() => {
+                      if (categorySearch.trim()) {
+                        handleCategorySearch(categorySearch);
+                      } else {
+                        // Si está vacío, mostrar todas las categorías disponibles
+                        const allCategories = getAllCategories();
+                        setCategorySuggestions(allCategories);
+                        setShowCategorySuggestions(allCategories.length > 0);
+                      }
+                    }}
+                    onBlur={() => {
+                      // Delay para permitir que el click en la sugerencia funcione
+                      setTimeout(() => setShowCategorySuggestions(false), 200);
+                    }}
+                  />
+                  {showCategorySuggestions && categorySuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      {categorySuggestions.map((category, index) => (
+                        <div
+                          key={index}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // Prevenir blur del input
+                            selectCategory(category);
+                          }}
+                        >
+                          <div className="font-medium">{category}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="md:col-span-2">

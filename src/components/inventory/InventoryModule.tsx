@@ -73,6 +73,9 @@ const InventoryModule = () => {
   const [sellingNoTax, setSellingNoTax] = useState(0);
   const [sellingWithTax, setSellingWithTax] = useState(0);
   const [autoSequential, setAutoSequential] = useState<boolean>(false);
+  const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
+  const [categorySuggestions, setCategorySuggestions] = useState<string[]>([]);
+  const [categorySearch, setCategorySearch] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -80,6 +83,54 @@ const InventoryModule = () => {
       fetchAutoSequentialFlag();
     }
   }, [user]);
+
+  // Obtener categorías únicas de productos existentes
+  const getAllCategories = () => {
+    const uniqueCategories = [...new Set(products.map(p => p.category).filter(Boolean))] as string[];
+    return uniqueCategories.sort();
+  };
+
+  // Manejar búsqueda de categoría con cascada (exacto, empieza con, contiene)
+  const handleCategorySearch = (searchTerm: string) => {
+    setCategorySearch(searchTerm);
+    setFormData({...formData, category: searchTerm});
+    
+    if (searchTerm.trim() === '') {
+      setCategorySuggestions([]);
+      setShowCategorySuggestions(false);
+      return;
+    }
+
+    const allCategories = getAllCategories();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    // Búsqueda en cascada: primero coincidencias exactas, luego que empiezan con, luego que contienen
+    const exactMatches = allCategories.filter(cat => 
+      cat.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allCategories.filter(cat => 
+      cat.toLowerCase().startsWith(searchLower) && cat.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allCategories.filter(cat => 
+      cat.toLowerCase().includes(searchLower) && !cat.toLowerCase().startsWith(searchLower)
+    );
+    
+    // Combinar resultados en orden de prioridad
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setCategorySuggestions(filtered);
+    setShowCategorySuggestions(filtered.length > 0);
+  };
+
+  // Seleccionar categoría de sugerencias
+  const selectCategory = (category: string) => {
+    setCategorySearch(category);
+    setFormData({...formData, category});
+    setShowCategorySuggestions(false);
+    setCategorySuggestions([]);
+  };
 
   const fetchAutoSequentialFlag = async () => {
     try {
@@ -125,8 +176,10 @@ const InventoryModule = () => {
 
     try {
       // Guardar siempre sin ITBIS en BD
+      // Asegurar que category use el valor de categorySearch si está disponible
       const productData = {
         ...formData,
+        category: categorySearch.trim() || formData.category.trim(),
         purchase_price: purchaseNoTax,
         selling_price: sellingNoTax,
         user_id: user.id
@@ -161,12 +214,13 @@ const InventoryModule = () => {
 
   const handleEdit = (product: Product) => {
     setEditingProduct(product);
+    const category = product.category || '';
     setFormData({
       name: product.name,
       description: product.description || '',
       sku: product.sku || '',
       barcode: product.barcode || '',
-      category: product.category || '',
+      category: category,
       brand: product.brand || '',
       current_stock: product.current_stock,
       min_stock: product.min_stock,
@@ -175,6 +229,7 @@ const InventoryModule = () => {
       unit_type: product.unit_type,
       status: product.status
     });
+    setCategorySearch(category);
     // Inicializar precios vinculados
     const sNo = Number(product.selling_price || 0);
     const pNo = Number(product.purchase_price || 0);
@@ -233,6 +288,9 @@ const InventoryModule = () => {
     setPurchaseWithTax(0);
     setSellingNoTax(0);
     setSellingWithTax(0);
+    setCategorySearch('');
+    setShowCategorySuggestions(false);
+    setCategorySuggestions([]);
   };
 
   const filteredProducts = products.filter(product => {
@@ -533,11 +591,44 @@ const InventoryModule = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="category">Categoría</Label>
-                <Input
-                  id="category"
-                  value={formData.category}
-                  onChange={(e) => setFormData({...formData, category: e.target.value})}
-                />
+                <div className="relative">
+                  <Input
+                    id="category"
+                    placeholder="Buscar o escribir categoría..."
+                    value={categorySearch}
+                    onChange={(e) => handleCategorySearch(e.target.value)}
+                    onFocus={() => {
+                      if (categorySearch.trim()) {
+                        handleCategorySearch(categorySearch);
+                      } else {
+                        // Si está vacío, mostrar todas las categorías disponibles
+                        const allCategories = getAllCategories();
+                        setCategorySuggestions(allCategories);
+                        setShowCategorySuggestions(allCategories.length > 0);
+                      }
+                    }}
+                    onBlur={() => {
+                      // Delay para permitir que el click en la sugerencia funcione
+                      setTimeout(() => setShowCategorySuggestions(false), 200);
+                    }}
+                  />
+                  {showCategorySuggestions && categorySuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      {categorySuggestions.map((category, index) => (
+                        <div
+                          key={index}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // Prevenir blur del input
+                            selectCategory(category);
+                          }}
+                        >
+                          <div className="font-medium">{category}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               <div>
                 <Label htmlFor="brand">Marca</Label>
