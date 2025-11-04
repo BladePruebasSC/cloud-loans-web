@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -47,6 +47,10 @@ interface PawnTransaction {
   created_at: string;
   deleted_at?: string | null;
   deleted_reason?: string | null;
+  item_category?: string | null;
+  item_brand?: string | null;
+  item_model?: string | null;
+  item_condition?: string | null;
   clients?: {
     id: string;
     full_name: string;
@@ -560,10 +564,6 @@ export const PawnShopModule = () => {
           </div>
           ` : ''}
           <div class="info-row">
-            <span class="info-label">Valor Estimado:</span>
-            <span>${formatCurrency(Number(transaction.estimated_value))}</span>
-          </div>
-          <div class="info-row">
             <span class="info-label">Monto del Préstamo:</span>
             <span>${formatCurrency(Number(transaction.loan_amount))}</span>
           </div>
@@ -727,59 +727,123 @@ export const PawnShopModule = () => {
         const transaction = transactions.find(t => t.id === transactionId);
         if (transaction && transaction.product_name) {
           // Crear un nuevo producto en el inventario
+          // Generar SKU único evitando duplicados con retry
           let nextSku: string | undefined = undefined;
-          try {
-            const { count } = await supabase
-              .from('products')
-              .select('id', { count: 'exact', head: true })
-              .eq('user_id', user.id);
-            nextSku = String(((count as number) || 0) + 1).padStart(5, '0');
-          } catch {}
+          let attempts = 0;
+          const maxAttempts = 10;
+          
+          while (!nextSku && attempts < maxAttempts) {
+            try {
+              // Obtener todos los SKUs existentes del usuario
+              const { data: existingProducts } = await supabase
+                .from('products')
+                .select('sku')
+                .eq('user_id', user.id)
+                .not('sku', 'is', null);
+              
+              if (existingProducts) {
+                // Convertir SKUs a números y encontrar el máximo
+                const skuNumbers = existingProducts
+                  .map(p => {
+                    if (!p.sku) return 0;
+                    // Intentar parsear como número
+                    const num = parseInt(p.sku);
+                    return isNaN(num) ? 0 : num;
+                  })
+                  .filter(num => num > 0);
+                
+                const maxSku = skuNumbers.length > 0 ? Math.max(...skuNumbers) : 0;
+                // Generar el siguiente SKU disponible (con intento para evitar concurrencia)
+                const candidateSku = String(maxSku + 1 + attempts).padStart(5, '0');
+                
+                // Verificar que el SKU no exista
+                const { data: existingSku } = await supabase
+                  .from('products')
+                  .select('id')
+                  .eq('user_id', user.id)
+                  .eq('sku', candidateSku)
+                  .maybeSingle();
+                
+                if (!existingSku) {
+                  nextSku = candidateSku;
+                } else {
+                  attempts++;
+                }
+              } else {
+                // Si no hay productos, empezar con 00001
+                nextSku = '00001';
+              }
+            } catch (error) {
+              console.error('Error generating SKU:', error);
+              attempts++;
+              if (attempts >= maxAttempts) {
+                // Fallback: usar timestamp como SKU único (últimos 8 dígitos)
+                nextSku = String(Date.now()).slice(-8).padStart(5, '0');
+              }
+            }
+          }
+          
+          // Si aún no hay SKU, usar un UUID corto
+          if (!nextSku) {
+            nextSku = `PF${Date.now().toString(36).toUpperCase().slice(-5)}`;
+          }
+
+          // Calcular precio de venta con ITBIS (18%)
+          // El valor estimado será el precio de venta CON ITBIS
+          const ITBIS_RATE = 0.18;
+          const estimatedValue = Number(transaction.estimated_value || 0);
+          // Precio de venta sin ITBIS (para guardar en BD, como en InventoryModule)
+          const sellingPriceNoTax = estimatedValue / (1 + ITBIS_RATE);
+          // Precio de venta con ITBIS (el valor estimado)
+          const sellingPriceWithTax = estimatedValue;
 
           const inventoryProduct = {
             user_id: user.id,
             name: transaction.product_name,
             description: transaction.product_description || '',
+            category: transaction.item_category || null,
+            brand: transaction.item_brand || null,
             current_stock: 1,
             status: 'active',
             sku: nextSku,
+            selling_price: sellingPriceNoTax, // Guardar sin ITBIS en BD (como en InventoryModule)
+            purchase_price: 0, // No hay precio de compra para empeños perdidos
             source: 'pawn_forfeited',
             original_transaction_id: transactionId
           } as any;
 
-          const { error: inventoryError } = await supabase
-            .from('products')
-            .insert([inventoryProduct]);
+          // Intentar insertar con retry en caso de SKU duplicado
+          let insertSuccess = false;
+          let retryCount = 0;
+          const maxRetries = 3;
+          
+          while (!insertSuccess && retryCount < maxRetries) {
+            const { error: inventoryError } = await supabase
+              .from('products')
+              .insert([inventoryProduct]);
 
-          if (inventoryError) {
-            console.error('Error adding to inventory:', inventoryError);
-            // Si el error es por columnas faltantes, intentar sin los campos opcionales
-            if (inventoryError.code === 'PGRST204') {
-              const basicInventoryProduct = {
-                user_id: user.id,
-                name: transaction.product_name,
-                description: transaction.product_description || '',
-                current_stock: 1,
-                status: 'active'
-              };
-              
-              const { error: basicError } = await supabase
-                .from('products')
-                .insert([basicInventoryProduct]);
-                
-              if (basicError) {
-                console.error('Error adding basic product to inventory:', basicError);
-                toast.error('Error al agregar producto al inventario');
+            if (inventoryError) {
+              // Si es error de SKU duplicado, generar uno nuevo
+              if (inventoryError.code === '23505' && inventoryError.message.includes('sku')) {
+                retryCount++;
+                // Generar nuevo SKU único
+                const timestamp = Date.now();
+                inventoryProduct.sku = `PF${timestamp.toString(36).toUpperCase().slice(-5)}${retryCount}`;
+                console.warn(`SKU duplicado detectado, intentando con nuevo SKU: ${inventoryProduct.sku}`);
+              } else {
+                console.error('Error adding to inventory:', inventoryError);
+                toast.error(`Error al agregar producto al inventario: ${inventoryError.message}`);
                 return;
               }
-              
-              toast.success('Producto agregado al inventario (sin campos adicionales)');
             } else {
-              toast.error('Error al agregar producto al inventario');
-              return;
+              insertSuccess = true;
+              toast.success(`Producto agregado al inventario. Precio de venta: $${sellingPriceWithTax.toLocaleString('es-DO', { minimumFractionDigits: 2 })} (con ITBIS)`);
             }
-          } else {
-            toast.success('Producto agregado al inventario como perdido');
+          }
+          
+          if (!insertSuccess) {
+            toast.error('Error al agregar producto al inventario después de varios intentos');
+            return;
           }
         }
       }
@@ -821,6 +885,7 @@ export const PawnShopModule = () => {
       if (updateError) throw updateError;
 
       // Create a payment record for the extension in history
+      // Try to insert the extension record, but don't fail if the constraint doesn't allow it yet
       const { error: paymentError } = await supabase
         .from('pawn_payments')
         .insert([{
@@ -831,7 +896,11 @@ export const PawnShopModule = () => {
           notes: `Plazo extendido ${daysToAdd} día(s). Nueva fecha de vencimiento: ${newDueStr}`
         }]);
 
-      if (paymentError) throw paymentError;
+      // If payment insertion fails due to constraint, log it but don't fail the extension
+      if (paymentError) {
+        console.warn('Could not create extension history record. The migration may not have been applied yet:', paymentError);
+        // Don't throw - the extension itself was successful
+      }
 
       toast.success(`Plazo extendido ${daysToAdd} día(s). Nueva fecha: ${newDueStr}`);
       setShowExtendForm(false);
@@ -949,7 +1018,8 @@ export const PawnShopModule = () => {
   const calculateAccumulatedInterest = (transaction: PawnTransaction, currentDate: string) => {
     const startDate = new Date(transaction.start_date);
     const endDate = new Date(currentDate);
-    const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+    // Asegurar que la fecha de inicio sea la base del cálculo
+    const daysDiff = Math.max(0, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
     
     return calculateDailyInterest(
       Number(transaction.loan_amount), 
@@ -958,15 +1028,32 @@ export const PawnShopModule = () => {
     );
   };
 
+  // Función auxiliar para calcular interés acumulado desde datos del formulario
+  const calculateAccumulatedInterestFromForm = (loanAmount: number, interestRate: number, startDate: string, endDate: string) => {
+    if (!startDate || !endDate) return 0;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const daysDiff = Math.max(0, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+    
+    return calculateDailyInterest(loanAmount, interestRate, daysDiff);
+  };
+
   // Función para generar previsualización de interés diario
   const generateInterestPreview = (principal: number, monthlyRate: number, days: number, startDate: string) => {
+    // Si no hay fecha de inicio, usar fecha actual como fallback
+    const effectiveStartDate = startDate || new Date().toISOString().split('T')[0];
+    
     const dailyRate = monthlyRate / 30;
     const dailyBreakdown = [];
     let accumulatedInterest = 0;
     
+    // Usar la fecha de inicio proporcionada como base del cálculo
+    // Asegurar que se use la fecha sin tiempo para evitar problemas de zona horaria
+    const baseStartDate = new Date(effectiveStartDate + 'T00:00:00');
+    
     for (let day = 1; day <= days; day++) {
-      const currentDate = new Date(startDate);
-      currentDate.setDate(currentDate.getDate() + day - 1);
+      const currentDate = new Date(baseStartDate);
+      currentDate.setDate(baseStartDate.getDate() + day - 1);
       
       const dailyInterest = principal * (dailyRate / 100);
       accumulatedInterest += dailyInterest;
@@ -985,7 +1072,7 @@ export const PawnShopModule = () => {
       principal,
       rate: monthlyRate,
       days,
-      startDate,
+      startDate: effectiveStartDate, // Guardar la fecha de inicio usada
       dailyBreakdown
     };
   };
@@ -1109,6 +1196,82 @@ export const PawnShopModule = () => {
       toast.success('Transacción recuperada exitosamente');
     } catch (error) {
       console.error('Error recovering transaction:', error);
+      toast.error('Error al recuperar transacción');
+      setShowTransactionDetails(false);
+      setSelectedTransaction(null);
+    }
+  };
+
+  // Función para recuperar transacción perdida (forfeited)
+  const handleRecoverForfeitedTransaction = async (transactionId: string) => {
+    try {
+      // Save current selected transaction state before recovery
+      const wasDetailsOpen = showTransactionDetails && selectedTransaction?.id === transactionId;
+      
+      // Buscar y eliminar el producto del inventario si existe (creado cuando se marcó como perdido)
+      const { data: inventoryProducts } = await supabase
+        .from('products')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('original_transaction_id', transactionId)
+        .eq('source', 'pawn_forfeited');
+
+      if (inventoryProducts && inventoryProducts.length > 0) {
+        // Eliminar productos del inventario relacionados con esta transacción
+        for (const product of inventoryProducts) {
+          const { error: deleteError } = await supabase
+            .from('products')
+            .delete()
+            .eq('id', product.id);
+          
+          if (deleteError) {
+            console.warn('Error deleting inventory product:', deleteError);
+          }
+        }
+      }
+
+      // Cambiar el estado de la transacción de 'forfeited' a 'active'
+      const { error } = await supabase
+        .from('pawn_transactions')
+        .update({ 
+          status: 'active'
+        } as any)
+        .eq('id', transactionId);
+
+      if (error) throw error;
+
+      // Refresh data to ensure we have the latest transaction data
+      await fetchData();
+      
+      // If details dialog was open, refresh the selected transaction with fresh data
+      if (wasDetailsOpen) {
+        const { data: refreshedTransaction, error: refreshError } = await supabase
+          .from('pawn_transactions')
+          .select(`
+            *,
+            clients(id, full_name, phone),
+            products!pawn_transactions_product_id_fkey(id, name)
+          `)
+          .eq('id', transactionId)
+          .single();
+        
+        if (!refreshError && refreshedTransaction) {
+          setSelectedTransaction(refreshedTransaction as PawnTransaction);
+          // Refresh payment history as well
+          fetchPaymentHistory(transactionId);
+        } else {
+          // If refresh failed, close dialog
+          setShowTransactionDetails(false);
+          setSelectedTransaction(null);
+        }
+      } else {
+        setShowTransactionDetails(false);
+        setSelectedTransaction(null);
+      }
+
+      toast.success('Transacción recuperada exitosamente. El producto ha sido removido del inventario.');
+    } catch (error) {
+      console.error('Error recovering forfeited transaction:', error);
       toast.error('Error al recuperar transacción');
       setShowTransactionDetails(false);
       setSelectedTransaction(null);
@@ -1596,6 +1759,17 @@ export const PawnShopModule = () => {
                             <CheckCircle2 className="h-4 w-4 mr-1" />
                             Recuperar
                           </Button>
+                        ) : transaction.status === 'forfeited' ? (
+                          <Button
+                            size="sm"
+                            variant="default"
+                            onClick={async () => {
+                              await handleRecoverForfeitedTransaction(transaction.id);
+                            }}
+                          >
+                            <CheckCircle2 className="h-4 w-4 mr-1" />
+                            Recuperar
+                          </Button>
                         ) : (
                           <>
                             <Button 
@@ -1745,38 +1919,49 @@ export const PawnShopModule = () => {
                               <CheckCircle2 className="h-4 w-4 mr-1" />
                               Recuperar
                             </Button>
+                          ) : transaction.status === 'forfeited' ? (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={async () => {
+                                await handleRecoverForfeitedTransaction(transaction.id);
+                              }}
+                            >
+                              <CheckCircle2 className="h-4 w-4 mr-1" />
+                              Recuperar
+                            </Button>
                           ) : (
-                          <Button 
-                            size="sm" 
-                            variant="outline"
-                            onClick={async () => {
-                              // Fetch fresh transaction data from database to ensure we have the latest values
-                              const { data: freshTransaction, error } = await supabase
-                                .from('pawn_transactions')
-                                .select(`
-                                  *,
-                                  clients(id, full_name, phone),
-                                  products!pawn_transactions_product_id_fkey(id, name)
-                                `)
-                                .eq('id', transaction.id)
-                                .single();
-                              
-                              if (error) {
-                                console.error('Error fetching transaction:', error);
-                                toast.error('Error al cargar datos de la transacción');
-                                return;
-                              }
-                              
-                              if (freshTransaction) {
-                                setSelectedTransaction(freshTransaction as PawnTransaction);
-                                fetchPaymentHistory(transaction.id);
-                                setShowTransactionDetails(true);
-                              }
-                            }}
-                          >
-                            <Package className="h-4 w-4 mr-1" />
-                            Detalles
-                          </Button>
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={async () => {
+                                // Fetch fresh transaction data from database to ensure we have the latest values
+                                const { data: freshTransaction, error } = await supabase
+                                  .from('pawn_transactions')
+                                  .select(`
+                                    *,
+                                    clients(id, full_name, phone),
+                                    products!pawn_transactions_product_id_fkey(id, name)
+                                  `)
+                                  .eq('id', transaction.id)
+                                  .single();
+                                
+                                if (error) {
+                                  console.error('Error fetching transaction:', error);
+                                  toast.error('Error al cargar datos de la transacción');
+                                  return;
+                                }
+                                
+                                if (freshTransaction) {
+                                  setSelectedTransaction(freshTransaction as PawnTransaction);
+                                  fetchPaymentHistory(transaction.id);
+                                  setShowTransactionDetails(true);
+                                }
+                              }}
+                            >
+                              <Package className="h-4 w-4 mr-1" />
+                              Detalles
+                            </Button>
                           )}
                         </div>
                       </div>
@@ -1853,6 +2038,9 @@ export const PawnShopModule = () => {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nueva Transacción de Empeño</DialogTitle>
+            <DialogDescription>
+              Completa el formulario para crear una nueva transacción de empeño
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2191,6 +2379,9 @@ export const PawnShopModule = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Extender Plazo</DialogTitle>
+            <DialogDescription>
+              Agrega días adicionales al plazo de vencimiento de esta transacción
+            </DialogDescription>
           </DialogHeader>
           {selectedTransaction && (
             <div className="space-y-4">
@@ -2221,6 +2412,9 @@ export const PawnShopModule = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Registrar Pago</DialogTitle>
+            <DialogDescription>
+              Registra un pago para esta transacción de empeño
+            </DialogDescription>
           </DialogHeader>
           {selectedTransaction && (
             <div className="mb-4 p-4 bg-gray-50 rounded-lg">
@@ -2290,6 +2484,9 @@ export const PawnShopModule = () => {
               <History className="h-5 w-5" />
               Historial de Pagos
             </DialogTitle>
+            <DialogDescription>
+              Visualiza el historial completo de pagos y extensiones de esta transacción
+            </DialogDescription>
           </DialogHeader>
           
           {selectedTransaction && (
@@ -2406,6 +2603,9 @@ export const PawnShopModule = () => {
               <Package className="h-5 w-5" />
               Detalles de la Transacción
             </DialogTitle>
+            <DialogDescription>
+              Información completa y estadísticas financieras de la transacción
+            </DialogDescription>
           </DialogHeader>
           
           {selectedTransaction && (
@@ -2664,6 +2864,16 @@ export const PawnShopModule = () => {
                     Recuperar
                   </Button>
                 )}
+                {selectedTransaction.status === 'forfeited' && (
+                  <Button
+                    variant="default"
+                    onClick={async () => {
+                      await handleRecoverForfeitedTransaction(selectedTransaction.id);
+                    }}
+                  >
+                    Recuperar
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -2675,6 +2885,9 @@ export const PawnShopModule = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Actualizar Tasa de Interés</DialogTitle>
+            <DialogDescription>
+              Modifica la tasa de interés de esta transacción. Puedes programar el cambio para una fecha futura.
+            </DialogDescription>
           </DialogHeader>
           {selectedTransaction && (
             <div className="mb-4 p-4 bg-gray-50 rounded-lg">
@@ -2738,6 +2951,9 @@ export const PawnShopModule = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Actualizar Transacción</DialogTitle>
+            <DialogDescription>
+              Selecciona una acción para actualizar esta transacción
+            </DialogDescription>
           </DialogHeader>
           {selectedTransaction && (
             <div className="space-y-3">
@@ -2801,6 +3017,18 @@ export const PawnShopModule = () => {
                   Recuperar Transacción
                 </Button>
               )}
+              {selectedTransaction.status === 'forfeited' && (
+                <Button
+                  variant="default"
+                  className="w-full"
+                  onClick={async () => {
+                    setShowQuickUpdate(false);
+                    await handleRecoverForfeitedTransaction(selectedTransaction.id);
+                  }}
+                >
+                  Recuperar Transacción
+                </Button>
+              )}
             </div>
           )}
         </DialogContent>
@@ -2814,6 +3042,9 @@ export const PawnShopModule = () => {
               <XCircle className="h-5 w-5" />
               Eliminar Transacción
             </DialogTitle>
+            <DialogDescription>
+              Esta acción marcará la transacción como eliminada, pero podrá ser recuperada más tarde
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
@@ -2867,6 +3098,9 @@ export const PawnShopModule = () => {
             <DialogTitle className="flex items-center gap-2">
               📊 Previsualización de Interés Diario
             </DialogTitle>
+            <DialogDescription>
+              Visualiza el desglose diario del cálculo de interés acumulado
+            </DialogDescription>
           </DialogHeader>
           
           {interestPreviewData && (

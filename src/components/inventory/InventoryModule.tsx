@@ -67,7 +67,8 @@ const InventoryModule = () => {
   });
 
   // Campos vinculados para ITBIS
-  const ITBIS_RATE = 0.18;
+  const [itbisRate, setItbisRate] = useState(18); // Porcentaje de ITBIS (por defecto 18%)
+  const ITBIS_RATE = itbisRate / 100; // Convertir porcentaje a decimal
   const [purchaseNoTax, setPurchaseNoTax] = useState(0);
   const [purchaseWithTax, setPurchaseWithTax] = useState(0);
   const [sellingNoTax, setSellingNoTax] = useState(0);
@@ -338,6 +339,7 @@ const InventoryModule = () => {
       unit_type: 'unit',
       status: 'active'
     });
+    setItbisRate(18); // Resetear a 18% por defecto
     setPurchaseNoTax(0);
     setPurchaseWithTax(0);
     setSellingNoTax(0);
@@ -809,7 +811,37 @@ const InventoryModule = () => {
                   />
                 </div>
               </div>
-              <p className="text-xs text-gray-500">ITBIS aplicado: 18%. Se guarda en base de datos el precio sin ITBIS.</p>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="itbis_rate" className="text-sm">% ITBIS:</Label>
+                <Input
+                  id="itbis_rate"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={itbisRate}
+                  onChange={(e) => {
+                    const rate = Number(e.target.value) || 0;
+                    setItbisRate(rate);
+                    // Recalcular precios con el nuevo ITBIS
+                    if (purchaseNoTax > 0) {
+                      setPurchaseWithTax(Number((purchaseNoTax * (1 + rate / 100)).toFixed(2)));
+                    }
+                    if (sellingNoTax > 0) {
+                      setSellingWithTax(Number((sellingNoTax * (1 + rate / 100)).toFixed(2)));
+                    }
+                    if (purchaseWithTax > 0) {
+                      setPurchaseNoTax(Number((purchaseWithTax / (1 + rate / 100)).toFixed(2)));
+                    }
+                    if (sellingWithTax > 0) {
+                      setSellingNoTax(Number((sellingWithTax / (1 + rate / 100)).toFixed(2)));
+                    }
+                  }}
+                  className="w-24"
+                />
+                <span className="text-xs text-gray-500">%</span>
+              </div>
+              <p className="text-xs text-gray-500">ITBIS aplicado: {itbisRate}%. Se guarda en base de datos el precio sin ITBIS.</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
