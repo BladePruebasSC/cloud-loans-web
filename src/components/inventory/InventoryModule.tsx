@@ -38,6 +38,7 @@ interface Product {
   selling_price: number;
   unit_type: string;
   status: string;
+  itbis_rate?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -235,6 +236,7 @@ const InventoryModule = () => {
         brand: brandSearch.trim() || formData.brand.trim(),
         purchase_price: purchaseNoTax,
         selling_price: sellingNoTax,
+        itbis_rate: itbisRate,
         user_id: user.id
       };
 
@@ -269,6 +271,10 @@ const InventoryModule = () => {
     setEditingProduct(product);
     const category = product.category || '';
     const brand = product.brand || '';
+    // Cargar el ITBIS rate del producto, o usar 18% como defecto
+    const productItbisRate = product.itbis_rate ?? 18;
+    setItbisRate(productItbisRate);
+    
     setFormData({
       name: product.name,
       description: product.description || '',
@@ -285,13 +291,14 @@ const InventoryModule = () => {
     });
     setCategorySearch(category);
     setBrandSearch(brand);
-    // Inicializar precios vinculados
+    // Inicializar precios vinculados usando el ITBIS rate del producto
+    const productItbisDecimal = productItbisRate / 100;
     const sNo = Number(product.selling_price || 0);
     const pNo = Number(product.purchase_price || 0);
     setSellingNoTax(sNo);
-    setSellingWithTax(Number((sNo * (1 + ITBIS_RATE)).toFixed(2)));
+    setSellingWithTax(Number((sNo * (1 + productItbisDecimal)).toFixed(2)));
     setPurchaseNoTax(pNo);
-    setPurchaseWithTax(Number((pNo * (1 + ITBIS_RATE)).toFixed(2)));
+    setPurchaseWithTax(Number((pNo * (1 + productItbisDecimal)).toFixed(2)));
     setShowProductForm(true);
   };
 
