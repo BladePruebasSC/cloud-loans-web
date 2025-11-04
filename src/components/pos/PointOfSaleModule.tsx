@@ -51,6 +51,7 @@ interface Product {
   unit_type?: string;
   min_stock?: number;
   status?: string;
+  itbis_rate?: number | null;
 }
 
 interface CartItem {
@@ -215,47 +216,54 @@ export const PointOfSaleModule = () => {
   // Actualizar totales cuando cambia el carrito
   useEffect(() => {
     const round2 = (n: number) => Math.round((n || 0) * 100) / 100;
-    const grossBase = cart.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0); // precios con ITBIS
-    const grossItems = cart.reduce((sum, item) => sum + item.subtotal, 0); // ya con descuento por ítem
-
-    let gross = grossItems;
-    let discountAmount = Math.max(0, grossBase - grossItems);
-
+    
+    // Subtotal total: suma de todos los subtotales sin ITBIS (ya con descuentos por ítem aplicados)
+    const subtotalBase = cart.reduce((sum, item) => sum + item.subtotal, 0);
+    
+    // Calcular descuento total
+    let discountAmount = 0;
     if (saleData.discountMode === 'total') {
-      // aplicar descuento sobre el total (con ITBIS incluido)
-      discountAmount = (grossBase * (saleData.discountPercentTotal || 0)) / 100;
-      gross = Math.max(0, grossBase - discountAmount);
+      // Si hay descuento total, calcular sobre el subtotal base + ITBIS calculado
+      // Primero calcular ITBIS sin descuento total para tener el total bruto
+      const totalTaxBeforeDiscount = cart.reduce((sum, item) => {
+        const priceWithoutTax = item.unitPrice; // precio sin ITBIS (ya está en unitPrice)
+        const itbisRate = item.product.itbis_rate ?? 18;
+        const baseAmount = priceWithoutTax * item.quantity;
+        const discountedBase = baseAmount * (1 - (item.discountPercent || 0) / 100);
+        const itemTax = discountedBase * (itbisRate / 100);
+        return sum + itemTax;
+      }, 0);
+      const grossBeforeDiscount = subtotalBase + totalTaxBeforeDiscount;
+      discountAmount = (grossBeforeDiscount * (saleData.discountPercentTotal || 0)) / 100;
     }
 
-    // Calcular ITBIS por artículo
-    // El ITBIS se calcula como la diferencia entre el precio con ITBIS y el precio sin ITBIS
-    // Para cada artículo: ITBIS = (precio con ITBIS - precio sin ITBIS) * cantidad
-    // Precio sin ITBIS se obtiene del selling_price del producto
+    // Calcular ITBIS por artículo usando el ITBIS rate específico de cada producto
+    // ITBIS = (subtotal sin ITBIS del item * % ITBIS del producto)
     const totalTax = cart.reduce((sum, item) => {
-      const priceWithTax = item.unitPrice; // precio unitario con ITBIS
-      const priceWithoutTax = item.product.selling_price || 0; // precio sin ITBIS
-      const itemTax = (priceWithTax - priceWithoutTax) * item.quantity;
-      // Aplicar descuento al ITBIS si hay descuento por ítem
-      const discountedTax = itemTax * (1 - (item.discountPercent || 0) / 100);
-      return sum + discountedTax;
+      const itbisRate = item.product.itbis_rate ?? 18; // Porcentaje de ITBIS del producto
+      // El subtotal del item ya tiene el descuento aplicado, calcular ITBIS sobre ese subtotal
+      const itemTax = item.subtotal * (itbisRate / 100);
+      return sum + itemTax;
     }, 0);
 
-    // Si hay descuento total, también afecta al ITBIS
+    // Si hay descuento total, aplicarlo proporcionalmente al ITBIS
     let finalTax = totalTax;
+    let finalSubtotal = subtotalBase;
     if (saleData.discountMode === 'total' && saleData.discountPercentTotal) {
-      finalTax = totalTax * (1 - (saleData.discountPercentTotal || 0) / 100);
+      // Aplicar descuento proporcional: subtotal y ITBIS se reducen proporcionalmente
+      const totalBeforeDiscount = subtotalBase + totalTax;
+      const discountRatio = discountAmount / totalBeforeDiscount;
+      finalSubtotal = subtotalBase * (1 - discountRatio);
+      finalTax = totalTax * (1 - discountRatio);
     }
 
-    // Calcular subtotal: precio total menos ITBIS
-    const subtotal = gross - finalTax;
-    const tax = round2(finalTax);
-    const total = gross;
+    const total = finalSubtotal + finalTax;
     
     setSaleData(prev => ({
       ...prev,
-      subtotal: round2(subtotal),
+      subtotal: round2(finalSubtotal),
       discount: round2(discountAmount),
-      tax: round2(tax),
+      tax: round2(finalTax),
       total: round2(total),
       items: cart
     }));
@@ -281,6 +289,7 @@ export const PointOfSaleModule = () => {
             unit_type,
             min_stock,
             status,
+            itbis_rate,
             created_at,
             updated_at
           `)
@@ -338,14 +347,15 @@ export const PointOfSaleModule = () => {
       }
       updateCartItemQuantity(product.id, desiredQty);
     } else {
-      const priceWithTax = Math.round(((product.selling_price || 0) * 1.18) * 100) / 100;
+      // unitPrice debe ser el precio SIN ITBIS (selling_price)
+      const priceWithoutTax = Math.round(((product.selling_price || 0)) * 100) / 100;
       const newItem: CartItem = {
         id: `${product.id}-${Date.now()}`,
         product,
         quantity: 1,
-        unitPrice: priceWithTax,
+        unitPrice: priceWithoutTax, // Precio sin ITBIS
         discountPercent: 0,
-        subtotal: priceWithTax
+        subtotal: priceWithoutTax // Subtotal sin ITBIS
       };
       setCart([...cart, newItem]);
       toast.success(`${product.name} agregado al carrito`);
@@ -365,7 +375,9 @@ export const PointOfSaleModule = () => {
           toast.error('Cantidad supera el stock disponible');
           return item;
         }
-        const discounted = (item.unitPrice * quantity) * (1 - (item.discountPercent || 0) / 100);
+        // Subtotal sin ITBIS: (precio sin ITBIS * cantidad) - descuento
+        const baseAmount = item.unitPrice * quantity;
+        const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
         const subtotal = Math.max(0, discounted);
         return { ...item, quantity, subtotal };
       }
@@ -377,7 +389,9 @@ export const PointOfSaleModule = () => {
     setCart(cart.map(item => {
       if (item.product.id === productId) {
         const roundedPrice = Math.round((price || 0) * 100) / 100;
-        const discounted = (roundedPrice * item.quantity) * (1 - (item.discountPercent || 0) / 100);
+        // Subtotal sin ITBIS: (precio sin ITBIS * cantidad) - descuento
+        const baseAmount = roundedPrice * item.quantity;
+        const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
         const subtotal = Math.max(0, discounted);
         return { ...item, unitPrice: roundedPrice, subtotal };
       }
@@ -389,7 +403,9 @@ export const PointOfSaleModule = () => {
     setCart(cart.map(item => {
       if (item.product.id === productId) {
         const percent = Math.min(Math.max(discountPercent, 0), 100);
-        const discounted = (item.unitPrice * item.quantity) * (1 - percent / 100);
+        // Subtotal sin ITBIS: (precio sin ITBIS * cantidad) - descuento
+        const baseAmount = item.unitPrice * item.quantity;
+        const discounted = baseAmount * (1 - percent / 100);
         const subtotal = Math.max(0, discounted);
         return { ...item, discountPercent: percent, subtotal };
       }
@@ -937,7 +953,12 @@ export const PointOfSaleModule = () => {
                           </div>
                           <div className="mt-2">
                             {product.selling_price ? (
-                              <p className="text-sm font-bold text-green-600">${((product.selling_price || 0) * 1.18).toFixed(2)}</p>
+                              (() => {
+                                const itbisRate = product.itbis_rate ?? 18;
+                                const itbisMultiplier = 1 + (itbisRate / 100);
+                                const priceWithTax = ((product.selling_price || 0) * itbisMultiplier);
+                                return <p className="text-sm font-bold text-green-600">${priceWithTax.toFixed(2)}</p>;
+                              })()
                             ) : (
                               <p className="text-xs text-gray-500">Precio no definido</p>
                             )}
