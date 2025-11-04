@@ -227,8 +227,28 @@ export const PointOfSaleModule = () => {
       gross = Math.max(0, grossBase - discountAmount);
     }
 
-    const subtotal = gross / 1.18; // base imponible
-    const tax = gross - subtotal; // ITBIS 18%
+    // Calcular ITBIS por artículo
+    // El ITBIS se calcula como la diferencia entre el precio con ITBIS y el precio sin ITBIS
+    // Para cada artículo: ITBIS = (precio con ITBIS - precio sin ITBIS) * cantidad
+    // Precio sin ITBIS se obtiene del selling_price del producto
+    const totalTax = cart.reduce((sum, item) => {
+      const priceWithTax = item.unitPrice; // precio unitario con ITBIS
+      const priceWithoutTax = item.product.selling_price || 0; // precio sin ITBIS
+      const itemTax = (priceWithTax - priceWithoutTax) * item.quantity;
+      // Aplicar descuento al ITBIS si hay descuento por ítem
+      const discountedTax = itemTax * (1 - (item.discountPercent || 0) / 100);
+      return sum + discountedTax;
+    }, 0);
+
+    // Si hay descuento total, también afecta al ITBIS
+    let finalTax = totalTax;
+    if (saleData.discountMode === 'total' && saleData.discountPercentTotal) {
+      finalTax = totalTax * (1 - (saleData.discountPercentTotal || 0) / 100);
+    }
+
+    // Calcular subtotal: precio total menos ITBIS
+    const subtotal = gross - finalTax;
+    const tax = round2(finalTax);
     const total = gross;
     
     setSaleData(prev => ({
@@ -652,7 +672,7 @@ export const PointOfSaleModule = () => {
             <div class="summary">
               <div class="sum-row"><span>Subtotal</span><span>${money(saleData.subtotal)}</span></div>
               <div class="sum-row"><span>Descuento</span><span>- ${money(saleData.discount)}</span></div>
-              <div class="sum-row"><span>ITBIS (18%)</span><span>${money(saleData.tax)}</span></div>
+              <div class="sum-row"><span>ITBIS</span><span>${money(saleData.tax)}</span></div>
               <div class="sum-row total"><span>Total a Pagar</span><span>${money(saleData.total)}</span></div>
           </div>
         </div>
@@ -800,7 +820,7 @@ export const PointOfSaleModule = () => {
             <div class=\"summary\">
               <div class=\"sum-row\"><span>Subtotal</span><span>$${saleData.subtotal.toFixed(2)}</span></div>
               <div class=\"sum-row\"><span>Descuento</span><span>-$${saleData.discount.toFixed(2)}</span></div>
-              <div class=\"sum-row\"><span>ITBIS (18%)</span><span>$${saleData.tax.toFixed(2)}</span></div>
+              <div class=\"sum-row\"><span>ITBIS</span><span>$${saleData.tax.toFixed(2)}</span></div>
               <div class=\"sum-row total\"><span>Total a Pagar</span><span>$${saleData.total.toFixed(2)}</span></div>
           </div>
         </div>
@@ -1109,7 +1129,7 @@ export const PointOfSaleModule = () => {
                 <span className="text-red-600">-${saleData.discount.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span>ITBIS (18%):</span>
+                <span>ITBIS:</span>
                 <span>${saleData.tax.toFixed(2)}</span>
               </div>
               <Separator />

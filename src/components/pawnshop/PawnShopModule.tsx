@@ -1834,6 +1834,32 @@ export const PawnShopModule = () => {
                             >
                               Actualizar
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={async () => {
+                                // Fetch transaction with client data for printing
+                                const { data: transactionWithClient, error } = await supabase
+                                  .from('pawn_transactions')
+                                  .select(`
+                                    *,
+                                    clients(id, full_name, phone)
+                                  `)
+                                  .eq('id', transaction.id)
+                                  .single();
+                                
+                                if (error || !transactionWithClient) {
+                                  toast.error('Error al cargar datos para imprimir');
+                                  return;
+                                }
+                                
+                                const client = transactionWithClient.clients;
+                                printPawnReceipt(transactionWithClient, client);
+                              }}
+                            >
+                              <Printer className="h-4 w-4 mr-1" />
+                              Imprimir
+                            </Button>
                           </>
                         )}
                       </div>
