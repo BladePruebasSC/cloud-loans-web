@@ -76,6 +76,9 @@ const InventoryModule = () => {
   const [showCategorySuggestions, setShowCategorySuggestions] = useState(false);
   const [categorySuggestions, setCategorySuggestions] = useState<string[]>([]);
   const [categorySearch, setCategorySearch] = useState('');
+  const [showBrandSuggestions, setShowBrandSuggestions] = useState(false);
+  const [brandSuggestions, setBrandSuggestions] = useState<string[]>([]);
+  const [brandSearch, setBrandSearch] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -132,6 +135,54 @@ const InventoryModule = () => {
     setCategorySuggestions([]);
   };
 
+  // Obtener marcas únicas de productos existentes
+  const getAllBrands = () => {
+    const uniqueBrands = [...new Set(products.map(p => p.brand).filter(Boolean))] as string[];
+    return uniqueBrands.sort();
+  };
+
+  // Manejar búsqueda de marca con cascada (exacto, empieza con, contiene)
+  const handleBrandSearch = (searchTerm: string) => {
+    setBrandSearch(searchTerm);
+    setFormData({...formData, brand: searchTerm});
+    
+    if (searchTerm.trim() === '') {
+      setBrandSuggestions([]);
+      setShowBrandSuggestions(false);
+      return;
+    }
+
+    const allBrands = getAllBrands();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    // Búsqueda en cascada: primero coincidencias exactas, luego que empiezan con, luego que contienen
+    const exactMatches = allBrands.filter(brand => 
+      brand.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allBrands.filter(brand => 
+      brand.toLowerCase().startsWith(searchLower) && brand.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allBrands.filter(brand => 
+      brand.toLowerCase().includes(searchLower) && !brand.toLowerCase().startsWith(searchLower)
+    );
+    
+    // Combinar resultados en orden de prioridad
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setBrandSuggestions(filtered);
+    setShowBrandSuggestions(filtered.length > 0);
+  };
+
+  // Seleccionar marca de sugerencias
+  const selectBrand = (brand: string) => {
+    setBrandSearch(brand);
+    setFormData({...formData, brand});
+    setShowBrandSuggestions(false);
+    setBrandSuggestions([]);
+  };
+
   const fetchAutoSequentialFlag = async () => {
     try {
       const { data, error } = await supabase
@@ -176,10 +227,11 @@ const InventoryModule = () => {
 
     try {
       // Guardar siempre sin ITBIS en BD
-      // Asegurar que category use el valor de categorySearch si está disponible
+      // Asegurar que category y brand usen los valores de búsqueda si están disponibles
       const productData = {
         ...formData,
         category: categorySearch.trim() || formData.category.trim(),
+        brand: brandSearch.trim() || formData.brand.trim(),
         purchase_price: purchaseNoTax,
         selling_price: sellingNoTax,
         user_id: user.id
@@ -215,13 +267,14 @@ const InventoryModule = () => {
   const handleEdit = (product: Product) => {
     setEditingProduct(product);
     const category = product.category || '';
+    const brand = product.brand || '';
     setFormData({
       name: product.name,
       description: product.description || '',
       sku: product.sku || '',
       barcode: product.barcode || '',
       category: category,
-      brand: product.brand || '',
+      brand: brand,
       current_stock: product.current_stock,
       min_stock: product.min_stock,
       purchase_price: product.purchase_price,
@@ -230,6 +283,7 @@ const InventoryModule = () => {
       status: product.status
     });
     setCategorySearch(category);
+    setBrandSearch(brand);
     // Inicializar precios vinculados
     const sNo = Number(product.selling_price || 0);
     const pNo = Number(product.purchase_price || 0);
@@ -291,6 +345,9 @@ const InventoryModule = () => {
     setCategorySearch('');
     setShowCategorySuggestions(false);
     setCategorySuggestions([]);
+    setBrandSearch('');
+    setShowBrandSuggestions(false);
+    setBrandSuggestions([]);
   };
 
   const filteredProducts = products.filter(product => {
@@ -632,11 +689,44 @@ const InventoryModule = () => {
               </div>
               <div>
                 <Label htmlFor="brand">Marca</Label>
-                <Input
-                  id="brand"
-                  value={formData.brand}
-                  onChange={(e) => setFormData({...formData, brand: e.target.value})}
-                />
+                <div className="relative">
+                  <Input
+                    id="brand"
+                    placeholder="Buscar o escribir marca..."
+                    value={brandSearch}
+                    onChange={(e) => handleBrandSearch(e.target.value)}
+                    onFocus={() => {
+                      if (brandSearch.trim()) {
+                        handleBrandSearch(brandSearch);
+                      } else {
+                        // Si está vacío, mostrar todas las marcas disponibles
+                        const allBrands = getAllBrands();
+                        setBrandSuggestions(allBrands);
+                        setShowBrandSuggestions(allBrands.length > 0);
+                      }
+                    }}
+                    onBlur={() => {
+                      // Delay para permitir que el click en la sugerencia funcione
+                      setTimeout(() => setShowBrandSuggestions(false), 200);
+                    }}
+                  />
+                  {showBrandSuggestions && brandSuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      {brandSuggestions.map((brand, index) => (
+                        <div
+                          key={index}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // Prevenir blur del input
+                            selectBrand(brand);
+                          }}
+                        >
+                          <div className="font-medium">{brand}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 

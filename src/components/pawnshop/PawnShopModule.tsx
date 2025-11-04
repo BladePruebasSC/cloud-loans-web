@@ -42,9 +42,11 @@ interface PawnTransaction {
   period_days: number;
   start_date: string;
   due_date: string;
-  status: 'active' | 'redeemed' | 'forfeited' | 'extended';
+  status: 'active' | 'redeemed' | 'forfeited' | 'deleted';
   notes: string | null;
   created_at: string;
+  deleted_at?: string | null;
+  deleted_reason?: string | null;
   clients?: {
     id: string;
     full_name: string;
@@ -61,7 +63,7 @@ interface PawnPayment {
   pawn_transaction_id: string;
   amount: number;
   payment_date: string;
-  payment_type: 'partial' | 'full' | 'interest';
+  payment_type: 'partial' | 'full' | 'interest' | 'extension';
   notes: string | null;
 }
 
@@ -92,6 +94,8 @@ export const PawnShopModule = () => {
   const [showQuickUpdate, setShowQuickUpdate] = useState(false);
   const [showInterestPreview, setShowInterestPreview] = useState(false);
   const [showExtendForm, setShowExtendForm] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteReason, setDeleteReason] = useState('');
   const [extendDays, setExtendDays] = useState<number>(30);
   const [selectedTransaction, setSelectedTransaction] = useState<PawnTransaction | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
@@ -133,6 +137,17 @@ export const PawnShopModule = () => {
   const [categorySuggestions, setCategorySuggestions] = useState<string[]>([]);
   const [categorySearch, setCategorySearch] = useState('');
   const [allProducts, setAllProducts] = useState<any[]>([]);
+  const [allTransactions, setAllTransactions] = useState<any[]>([]);
+  
+  // Estados para autocompletado de marca
+  const [showBrandSuggestions, setShowBrandSuggestions] = useState(false);
+  const [brandSuggestions, setBrandSuggestions] = useState<string[]>([]);
+  const [brandSearch, setBrandSearch] = useState('');
+  
+  // Estados para autocompletado de modelo
+  const [showModelSuggestions, setShowModelSuggestions] = useState(false);
+  const [modelSuggestions, setModelSuggestions] = useState<string[]>([]);
+  const [modelSearch, setModelSearch] = useState('');
 
   const [paymentData, setPaymentData] = useState({
     amount: 0,
@@ -202,7 +217,7 @@ export const PawnShopModule = () => {
     try {
       setLoading(true);
       
-      const [transactionsRes, clientsRes, productsRes, allProductsRes] = await Promise.all([
+      const [transactionsRes, clientsRes, productsRes, allProductsRes, allTransactionsRes] = await Promise.all([
          supabase
            .from('pawn_transactions')
            .select(`
@@ -225,9 +240,12 @@ export const PawnShopModule = () => {
            .order('name'),
          supabase
            .from('products')
-           .select('category')
+           .select('category, brand')
+           .eq('user_id', user.id),
+         supabase
+           .from('pawn_transactions')
+           .select('item_brand, item_model')
            .eq('user_id', user.id)
-           .not('category', 'is', null)
       ]);
 
       if (transactionsRes.error) throw transactionsRes.error;
@@ -238,6 +256,7 @@ export const PawnShopModule = () => {
       setClients(clientsRes.data || []);
       setProducts(productsRes.data || []);
       setAllProducts(allProductsRes.data || []);
+      setAllTransactions(allTransactionsRes.data || []);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Error al cargar datos');
@@ -294,16 +313,330 @@ export const PawnShopModule = () => {
     setCategorySuggestions([]);
   };
 
+  // Obtener marcas únicas de productos y transacciones
+  const getAllBrands = () => {
+    const productBrands = allProducts.map(p => p.brand).filter(Boolean);
+    const transactionBrands = allTransactions.map(t => t.item_brand).filter(Boolean);
+    const uniqueBrands = [...new Set([...productBrands, ...transactionBrands])] as string[];
+    return uniqueBrands.sort();
+  };
+
+  // Manejar búsqueda de marca con cascada
+  const handleBrandSearch = (searchTerm: string) => {
+    setBrandSearch(searchTerm);
+    setFormData({...formData, item_brand: searchTerm});
+    
+    if (searchTerm.trim() === '') {
+      setBrandSuggestions([]);
+      setShowBrandSuggestions(false);
+      return;
+    }
+
+    const allBrands = getAllBrands();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    const exactMatches = allBrands.filter(brand => 
+      brand.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allBrands.filter(brand => 
+      brand.toLowerCase().startsWith(searchLower) && brand.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allBrands.filter(brand => 
+      brand.toLowerCase().includes(searchLower) && !brand.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setBrandSuggestions(filtered);
+    setShowBrandSuggestions(filtered.length > 0);
+  };
+
+  // Seleccionar marca de sugerencias
+  const selectBrand = (brand: string) => {
+    setBrandSearch(brand);
+    setFormData({...formData, item_brand: brand});
+    setShowBrandSuggestions(false);
+    setBrandSuggestions([]);
+  };
+
+  // Obtener modelos únicos de transacciones (filtrados por marca si hay)
+  const getAllModels = (filterByBrand?: string) => {
+    let transactionModels = allTransactions.map(t => t.item_model).filter(Boolean);
+    
+    // Si hay una marca seleccionada, filtrar modelos por esa marca
+    if (filterByBrand && filterByBrand.trim()) {
+      transactionModels = allTransactions
+        .filter(t => t.item_brand && t.item_brand.toLowerCase() === filterByBrand.toLowerCase())
+        .map(t => t.item_model)
+        .filter(Boolean);
+    }
+    
+    const uniqueModels = [...new Set(transactionModels)] as string[];
+    return uniqueModels.sort();
+  };
+
+  // Manejar búsqueda de modelo con cascada
+  const handleModelSearch = (searchTerm: string) => {
+    setModelSearch(searchTerm);
+    setFormData({...formData, item_model: searchTerm});
+    
+    if (searchTerm.trim() === '') {
+      setModelSuggestions([]);
+      setShowModelSuggestions(false);
+      return;
+    }
+
+    const allModels = getAllModels(formData.item_brand);
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    const exactMatches = allModels.filter(model => 
+      model.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allModels.filter(model => 
+      model.toLowerCase().startsWith(searchLower) && model.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allModels.filter(model => 
+      model.toLowerCase().includes(searchLower) && !model.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setModelSuggestions(filtered);
+    setShowModelSuggestions(filtered.length > 0);
+  };
+
+  // Seleccionar modelo de sugerencias
+  const selectModel = (model: string) => {
+    setModelSearch(model);
+    setFormData({...formData, item_model: model});
+    setShowModelSuggestions(false);
+    setModelSuggestions([]);
+  };
+
+  // Función para generar recibo de creación de empeño
+  const generatePawnReceiptHTML = (transaction: any, client: any, format: string = 'LETTER') => {
+    const formatCurrency = (amount: number) => {
+      return new Intl.NumberFormat('es-DO', {
+        style: 'currency',
+        currency: 'DOP'
+      }).format(amount);
+    };
+
+    const formatDate = (dateString: string) => {
+      return new Date(dateString).toLocaleDateString('es-DO', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    };
+
+    return `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Recibo de Empeño</title>
+        <style>
+          @page {
+            size: ${format};
+            margin: 0.5in;
+          }
+          body {
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            line-height: 1.4;
+            color: #333;
+            margin: 0;
+            padding: 0;
+          }
+          .header {
+            text-align: center;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+          }
+          .company-name {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 5px;
+          }
+          .receipt-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin: 20px 0;
+            text-align: center;
+            text-decoration: underline;
+          }
+          .info-section {
+            margin-bottom: 15px;
+          }
+          .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+          }
+          .info-label {
+            font-weight: bold;
+          }
+          .transaction-details {
+            border: 1px solid #333;
+            padding: 10px;
+            margin: 15px 0;
+          }
+          .amount-section {
+            text-align: center;
+            margin: 20px 0;
+            padding: 15px;
+            border: 2px solid #333;
+            background-color: #f9f9f9;
+          }
+          .amount {
+            font-size: 20px;
+            font-weight: bold;
+            color: #2c5aa0;
+          }
+          .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 10px;
+            color: #666;
+          }
+          .signature-section {
+            margin-top: 40px;
+            display: flex;
+            justify-content: space-between;
+          }
+          .signature-box {
+            width: 200px;
+            text-align: center;
+            border-top: 1px solid #333;
+            padding-top: 5px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="company-name">CASA DE EMPEÑO</div>
+          <div>Recibo de Empeño</div>
+        </div>
+
+        <div class="receipt-title">RECIBO DE EMPEÑO</div>
+
+        <div class="info-section">
+          <div class="info-row">
+            <span class="info-label">Fecha:</span>
+            <span>${formatDate(transaction.start_date)}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Número de Transacción:</span>
+            <span>${transaction.id.slice(0, 8).toUpperCase()}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Cliente:</span>
+            <span>${client?.full_name || 'N/A'}</span>
+          </div>
+          ${client?.phone ? `
+          <div class="info-row">
+            <span class="info-label">Teléfono:</span>
+            <span>${client.phone}</span>
+          </div>
+          ` : ''}
+        </div>
+
+        <div class="transaction-details">
+          <div class="info-row">
+            <span class="info-label">Artículo:</span>
+            <span>${transaction.product_name}</span>
+          </div>
+          ${transaction.product_description ? `
+          <div class="info-row">
+            <span class="info-label">Descripción:</span>
+            <span>${transaction.product_description}</span>
+          </div>
+          ` : ''}
+          <div class="info-row">
+            <span class="info-label">Valor Estimado:</span>
+            <span>${formatCurrency(Number(transaction.estimated_value))}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Monto del Préstamo:</span>
+            <span>${formatCurrency(Number(transaction.loan_amount))}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Tasa de Interés:</span>
+            <span>${transaction.interest_rate}% ${transaction.interest_rate_type === 'monthly' ? 'Mensual' : transaction.interest_rate_type}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Período:</span>
+            <span>${transaction.period_days} días</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Fecha de Vencimiento:</span>
+            <span>${formatDate(transaction.due_date)}</span>
+          </div>
+        </div>
+
+        <div class="amount-section">
+          <div class="amount">Monto Prestado: ${formatCurrency(Number(transaction.loan_amount))}</div>
+        </div>
+
+        ${transaction.notes ? `
+        <div class="info-section">
+          <div class="info-label">Notas:</div>
+          <div>${transaction.notes}</div>
+        </div>
+        ` : ''}
+
+        <div class="footer">
+          <p>Este documento es un recibo de empeño. Guarde este documento para futuras referencias.</p>
+          <p>Generado el ${formatDate(new Date().toISOString())}</p>
+        </div>
+
+        <div class="signature-section">
+          <div class="signature-box">
+            <div>Cliente</div>
+          </div>
+          <div class="signature-box">
+            <div>Casa de Empeño</div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
+  const printPawnReceipt = (transaction: any, client: any) => {
+    const receiptHTML = generatePawnReceiptHTML(transaction, client);
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(receiptHTML);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
 
     try {
+      // Obtener datos del cliente
+      const selectedClient = clients.find(c => c.id === formData.client_id);
+      
       const transactionData = {
         user_id: user.id,
         client_id: formData.client_id,
         product_name: formData.product_name,
         product_description: formData.product_description,
+        item_category: categorySearch.trim() || formData.item_category.trim(),
+        item_brand: brandSearch.trim() || formData.item_brand.trim(),
+        item_model: modelSearch.trim() || formData.item_model.trim(),
+        item_condition: formData.item_condition,
         estimated_value: formData.estimated_value,
         loan_amount: formData.loan_amount,
         interest_rate: formData.interest_rate,
@@ -315,15 +648,28 @@ export const PawnShopModule = () => {
         status: 'active'
       };
 
-      const { error } = await supabase
+      const { data: insertedTransaction, error } = await supabase
         .from('pawn_transactions')
-        .insert([transactionData]);
+        .insert([transactionData])
+        .select()
+        .single();
 
       if (error) throw error;
 
       toast.success('Transacción creada exitosamente');
+      
+      // Cerrar formulario y resetear antes de imprimir
       setShowTransactionForm(false);
       resetForm();
+      
+      // Generar y mostrar recibo después de cerrar el formulario
+      if (insertedTransaction && selectedClient) {
+        // Usar setTimeout para asegurar que el formulario se cierre primero
+        setTimeout(() => {
+          printPawnReceipt(insertedTransaction, selectedClient);
+        }, 100);
+      }
+      
       fetchData();
     } catch (error) {
       console.error('Error creating transaction:', error);
@@ -460,7 +806,8 @@ export const PawnShopModule = () => {
       const newDueStr = newDue.toISOString().split('T')[0];
       const newPeriod = (transaction.period_days || 0) + Math.max(1, daysToAdd);
 
-      const { error } = await supabase
+      // Update transaction
+      const { error: updateError } = await supabase
         .from('pawn_transactions')
         .update({
           due_date: newDueStr,
@@ -471,7 +818,20 @@ export const PawnShopModule = () => {
         })
         .eq('id', transaction.id);
 
-      if (error) throw error;
+      if (updateError) throw updateError;
+
+      // Create a payment record for the extension in history
+      const { error: paymentError } = await supabase
+        .from('pawn_payments')
+        .insert([{
+          pawn_transaction_id: transaction.id,
+          amount: 0, // Extensions don't have a monetary amount
+          payment_date: new Date().toISOString(),
+          payment_type: 'extension',
+          notes: `Plazo extendido ${daysToAdd} día(s). Nueva fecha de vencimiento: ${newDueStr}`
+        }]);
+
+      if (paymentError) throw paymentError;
 
       toast.success(`Plazo extendido ${daysToAdd} día(s). Nueva fecha: ${newDueStr}`);
       setShowExtendForm(false);
@@ -511,6 +871,12 @@ export const PawnShopModule = () => {
     setCategorySearch('');
     setShowCategorySuggestions(false);
     setCategorySuggestions([]);
+    setBrandSearch('');
+    setShowBrandSuggestions(false);
+    setBrandSuggestions([]);
+    setModelSearch('');
+    setShowModelSuggestions(false);
+    setModelSuggestions([]);
     setShowClientDropdown(false);
   };
 
@@ -668,29 +1034,126 @@ export const PawnShopModule = () => {
     });
   };
 
+  // Función para eliminar transacción
+  const handleDeleteTransaction = async (transactionId: string) => {
+    try {
+      const { error } = await supabase
+        .from('pawn_transactions')
+        .update({ 
+          status: 'deleted',
+          deleted_at: new Date().toISOString(),
+          deleted_reason: deleteReason.trim() || null
+        } as any)
+        .eq('id', transactionId);
+
+      if (error) throw error;
+
+      toast.success('Transacción eliminada exitosamente (recuperable)');
+      setShowTransactionDetails(false);
+      setShowDeleteDialog(false);
+      setDeleteReason('');
+      setSelectedTransaction(null);
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting transaction:', error);
+      toast.error('Error al eliminar transacción');
+    }
+  };
+
+  // Función para recuperar transacción
+  const handleRecoverTransaction = async (transactionId: string) => {
+    try {
+      // Save current selected transaction state before recovery
+      const wasDetailsOpen = showTransactionDetails && selectedTransaction?.id === transactionId;
+      
+      const { error } = await supabase
+        .from('pawn_transactions')
+        .update({ 
+          status: 'active',
+          deleted_at: null,
+          deleted_reason: null
+        } as any)
+        .eq('id', transactionId);
+
+      if (error) throw error;
+
+      // Refresh data to ensure we have the latest transaction data
+      await fetchData();
+      
+      // If details dialog was open, refresh the selected transaction with fresh data
+      if (wasDetailsOpen) {
+        const { data: refreshedTransaction, error: refreshError } = await supabase
+          .from('pawn_transactions')
+          .select(`
+            *,
+            clients(id, full_name, phone),
+            products!pawn_transactions_product_id_fkey(id, name)
+          `)
+          .eq('id', transactionId)
+          .single();
+        
+        if (!refreshError && refreshedTransaction) {
+          setSelectedTransaction(refreshedTransaction as PawnTransaction);
+          // Refresh payment history as well
+          fetchPaymentHistory(transactionId);
+        } else {
+          // If refresh failed, close dialog
+          setShowTransactionDetails(false);
+          setSelectedTransaction(null);
+        }
+      } else {
+        setShowTransactionDetails(false);
+        setSelectedTransaction(null);
+      }
+
+      toast.success('Transacción recuperada exitosamente');
+    } catch (error) {
+      console.error('Error recovering transaction:', error);
+      toast.error('Error al recuperar transacción');
+      setShowTransactionDetails(false);
+      setSelectedTransaction(null);
+    }
+  };
+
   const handleRateUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTransaction) return;
 
     try {
-      const { error } = await supabase
-        .from('pawn_transactions')
-        .update({ 
-          interest_rate: rateUpdateData.new_rate,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', selectedTransaction.id);
+      const today = new Date().toISOString().split('T')[0];
+      const effectiveDate = rateUpdateData.effective_date;
+      
+      // Si la fecha efectiva es hoy o en el pasado, aplicar el cambio inmediatamente
+      // Si es en el futuro, solo guardar en historial (se aplicará cuando llegue la fecha)
+      const shouldApplyNow = effectiveDate <= today;
 
-      if (error) throw error;
+      if (shouldApplyNow) {
+        // Aplicar el cambio inmediatamente
+        const { error } = await supabase
+          .from('pawn_transactions')
+          .update({ 
+            interest_rate: rateUpdateData.new_rate,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', selectedTransaction.id);
 
-      // Registrar el cambio de tasa en el historial
+        if (error) throw error;
+        toast.success('Tasa de interés actualizada exitosamente');
+      } else {
+        // Si la fecha efectiva es futura, solo guardar en historial
+        // El cambio se aplicará cuando llegue la fecha (requiere un job/cron o procesamiento manual)
+        toast.success(`Cambio de tasa programado para ${effectiveDate}. Se aplicará automáticamente en esa fecha.`);
+      }
+
+      // Registrar el cambio de tasa en el historial (siempre)
       const rateChangeRecord = {
         pawn_transaction_id: selectedTransaction.id,
         old_rate: selectedTransaction.interest_rate,
         new_rate: rateUpdateData.new_rate,
         reason: rateUpdateData.reason,
         effective_date: rateUpdateData.effective_date,
-        changed_at: new Date().toISOString()
+        changed_at: new Date().toISOString(),
+        user_id: user?.id
       };
 
       const { error: historyError } = await supabase
@@ -699,9 +1162,12 @@ export const PawnShopModule = () => {
 
       if (historyError) {
         console.warn('Error saving rate change history:', historyError);
+        // Si falla el historial pero ya se aplicó el cambio, no es crítico
+        if (!shouldApplyNow) {
+          throw historyError; // Si es futuro, el historial es crítico
+        }
       }
 
-      toast.success('Tasa de interés actualizada exitosamente');
       setShowRateUpdateForm(false);
       setSelectedTransaction(null);
       resetRateUpdateForm();
@@ -958,8 +1424,10 @@ export const PawnShopModule = () => {
         return <Badge className="bg-green-500"><CheckCircle2 className="h-3 w-3 mr-1" /> Redimido</Badge>;
       case 'forfeited':
         return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" /> Perdido</Badge>;
-      case 'extended':
-        return <Badge className="bg-yellow-500"><AlertCircle className="h-3 w-3 mr-1" /> Extendido</Badge>;
+      case 'deleted':
+        return <Badge variant="secondary" className="bg-gray-500"><XCircle className="h-3 w-3 mr-1" /> Eliminado</Badge>;
+      // 'extended' ya no se usa - las extensiones mantienen el estado 'active'
+      // case 'extended': ya no necesario
       default:
         return <Badge>{status}</Badge>;
     }
@@ -1057,7 +1525,7 @@ export const PawnShopModule = () => {
                     <SelectItem value="active">Activo</SelectItem>
                     <SelectItem value="redeemed">Redimido</SelectItem>
                     <SelectItem value="forfeited">Perdido</SelectItem>
-                    <SelectItem value="extended">Extendido</SelectItem>
+                    <SelectItem value="deleted">Eliminado</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1067,19 +1535,19 @@ export const PawnShopModule = () => {
           {/* Transactions List */}
           <Card>
             <CardHeader>
-              <CardTitle>Lista de Transacciones ({filteredTransactions.filter(t => t.status === 'active').length})</CardTitle>
+              <CardTitle>Lista de Transacciones ({filteredTransactions.length})</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
                 <div className="text-center py-8">Cargando transacciones...</div>
-              ) : filteredTransactions.filter(t => t.status === 'active').length === 0 ? (
+              ) : filteredTransactions.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No hay transacciones activas</p>
+                  <p>No hay transacciones {statusFilter === 'all' ? 'disponibles' : statusFilter === 'deleted' ? 'eliminadas' : 'activas'}</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {filteredTransactions.filter(t => t.status === 'active').map((transaction) => (
+                  {filteredTransactions.map((transaction) => (
                     <div key={transaction.id} className="border rounded-lg p-4">
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex-1">
@@ -1117,47 +1585,83 @@ export const PawnShopModule = () => {
                         </div>
                       </div>
                       <div className="flex gap-2 flex-wrap">
-                        <Button 
-                          size="sm" 
-                          onClick={() => {
-                            setSelectedTransaction(transaction);
-                            setShowPaymentForm(true);
-                          }}
-                        >
-                          Registrar Pago
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedTransaction(transaction);
-                            setShowTransactionDetails(true);
-                          }}
-                        >
-                          <Package className="h-4 w-4 mr-1" />
-                          Detalles
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedTransaction(transaction);
-                            fetchPaymentHistory(transaction.id);
-                            setShowPaymentHistory(true);
-                          }}
-                        >
-                          <History className="h-4 w-4 mr-1" />
-                          Historial
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            setSelectedTransaction(transaction);
-                            setShowQuickUpdate(true);
-                          }}
-                        >
-                          Actualizar
-                        </Button>
+                        {transaction.status === 'deleted' ? (
+                          <Button
+                            size="sm"
+                            variant="default"
+                            onClick={async () => {
+                              await handleRecoverTransaction(transaction.id);
+                            }}
+                          >
+                            <CheckCircle2 className="h-4 w-4 mr-1" />
+                            Recuperar
+                          </Button>
+                        ) : (
+                          <>
+                            <Button 
+                              size="sm" 
+                              onClick={() => {
+                                setSelectedTransaction(transaction);
+                                setShowPaymentForm(true);
+                              }}
+                            >
+                              Registrar Pago
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={async () => {
+                                // Fetch fresh transaction data from database to ensure we have the latest values
+                                const { data: freshTransaction, error } = await supabase
+                                  .from('pawn_transactions')
+                                  .select(`
+                                    *,
+                                    clients(id, full_name, phone),
+                                    products!pawn_transactions_product_id_fkey(id, name)
+                                  `)
+                                  .eq('id', transaction.id)
+                                  .single();
+                                
+                                if (error) {
+                                  console.error('Error fetching transaction:', error);
+                                  toast.error('Error al cargar datos de la transacción');
+                                  return;
+                                }
+                                
+                                if (freshTransaction) {
+                                  setSelectedTransaction(freshTransaction as PawnTransaction);
+                                  fetchPaymentHistory(transaction.id);
+                                  setShowTransactionDetails(true);
+                                }
+                              }}
+                            >
+                              <Package className="h-4 w-4 mr-1" />
+                              Detalles
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedTransaction(transaction);
+                                fetchPaymentHistory(transaction.id);
+                                setShowPaymentHistory(true);
+                              }}
+                            >
+                              <History className="h-4 w-4 mr-1" />
+                              Historial
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedTransaction(transaction);
+                                setShowQuickUpdate(true);
+                              }}
+                            >
+                              Actualizar
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1193,7 +1697,7 @@ export const PawnShopModule = () => {
                     <SelectItem value="active">Activo</SelectItem>
                     <SelectItem value="redeemed">Redimido</SelectItem>
                     <SelectItem value="forfeited">Perdido</SelectItem>
-                    <SelectItem value="extended">Extendido</SelectItem>
+                    <SelectItem value="deleted">Eliminado</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1230,17 +1734,50 @@ export const PawnShopModule = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          {transaction.status === 'deleted' ? (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={async () => {
+                                await handleRecoverTransaction(transaction.id);
+                              }}
+                            >
+                              <CheckCircle2 className="h-4 w-4 mr-1" />
+                              Recuperar
+                            </Button>
+                          ) : (
                           <Button 
                             size="sm" 
                             variant="outline"
-                            onClick={() => {
-                              setSelectedTransaction(transaction);
-                              setShowTransactionDetails(true);
+                            onClick={async () => {
+                              // Fetch fresh transaction data from database to ensure we have the latest values
+                              const { data: freshTransaction, error } = await supabase
+                                .from('pawn_transactions')
+                                .select(`
+                                  *,
+                                  clients(id, full_name, phone),
+                                  products!pawn_transactions_product_id_fkey(id, name)
+                                `)
+                                .eq('id', transaction.id)
+                                .single();
+                              
+                              if (error) {
+                                console.error('Error fetching transaction:', error);
+                                toast.error('Error al cargar datos de la transacción');
+                                return;
+                              }
+                              
+                              if (freshTransaction) {
+                                setSelectedTransaction(freshTransaction as PawnTransaction);
+                                fetchPaymentHistory(transaction.id);
+                                setShowTransactionDetails(true);
+                              }
                             }}
                           >
                             <Package className="h-4 w-4 mr-1" />
                             Detalles
                           </Button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1301,12 +1838,6 @@ export const PawnShopModule = () => {
                     <span>Perdidas:</span>
                     <span className="font-semibold text-red-600">
                       {transactions.filter(t => t.status === 'forfeited').length}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Extendidas:</span>
-                    <span className="font-semibold text-yellow-600">
-                      {transactions.filter(t => t.status === 'extended').length}
                     </span>
                   </div>
                 </div>
@@ -1437,22 +1968,82 @@ export const PawnShopModule = () => {
 
               <div className="md:col-span-2">
                 <Label htmlFor="item_brand">Marca del Artículo</Label>
-                <Input
-                  id="item_brand"
-                  value={formData.item_brand}
-                  onChange={(e) => setFormData({...formData, item_brand: e.target.value})}
-                  placeholder="Ej: Apple, Samsung, Dell, etc."
-                />
+                <div className="relative">
+                  <Input
+                    id="item_brand"
+                    placeholder="Buscar o escribir marca..."
+                    value={brandSearch}
+                    onChange={(e) => handleBrandSearch(e.target.value)}
+                    onFocus={() => {
+                      if (brandSearch.trim()) {
+                        handleBrandSearch(brandSearch);
+                      } else {
+                        const allBrands = getAllBrands();
+                        setBrandSuggestions(allBrands);
+                        setShowBrandSuggestions(allBrands.length > 0);
+                      }
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setShowBrandSuggestions(false), 200);
+                    }}
+                  />
+                  {showBrandSuggestions && brandSuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      {brandSuggestions.map((brand, index) => (
+                        <div
+                          key={index}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            selectBrand(brand);
+                          }}
+                        >
+                          <div className="font-medium">{brand}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="md:col-span-2">
                 <Label htmlFor="item_model">Modelo del Artículo</Label>
-                <Input
-                  id="item_model"
-                  value={formData.item_model}
-                  onChange={(e) => setFormData({...formData, item_model: e.target.value})}
-                  placeholder="Ej: iPhone 13, Galaxy S21, XPS 15, etc."
-                />
+                <div className="relative">
+                  <Input
+                    id="item_model"
+                    placeholder="Buscar o escribir modelo..."
+                    value={modelSearch}
+                    onChange={(e) => handleModelSearch(e.target.value)}
+                    onFocus={() => {
+                      if (modelSearch.trim()) {
+                        handleModelSearch(modelSearch);
+                      } else {
+                        const allModels = getAllModels(formData.item_brand);
+                        setModelSuggestions(allModels);
+                        setShowModelSuggestions(allModels.length > 0);
+                      }
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setShowModelSuggestions(false), 200);
+                    }}
+                  />
+                  {showModelSuggestions && modelSuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      {modelSuggestions.map((model, index) => (
+                        <div
+                          key={index}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            selectModel(model);
+                          }}
+                        >
+                          <div className="font-medium">{model}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -1743,21 +2334,30 @@ export const PawnShopModule = () => {
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex-1">
                               <div className="flex items-center gap-3 mb-2">
-                                <h3 className="font-semibold text-lg">
-                                  ${Number(payment.amount).toLocaleString()}
-                                </h3>
+                                {payment.payment_type === 'extension' ? (
+                                  <h3 className="font-semibold text-lg">
+                                    Extensión de Plazo
+                                  </h3>
+                                ) : (
+                                  <h3 className="font-semibold text-lg">
+                                    ${Number(payment.amount).toLocaleString()}
+                                  </h3>
+                                )}
                                 <Badge className={
                                   payment.payment_type === 'full' ? 'bg-green-500' :
                                   payment.payment_type === 'partial' ? 'bg-blue-500' :
+                                  payment.payment_type === 'extension' ? 'bg-purple-500' :
                                   'bg-yellow-500'
                                 }>
                                   {payment.payment_type === 'full' ? 'Completo' :
-                                   payment.payment_type === 'partial' ? 'Parcial' : 'Interés'}
+                                   payment.payment_type === 'partial' ? 'Parcial' :
+                                   payment.payment_type === 'extension' ? 'Extensión' : 'Interés'}
                                 </Badge>
                               </div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
                                 <div><strong>Fecha:</strong> {formatDateTimeWithOffset(payment.payment_date)}</div>
                                 <div><strong>Tipo:</strong> {
+                                  payment.payment_type === 'extension' ? 'Extensión de Plazo' :
                                   payment.payment_type === 'full' ? 'Pago Completo (Redención)' :
                                   payment.payment_type === 'partial' ? 'Pago Parcial' : 'Solo Interés'
                                 }</div>
@@ -1919,28 +2519,71 @@ export const PawnShopModule = () => {
                     </div>
                   </div>
                   
-                  <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div>
-                        <span className="text-sm font-medium text-gray-600">Período:</span>
-                        <div className="text-lg font-semibold">
-                          {selectedTransaction.period_days} días
+                  {/* Resumen de Pagos e Intereses */}
+                  {(() => {
+                    const totalPaid = paymentHistory.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+                    const today = new Date().toISOString().split('T')[0];
+                    const loanAmount = Number(selectedTransaction.loan_amount || 0);
+                    const estimatedValue = Number(selectedTransaction.estimated_value || 0);
+                    const interestEarned = loanAmount > 0 ? calculateAccumulatedInterest(selectedTransaction, today) : 0;
+                    const totalDue = loanAmount + interestEarned;
+                    const pendingAmount = Math.max(0, totalDue - totalPaid);
+                    
+                    return (
+                      <>
+                        <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border-2 border-blue-200">
+                          <h4 className="font-semibold text-lg mb-4 text-center">Resumen de Pagos</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                              <div className="text-sm font-medium text-gray-600 mb-1">Total Pagado</div>
+                              <div className="text-2xl font-bold text-green-600">
+                                ${totalPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                            <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                              <div className="text-sm font-medium text-gray-600 mb-1">Interés Ganado (Hasta Hoy)</div>
+                              <div className="text-2xl font-bold text-blue-600">
+                                ${interestEarned.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                            <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                              <div className="text-sm font-medium text-gray-600 mb-1">Monto Pendiente</div>
+                              <div className="text-2xl font-bold text-red-600">
+                                ${pendingAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-4 text-center text-sm text-gray-600">
+                            <p>Total a Pagar: <span className="font-semibold">${totalDue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
+                            <p className="text-xs mt-1">(Préstamo: ${loanAmount.toLocaleString()} + Interés: ${interestEarned.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</p>
+                          </div>
                         </div>
-                      </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-600">Diferencia (Valor - Préstamo):</span>
-                        <div className="text-lg font-semibold">
-                          ${(Number(selectedTransaction.estimated_value) - Number(selectedTransaction.loan_amount)).toLocaleString()}
+                        
+                        <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                              <span className="text-sm font-medium text-gray-600">Período:</span>
+                              <div className="text-lg font-semibold">
+                                {selectedTransaction.period_days} días
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-sm font-medium text-gray-600">Diferencia (Valor - Préstamo):</span>
+                              <div className="text-lg font-semibold">
+                                ${(estimatedValue - loanAmount).toLocaleString()}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-sm font-medium text-gray-600">Margen de Seguridad:</span>
+                              <div className="text-lg font-semibold">
+                                {estimatedValue > 0 ? ((estimatedValue - loanAmount) / estimatedValue * 100).toFixed(1) : '0.0'}%
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                      <div>
-                        <span className="text-sm font-medium text-gray-600">Margen de Seguridad:</span>
-                        <div className="text-lg font-semibold">
-                          {((Number(selectedTransaction.estimated_value) - Number(selectedTransaction.loan_amount)) / Number(selectedTransaction.estimated_value) * 100).toFixed(1)}%
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                      </>
+                    );
+                  })()}
                 </CardContent>
               </Card>
 
@@ -1979,7 +2622,49 @@ export const PawnShopModule = () => {
                 </CardContent>
               </Card>
 
-              {/* No action buttons inside Detalles */}
+              {/* Action Buttons */}
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedTransaction(null);
+                    setShowTransactionDetails(false);
+                  }}
+                >
+                  Cerrar
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowRateUpdateForm(true);
+                    setShowTransactionDetails(false);
+                  }}
+                >
+                  Actualizar Tasa
+                </Button>
+                {selectedTransaction.status !== 'deleted' && (
+                  <Button
+                    variant="destructive"
+                    onClick={async () => {
+                      if (confirm('¿Estás seguro de que deseas eliminar esta transacción? Se puede recuperar más tarde.')) {
+                        await handleDeleteTransaction(selectedTransaction.id);
+                      }
+                    }}
+                  >
+                    Eliminar
+                  </Button>
+                )}
+                {selectedTransaction.status === 'deleted' && (
+                  <Button
+                    variant="default"
+                    onClick={async () => {
+                      await handleRecoverTransaction(selectedTransaction.id);
+                    }}
+                  >
+                    Recuperar
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>
@@ -2019,7 +2704,12 @@ export const PawnShopModule = () => {
                 value={rateUpdateData.effective_date}
                 onChange={(e) => setRateUpdateData({...rateUpdateData, effective_date: e.target.value})}
                   required
+                  min={selectedTransaction?.start_date ? new Date(selectedTransaction.start_date).toISOString().split('T')[0] : undefined}
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Si la fecha es hoy o anterior, el cambio se aplicará inmediatamente. 
+                  Si es futura, se programará para aplicarse en esa fecha.
+                </p>
               </div>
 
               <div>
@@ -2053,6 +2743,7 @@ export const PawnShopModule = () => {
             <div className="space-y-3">
               <Button
                 variant="outline"
+                className="w-full"
                 onClick={() => {
                   setShowQuickUpdate(false);
                   setShowExtendForm(true);
@@ -2062,6 +2753,7 @@ export const PawnShopModule = () => {
               </Button>
               <Button
                 variant="outline"
+                className="w-full"
                 onClick={() => {
                   setShowQuickUpdate(false);
                   setRateUpdateData({
@@ -2076,6 +2768,7 @@ export const PawnShopModule = () => {
               </Button>
               <Button
                 variant="destructive"
+                className="w-full"
                 onClick={() => {
                   setShowQuickUpdate(false);
                   handleStatusChange(selectedTransaction.id, 'forfeited');
@@ -2083,8 +2776,87 @@ export const PawnShopModule = () => {
               >
                 Marcar como Perdido
               </Button>
+              {selectedTransaction.status !== 'deleted' && (
+                <Button
+                  variant="destructive"
+                  className="w-full"
+                  onClick={() => {
+                    setShowQuickUpdate(false);
+                    setShowDeleteDialog(true);
+                  }}
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Eliminar Transacción
+                </Button>
+              )}
+              {selectedTransaction.status === 'deleted' && (
+                <Button
+                  variant="default"
+                  className="w-full"
+                  onClick={async () => {
+                    setShowQuickUpdate(false);
+                    await handleRecoverTransaction(selectedTransaction.id);
+                  }}
+                >
+                  Recuperar Transacción
+                </Button>
+              )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Transaction Dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <XCircle className="h-5 w-5" />
+              Eliminar Transacción
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <p className="text-sm text-yellow-800">
+                <strong>¿Estás seguro?</strong> Esta acción marcará la transacción como eliminada, pero podrá ser recuperada más tarde.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="delete_reason">Razón de eliminación (opcional)</Label>
+              <Textarea
+                id="delete_reason"
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                placeholder="Ej: Error en el registro, cancelación por el cliente, etc."
+                rows={3}
+                className="mt-1"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button 
+                type="button" 
+                variant="outline" 
+                onClick={() => {
+                  setShowDeleteDialog(false);
+                  setDeleteReason('');
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                type="button"
+                variant="destructive" 
+                onClick={async () => {
+                  if (selectedTransaction) {
+                    await handleDeleteTransaction(selectedTransaction.id);
+                  }
+                }}
+              >
+                <XCircle className="h-4 w-4 mr-2" />
+                Eliminar
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
