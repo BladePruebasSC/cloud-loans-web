@@ -826,6 +826,15 @@ export const PawnShopModule = () => {
       // Obtener datos del cliente
       const selectedClient = clients.find(c => c.id === formData.client_id);
       
+      // Convertir fecha de inicio a formato con zona horaria UTC-4 (Santo Domingo)
+      // Esto evita que se guarde un día antes debido a la zona horaria
+      const startDateStr = formData.start_date;
+      const startDateWithTimezone = `${startDateStr}T00:00:00-04:00`;
+      
+      // Convertir fecha de vencimiento a formato con zona horaria UTC-4
+      const dueDateStr = formData.due_date;
+      const dueDateWithTimezone = `${dueDateStr}T23:59:59-04:00`;
+
       const transactionData = {
         user_id: user.id,
         client_id: formData.client_id,
@@ -840,8 +849,8 @@ export const PawnShopModule = () => {
         interest_rate: formData.interest_rate,
         interest_rate_type: formData.interest_rate_type,
         period_days: formData.period_days,
-        start_date: formData.start_date,
-        due_date: formData.due_date,
+        start_date: startDateWithTimezone,
+        due_date: dueDateWithTimezone,
         notes: formData.notes,
         status: 'active'
       };
@@ -913,15 +922,32 @@ export const PawnShopModule = () => {
 
       if (paymentError) throw paymentError;
 
+      // Actualizar start_date al día siguiente al pago para reiniciar el cálculo de interés
+      // El interés debe empezar desde mañana después del pago
+      const paymentDateObj = new Date(paymentDate);
+      const tomorrow = new Date(paymentDateObj);
+      tomorrow.setDate(paymentDateObj.getDate() + 1);
+      
+      // Convertir a formato YYYY-MM-DD y agregar hora en UTC-4 (Santo Domingo)
+      // Crear fecha en zona horaria de Santo Domingo (UTC-4)
+      const tomorrowStr = tomorrow.toISOString().split('T')[0];
+      const tomorrowInSantoDomingo = `${tomorrowStr}T00:00:00-04:00`;
+      
+      const updateData: any = {
+        start_date: tomorrowInSantoDomingo
+      };
+      
       // Update transaction status if full payment (balance is 0)
       if (paymentBreakdown.remainingBalance <= 0) {
-        const { error: updateError } = await supabase
-          .from('pawn_transactions')
-          .update({ status: 'redeemed' })
-          .eq('id', selectedTransaction.id);
-
-        if (updateError) throw updateError;
+        updateData.status = 'redeemed';
       }
+
+      const { error: updateError } = await supabase
+        .from('pawn_transactions')
+        .update(updateData)
+        .eq('id', selectedTransaction.id);
+
+      if (updateError) throw updateError;
 
       toast.success('Pago registrado exitosamente');
       setShowPaymentForm(false);
