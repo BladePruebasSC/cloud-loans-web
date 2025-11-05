@@ -1437,10 +1437,26 @@ export const PawnShopModule = () => {
         .limit(1)
         .single();
       
-      // Si hay un pago de capital, usar esa fecha; si no, usar la fecha de inicio
-      return lastPayment?.payment_date || startDate;
+      // Si hay un pago de capital, el interés se calcula desde el día SIGUIENTE al pago
+      // Si no hay pagos, se calcula desde la fecha de inicio
+      const paymentDate = lastPayment?.payment_date || startDate;
+      
+      // Normalizar la fecha: extraer solo la parte de fecha (YYYY-MM-DD)
+      const datePart = paymentDate.split('T')[0];
+      
+      // Si hay un pago de capital, el interés se calcula desde el día siguiente
+      if (lastPayment) {
+        const lastPaymentDateObj = new Date(datePart + 'T00:00:00');
+        lastPaymentDateObj.setDate(lastPaymentDateObj.getDate() + 1); // Día siguiente al pago de capital
+        return lastPaymentDateObj.toISOString().split('T')[0] + 'T00:00:00';
+      }
+      
+      // Si no hay pagos, usar la fecha de inicio tal cual
+      return datePart + 'T00:00:00';
     } catch (error) {
-      return startDate;
+      // Si no hay pagos de capital, usar la fecha de inicio
+      const datePart = startDate.split('T')[0];
+      return datePart + 'T00:00:00';
     }
   };
 
@@ -1451,10 +1467,37 @@ export const PawnShopModule = () => {
     startDate: string, 
     endDate: string
   ): number => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const daysDiff = Math.max(0, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-    return calculateDailyInterest(principal, monthlyRate, daysDiff);
+    // Normalizar fechas para trabajar solo con la parte de fecha (sin hora)
+    // Extraer solo la fecha (YYYY-MM-DD) para evitar problemas de zona horaria
+    const startDateStr = startDate.split('T')[0];
+    const endDateStr = endDate.split('T')[0];
+    
+    const startDateOnly = new Date(startDateStr + 'T00:00:00');
+    const endDateOnly = new Date(endDateStr + 'T00:00:00');
+    
+    // El interés se calcula desde startDate (inclusive) hasta el día ANTERIOR al pago
+    // IMPORTANTE: El día del pago NO genera interés, solo se cuenta hasta el día anterior
+    // Ejemplo 1: Si startDate es 2024-01-01 y endDate es 2024-01-02 (pago al día siguiente)
+    // - Diferencia: 1 día
+    // - Pero el día 02/01 es el día del pago, así que NO genera interés
+    // - Interés acumulado: 0 días (se paga el mismo día que inicia, no hay interés)
+    // Ejemplo 2: Si startDate es 2024-01-01 y endDate es 2024-01-03 (pago 2 días después)
+    // - Diferencia: 2 días
+    // - El día 03/01 es el día del pago, así que NO genera interés
+    // - Interés acumulado: 1 día (solo el día 01/01)
+    const diffTime = endDateOnly.getTime() - startDateOnly.getTime();
+    const daysDiff = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+    
+    // Si las fechas son el mismo día o endDate es anterior, no hay interés acumulado
+    if (daysDiff <= 0) {
+      return 0;
+    }
+    
+    // Restar 1 día porque el día del pago NO genera interés acumulado
+    // El interés se acumula hasta el día anterior al pago
+    const actualDays = Math.max(0, daysDiff - 1);
+    
+    return calculateDailyInterest(principal, monthlyRate, actualDays);
   };
 
   // Función para procesar pagos con lógica de interés primero, luego capital
@@ -3479,44 +3522,21 @@ export const PawnShopModule = () => {
                 <Button
                   variant="outline"
                   onClick={() => {
+                    setShowQuickUpdate(true);
+                    setShowTransactionDetails(false);
+                  }}
+                >
+                  Actualizar
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
                     setShowRateUpdateForm(true);
                     setShowTransactionDetails(false);
                   }}
                 >
                   Actualizar Tasa
                 </Button>
-                {selectedTransaction.status !== 'deleted' && (
-                  <Button
-                    variant="destructive"
-                    onClick={async () => {
-                      if (confirm('¿Estás seguro de que deseas eliminar esta transacción? Se puede recuperar más tarde.')) {
-                        await handleDeleteTransaction(selectedTransaction.id);
-                      }
-                    }}
-                  >
-                    Eliminar
-                  </Button>
-                )}
-                {selectedTransaction.status === 'deleted' && (
-                  <Button
-                    variant="default"
-                    onClick={async () => {
-                      await handleRecoverTransaction(selectedTransaction.id);
-                    }}
-                  >
-                    Recuperar
-                  </Button>
-                )}
-                {selectedTransaction.status === 'forfeited' && (
-                  <Button
-                    variant="default"
-                    onClick={async () => {
-                      await handleRecoverForfeitedTransaction(selectedTransaction.id);
-                    }}
-                  >
-                    Recuperar
-                  </Button>
-                )}
               </div>
             </div>
           )}
