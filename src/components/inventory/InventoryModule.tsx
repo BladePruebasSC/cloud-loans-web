@@ -100,6 +100,14 @@ const InventoryModule = () => {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const { user } = useAuth();
   
+  // Estados para filtros de Stock Bajo
+  const [lowStockCategoryFilter, setLowStockCategoryFilter] = useState<string>('');
+  const [lowStockBrandFilter, setLowStockBrandFilter] = useState<string>('');
+  const [showLowStockCategorySuggestions, setShowLowStockCategorySuggestions] = useState(false);
+  const [lowStockCategorySuggestions, setLowStockCategorySuggestions] = useState<string[]>([]);
+  const [showLowStockBrandSuggestions, setShowLowStockBrandSuggestions] = useState(false);
+  const [lowStockBrandSuggestions, setLowStockBrandSuggestions] = useState<string[]>([]);
+  
   // Estados para ventas POS
   const [sales, setSales] = useState<SaleWithDetails[]>([]);
   const [loadingSales, setLoadingSales] = useState(false);
@@ -124,9 +132,15 @@ const InventoryModule = () => {
   
   const [salesDateFrom, setSalesDateFrom] = useState<string>('');
   const [salesDateTo, setSalesDateTo] = useState<string>('');
-  const [salesProductFilter, setSalesProductFilter] = useState<string>('all');
-  const [salesCategoryFilter, setSalesCategoryFilter] = useState<string>('all');
-  const [salesBrandFilter, setSalesBrandFilter] = useState<string>('all');
+  const [salesProductFilter, setSalesProductFilter] = useState<string>('');
+  const [salesCategoryFilter, setSalesCategoryFilter] = useState<string>('');
+  const [salesBrandFilter, setSalesBrandFilter] = useState<string>('');
+  const [showSalesProductSuggestions, setShowSalesProductSuggestions] = useState(false);
+  const [salesProductSuggestions, setSalesProductSuggestions] = useState<Product[]>([]);
+  const [showSalesCategorySuggestions, setShowSalesCategorySuggestions] = useState(false);
+  const [salesCategorySuggestions, setSalesCategorySuggestions] = useState<string[]>([]);
+  const [showSalesBrandSuggestions, setShowSalesBrandSuggestions] = useState(false);
+  const [salesBrandSuggestions, setSalesBrandSuggestions] = useState<string[]>([]);
   
   // Inicializar fechas por defecto al montar el componente
   useEffect(() => {
@@ -144,9 +158,15 @@ const InventoryModule = () => {
   const [loadingMovements, setLoadingMovements] = useState(false);
   const [movementDateFrom, setMovementDateFrom] = useState<string>('');
   const [movementDateTo, setMovementDateTo] = useState<string>('');
-  const [movementProductFilter, setMovementProductFilter] = useState<string>('all');
-  const [movementCategoryFilter, setMovementCategoryFilter] = useState<string>('all');
-  const [movementBrandFilter, setMovementBrandFilter] = useState<string>('all');
+  const [movementProductFilter, setMovementProductFilter] = useState<string>('');
+  const [movementCategoryFilter, setMovementCategoryFilter] = useState<string>('');
+  const [movementBrandFilter, setMovementBrandFilter] = useState<string>('');
+  const [showMovementProductSuggestions, setShowMovementProductSuggestions] = useState(false);
+  const [movementProductSuggestions, setMovementProductSuggestions] = useState<Product[]>([]);
+  const [showMovementCategorySuggestions, setShowMovementCategorySuggestions] = useState(false);
+  const [movementCategorySuggestions, setMovementCategorySuggestions] = useState<string[]>([]);
+  const [showMovementBrandSuggestions, setShowMovementBrandSuggestions] = useState(false);
+  const [movementBrandSuggestions, setMovementBrandSuggestions] = useState<string[]>([]);
   
   // Estados para acciones de ventas
   const [selectedSale, setSelectedSale] = useState<SaleWithDetails | null>(null);
@@ -307,6 +327,249 @@ const InventoryModule = () => {
     setFormData({...formData, brand});
     setShowBrandSuggestions(false);
     setBrandSuggestions([]);
+  };
+
+  // Funciones de búsqueda para filtros de Stock Bajo
+  const handleLowStockCategorySearch = (searchTerm: string) => {
+    setLowStockCategoryFilter(searchTerm);
+    
+    if (searchTerm.trim() === '') {
+      setLowStockCategorySuggestions([]);
+      setShowLowStockCategorySuggestions(false);
+      return;
+    }
+
+    const allCategories = getAllCategories();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    const exactMatches = allCategories.filter(cat => 
+      cat.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allCategories.filter(cat => 
+      cat.toLowerCase().startsWith(searchLower) && cat.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allCategories.filter(cat => 
+      cat.toLowerCase().includes(searchLower) && !cat.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setLowStockCategorySuggestions(filtered);
+    setShowLowStockCategorySuggestions(filtered.length > 0);
+  };
+
+  const handleLowStockBrandSearch = (searchTerm: string) => {
+    setLowStockBrandFilter(searchTerm);
+    
+    if (searchTerm.trim() === '') {
+      setLowStockBrandSuggestions([]);
+      setShowLowStockBrandSuggestions(false);
+      return;
+    }
+
+    const allBrands = getAllBrands();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    const exactMatches = allBrands.filter(brand => 
+      brand.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allBrands.filter(brand => 
+      brand.toLowerCase().startsWith(searchLower) && brand.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allBrands.filter(brand => 
+      brand.toLowerCase().includes(searchLower) && !brand.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setLowStockBrandSuggestions(filtered);
+    setShowLowStockBrandSuggestions(filtered.length > 0);
+  };
+
+  // Funciones de búsqueda para filtros de Ventas POS
+  const handleSalesProductSearch = (searchTerm: string) => {
+    setSalesProductFilter(searchTerm);
+    
+    if (searchTerm.trim() === '') {
+      setSalesProductSuggestions([]);
+      setShowSalesProductSuggestions(false);
+      return;
+    }
+
+    const searchLower = searchTerm.toLowerCase().trim();
+    const exactMatches = products.filter(p => 
+      p.name.toLowerCase() === searchLower || p.id === searchTerm
+    );
+    
+    const startsWithMatches = products.filter(p => 
+      (p.name.toLowerCase().startsWith(searchLower) || (p.sku && p.sku.toLowerCase().startsWith(searchLower))) &&
+      p.name.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = products.filter(p => 
+      (p.name.toLowerCase().includes(searchLower) || (p.sku && p.sku.toLowerCase().includes(searchLower))) &&
+      !p.name.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches].slice(0, 10);
+    
+    setSalesProductSuggestions(filtered);
+    setShowSalesProductSuggestions(filtered.length > 0);
+  };
+
+  const handleSalesCategorySearch = (searchTerm: string) => {
+    setSalesCategoryFilter(searchTerm);
+    
+    if (searchTerm.trim() === '') {
+      setSalesCategorySuggestions([]);
+      setShowSalesCategorySuggestions(false);
+      return;
+    }
+
+    const allCategories = getAllCategories();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    const exactMatches = allCategories.filter(cat => 
+      cat.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allCategories.filter(cat => 
+      cat.toLowerCase().startsWith(searchLower) && cat.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allCategories.filter(cat => 
+      cat.toLowerCase().includes(searchLower) && !cat.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setSalesCategorySuggestions(filtered);
+    setShowSalesCategorySuggestions(filtered.length > 0);
+  };
+
+  const handleSalesBrandSearch = (searchTerm: string) => {
+    setSalesBrandFilter(searchTerm);
+    
+    if (searchTerm.trim() === '') {
+      setSalesBrandSuggestions([]);
+      setShowSalesBrandSuggestions(false);
+      return;
+    }
+
+    const allBrands = getAllBrands();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    const exactMatches = allBrands.filter(brand => 
+      brand.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allBrands.filter(brand => 
+      brand.toLowerCase().startsWith(searchLower) && brand.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allBrands.filter(brand => 
+      brand.toLowerCase().includes(searchLower) && !brand.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setSalesBrandSuggestions(filtered);
+    setShowSalesBrandSuggestions(filtered.length > 0);
+  };
+
+  // Funciones de búsqueda para filtros de Movimientos
+  const handleMovementProductSearch = (searchTerm: string) => {
+    setMovementProductFilter(searchTerm);
+    
+    if (searchTerm.trim() === '') {
+      setMovementProductSuggestions([]);
+      setShowMovementProductSuggestions(false);
+      return;
+    }
+
+    const searchLower = searchTerm.toLowerCase().trim();
+    const exactMatches = products.filter(p => 
+      p.name.toLowerCase() === searchLower || p.id === searchTerm
+    );
+    
+    const startsWithMatches = products.filter(p => 
+      (p.name.toLowerCase().startsWith(searchLower) || (p.sku && p.sku.toLowerCase().startsWith(searchLower))) &&
+      p.name.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = products.filter(p => 
+      (p.name.toLowerCase().includes(searchLower) || (p.sku && p.sku.toLowerCase().includes(searchLower))) &&
+      !p.name.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches].slice(0, 10);
+    
+    setMovementProductSuggestions(filtered);
+    setShowMovementProductSuggestions(filtered.length > 0);
+  };
+
+  const handleMovementCategorySearch = (searchTerm: string) => {
+    setMovementCategoryFilter(searchTerm);
+    
+    if (searchTerm.trim() === '') {
+      setMovementCategorySuggestions([]);
+      setShowMovementCategorySuggestions(false);
+      return;
+    }
+
+    const allCategories = getAllCategories();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    const exactMatches = allCategories.filter(cat => 
+      cat.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allCategories.filter(cat => 
+      cat.toLowerCase().startsWith(searchLower) && cat.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allCategories.filter(cat => 
+      cat.toLowerCase().includes(searchLower) && !cat.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setMovementCategorySuggestions(filtered);
+    setShowMovementCategorySuggestions(filtered.length > 0);
+  };
+
+  const handleMovementBrandSearch = (searchTerm: string) => {
+    setMovementBrandFilter(searchTerm);
+    
+    if (searchTerm.trim() === '') {
+      setMovementBrandSuggestions([]);
+      setShowMovementBrandSuggestions(false);
+      return;
+    }
+
+    const allBrands = getAllBrands();
+    const searchLower = searchTerm.toLowerCase().trim();
+    
+    const exactMatches = allBrands.filter(brand => 
+      brand.toLowerCase() === searchLower
+    );
+    
+    const startsWithMatches = allBrands.filter(brand => 
+      brand.toLowerCase().startsWith(searchLower) && brand.toLowerCase() !== searchLower
+    );
+    
+    const containsMatches = allBrands.filter(brand => 
+      brand.toLowerCase().includes(searchLower) && !brand.toLowerCase().startsWith(searchLower)
+    );
+    
+    const filtered = [...exactMatches, ...startsWithMatches, ...containsMatches];
+    
+    setMovementBrandSuggestions(filtered);
+    setShowMovementBrandSuggestions(filtered.length > 0);
   };
 
   const fetchAutoSequentialFlag = async () => {
@@ -470,15 +733,15 @@ const InventoryModule = () => {
         }
 
         // Aplicar filtros de producto, categoría y marca
-        const matchesProduct = salesProductFilter === 'all' || 
+        const matchesProduct = !salesProductFilter || 
             saleDetails.length === 0 || // Si no hay detalles, mostrar igual
-            saleDetails.some(d => d.product_id === salesProductFilter);
+            saleDetails.some(d => d.product_id === salesProductFilter || d.product?.name === salesProductFilter);
         
-        const matchesCategory = salesCategoryFilter === 'all' || 
+        const matchesCategory = !salesCategoryFilter || 
             saleDetails.length === 0 ||
             saleDetails.some(d => d.product?.category === salesCategoryFilter);
         
-        const matchesBrand = salesBrandFilter === 'all' || 
+        const matchesBrand = !salesBrandFilter || 
             saleDetails.length === 0 ||
             saleDetails.some(d => d.product?.brand === salesBrandFilter);
         
@@ -586,9 +849,9 @@ const InventoryModule = () => {
 
             if (product) {
               // Aplicar filtros de producto, categoría y marca
-              const matchesProduct = movementProductFilter === 'all' || (sale as any).product_id === movementProductFilter;
-              const matchesCategory = movementCategoryFilter === 'all' || product.category === movementCategoryFilter;
-              const matchesBrand = movementBrandFilter === 'all' || product.brand === movementBrandFilter;
+              const matchesProduct = !movementProductFilter || (sale as any).product_id === movementProductFilter || product.name === movementProductFilter;
+              const matchesCategory = !movementCategoryFilter || product.category === movementCategoryFilter;
+              const matchesBrand = !movementBrandFilter || product.brand === movementBrandFilter;
               
               if (matchesProduct && matchesCategory && matchesBrand) {
                 movementsList.push({
@@ -639,13 +902,11 @@ const InventoryModule = () => {
               if (!product) continue;
 
               // Aplicar filtros de producto, categoría y marca
-              if (movementProductFilter !== 'all' && detail.product_id !== movementProductFilter) {
-                continue;
-              }
-              if (movementCategoryFilter !== 'all' && product.category !== movementCategoryFilter) {
-                continue;
-              }
-              if (movementBrandFilter !== 'all' && product.brand !== movementBrandFilter) {
+              const matchesProduct = !movementProductFilter || detail.product_id === movementProductFilter || product.name === movementProductFilter;
+              const matchesCategory = !movementCategoryFilter || product.category === movementCategoryFilter;
+              const matchesBrand = !movementBrandFilter || product.brand === movementBrandFilter;
+              
+              if (!matchesProduct || !matchesCategory || !matchesBrand) {
                 continue;
               }
 
@@ -844,7 +1105,13 @@ const InventoryModule = () => {
   });
 
   // Stock bajo: productos con stock actual igual o menor al stock mínimo
-  const lowStockProducts = products.filter(p => p.current_stock <= p.min_stock);
+  // Aplicar filtros de categoría y marca
+  const lowStockProducts = products.filter(p => {
+    const matchesLowStock = p.current_stock <= p.min_stock;
+    const matchesCategory = !lowStockCategoryFilter || p.category === lowStockCategoryFilter;
+    const matchesBrand = !lowStockBrandFilter || p.brand === lowStockBrandFilter;
+    return matchesLowStock && matchesCategory && matchesBrand;
+  });
   const totalValue = products.reduce((sum, p) => sum + (p.current_stock * p.purchase_price), 0);
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
   const brands = [...new Set(products.map(p => p.brand).filter(Boolean))];
@@ -1359,28 +1626,106 @@ const InventoryModule = () => {
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
                 </div>
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Todas las categorías" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todas las categorías</SelectItem>
-                    {categories.map(category => (
-                      <SelectItem key={category} value={category!}>{category}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={selectedBrand} onValueChange={setSelectedBrand}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Todas las marcas" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todas las marcas</SelectItem>
-                    {brands.map(brand => (
-                      <SelectItem key={brand} value={brand!}>{brand}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="relative">
+                  <Input
+                    placeholder="Buscar categoría..."
+                    value={selectedCategory === 'all' ? '' : selectedCategory}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedCategory(val || 'all');
+                      if (val) handleCategorySearch(val);
+                    }}
+                    onFocus={() => {
+                      if (selectedCategory !== 'all') {
+                        handleCategorySearch(selectedCategory);
+                      } else {
+                        const allCategories = getAllCategories();
+                        setCategorySuggestions(allCategories);
+                        setShowCategorySuggestions(allCategories.length > 0);
+                      }
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setShowCategorySuggestions(false), 200);
+                    }}
+                  />
+                  {showCategorySuggestions && categorySuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      <div
+                        className="p-3 hover:bg-gray-100 cursor-pointer border-b"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setSelectedCategory('all');
+                          setShowCategorySuggestions(false);
+                        }}
+                      >
+                        <div className="font-medium text-gray-500">Todas las categorías</div>
+                      </div>
+                      {categorySuggestions.map((category, index) => (
+                        <div
+                          key={index}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            selectCategory(category);
+                            setSelectedCategory(category);
+                          }}
+                        >
+                          <div className="font-medium">{category}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="relative">
+                  <Input
+                    placeholder="Buscar marca..."
+                    value={selectedBrand === 'all' ? '' : selectedBrand}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedBrand(val || 'all');
+                      if (val) handleBrandSearch(val);
+                    }}
+                    onFocus={() => {
+                      if (selectedBrand !== 'all') {
+                        handleBrandSearch(selectedBrand);
+                      } else {
+                        const allBrands = getAllBrands();
+                        setBrandSuggestions(allBrands);
+                        setShowBrandSuggestions(allBrands.length > 0);
+                      }
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setShowBrandSuggestions(false), 200);
+                    }}
+                  />
+                  {showBrandSuggestions && brandSuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      <div
+                        className="p-3 hover:bg-gray-100 cursor-pointer border-b"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setSelectedBrand('all');
+                          setShowBrandSuggestions(false);
+                        }}
+                      >
+                        <div className="font-medium text-gray-500">Todas las marcas</div>
+                      </div>
+                      {brandSuggestions.map((brand, index) => (
+                        <div
+                          key={index}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            selectBrand(brand);
+                            setSelectedBrand(brand);
+                          }}
+                        >
+                          <div className="font-medium">{brand}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -1460,10 +1805,113 @@ const InventoryModule = () => {
           </Card>
         </TabsContent>
 
-        <TabsContent value="stock-bajo">
+        <TabsContent value="stock-bajo" className="space-y-6">
+          {/* Filtros de Stock Bajo */}
           <Card>
             <CardHeader>
-              <CardTitle>Productos con Stock Bajo</CardTitle>
+              <CardTitle>Filtros de Stock Bajo</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label>Categoría</Label>
+                  <div className="relative">
+                    <Input
+                      placeholder="Buscar o escribir categoría..."
+                      value={lowStockCategoryFilter}
+                      onChange={(e) => handleLowStockCategorySearch(e.target.value)}
+                      onFocus={() => {
+                        if (lowStockCategoryFilter.trim()) {
+                          handleLowStockCategorySearch(lowStockCategoryFilter);
+                        } else {
+                          const allCategories = getAllCategories();
+                          setLowStockCategorySuggestions(allCategories);
+                          setShowLowStockCategorySuggestions(allCategories.length > 0);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowLowStockCategorySuggestions(false), 200);
+                      }}
+                    />
+                    {showLowStockCategorySuggestions && lowStockCategorySuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                        {lowStockCategorySuggestions.map((category, index) => (
+                          <div
+                            key={index}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setLowStockCategoryFilter(category);
+                              setShowLowStockCategorySuggestions(false);
+                              setLowStockCategorySuggestions([]);
+                            }}
+                          >
+                            <div className="font-medium">{category}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <Label>Marca</Label>
+                  <div className="relative">
+                    <Input
+                      placeholder="Buscar o escribir marca..."
+                      value={lowStockBrandFilter}
+                      onChange={(e) => handleLowStockBrandSearch(e.target.value)}
+                      onFocus={() => {
+                        if (lowStockBrandFilter.trim()) {
+                          handleLowStockBrandSearch(lowStockBrandFilter);
+                        } else {
+                          const allBrands = getAllBrands();
+                          setLowStockBrandSuggestions(allBrands);
+                          setShowLowStockBrandSuggestions(allBrands.length > 0);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowLowStockBrandSuggestions(false), 200);
+                      }}
+                    />
+                    {showLowStockBrandSuggestions && lowStockBrandSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                        {lowStockBrandSuggestions.map((brand, index) => (
+                          <div
+                            key={index}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setLowStockBrandFilter(brand);
+                              setShowLowStockBrandSuggestions(false);
+                              setLowStockBrandSuggestions([]);
+                            }}
+                          >
+                            <div className="font-medium">{brand}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-end">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => {
+                      setLowStockCategoryFilter('');
+                      setLowStockBrandFilter('');
+                    }}
+                    className="w-full"
+                  >
+                    Limpiar Filtros
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Productos con Stock Bajo ({lowStockProducts.length})</CardTitle>
             </CardHeader>
             <CardContent>
               {lowStockProducts.length === 0 ? (
@@ -1528,47 +1976,117 @@ const InventoryModule = () => {
                 </div>
                 <div>
                   <Label>Producto</Label>
-                  <Select value={salesProductFilter} onValueChange={setSalesProductFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todos los productos" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos los productos</SelectItem>
-                      {products.map(product => (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Input
+                      placeholder="Buscar producto..."
+                      value={salesProductFilter}
+                      onChange={(e) => handleSalesProductSearch(e.target.value)}
+                      onFocus={() => {
+                        if (salesProductFilter.trim()) {
+                          handleSalesProductSearch(salesProductFilter);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowSalesProductSuggestions(false), 200);
+                      }}
+                    />
+                    {showSalesProductSuggestions && salesProductSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                        {salesProductSuggestions.map((product) => (
+                          <div
+                            key={product.id}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setSalesProductFilter(product.id);
+                              setShowSalesProductSuggestions(false);
+                            }}
+                          >
+                            <div className="font-medium">{product.name}</div>
+                            {product.sku && <div className="text-sm text-gray-500">Código: {product.sku}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Label>Categoría</Label>
-                  <Select value={salesCategoryFilter} onValueChange={setSalesCategoryFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todas las categorías" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todas las categorías</SelectItem>
-                      {categories.map(category => (
-                        <SelectItem key={category} value={category!}>{category}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Input
+                      placeholder="Buscar categoría..."
+                      value={salesCategoryFilter}
+                      onChange={(e) => handleSalesCategorySearch(e.target.value)}
+                      onFocus={() => {
+                        if (salesCategoryFilter.trim()) {
+                          handleSalesCategorySearch(salesCategoryFilter);
+                        } else {
+                          const allCategories = getAllCategories();
+                          setSalesCategorySuggestions(allCategories);
+                          setShowSalesCategorySuggestions(allCategories.length > 0);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowSalesCategorySuggestions(false), 200);
+                      }}
+                    />
+                    {showSalesCategorySuggestions && salesCategorySuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                        {salesCategorySuggestions.map((category, index) => (
+                          <div
+                            key={index}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setSalesCategoryFilter(category);
+                              setShowSalesCategorySuggestions(false);
+                            }}
+                          >
+                            <div className="font-medium">{category}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Label>Marca</Label>
-                  <Select value={salesBrandFilter} onValueChange={setSalesBrandFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todas las marcas" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todas las marcas</SelectItem>
-                      {brands.map(brand => (
-                        <SelectItem key={brand} value={brand!}>{brand}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Input
+                      placeholder="Buscar marca..."
+                      value={salesBrandFilter}
+                      onChange={(e) => handleSalesBrandSearch(e.target.value)}
+                      onFocus={() => {
+                        if (salesBrandFilter.trim()) {
+                          handleSalesBrandSearch(salesBrandFilter);
+                        } else {
+                          const allBrands = getAllBrands();
+                          setSalesBrandSuggestions(allBrands);
+                          setShowSalesBrandSuggestions(allBrands.length > 0);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowSalesBrandSuggestions(false), 200);
+                      }}
+                    />
+                    {showSalesBrandSuggestions && salesBrandSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                        {salesBrandSuggestions.map((brand, index) => (
+                          <div
+                            key={index}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setSalesBrandFilter(brand);
+                              setShowSalesBrandSuggestions(false);
+                            }}
+                          >
+                            <div className="font-medium">{brand}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-end">
                   <Button 
@@ -1576,9 +2094,9 @@ const InventoryModule = () => {
                     onClick={() => {
                       setSalesDateFrom(getTodayStart());
                       setSalesDateTo(getTodayEnd());
-                      setSalesProductFilter('all');
-                      setSalesCategoryFilter('all');
-                      setSalesBrandFilter('all');
+                      setSalesProductFilter('');
+                      setSalesCategoryFilter('');
+                      setSalesBrandFilter('');
                     }}
                     className="w-full"
                   >
@@ -1763,47 +2281,117 @@ const InventoryModule = () => {
                 </div>
                 <div>
                   <Label>Producto</Label>
-                  <Select value={movementProductFilter} onValueChange={setMovementProductFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todos los productos" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos los productos</SelectItem>
-                      {products.map(product => (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Input
+                      placeholder="Buscar producto..."
+                      value={movementProductFilter}
+                      onChange={(e) => handleMovementProductSearch(e.target.value)}
+                      onFocus={() => {
+                        if (movementProductFilter.trim()) {
+                          handleMovementProductSearch(movementProductFilter);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowMovementProductSuggestions(false), 200);
+                      }}
+                    />
+                    {showMovementProductSuggestions && movementProductSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                        {movementProductSuggestions.map((product) => (
+                          <div
+                            key={product.id}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setMovementProductFilter(product.id);
+                              setShowMovementProductSuggestions(false);
+                            }}
+                          >
+                            <div className="font-medium">{product.name}</div>
+                            {product.sku && <div className="text-sm text-gray-500">Código: {product.sku}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Label>Categoría</Label>
-                  <Select value={movementCategoryFilter} onValueChange={setMovementCategoryFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todas las categorías" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todas las categorías</SelectItem>
-                      {categories.map(category => (
-                        <SelectItem key={category} value={category!}>{category}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Input
+                      placeholder="Buscar categoría..."
+                      value={movementCategoryFilter}
+                      onChange={(e) => handleMovementCategorySearch(e.target.value)}
+                      onFocus={() => {
+                        if (movementCategoryFilter.trim()) {
+                          handleMovementCategorySearch(movementCategoryFilter);
+                        } else {
+                          const allCategories = getAllCategories();
+                          setMovementCategorySuggestions(allCategories);
+                          setShowMovementCategorySuggestions(allCategories.length > 0);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowMovementCategorySuggestions(false), 200);
+                      }}
+                    />
+                    {showMovementCategorySuggestions && movementCategorySuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                        {movementCategorySuggestions.map((category, index) => (
+                          <div
+                            key={index}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setMovementCategoryFilter(category);
+                              setShowMovementCategorySuggestions(false);
+                            }}
+                          >
+                            <div className="font-medium">{category}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <Label>Marca</Label>
-                  <Select value={movementBrandFilter} onValueChange={setMovementBrandFilter}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Todas las marcas" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todas las marcas</SelectItem>
-                      {brands.map(brand => (
-                        <SelectItem key={brand} value={brand!}>{brand}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <Input
+                      placeholder="Buscar marca..."
+                      value={movementBrandFilter}
+                      onChange={(e) => handleMovementBrandSearch(e.target.value)}
+                      onFocus={() => {
+                        if (movementBrandFilter.trim()) {
+                          handleMovementBrandSearch(movementBrandFilter);
+                        } else {
+                          const allBrands = getAllBrands();
+                          setMovementBrandSuggestions(allBrands);
+                          setShowMovementBrandSuggestions(allBrands.length > 0);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setShowMovementBrandSuggestions(false), 200);
+                      }}
+                    />
+                    {showMovementBrandSuggestions && movementBrandSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                        {movementBrandSuggestions.map((brand, index) => (
+                          <div
+                            key={index}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setMovementBrandFilter(brand);
+                              setShowMovementBrandSuggestions(false);
+                            }}
+                          >
+                            <div className="font-medium">{brand}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-end">
                   <Button 
@@ -1811,9 +2399,9 @@ const InventoryModule = () => {
                     onClick={() => {
                       setMovementDateFrom('');
                       setMovementDateTo('');
-                      setMovementProductFilter('all');
-                      setMovementCategoryFilter('all');
-                      setMovementBrandFilter('all');
+                      setMovementProductFilter('');
+                      setMovementCategoryFilter('');
+                      setMovementBrandFilter('');
                     }}
                     className="w-full"
                   >
