@@ -94,8 +94,7 @@ interface PaymentFormContentProps {
   onCancel: () => void;
   onSubmit: (e: React.FormEvent) => void;
   getCurrentRemainingPrincipal: (transactionId: string, initialLoanAmount: number) => Promise<number>;
-  getLastPaymentDate: (transactionId: string, startDate: string) => Promise<string>;
-  calculateInterestFromDate: (principal: number, monthlyRate: number, startDate: string, endDate: string) => number;
+  calculateAccumulatedInterest: (transaction: PawnTransaction, currentDate: string) => number;
 }
 
 const PaymentFormContent: React.FC<PaymentFormContentProps> = ({
@@ -105,8 +104,7 @@ const PaymentFormContent: React.FC<PaymentFormContentProps> = ({
   onCancel,
   onSubmit,
   getCurrentRemainingPrincipal,
-  getLastPaymentDate,
-  calculateInterestFromDate
+  calculateAccumulatedInterest
 }) => {
   const [loading, setLoading] = useState(true);
   const [currentPrincipal, setCurrentPrincipal] = useState(0);
@@ -124,14 +122,9 @@ const PaymentFormContent: React.FC<PaymentFormContentProps> = ({
         const principal = await getCurrentRemainingPrincipal(transaction.id, Number(transaction.loan_amount));
         setCurrentPrincipal(principal);
         
-        const lastPaymentDate = await getLastPaymentDate(transaction.id, transaction.start_date);
-        const paymentDate = new Date().toISOString();
-        const interest = calculateInterestFromDate(
-          principal,
-          Number(transaction.interest_rate),
-          lastPaymentDate,
-          paymentDate
-        );
+        // Usar la misma función que las estadísticas: desde start_date hasta hoy
+        const today = new Date().toISOString().split('T')[0];
+        const interest = calculateAccumulatedInterest(transaction, today);
         setAccumulatedInterest(interest);
       } catch (error) {
         console.error('Error calculating payment info:', error);
@@ -1437,26 +1430,10 @@ export const PawnShopModule = () => {
         .limit(1)
         .single();
       
-      // Si hay un pago de capital, el interés se calcula desde el día SIGUIENTE al pago
-      // Si no hay pagos, se calcula desde la fecha de inicio
-      const paymentDate = lastPayment?.payment_date || startDate;
-      
-      // Normalizar la fecha: extraer solo la parte de fecha (YYYY-MM-DD)
-      const datePart = paymentDate.split('T')[0];
-      
-      // Si hay un pago de capital, el interés se calcula desde el día siguiente
-      if (lastPayment) {
-        const lastPaymentDateObj = new Date(datePart + 'T00:00:00');
-        lastPaymentDateObj.setDate(lastPaymentDateObj.getDate() + 1); // Día siguiente al pago de capital
-        return lastPaymentDateObj.toISOString().split('T')[0] + 'T00:00:00';
-      }
-      
-      // Si no hay pagos, usar la fecha de inicio tal cual
-      return datePart + 'T00:00:00';
+      // Si hay un pago de capital, usar esa fecha; si no, usar la fecha de inicio
+      return lastPayment?.payment_date || startDate;
     } catch (error) {
-      // Si no hay pagos de capital, usar la fecha de inicio
-      const datePart = startDate.split('T')[0];
-      return datePart + 'T00:00:00';
+      return startDate;
     }
   };
 
@@ -1467,37 +1444,10 @@ export const PawnShopModule = () => {
     startDate: string, 
     endDate: string
   ): number => {
-    // Normalizar fechas para trabajar solo con la parte de fecha (sin hora)
-    // Extraer solo la fecha (YYYY-MM-DD) para evitar problemas de zona horaria
-    const startDateStr = startDate.split('T')[0];
-    const endDateStr = endDate.split('T')[0];
-    
-    const startDateOnly = new Date(startDateStr + 'T00:00:00');
-    const endDateOnly = new Date(endDateStr + 'T00:00:00');
-    
-    // El interés se calcula desde startDate (inclusive) hasta el día ANTERIOR al pago
-    // IMPORTANTE: El día del pago NO genera interés, solo se cuenta hasta el día anterior
-    // Ejemplo 1: Si startDate es 2024-01-01 y endDate es 2024-01-02 (pago al día siguiente)
-    // - Diferencia: 1 día
-    // - Pero el día 02/01 es el día del pago, así que NO genera interés
-    // - Interés acumulado: 0 días (se paga el mismo día que inicia, no hay interés)
-    // Ejemplo 2: Si startDate es 2024-01-01 y endDate es 2024-01-03 (pago 2 días después)
-    // - Diferencia: 2 días
-    // - El día 03/01 es el día del pago, así que NO genera interés
-    // - Interés acumulado: 1 día (solo el día 01/01)
-    const diffTime = endDateOnly.getTime() - startDateOnly.getTime();
-    const daysDiff = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
-    
-    // Si las fechas son el mismo día o endDate es anterior, no hay interés acumulado
-    if (daysDiff <= 0) {
-      return 0;
-    }
-    
-    // Restar 1 día porque el día del pago NO genera interés acumulado
-    // El interés se acumula hasta el día anterior al pago
-    const actualDays = Math.max(0, daysDiff - 1);
-    
-    return calculateDailyInterest(principal, monthlyRate, actualDays);
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const daysDiff = Math.max(0, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+    return calculateDailyInterest(principal, monthlyRate, daysDiff);
   };
 
   // Función para procesar pagos con lógica de interés primero, luego capital
@@ -1512,16 +1462,10 @@ export const PawnShopModule = () => {
       Number(transaction.loan_amount)
     );
     
-    // Obtener la última fecha de pago de capital (o fecha de inicio si no hay pagos)
-    const lastPaymentDate = await getLastPaymentDate(transaction.id, transaction.start_date);
-    
-    // Calcular interés acumulado desde la última fecha de pago de capital hasta la fecha del pago
-    const accumulatedInterest = calculateInterestFromDate(
-      currentPrincipal,
-      Number(transaction.interest_rate),
-      lastPaymentDate,
-      paymentDate
-    );
+    // Usar la misma función que las estadísticas: calcular desde start_date hasta la fecha del pago
+    // Extraer solo la fecha (sin hora) para el cálculo
+    const paymentDateOnly = paymentDate.split('T')[0];
+    const accumulatedInterest = calculateAccumulatedInterest(transaction, paymentDateOnly);
     
     // Primero pagar interés, luego el resto va al capital
     const interestPayment = Math.min(paymentAmount, accumulatedInterest);
@@ -3156,8 +3100,7 @@ export const PawnShopModule = () => {
             onCancel={() => setShowPaymentForm(false)}
             onSubmit={handlePayment}
             getCurrentRemainingPrincipal={getCurrentRemainingPrincipal}
-            getLastPaymentDate={getLastPaymentDate}
-            calculateInterestFromDate={calculateInterestFromDate}
+            calculateAccumulatedInterest={calculateAccumulatedInterest}
           />}
         </DialogContent>
       </Dialog>
