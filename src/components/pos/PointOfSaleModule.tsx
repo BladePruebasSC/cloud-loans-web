@@ -1206,25 +1206,26 @@ export const PointOfSaleModule = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 pb-24 lg:pb-0">
+    <div className="min-h-screen flex flex-col bg-gray-50 pb-32 lg:pb-0">
       {/* Header */}
-      <div className="bg-white border-b border-gray-200 p-4">
-        <div className="flex items-center justify-between">
+      <div className="bg-white border-b border-gray-200 p-3 sm:p-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <ShoppingCart className="h-6 w-6 text-blue-600" />
-              Punto de Venta
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <ShoppingCart className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600" />
+              <span className="hidden sm:inline">Punto de Venta</span>
+              <span className="sm:hidden">POS</span>
             </h1>
-            <p className="text-sm text-gray-600">Sistema de ventas completo</p>
+            <p className="text-xs sm:text-sm text-gray-600">Sistema de ventas completo</p>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <div className="text-sm text-gray-600">Cajero</div>
-              <div className="font-semibold">{user?.email}</div>
+          <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
+            <div className="text-right flex-1 sm:flex-none">
+              <div className="text-xs sm:text-sm text-gray-600">Cajero</div>
+              <div className="font-semibold text-xs sm:text-sm truncate">{user?.email}</div>
             </div>
-            <Button onClick={() => clearCart()} variant="outline" size="sm">
-              <Trash2 className="h-4 w-4 mr-2" />
-              Limpiar
+            <Button onClick={() => clearCart()} variant="outline" size="sm" className="h-8 sm:h-9">
+              <Trash2 className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Limpiar</span>
             </Button>
           </div>
         </div>
@@ -1232,9 +1233,9 @@ export const PointOfSaleModule = () => {
 
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {/* Left Panel - Products */}
-        <div className="w-full lg:w-1/2 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col">
+        <div className="w-full lg:w-1/2 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col order-2 lg:order-1">
           {/* Product Search */}
-          <div className="p-4 border-b border-gray-200">
+          <div className="p-3 sm:p-4 border-b border-gray-200">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
               <Input
@@ -1245,7 +1246,7 @@ export const PointOfSaleModule = () => {
               />
             </div>
             <div className="mt-2 flex items-center justify-between text-xs sm:text-sm text-gray-600">
-              <span>{filteredProducts.length} productos en inventario</span>
+              <span>{filteredProducts.length} {filteredProducts.length === 1 ? 'producto' : 'productos'}</span>
               {productSearchTerm && (
                 <div className="flex items-center gap-2">
                   <span className="text-blue-600">
@@ -1277,10 +1278,10 @@ export const PointOfSaleModule = () => {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
                 {filteredProducts.map((product) => (
                   <Card key={product.id} className="hover:shadow-md transition-shadow cursor-pointer">
-                    <CardContent className="p-3">
+                    <CardContent className="p-2 sm:p-3">
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
                           <h3 className="font-semibold text-sm line-clamp-2">{product.name}</h3>
@@ -1322,11 +1323,12 @@ export const PointOfSaleModule = () => {
                       <Button 
                         size="sm" 
                         onClick={() => addToCart(product)}
-                        className="w-full"
+                        className="w-full text-xs sm:text-sm h-8 sm:h-9"
                         disabled={product.current_stock === 0}
                       >
-                        <Plus className="h-3 w-3 mr-1" />
-                        Agregar al Carrito
+                        <Plus className="h-3 w-3 sm:mr-1" />
+                        <span className="hidden sm:inline">Agregar al Carrito</span>
+                        <span className="sm:hidden">Agregar</span>
                       </Button>
                     </CardContent>
                   </Card>
@@ -1337,21 +1339,21 @@ export const PointOfSaleModule = () => {
         </div>
 
         {/* Right Panel - Cart & Checkout */}
-        <div className="w-full lg:w-1/2 flex flex-col">
+        <div className="w-full lg:w-1/2 flex flex-col order-1 lg:order-2">
           {/* Cart Header */}
           <div className="p-3 sm:p-4 border-b border-gray-200 bg-gray-50">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <ShoppingCart className="h-5 w-5" />
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
+              <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4 sm:h-5 sm:w-5" />
                 Carrito ({cart.length})
               </h2>
               <Button 
                 onClick={() => setShowCustomerModal(true)} 
                 variant="outline" 
-                className="h-9 px-3"
+                className="h-8 sm:h-9 px-2 sm:px-3 text-xs sm:text-sm w-full sm:w-auto"
               >
-                <User className="h-4 w-4 mr-2" />
-                {selectedCustomer ? selectedCustomer.full_name : 'Cliente'}
+                <User className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-2" />
+                <span className="truncate">{selectedCustomer ? selectedCustomer.full_name : 'Cliente'}</span>
               </Button>
             </div>
           </div>
@@ -1391,22 +1393,24 @@ export const PointOfSaleModule = () => {
                               size="sm" 
                               variant="outline" 
                               onClick={() => updateCartItemQuantity(item.product.id, item.quantity - 1)}
+                              className="h-8 sm:h-9 w-8 sm:w-9 p-0"
                             >
-                              <Minus className="h-3 w-3" />
+                              <Minus className="h-3 w-3 sm:h-4 sm:w-4" />
                             </Button>
                             <Input 
                               type="number" 
                               value={item.quantity} 
                               onChange={(e) => updateCartItemQuantity(item.product.id, parseInt(e.target.value) || 0)}
-                              className="text-center text-sm h-9"
+                              className="text-center text-xs sm:text-sm h-8 sm:h-9"
                               min="1"
                             />
                             <Button 
                               size="sm" 
                               variant="outline" 
                               onClick={() => updateCartItemQuantity(item.product.id, item.quantity + 1)}
+                              className="h-8 sm:h-9 w-8 sm:w-9 p-0"
                             >
-                              <Plus className="h-3 w-3" />
+                              <Plus className="h-3 w-3 sm:h-4 sm:w-4" />
                             </Button>
                           </div>
                         </div>
@@ -1418,7 +1422,7 @@ export const PointOfSaleModule = () => {
                             step="0.01"
                             value={parseFloat(item.unitPrice.toFixed(2))} 
                             onChange={(e) => updateCartItemPrice(item.product.id, parseFloat(e.target.value) || 0)}
-                            className="text-sm h-9"
+                            className="text-xs sm:text-sm h-8 sm:h-9"
                           />
                         </div>
                       </div>
@@ -1433,13 +1437,13 @@ export const PointOfSaleModule = () => {
                             max="100"
                             value={item.discountPercent} 
                             onChange={(e) => updateCartItemDiscount(item.product.id, parseFloat(e.target.value) || 0)}
-                            className="text-sm h-9"
+                            className="text-xs sm:text-sm h-8 sm:h-9"
                           />
                         </div>
                         
                         <div className="text-right">
                           <Label className="text-xs">Subtotal</Label>
-                          <div className="font-semibold text-green-600">
+                          <div className="font-semibold text-green-600 text-xs sm:text-sm">
                             ${item.subtotal.toFixed(2)}
                           </div>
                         </div>
@@ -1452,20 +1456,20 @@ export const PointOfSaleModule = () => {
           </div>
 
           {/* Cart Summary */}
-          <div className="border-t border-gray-200 bg-white p-3 sm:p-4 lg:static fixed bottom-0 left-0 right-0 z-30 shadow-[0_-4px_10px_rgba(0,0,0,0.06)]">
+          <div className="border-t border-gray-200 bg-white p-3 sm:p-4 lg:static fixed bottom-0 left-0 right-0 z-30 shadow-[0_-4px_10px_rgba(0,0,0,0.1)] lg:shadow-none">
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
                 <span>${saleData.subtotal.toFixed(2)}</span>
               </div>
-            <div className="grid grid-cols-2 gap-2 items-end">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
               <div>
                 <Label className="text-xs">Modo de Descuento</Label>
                 <Select
                   value={saleData.discountMode}
                   onValueChange={(value) => setSaleData(prev => ({ ...prev, discountMode: value as 'item' | 'total' }))}
                 >
-                  <SelectTrigger className="h-9">
+                  <SelectTrigger className="h-8 sm:h-9 text-xs sm:text-sm">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1484,21 +1488,21 @@ export const PointOfSaleModule = () => {
                     max="100"
                     value={saleData.discountPercentTotal}
                     onChange={(e) => setSaleData(prev => ({ ...prev, discountPercentTotal: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100) }))}
-                    className="h-9"
+                    className="h-8 sm:h-9 text-xs sm:text-sm"
                   />
                 </div>
               )}
               </div>
-              <div className="flex justify-between text-sm">
+              <div className="flex justify-between text-xs sm:text-sm">
                 <span>Descuento:</span>
                 <span className="text-red-600">-${saleData.discount.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between text-sm">
+              <div className="flex justify-between text-xs sm:text-sm">
                 <span>ITBIS:</span>
                 <span>${saleData.tax.toFixed(2)}</span>
               </div>
               <Separator />
-              <div className="flex justify-between text-lg font-bold">
+              <div className="flex justify-between text-base sm:text-lg font-bold">
                 <span>TOTAL:</span>
                 <span className="text-green-600">${saleData.total.toFixed(2)}</span>
               </div>
@@ -1506,11 +1510,11 @@ export const PointOfSaleModule = () => {
             
             <Button 
               onClick={() => setShowPaymentModal(true)} 
-              className="w-full h-12 text-base" 
+              className="w-full h-11 sm:h-12 text-sm sm:text-base font-semibold" 
               disabled={cart.length === 0}
               aria-label="Procesar Venta"
             >
-              <DollarSign className="h-5 w-5 mr-2" />
+              <DollarSign className="h-4 w-4 sm:h-5 sm:w-5 sm:mr-2" />
               Procesar Venta
             </Button>
           </div>
@@ -1519,7 +1523,7 @@ export const PointOfSaleModule = () => {
 
       {/* Customer Selection Modal */}
       <Dialog open={showCustomerModal} onOpenChange={setShowCustomerModal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Seleccionar Cliente</DialogTitle>
           </DialogHeader>
@@ -1569,7 +1573,7 @@ export const PointOfSaleModule = () => {
 
       {/* Payment Modal */}
       <Dialog open={showPaymentModal} onOpenChange={setShowPaymentModal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Procesar Pago</DialogTitle>
           </DialogHeader>
@@ -1579,16 +1583,17 @@ export const PointOfSaleModule = () => {
             {/* Payment Methods */}
             <div>
               <Label>Método de Pago</Label>
-              <div className="grid grid-cols-2 gap-2 mt-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
                 {paymentMethods.map((method) => (
                   <Button
                     key={method.id}
                     variant={saleData.paymentMethod?.id === method.id ? 'default' : 'outline'}
                     onClick={() => setSaleData(prev => ({ ...prev, paymentMethod: method }))}
-                    className="flex items-center gap-2"
+                    className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm h-9 sm:h-10"
                   >
                     {method.icon}
-                    {method.name}
+                    <span className="hidden sm:inline">{method.name}</span>
+                    <span className="sm:hidden">{method.name.substring(0, 4)}</span>
                   </Button>
                 ))}
               </div>

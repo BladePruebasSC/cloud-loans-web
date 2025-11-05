@@ -1597,11 +1597,11 @@ export const PawnShopModule = () => {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Casa de Empeño</h1>
-        <div className="flex gap-2 flex-wrap">
-          <Button onClick={() => setShowTransactionForm(true)} className="w-full sm:w-auto">
+    <div className="p-3 sm:p-4 lg:p-6 space-y-3 sm:space-y-4 lg:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+        <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900">Casa de Empeño</h1>
+        <div className="flex gap-2 flex-wrap w-full sm:w-auto">
+          <Button onClick={() => setShowTransactionForm(true)} className="w-full sm:w-auto text-sm sm:text-base h-9 sm:h-10">
             <Plus className="h-4 w-4 mr-2" />
             Nueva Transacción
           </Button>
@@ -1609,7 +1609,7 @@ export const PawnShopModule = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Transacciones Activas</CardTitle>
@@ -1711,35 +1711,35 @@ export const PawnShopModule = () => {
               ) : (
                 <div className="space-y-4">
                   {filteredTransactions.map((transaction) => (
-                    <div key={transaction.id} className="border rounded-lg p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h3 className="font-semibold text-lg">{transaction.product_name}</h3>
+                    <div key={transaction.id} className="border rounded-lg p-3 sm:p-4">
+                      <div className="flex flex-col sm:flex-row items-start justify-between gap-3 mb-3">
+                        <div className="flex-1 w-full">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3 mb-2">
+                            <h3 className="font-semibold text-base sm:text-lg">{transaction.product_name}</h3>
                             {getStatusBadge(transaction.status)}
                           </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-600">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 text-xs sm:text-sm text-gray-600">
                             <div className="flex items-center gap-2">
-                              <User className="h-4 w-4" />
-                              <span><strong>Cliente:</strong> {transaction.clients?.full_name || 'N/A'}</span>
+                              <User className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
+                              <span className="truncate"><strong>Cliente:</strong> {transaction.clients?.full_name || 'N/A'}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <DollarSign className="h-4 w-4" />
+                              <DollarSign className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
                               <span><strong>Préstamo:</strong> ${Number(transaction.loan_amount).toLocaleString()}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <Package className="h-4 w-4" />
+                              <Package className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
                               <span><strong>Valor Estimado:</strong> ${Number(transaction.estimated_value).toLocaleString()}</span>
                             </div>
                             <div className="flex items-center gap-2">
-                              <Calendar className="h-4 w-4" />
-                              <span><strong>Vencimiento:</strong> {formatDateTimeWithOffset(transaction.due_date)}</span>
+                              <Calendar className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
+                              <span className="truncate"><strong>Vencimiento:</strong> {formatDateTimeWithOffset(transaction.due_date)}</span>
                             </div>
                             <div>
                               <span><strong>Interés:</strong> {transaction.interest_rate}%</span>
                             </div>
                             <div>
-                              <span><strong>Inicio:</strong> {formatDateTimeWithOffset(transaction.start_date)}</span>
+                              <span className="truncate"><strong>Inicio:</strong> {formatDateTimeWithOffset(transaction.start_date)}</span>
                             </div>
                           </div>
                           {transaction.product_description && (
@@ -1747,7 +1747,7 @@ export const PawnShopModule = () => {
                           )}
                         </div>
                       </div>
-                      <div className="flex gap-2 flex-wrap">
+                      <div className="flex flex-col sm:flex-row gap-2 flex-wrap">
                         {transaction.status === 'deleted' ? (
                           <Button
                             size="sm"
@@ -1755,19 +1755,21 @@ export const PawnShopModule = () => {
                             onClick={async () => {
                               await handleRecoverTransaction(transaction.id);
                             }}
+                            className="w-full sm:w-auto text-xs sm:text-sm"
                           >
-                            <CheckCircle2 className="h-4 w-4 mr-1" />
+                            <CheckCircle2 className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-1" />
                             Recuperar
                           </Button>
                         ) : transaction.status === 'forfeited' ? (
                           <Button
                             size="sm"
                             variant="default"
+                            className="w-full sm:w-auto text-xs sm:text-sm"
                             onClick={async () => {
                               await handleRecoverForfeitedTransaction(transaction.id);
                             }}
                           >
-                            <CheckCircle2 className="h-4 w-4 mr-1" />
+                            <CheckCircle2 className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-1" />
                             Recuperar
                           </Button>
                         ) : (
@@ -1778,6 +1780,7 @@ export const PawnShopModule = () => {
                                 setSelectedTransaction(transaction);
                                 setShowPaymentForm(true);
                               }}
+                              className="w-full sm:w-auto text-xs sm:text-sm"
                             >
                               Registrar Pago
                             </Button>
@@ -1809,24 +1812,26 @@ export const PawnShopModule = () => {
                                 }
                               }}
                             >
-                              <Package className="h-4 w-4 mr-1" />
+                              <Package className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-1" />
                               Detalles
                             </Button>
                             <Button 
                               size="sm" 
                               variant="outline"
+                              className="w-full sm:w-auto text-xs sm:text-sm"
                               onClick={() => {
                                 setSelectedTransaction(transaction);
                                 fetchPaymentHistory(transaction.id);
                                 setShowPaymentHistory(true);
                               }}
                             >
-                              <History className="h-4 w-4 mr-1" />
+                              <History className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-1" />
                               Historial
                             </Button>
                             <Button
                               size="sm"
                               variant="outline"
+                              className="w-full sm:w-auto text-xs sm:text-sm"
                               onClick={() => {
                                 setSelectedTransaction(transaction);
                                 setShowQuickUpdate(true);
@@ -1837,6 +1842,7 @@ export const PawnShopModule = () => {
                             <Button
                               size="sm"
                               variant="outline"
+                              className="w-full sm:w-auto text-xs sm:text-sm"
                               onClick={async () => {
                                 // Fetch transaction with client data for printing
                                 const { data: transactionWithClient, error } = await supabase
@@ -1857,7 +1863,7 @@ export const PawnShopModule = () => {
                                 printPawnReceipt(transactionWithClient, client);
                               }}
                             >
-                              <Printer className="h-4 w-4 mr-1" />
+                              <Printer className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-1" />
                               Imprimir
                             </Button>
                           </>
