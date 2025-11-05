@@ -1526,8 +1526,8 @@ export const PointOfSaleModule = () => {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Seleccionar Cliente</DialogTitle>
+            <DialogDescription>Busca y selecciona un cliente para la factura</DialogDescription>
           </DialogHeader>
-          <DialogDescription className="sr-only">Busca y selecciona un cliente para la factura</DialogDescription>
           
           <div className="space-y-4">
             <div className="relative">
@@ -1576,8 +1576,8 @@ export const PointOfSaleModule = () => {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Procesar Pago</DialogTitle>
+            <DialogDescription>Completa los datos de pago y formato de impresión</DialogDescription>
           </DialogHeader>
-          <DialogDescription className="sr-only">Completa los datos de pago y formato de impresión</DialogDescription>
           
           <div className="space-y-4">
             {/* Payment Methods */}
@@ -1705,14 +1705,14 @@ export const PointOfSaleModule = () => {
 
       {/* Receipt Modal */}
       <Dialog open={showReceiptModal} onOpenChange={setShowReceiptModal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Receipt className="h-5 w-5" />
               Recibo de Venta
             </DialogTitle>
+            <DialogDescription>Comprobante de venta generado</DialogDescription>
           </DialogHeader>
-          <DialogDescription className="sr-only">Comprobante de venta generado</DialogDescription>
           
           <div className="space-y-4">
             <div className="text-center p-4 bg-green-50 rounded-lg">

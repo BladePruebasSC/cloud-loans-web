@@ -83,6 +83,211 @@ interface Product {
   current_stock: number;
 }
 
+interface PaymentFormContentProps {
+  transaction: PawnTransaction;
+  paymentData: {
+    amount: number;
+    payment_method: 'cash' | 'transfer' | 'card' | 'check' | 'other';
+    notes: string;
+  };
+  setPaymentData: (data: any) => void;
+  onCancel: () => void;
+  onSubmit: (e: React.FormEvent) => void;
+  getCurrentRemainingPrincipal: (transactionId: string, initialLoanAmount: number) => Promise<number>;
+  getLastPaymentDate: (transactionId: string, startDate: string) => Promise<string>;
+  calculateInterestFromDate: (principal: number, monthlyRate: number, startDate: string, endDate: string) => number;
+}
+
+const PaymentFormContent: React.FC<PaymentFormContentProps> = ({
+  transaction,
+  paymentData,
+  setPaymentData,
+  onCancel,
+  onSubmit,
+  getCurrentRemainingPrincipal,
+  getLastPaymentDate,
+  calculateInterestFromDate
+}) => {
+  const [loading, setLoading] = useState(true);
+  const [currentPrincipal, setCurrentPrincipal] = useState(0);
+  const [accumulatedInterest, setAccumulatedInterest] = useState(0);
+  const [paymentBreakdown, setPaymentBreakdown] = useState({
+    interestPayment: 0,
+    principalPayment: 0,
+    newBalance: 0
+  });
+
+  useEffect(() => {
+    const calculatePaymentInfo = async () => {
+      setLoading(true);
+      try {
+        const principal = await getCurrentRemainingPrincipal(transaction.id, Number(transaction.loan_amount));
+        setCurrentPrincipal(principal);
+        
+        const lastPaymentDate = await getLastPaymentDate(transaction.id, transaction.start_date);
+        const paymentDate = new Date().toISOString();
+        const interest = calculateInterestFromDate(
+          principal,
+          Number(transaction.interest_rate),
+          lastPaymentDate,
+          paymentDate
+        );
+        setAccumulatedInterest(interest);
+      } catch (error) {
+        console.error('Error calculating payment info:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    calculatePaymentInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transaction.id]);
+
+  // Calcular desglose cuando cambie el monto del pago
+  useEffect(() => {
+    if (paymentData.amount > 0 && currentPrincipal > 0 && accumulatedInterest >= 0) {
+      const interestPayment = Math.min(paymentData.amount, accumulatedInterest);
+      const principalPayment = Math.max(0, paymentData.amount - interestPayment);
+      const newBalance = Math.max(0, currentPrincipal - principalPayment);
+      
+      setPaymentBreakdown({
+        interestPayment,
+        principalPayment,
+        newBalance
+      });
+    } else {
+      setPaymentBreakdown({
+        interestPayment: 0,
+        principalPayment: 0,
+        newBalance: currentPrincipal
+      });
+    }
+  }, [paymentData.amount, currentPrincipal, accumulatedInterest]);
+
+  const totalDue = currentPrincipal + accumulatedInterest;
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-4">
+      {/* Información de la transacción */}
+      <div className="mb-4 p-4 bg-gray-50 rounded-lg space-y-2">
+        <p><strong>Artículo:</strong> {transaction.product_name}</p>
+        <p><strong>Cliente:</strong> {transaction.clients?.full_name}</p>
+        <p><strong>Monto prestado inicial:</strong> ${Number(transaction.loan_amount).toLocaleString()}</p>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-4">Cargando información...</div>
+      ) : (
+        <>
+          {/* Resumen de deuda */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Resumen de Deuda</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Capital Pendiente:</span>
+                <span className="font-semibold">${currentPrincipal.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Interés Acumulado:</span>
+                <span className="font-semibold text-orange-600">${accumulatedInterest.toFixed(2)}</span>
+              </div>
+              <div className="border-t pt-3 flex justify-between">
+                <span className="font-bold text-lg">Total Adeudado:</span>
+                <span className="font-bold text-lg text-red-600">${totalDue.toFixed(2)}</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Monto del pago */}
+          <div>
+            <Label htmlFor="amount">Monto del Pago *</Label>
+            <Input
+              id="amount"
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={paymentData.amount || ''}
+              onChange={(e) => {
+                const amount = parseFloat(e.target.value) || 0;
+                setPaymentData({...paymentData, amount});
+              }}
+              required
+            />
+          </div>
+
+          {/* Desglose del pago */}
+          {paymentData.amount > 0 && (
+            <Card className="bg-blue-50">
+              <CardHeader>
+                <CardTitle className="text-lg">Desglose del Pago</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Aplicado a Interés:</span>
+                  <span className="font-semibold">${paymentBreakdown.interestPayment.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Aplicado a Capital:</span>
+                  <span className="font-semibold">${paymentBreakdown.principalPayment.toFixed(2)}</span>
+                </div>
+                <div className="border-t pt-2 flex justify-between">
+                  <span className="font-semibold">Nuevo Capital Pendiente:</span>
+                  <span className="font-semibold text-blue-600">${paymentBreakdown.newBalance.toFixed(2)}</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Método de pago */}
+          <div>
+            <Label htmlFor="payment_method">Método de Pago *</Label>
+            <Select 
+              value={paymentData.payment_method} 
+              onValueChange={(value: 'cash' | 'transfer' | 'card' | 'check' | 'other') => 
+                setPaymentData({...paymentData, payment_method: value})
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Efectivo</SelectItem>
+                <SelectItem value="transfer">Transferencia</SelectItem>
+                <SelectItem value="card">Tarjeta</SelectItem>
+                <SelectItem value="check">Cheque</SelectItem>
+                <SelectItem value="other">Otro</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Notas */}
+          <div>
+            <Label htmlFor="payment_notes">Notas</Label>
+            <Textarea
+              id="payment_notes"
+              value={paymentData.notes}
+              onChange={(e) => setPaymentData({...paymentData, notes: e.target.value})}
+              placeholder="Notas del pago..."
+              rows={2}
+            />
+          </div>
+
+          {/* Botones */}
+          <div className="flex gap-2 justify-end">
+            <Button type="button" variant="outline" onClick={onCancel}>
+              Cancelar
+            </Button>
+            <Button type="submit">Registrar Pago</Button>
+          </div>
+        </>
+      )}
+    </form>
+  );
+};
+
 export const PawnShopModule = () => {
   const [transactions, setTransactions] = useState<PawnTransaction[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -155,7 +360,7 @@ export const PawnShopModule = () => {
 
   const [paymentData, setPaymentData] = useState({
     amount: 0,
-    payment_type: 'partial' as 'partial' | 'full' | 'interest',
+    payment_method: 'cash' as 'cash' | 'transfer' | 'card' | 'check' | 'other',
     notes: ''
   });
 
@@ -683,14 +888,30 @@ export const PawnShopModule = () => {
 
     try {
       const paymentDate = new Date().toISOString();
-      const paymentBreakdown = processPayment(selectedTransaction, paymentData.amount, paymentDate);
+      const paymentBreakdown = await processPayment(selectedTransaction, paymentData.amount, paymentDate);
       
+      // Construir las notas incluyendo el método de pago
+      const paymentMethodLabel = {
+        'cash': 'Efectivo',
+        'transfer': 'Transferencia',
+        'card': 'Tarjeta',
+        'check': 'Cheque',
+        'other': 'Otro'
+      }[paymentData.payment_method] || 'N/A';
+      
+      const notesWithMethod = paymentData.notes 
+        ? `Método: ${paymentMethodLabel}. ${paymentData.notes}`
+        : `Método: ${paymentMethodLabel}`;
+
       const payment = {
         pawn_transaction_id: selectedTransaction.id,
         amount: paymentData.amount,
-        payment_type: paymentData.payment_type,
+        payment_type: paymentBreakdown.remainingBalance <= 0 ? 'full' : 'partial',
         payment_date: paymentDate,
-        notes: paymentData.notes
+        interest_payment: paymentBreakdown.interestPayment,
+        principal_payment: paymentBreakdown.principalPayment,
+        remaining_balance: paymentBreakdown.remainingBalance,
+        notes: notesWithMethod
       };
 
       const { error: paymentError } = await supabase
@@ -699,8 +920,8 @@ export const PawnShopModule = () => {
 
       if (paymentError) throw paymentError;
 
-      // Update transaction status if full payment
-      if (paymentData.payment_type === 'full' || paymentBreakdown.remainingBalance <= 0) {
+      // Update transaction status if full payment (balance is 0)
+      if (paymentBreakdown.remainingBalance <= 0) {
         const { error: updateError } = await supabase
           .from('pawn_transactions')
           .update({ status: 'redeemed' })
@@ -959,10 +1180,17 @@ export const PawnShopModule = () => {
 
   const calculateDaysDifference = (startDate: string, endDate: string) => {
     if (!startDate || !endDate) return 0;
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const diffTime = end.getTime() - start.getTime();
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    try {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
+      const diffTime = end.getTime() - start.getTime();
+      const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      return days > 0 ? days : 0;
+    } catch (error) {
+      console.error('Error calculando diferencia de días:', error);
+      return 0;
+    }
   };
 
   const handlePeriodChange = (periodDays: number) => {
@@ -994,17 +1222,46 @@ export const PawnShopModule = () => {
 
   // Previsualización desde una transacción existente (Detalles)
   const previewInterestFromTransaction = (transaction: PawnTransaction) => {
-    if (!transaction) return;
+    if (!transaction) {
+      toast.error('No hay transacción seleccionada');
+      return;
+    }
     const principal = Number(transaction.loan_amount || 0);
     const monthlyRate = Number(transaction.interest_rate || 0);
     const startDate = transaction.start_date;
-    const days = calculateDaysDifference(transaction.start_date, transaction.due_date);
-    if (principal > 0 && monthlyRate > 0 && days > 0 && startDate) {
+    const dueDate = transaction.due_date;
+    
+    // Validaciones más específicas
+    if (!startDate) {
+      toast.error('La transacción no tiene fecha de inicio');
+      return;
+    }
+    if (!dueDate) {
+      toast.error('La transacción no tiene fecha de vencimiento');
+      return;
+    }
+    if (principal <= 0) {
+      toast.error('El monto del préstamo debe ser mayor a 0');
+      return;
+    }
+    if (monthlyRate <= 0) {
+      toast.error('La tasa de interés debe ser mayor a 0');
+      return;
+    }
+    
+    const days = calculateDaysDifference(startDate, dueDate);
+    if (days <= 0) {
+      toast.error('La fecha de vencimiento debe ser posterior a la fecha de inicio');
+      return;
+    }
+    
+    try {
       const preview = generateInterestPreview(principal, monthlyRate, days, startDate);
       setInterestPreviewData(preview);
       setShowInterestPreview(true);
-    } else {
-      toast.error('Faltan datos para previsualizar el interés');
+    } catch (error) {
+      console.error('Error generando previsualización:', error);
+      toast.error('Error al generar la previsualización de interés');
     }
   };
 
@@ -1040,8 +1297,42 @@ export const PawnShopModule = () => {
 
   // Función para generar previsualización de interés diario
   const generateInterestPreview = (principal: number, monthlyRate: number, days: number, startDate: string) => {
-    // Si no hay fecha de inicio, usar fecha actual como fallback
-    const effectiveStartDate = startDate || new Date().toISOString().split('T')[0];
+    // Validar parámetros
+    if (!principal || principal <= 0) {
+      throw new Error('El capital debe ser mayor a 0');
+    }
+    if (!monthlyRate || monthlyRate <= 0) {
+      throw new Error('La tasa de interés debe ser mayor a 0');
+    }
+    if (!days || days <= 0) {
+      throw new Error('El número de días debe ser mayor a 0');
+    }
+    if (!startDate) {
+      throw new Error('La fecha de inicio es requerida');
+    }
+    
+    // Normalizar la fecha: extraer solo la parte de fecha (YYYY-MM-DD) si viene como timestamp
+    let effectiveStartDate: string;
+    try {
+      // Si la fecha viene como timestamp completo, extraer solo la fecha
+      if (startDate.includes('T') || startDate.includes(' ')) {
+        // Es un timestamp, extraer solo la parte de fecha
+        const datePart = startDate.split('T')[0].split(' ')[0];
+        effectiveStartDate = datePart;
+      } else {
+        // Ya es solo fecha
+        effectiveStartDate = startDate;
+      }
+      
+      // Validar que tenga el formato correcto (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(effectiveStartDate)) {
+        throw new Error('Formato de fecha inválido');
+      }
+    } catch (error) {
+      console.error('Error procesando fecha:', error, 'Fecha recibida:', startDate);
+      throw new Error('La fecha de inicio no tiene un formato válido');
+    }
     
     const dailyRate = monthlyRate / 30;
     const dailyBreakdown = [];
@@ -1049,7 +1340,24 @@ export const PawnShopModule = () => {
     
     // Usar la fecha de inicio proporcionada como base del cálculo
     // Asegurar que se use la fecha sin tiempo para evitar problemas de zona horaria
-    const baseStartDate = new Date(effectiveStartDate + 'T00:00:00');
+    let baseStartDate: Date;
+    try {
+      // Intentar crear la fecha en diferentes formatos
+      baseStartDate = new Date(effectiveStartDate + 'T00:00:00');
+      
+      // Si falla, intentar con otro formato
+      if (isNaN(baseStartDate.getTime())) {
+        baseStartDate = new Date(effectiveStartDate);
+      }
+      
+      // Validar que la fecha sea válida
+      if (isNaN(baseStartDate.getTime())) {
+        throw new Error('No se pudo parsear la fecha');
+      }
+    } catch (error) {
+      console.error('Error creando fecha:', error, 'Fecha procesada:', effectiveStartDate);
+      throw new Error(`La fecha de inicio no es válida: ${effectiveStartDate}`);
+    }
     
     for (let day = 1; day <= days; day++) {
       const currentDate = new Date(baseStartDate);
@@ -1079,36 +1387,117 @@ export const PawnShopModule = () => {
 
   const handleShowInterestPreview = () => {
     if (formData.loan_amount > 0 && formData.interest_rate > 0 && formData.period_days > 0 && formData.start_date) {
-      const preview = generateInterestPreview(
-        formData.loan_amount,
-        formData.interest_rate,
-        formData.period_days,
-        formData.start_date
-      );
-      setInterestPreviewData(preview);
-      setShowInterestPreview(true);
+      try {
+        const preview = generateInterestPreview(
+          formData.loan_amount,
+          formData.interest_rate,
+          formData.period_days,
+          formData.start_date
+        );
+        setInterestPreviewData(preview);
+        setShowInterestPreview(true);
+      } catch (error: any) {
+        console.error('Error generando previsualización:', error);
+        toast.error(error?.message || 'Error al generar la previsualización de interés');
+      }
     } else {
       toast.error('Por favor completa todos los campos requeridos para ver la previsualización');
     }
   };
 
+  // Función para obtener el capital pendiente actual de una transacción
+  const getCurrentRemainingPrincipal = async (transactionId: string, initialLoanAmount: number): Promise<number> => {
+    try {
+      const { data: payments } = await supabase
+        .from('pawn_payments')
+        .select('principal_payment')
+        .eq('pawn_transaction_id', transactionId)
+        .not('principal_payment', 'is', null);
+      
+      if (!payments) return initialLoanAmount;
+      
+      const totalPrincipalPaid = payments.reduce((sum, p) => sum + Number(p.principal_payment || 0), 0);
+      return Math.max(0, initialLoanAmount - totalPrincipalPaid);
+    } catch (error) {
+      console.error('Error calculating remaining principal:', error);
+      return initialLoanAmount;
+    }
+  };
+
+  // Función para obtener la última fecha de pago de capital o la fecha de inicio
+  const getLastPaymentDate = async (transactionId: string, startDate: string): Promise<string> => {
+    try {
+      const { data: lastPayment } = await supabase
+        .from('pawn_payments')
+        .select('payment_date, principal_payment')
+        .eq('pawn_transaction_id', transactionId)
+        .not('principal_payment', 'is', null)
+        .gt('principal_payment', 0)
+        .order('payment_date', { ascending: false })
+        .limit(1)
+        .single();
+      
+      // Si hay un pago de capital, usar esa fecha; si no, usar la fecha de inicio
+      return lastPayment?.payment_date || startDate;
+    } catch (error) {
+      return startDate;
+    }
+  };
+
+  // Función para calcular interés acumulado desde una fecha base hasta otra fecha
+  const calculateInterestFromDate = (
+    principal: number, 
+    monthlyRate: number, 
+    startDate: string, 
+    endDate: string
+  ): number => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const daysDiff = Math.max(0, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+    return calculateDailyInterest(principal, monthlyRate, daysDiff);
+  };
+
   // Función para procesar pagos con lógica de interés primero, luego capital
-  const processPayment = (transaction: PawnTransaction, paymentAmount: number, paymentDate: string) => {
-    const accumulatedInterest = calculateAccumulatedInterest(transaction, paymentDate);
+  const processPayment = async (
+    transaction: PawnTransaction, 
+    paymentAmount: number, 
+    paymentDate: string
+  ) => {
+    // Obtener el capital pendiente actual
+    const currentPrincipal = await getCurrentRemainingPrincipal(
+      transaction.id, 
+      Number(transaction.loan_amount)
+    );
+    
+    // Obtener la última fecha de pago de capital (o fecha de inicio si no hay pagos)
+    const lastPaymentDate = await getLastPaymentDate(transaction.id, transaction.start_date);
+    
+    // Calcular interés acumulado desde la última fecha de pago de capital hasta la fecha del pago
+    const accumulatedInterest = calculateInterestFromDate(
+      currentPrincipal,
+      Number(transaction.interest_rate),
+      lastPaymentDate,
+      paymentDate
+    );
+    
+    // Primero pagar interés, luego el resto va al capital
     const interestPayment = Math.min(paymentAmount, accumulatedInterest);
     const principalPayment = Math.max(0, paymentAmount - interestPayment);
+    const newRemainingBalance = Math.max(0, currentPrincipal - principalPayment);
     
     return {
       interestPayment,
       principalPayment,
-      remainingBalance: Number(transaction.loan_amount) - principalPayment
+      remainingBalance: newRemainingBalance,
+      currentPrincipal,
+      accumulatedInterest
     };
   };
 
   const resetPaymentForm = () => {
     setPaymentData({
       amount: 0,
-      payment_type: 'partial',
+      payment_method: 'cash',
       notes: ''
     });
   };
@@ -2710,70 +3099,23 @@ export const PawnShopModule = () => {
 
       {/* Payment Form Dialog */}
       <Dialog open={showPaymentForm} onOpenChange={setShowPaymentForm}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Registrar Pago</DialogTitle>
             <DialogDescription>
               Registra un pago para esta transacción de empeño
             </DialogDescription>
           </DialogHeader>
-          {selectedTransaction && (
-            <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-              <p><strong>Artículo:</strong> {selectedTransaction.product_name}</p>
-              <p><strong>Cliente:</strong> {selectedTransaction.clients?.full_name}</p>
-              <p><strong>Monto prestado:</strong> ${Number(selectedTransaction.loan_amount).toLocaleString()}</p>
-            </div>
-          )}
-          <form onSubmit={handlePayment} className="space-y-4">
-            <div>
-              <Label htmlFor="amount">Monto del Pago *</Label>
-              <Input
-                id="amount"
-                type="number"
-                step="0.01"
-                value={paymentData.amount}
-                onChange={(e) => setPaymentData({...paymentData, amount: parseFloat(e.target.value)})}
-                required
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="payment_type">Tipo de Pago *</Label>
-              <Select 
-                value={paymentData.payment_type} 
-                onValueChange={(value: 'partial' | 'full' | 'interest') => 
-                  setPaymentData({...paymentData, payment_type: value})
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="partial">Pago Parcial</SelectItem>
-                  <SelectItem value="full">Pago Completo (Redimir)</SelectItem>
-                  <SelectItem value="interest">Solo Interés</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label htmlFor="payment_notes">Notas</Label>
-              <Textarea
-                id="payment_notes"
-                value={paymentData.notes}
-                onChange={(e) => setPaymentData({...paymentData, notes: e.target.value})}
-                placeholder="Notas del pago..."
-                rows={2}
-              />
-            </div>
-
-            <div className="flex gap-2 justify-end">
-              <Button type="button" variant="outline" onClick={() => setShowPaymentForm(false)}>
-                Cancelar
-              </Button>
-              <Button type="submit">Registrar Pago</Button>
-            </div>
-          </form>
+          {selectedTransaction && <PaymentFormContent 
+            transaction={selectedTransaction}
+            paymentData={paymentData}
+            setPaymentData={setPaymentData}
+            onCancel={() => setShowPaymentForm(false)}
+            onSubmit={handlePayment}
+            getCurrentRemainingPrincipal={getCurrentRemainingPrincipal}
+            getLastPaymentDate={getLastPaymentDate}
+            calculateInterestFromDate={calculateInterestFromDate}
+          />}
         </DialogContent>
       </Dialog>
 
