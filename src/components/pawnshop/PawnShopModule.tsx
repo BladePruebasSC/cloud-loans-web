@@ -889,7 +889,28 @@ export const PawnShopModule = () => {
     if (!selectedTransaction) return;
 
     try {
-      const paymentDate = new Date().toISOString();
+      // Obtener la fecha actual en la zona horaria de Santo Domingo (UTC-4)
+      // Usar toLocaleString para obtener la fecha/hora en Santo Domingo
+      const now = new Date();
+      const santoDomingoString = now.toLocaleString('en-US', {
+        timeZone: 'America/Santo_Domingo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+      
+      // Parsear la fecha formateada (MM/DD/YYYY, HH:mm:ss)
+      const [datePart, timePart] = santoDomingoString.split(', ');
+      const [month, day, year] = datePart.split('/');
+      const [hours, minutes, seconds] = timePart.split(':');
+      
+      // Formatear como YYYY-MM-DDTHH:mm:ss-04:00
+      const paymentDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:${seconds.padStart(2, '0')}-04:00`;
+      
       const paymentBreakdown = await processPayment(selectedTransaction, paymentData.amount, paymentDate);
       
       // Construir las notas incluyendo el método de pago
@@ -3207,7 +3228,15 @@ export const PawnShopModule = () => {
                                 </Badge>
                               </div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
-                                <div><strong>Fecha:</strong> {formatDateTimeWithOffset(payment.payment_date)}</div>
+                                <div><strong>Fecha:</strong> {new Date(payment.payment_date).toLocaleString('es-DO', {
+                                  timeZone: 'America/Santo_Domingo',
+                                  year: 'numeric',
+                                  month: '2-digit',
+                                  day: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: true
+                                })}</div>
                                 <div><strong>Tipo:</strong> {
                                   payment.payment_type === 'extension' ? 'Extensión de Plazo' :
                                   payment.payment_type === 'full' ? 'Pago Completo (Redención)' :
