@@ -2000,60 +2000,329 @@ export const PawnShopModule = () => {
         </TabsContent>
 
         <TabsContent value="reportes">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Resumen General</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex justify-between">
-                    <span>Transacciones activas:</span>
-                    <span className="font-semibold">{activeTransactions.length}</span>
+          <div className="space-y-6">
+            {/* Resumen General Mejorado */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Resumen General</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="flex justify-between">
+                      <span>Transacciones activas:</span>
+                      <span className="font-semibold">{activeTransactions.length}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total prestado (activo):</span>
+                      <span className="font-semibold">${totalLoanAmount.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Valor en garantía:</span>
+                      <span className="font-semibold">${totalEstimatedValue.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total transacciones:</span>
+                      <span className="font-semibold">{transactions.length}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Promedio de préstamo:</span>
+                      <span className="font-semibold">
+                        ${transactions.length > 0 
+                          ? Math.round(transactions.reduce((sum, t) => sum + Number(t.loan_amount), 0) / transactions.length).toLocaleString()
+                          : '0'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Préstamo más alto:</span>
+                      <span className="font-semibold text-green-600">
+                        ${transactions.length > 0 
+                          ? Math.max(...transactions.map(t => Number(t.loan_amount))).toLocaleString()
+                          : '0'}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Total prestado (activo):</span>
-                    <span className="font-semibold">${totalLoanAmount.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Valor en garantía:</span>
-                    <span className="font-semibold">${totalEstimatedValue.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Total transacciones:</span>
-                    <span className="font-semibold">{transactions.length}</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Por Estado</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex justify-between">
-                    <span>Activas:</span>
-                    <span className="font-semibold text-blue-600">
-                      {transactions.filter(t => t.status === 'active').length}
-                    </span>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Por Estado</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="flex justify-between">
+                      <span>Activas:</span>
+                      <span className="font-semibold text-blue-600">
+                        {transactions.filter(t => t.status === 'active').length}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Redimidas:</span>
+                      <span className="font-semibold text-green-600">
+                        {transactions.filter(t => t.status === 'redeemed').length}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Perdidas:</span>
+                      <span className="font-semibold text-red-600">
+                        {transactions.filter(t => t.status === 'forfeited').length}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Eliminadas:</span>
+                      <span className="font-semibold text-gray-600">
+                        {transactions.filter(t => t.status === 'deleted').length}
+                      </span>
+                    </div>
+                    {transactions.length > 0 && (
+                      <>
+                        <div className="border-t pt-2 mt-2">
+                          <div className="flex justify-between">
+                            <span>Tasa de redención:</span>
+                            <span className="font-semibold">
+                              {Math.round((transactions.filter(t => t.status === 'redeemed').length / transactions.filter(t => t.status !== 'deleted').length) * 100)}%
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Tasa de pérdida:</span>
+                          <span className="font-semibold text-red-600">
+                            {Math.round((transactions.filter(t => t.status === 'forfeited').length / transactions.filter(t => t.status !== 'deleted').length) * 100)}%
+                          </span>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <div className="flex justify-between">
-                    <span>Redimidas:</span>
-                    <span className="font-semibold text-green-600">
-                      {transactions.filter(t => t.status === 'redeemed').length}
-                    </span>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Estadísticas Financieras</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    <div className="flex justify-between">
+                      <span>Total prestado (histórico):</span>
+                      <span className="font-semibold">
+                        ${transactions.filter(t => t.status !== 'deleted').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Valor recuperado (redimidas):</span>
+                      <span className="font-semibold text-green-600">
+                        ${transactions.filter(t => t.status === 'redeemed').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Valor en pérdidas:</span>
+                      <span className="font-semibold text-red-600">
+                        ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Valor garantía recuperada:</span>
+                      <span className="font-semibold text-blue-600">
+                        ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + Number(t.estimated_value), 0).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="border-t pt-2 mt-2">
+                      <div className="flex justify-between">
+                        <span>Ganancia estimada (garantías):</span>
+                        <span className="font-semibold text-green-600">
+                          ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + (Number(t.estimated_value) - Number(t.loan_amount)), 0).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Perdidas:</span>
-                    <span className="font-semibold text-red-600">
-                      {transactions.filter(t => t.status === 'forfeited').length}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Vencimientos y Alertas */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 text-red-600" />
+                    Transacciones Vencidas
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {(() => {
+                    const now = new Date();
+                    const expired = activeTransactions.filter(t => {
+                      const dueDate = new Date(t.due_date);
+                      return dueDate < now;
+                    });
+                    return (
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                          <span className="text-lg font-semibold">Total vencidas:</span>
+                          <span className="text-2xl font-bold text-red-600">{expired.length}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Monto total vencido:</span>
+                          <span className="font-semibold text-red-600">
+                            ${expired.reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                          </span>
+                        </div>
+                        {expired.length > 0 && (
+                          <div className="mt-4 pt-4 border-t">
+                            <p className="text-sm text-gray-600 mb-2">Últimas 5 vencidas:</p>
+                            <div className="space-y-2">
+                              {expired.slice(0, 5).map((t) => (
+                                <div key={t.id} className="flex justify-between text-sm">
+                                  <span className="truncate">{t.product_name}</span>
+                                  <span className="font-semibold">${Number(t.loan_amount).toLocaleString()}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-yellow-600" />
+                    Próximos Vencimientos
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {(() => {
+                    const now = new Date();
+                    const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+                    const upcoming = activeTransactions.filter(t => {
+                      const dueDate = new Date(t.due_date);
+                      return dueDate >= now && dueDate <= nextWeek;
+                    }).sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime());
+                    return (
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                          <span className="text-lg font-semibold">Esta semana:</span>
+                          <span className="text-2xl font-bold text-yellow-600">{upcoming.length}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Monto a vencer:</span>
+                          <span className="font-semibold text-yellow-600">
+                            ${upcoming.reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                          </span>
+                        </div>
+                        {upcoming.length > 0 && (
+                          <div className="mt-4 pt-4 border-t">
+                            <p className="text-sm text-gray-600 mb-2">Próximas 5:</p>
+                            <div className="space-y-2">
+                              {upcoming.slice(0, 5).map((t) => (
+                                <div key={t.id} className="flex justify-between text-sm">
+                                  <span className="truncate">{t.product_name}</span>
+                                  <span className="text-xs text-gray-500">
+                                    {formatDateTimeWithOffset(t.due_date).split(',')[0]}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Estadísticas por Categoría y Top Clientes */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Estadísticas por Categoría</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {(() => {
+                    const categoryStats: Record<string, { count: number; totalLoan: number; totalValue: number }> = {};
+                    transactions.filter(t => t.status !== 'deleted' && t.item_category).forEach(t => {
+                      const cat = t.item_category || 'Sin categoría';
+                      if (!categoryStats[cat]) {
+                        categoryStats[cat] = { count: 0, totalLoan: 0, totalValue: 0 };
+                      }
+                      categoryStats[cat].count++;
+                      categoryStats[cat].totalLoan += Number(t.loan_amount);
+                      categoryStats[cat].totalValue += Number(t.estimated_value);
+                    });
+                    const sortedCategories = Object.entries(categoryStats)
+                      .sort((a, b) => b[1].count - a[1].count)
+                      .slice(0, 5);
+                    return (
+                      <div className="space-y-4">
+                        {sortedCategories.length > 0 ? (
+                          sortedCategories.map(([category, stats]) => (
+                            <div key={category} className="border-b pb-3 last:border-b-0">
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="font-semibold">{category}</span>
+                                <span className="text-sm text-gray-600">{stats.count} transacciones</span>
+                              </div>
+                              <div className="flex justify-between text-sm text-gray-600">
+                                <span>Total prestado: ${stats.totalLoan.toLocaleString()}</span>
+                                <span>Valor: ${stats.totalValue.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-gray-500 text-center py-4">No hay categorías registradas</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Top Clientes</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {(() => {
+                    const clientStats: Record<string, { name: string; count: number; totalLoan: number }> = {};
+                    transactions.filter(t => t.status !== 'deleted' && t.clients).forEach(t => {
+                      const clientId = t.client_id;
+                      const clientName = t.clients?.full_name || 'Sin nombre';
+                      if (!clientStats[clientId]) {
+                        clientStats[clientId] = { name: clientName, count: 0, totalLoan: 0 };
+                      }
+                      clientStats[clientId].count++;
+                      clientStats[clientId].totalLoan += Number(t.loan_amount);
+                    });
+                    const sortedClients = Object.entries(clientStats)
+                      .sort((a, b) => b[1].count - a[1].count)
+                      .slice(0, 5);
+                    return (
+                      <div className="space-y-4">
+                        {sortedClients.length > 0 ? (
+                          sortedClients.map(([clientId, stats]) => (
+                            <div key={clientId} className="border-b pb-3 last:border-b-0">
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="font-semibold truncate">{stats.name}</span>
+                                <span className="text-sm text-gray-600">{stats.count} transacciones</span>
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                Total prestado: ${stats.totalLoan.toLocaleString()}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-gray-500 text-center py-4">No hay datos de clientes</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </TabsContent>
 

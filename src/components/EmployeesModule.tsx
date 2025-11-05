@@ -78,36 +78,119 @@ interface PermissionConfig {
 }
 
 const PERMISSIONS_CONFIG: PermissionConfig = {
-  // Préstamos
+  // ========== PRÉSTAMOS ==========
   'loans.view': { label: 'Ver Préstamos', description: 'Puede ver la lista de préstamos', category: 'Préstamos' },
   'loans.create': { label: 'Crear Préstamos', description: 'Puede crear nuevos préstamos', category: 'Préstamos' },
   'loans.edit': { label: 'Editar Préstamos', description: 'Puede modificar préstamos existentes', category: 'Préstamos' },
   'loans.delete': { label: 'Eliminar Préstamos', description: 'Puede eliminar préstamos', category: 'Préstamos' },
   
-  // Clientes
+  // ========== CLIENTES ==========
   'clients.view': { label: 'Ver Clientes', description: 'Puede ver la lista de clientes', category: 'Clientes' },
   'clients.create': { label: 'Crear Clientes', description: 'Puede registrar nuevos clientes', category: 'Clientes' },
   'clients.edit': { label: 'Editar Clientes', description: 'Puede modificar información de clientes', category: 'Clientes' },
   'clients.delete': { label: 'Eliminar Clientes', description: 'Puede eliminar clientes', category: 'Clientes' },
   
-  // Pagos
+  // ========== PAGOS ==========
   'payments.view': { label: 'Ver Pagos', description: 'Puede ver el historial de pagos', category: 'Pagos' },
   'payments.create': { label: 'Registrar Pagos', description: 'Puede registrar nuevos pagos', category: 'Pagos' },
   'payments.edit': { label: 'Editar Pagos', description: 'Puede modificar pagos registrados', category: 'Pagos' },
+  'payments.delete': { label: 'Eliminar Pagos', description: 'Puede eliminar pagos registrados', category: 'Pagos' },
   
-  // Reportes
-  'reports.view': { label: 'Ver Reportes', description: 'Puede acceder a los reportes', category: 'Reportes' },
-  'reports.export': { label: 'Exportar Reportes', description: 'Puede exportar reportes', category: 'Reportes' },
+  // ========== INVENTARIO ==========
+  'inventory.view': { label: 'Ver Inventario', description: 'Puede ver el inventario de productos', category: 'Inventario' },
+  'inventory.products.create': { label: 'Crear Productos', description: 'Puede crear nuevos productos en el inventario', category: 'Inventario' },
+  'inventory.products.edit': { label: 'Editar Productos', description: 'Puede modificar productos existentes', category: 'Inventario' },
+  'inventory.products.delete': { label: 'Eliminar Productos', description: 'Puede eliminar productos del inventario', category: 'Inventario' },
+  'inventory.movements.view': { label: 'Ver Movimientos', description: 'Puede ver los movimientos de inventario', category: 'Inventario' },
+  'inventory.sales.view': { label: 'Ver Ventas POS', description: 'Puede ver el historial de ventas del punto de venta', category: 'Inventario' },
+  'inventory.reports.view': { label: 'Ver Reportes de Inventario', description: 'Puede ver reportes y estadísticas de inventario', category: 'Inventario' },
+  
+  // ========== PUNTO DE VENTA (POS) ==========
+  'pos.view': { label: 'Ver Punto de Venta', description: 'Puede acceder al módulo de punto de venta', category: 'Punto de Venta' },
+  'pos.create': { label: 'Realizar Ventas', description: 'Puede procesar nuevas ventas en el punto de venta', category: 'Punto de Venta' },
+  'pos.edit': { label: 'Editar Ventas', description: 'Puede editar ventas realizadas', category: 'Punto de Venta' },
+  'pos.delete': { label: 'Eliminar Ventas', description: 'Puede eliminar ventas registradas', category: 'Punto de Venta' },
+  'pos.receipt.print': { label: 'Imprimir Recibos', description: 'Puede imprimir recibos de venta', category: 'Punto de Venta' },
+  'pos.receipt.download': { label: 'Descargar Recibos', description: 'Puede descargar recibos de venta', category: 'Punto de Venta' },
+  
+  // ========== COMPRA-VENTA (CASA DE EMPEÑO) ==========
+  'pawnshop.view': { label: 'Ver Transacciones', description: 'Puede ver las transacciones de compra-venta', category: 'Compra-Venta' },
+  'pawnshop.create': { label: 'Crear Transacciones', description: 'Puede crear nuevas transacciones de empeño', category: 'Compra-Venta' },
+  'pawnshop.edit': { label: 'Editar Transacciones', description: 'Puede modificar transacciones existentes', category: 'Compra-Venta' },
+  'pawnshop.delete': { label: 'Eliminar Transacciones', description: 'Puede eliminar transacciones', category: 'Compra-Venta' },
+  'pawnshop.payments.view': { label: 'Ver Pagos de Empeño', description: 'Puede ver el historial de pagos de empeños', category: 'Compra-Venta' },
+  'pawnshop.payments.create': { label: 'Registrar Pagos de Empeño', description: 'Puede registrar pagos de transacciones de empeño', category: 'Compra-Venta' },
+  'pawnshop.payments.edit': { label: 'Editar Pagos de Empeño', description: 'Puede modificar pagos de empeños registrados', category: 'Compra-Venta' },
+  'pawnshop.redeem': { label: 'Redimir Artículos', description: 'Puede marcar artículos como redimidos', category: 'Compra-Venta' },
+  'pawnshop.forfeit': { label: 'Marcar como Perdido', description: 'Puede marcar artículos como perdidos', category: 'Compra-Venta' },
+  'pawnshop.reports.view': { label: 'Ver Reportes de Empeño', description: 'Puede ver reportes y estadísticas de compra-venta', category: 'Compra-Venta' },
+  'pawnshop.receipt.print': { label: 'Imprimir Recibos de Empeño', description: 'Puede imprimir recibos de transacciones de empeño', category: 'Compra-Venta' },
+  
+  // ========== CARTERAS ==========
+  'portfolios.view': { label: 'Ver Carteras', description: 'Puede ver las carteras de préstamos', category: 'Carteras' },
+  'portfolios.create': { label: 'Crear Carteras', description: 'Puede crear nuevas carteras', category: 'Carteras' },
+  'portfolios.edit': { label: 'Editar Carteras', description: 'Puede modificar carteras existentes', category: 'Carteras' },
+  'portfolios.delete': { label: 'Eliminar Carteras', description: 'Puede eliminar carteras', category: 'Carteras' },
+  
+  // ========== SOLICITUDES ==========
+  'requests.view': { label: 'Ver Solicitudes', description: 'Puede ver solicitudes de préstamos', category: 'Solicitudes' },
+  'requests.create': { label: 'Crear Solicitudes', description: 'Puede crear nuevas solicitudes', category: 'Solicitudes' },
+  'requests.edit': { label: 'Editar Solicitudes', description: 'Puede modificar solicitudes existentes', category: 'Solicitudes' },
+  'requests.approve': { label: 'Aprobar Solicitudes', description: 'Puede aprobar solicitudes de préstamos', category: 'Solicitudes' },
+  'requests.reject': { label: 'Rechazar Solicitudes', description: 'Puede rechazar solicitudes de préstamos', category: 'Solicitudes' },
+  
+  // ========== ACUERDOS DE PAGO ==========
+  'agreements.view': { label: 'Ver Acuerdos', description: 'Puede ver acuerdos de pago', category: 'Acuerdos' },
+  'agreements.create': { label: 'Crear Acuerdos', description: 'Puede crear nuevos acuerdos de pago', category: 'Acuerdos' },
+  'agreements.edit': { label: 'Editar Acuerdos', description: 'Puede modificar acuerdos existentes', category: 'Acuerdos' },
+  'agreements.delete': { label: 'Eliminar Acuerdos', description: 'Puede eliminar acuerdos de pago', category: 'Acuerdos' },
+  
+  // ========== DOCUMENTOS ==========
+  'documents.view': { label: 'Ver Documentos', description: 'Puede ver documentos del sistema', category: 'Documentos' },
+  'documents.create': { label: 'Subir Documentos', description: 'Puede subir nuevos documentos', category: 'Documentos' },
+  'documents.edit': { label: 'Editar Documentos', description: 'Puede modificar documentos existentes', category: 'Documentos' },
+  'documents.delete': { label: 'Eliminar Documentos', description: 'Puede eliminar documentos', category: 'Documentos' },
+  'documents.download': { label: 'Descargar Documentos', description: 'Puede descargar documentos del sistema', category: 'Documentos' },
+  
+  // ========== RUTAS Y COBRANZA ==========
+  'routes.view': { label: 'Ver Rutas', description: 'Puede ver las rutas de cobranza', category: 'Rutas y Cobranza' },
+  'routes.create': { label: 'Crear Rutas', description: 'Puede crear nuevas rutas de cobranza', category: 'Rutas y Cobranza' },
+  'routes.edit': { label: 'Editar Rutas', description: 'Puede modificar rutas existentes', category: 'Rutas y Cobranza' },
+  'routes.delete': { label: 'Eliminar Rutas', description: 'Puede eliminar rutas de cobranza', category: 'Rutas y Cobranza' },
+  'routes.map.view': { label: 'Ver Mapa', description: 'Puede ver el mapa de rutas y ubicaciones', category: 'Rutas y Cobranza' },
+  
+  // ========== REPORTES ==========
+  'reports.view': { label: 'Ver Reportes', description: 'Puede acceder a los reportes generales', category: 'Reportes' },
+  'reports.loans': { label: 'Reportes de Préstamos', description: 'Puede ver reportes de préstamos', category: 'Reportes' },
   'reports.financial': { label: 'Reportes Financieros', description: 'Puede ver reportes financieros sensibles', category: 'Reportes' },
+  'reports.export': { label: 'Exportar Reportes', description: 'Puede exportar reportes a diferentes formatos', category: 'Reportes' },
+  'reports.inventory': { label: 'Reportes de Inventario', description: 'Puede ver reportes de inventario y ventas', category: 'Reportes' },
+  'reports.pawnshop': { label: 'Reportes de Compra-Venta', description: 'Puede ver reportes de compra-venta', category: 'Reportes' },
   
-  // Configuración
+  // ========== FINANZAS ==========
+  'expenses.view': { label: 'Ver Gastos', description: 'Puede ver los gastos registrados', category: 'Finanzas' },
+  'expenses.create': { label: 'Registrar Gastos', description: 'Puede registrar nuevos gastos', category: 'Finanzas' },
+  'expenses.edit': { label: 'Editar Gastos', description: 'Puede modificar gastos registrados', category: 'Finanzas' },
+  'expenses.delete': { label: 'Eliminar Gastos', description: 'Puede eliminar gastos registrados', category: 'Finanzas' },
+  
+  // ========== PERSONAL Y TURNOS ==========
+  'shifts.view': { label: 'Ver Turnos', description: 'Puede ver los turnos de trabajo', category: 'Personal' },
+  'shifts.create': { label: 'Crear Turnos', description: 'Puede crear nuevos turnos de trabajo', category: 'Personal' },
+  'shifts.edit': { label: 'Editar Turnos', description: 'Puede modificar turnos existentes', category: 'Personal' },
+  'shifts.delete': { label: 'Eliminar Turnos', description: 'Puede eliminar turnos de trabajo', category: 'Personal' },
+  
+  // ========== AGENDA Y CITAS ==========
+  'appointments.view': { label: 'Ver Citas', description: 'Puede ver las citas programadas', category: 'Agenda' },
+  'appointments.create': { label: 'Crear Citas', description: 'Puede programar nuevas citas', category: 'Agenda' },
+  'appointments.edit': { label: 'Editar Citas', description: 'Puede modificar citas existentes', category: 'Agenda' },
+  'appointments.delete': { label: 'Eliminar Citas', description: 'Puede eliminar citas programadas', category: 'Agenda' },
+  
+  // ========== CONFIGURACIÓN Y ADMINISTRACIÓN ==========
   'settings.view': { label: 'Ver Configuración', description: 'Puede ver configuraciones de la empresa', category: 'Configuración' },
-  'settings.edit': { label: 'Editar Configuración', description: 'Puede modificar configuraciones', category: 'Configuración' },
-  'employees.manage': { label: 'Gestionar Empleados', description: 'Puede gestionar otros empleados', category: 'Configuración' },
-  
-  // Inventario
-  'inventory.view': { label: 'Ver Inventario', description: 'Puede ver el inventario', category: 'Inventario' },
-  'inventory.manage': { label: 'Gestionar Inventario', description: 'Puede gestionar productos del inventario', category: 'Inventario' },
+  'settings.edit': { label: 'Editar Configuración', description: 'Puede modificar configuraciones generales', category: 'Configuración' },
+  'employees.manage': { label: 'Gestionar Empleados', description: 'Puede gestionar otros empleados y sus permisos', category: 'Configuración' },
+  'settings.banks': { label: 'Gestionar Bancos', description: 'Puede gestionar información de bancos', category: 'Configuración' },
+  'settings.utilities': { label: 'Gestionar Utilidades', description: 'Puede acceder a utilidades del sistema', category: 'Configuración' },
 };
 
 export const EmployeesModule = () => {
@@ -332,7 +415,26 @@ export const EmployeesModule = () => {
     .filter(e => e.status === 'active' && e.salary)
     .reduce((sum, e) => sum + (e.salary || 0), 0);
 
-  // Group permissions by category
+  // Group permissions by category and sort them in a logical order
+  const categoryOrder = [
+    'Préstamos',
+    'Clientes',
+    'Pagos',
+    'Inventario',
+    'Punto de Venta',
+    'Compra-Venta',
+    'Carteras',
+    'Solicitudes',
+    'Acuerdos',
+    'Documentos',
+    'Rutas y Cobranza',
+    'Reportes',
+    'Finanzas',
+    'Personal',
+    'Agenda',
+    'Configuración'
+  ];
+  
   const permissionsByCategory = Object.entries(PERMISSIONS_CONFIG).reduce((acc, [key, config]) => {
     if (!acc[config.category]) {
       acc[config.category] = [];
@@ -340,6 +442,16 @@ export const EmployeesModule = () => {
     acc[config.category].push({ key, ...config });
     return acc;
   }, {} as Record<string, Array<{ key: string; label: string; description: string; category: string }>>);
+
+  // Sort categories according to the defined order
+  const sortedCategories = Object.keys(permissionsByCategory).sort((a, b) => {
+    const indexA = categoryOrder.indexOf(a);
+    const indexB = categoryOrder.indexOf(b);
+    if (indexA === -1 && indexB === -1) return a.localeCompare(b);
+    if (indexA === -1) return 1;
+    if (indexB === -1) return -1;
+    return indexA - indexB;
+  });
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -561,33 +673,36 @@ export const EmployeesModule = () => {
                       </div>
                 
                       
-                      {Object.entries(permissionsByCategory).map(([category, permissions]) => (
-                        <Card key={category}>
-                          <CardHeader>
-                            <CardTitle className="text-base">{category}</CardTitle>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              {permissions.map((permission) => (
-                                <div key={permission.key} className="flex items-start space-x-3">
-                                  <Switch
-                                    checked={selectedPermissions.includes(permission.key)}
-                                    onCheckedChange={(checked) => handlePermissionChange(permission.key, checked)}
-                                  />
-                                  <div className="space-y-1">
-                                    <Label className="text-sm font-medium">
-                                      {permission.label}
-                                    </Label>
-                                    <p className="text-xs text-gray-500">
-                                      {permission.description}
-                                    </p>
+                      {sortedCategories.map((category) => {
+                        const permissions = permissionsByCategory[category];
+                        return (
+                          <Card key={category}>
+                            <CardHeader>
+                              <CardTitle className="text-base">{category}</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {permissions.map((permission) => (
+                                  <div key={permission.key} className="flex items-start space-x-3">
+                                    <Switch
+                                      checked={selectedPermissions.includes(permission.key)}
+                                      onCheckedChange={(checked) => handlePermissionChange(permission.key, checked)}
+                                    />
+                                    <div className="space-y-1">
+                                      <Label className="text-sm font-medium">
+                                        {permission.label}
+                                      </Label>
+                                      <p className="text-xs text-gray-500">
+                                        {permission.description}
+                                      </p>
+                                    </div>
                                   </div>
-                                </div>
-                              ))}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
                     </div>
                   </TabsContent>
                 </Tabs>

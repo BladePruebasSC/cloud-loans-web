@@ -119,14 +119,14 @@ const Index = () => {
         return <InventoryModule />;
       
       case '/compra-venta':
-        if (!hasPermission('inventory.view')) {
-          return <RestrictedAccess module="inventory" />;
+        if (!hasPermission('pawnshop.view')) {
+          return <RestrictedAccess module="pawnshop" />;
         }
         return <PawnShopModule />;
       
       case '/punto-venta':
-        if (!hasPermission('inventory.view')) {
-          return <RestrictedAccess module="inventory" />;
+        if (!hasPermission('pos.view')) {
+          return <RestrictedAccess module="pos" />;
         }
         return <PointOfSaleModule />;
       

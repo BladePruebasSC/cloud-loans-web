@@ -91,13 +91,13 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       name: 'Punto de Venta', 
       path: '/punto-venta', 
       icon: ShoppingCart,
-      permission: 'inventory.view'
+      permission: 'pos.view'
     },
     { 
       name: 'Compra/Venta', 
       path: '/compra-venta', 
       icon: Scale,
-      permission: 'inventory.view'
+      permission: 'pawnshop.view'
     },
     { 
       name: 'Documentos', 

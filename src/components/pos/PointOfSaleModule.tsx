@@ -226,8 +226,9 @@ export const PointOfSaleModule = () => {
       // Si hay descuento total, calcular sobre el subtotal base + ITBIS calculado
       // Primero calcular ITBIS sin descuento total para tener el total bruto
       const totalTaxBeforeDiscount = cart.reduce((sum, item) => {
-        const priceWithoutTax = item.unitPrice; // precio sin ITBIS (ya está en unitPrice)
+        // Calcular precio sin ITBIS a partir del precio con ITBIS
         const itbisRate = item.product.itbis_rate ?? 18;
+        const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
         const baseAmount = priceWithoutTax * item.quantity;
         const discountedBase = baseAmount * (1 - (item.discountPercent || 0) / 100);
         const itemTax = discountedBase * (itbisRate / 100);
@@ -347,15 +348,17 @@ export const PointOfSaleModule = () => {
       }
       updateCartItemQuantity(product.id, desiredQty);
     } else {
-      // unitPrice debe ser el precio SIN ITBIS (selling_price)
-      const priceWithoutTax = Math.round(((product.selling_price || 0)) * 100) / 100;
+      // unitPrice debe ser el precio CON ITBIS (para mostrar al usuario)
+      const itbisRate = product.itbis_rate ?? 18;
+      const priceWithoutTax = product.selling_price || 0;
+      const priceWithTax = Math.round((priceWithoutTax * (1 + itbisRate / 100)) * 100) / 100;
       const newItem: CartItem = {
         id: `${product.id}-${Date.now()}`,
         product,
         quantity: 1,
-        unitPrice: priceWithoutTax, // Precio sin ITBIS
+        unitPrice: priceWithTax, // Precio CON ITBIS (para mostrar)
         discountPercent: 0,
-        subtotal: priceWithoutTax // Subtotal sin ITBIS
+        subtotal: priceWithoutTax // Subtotal SIN ITBIS (precio base × cantidad, sin descuento aún)
       };
       setCart([...cart, newItem]);
       toast.success(`${product.name} agregado al carrito`);
@@ -375,8 +378,11 @@ export const PointOfSaleModule = () => {
           toast.error('Cantidad supera el stock disponible');
           return item;
         }
+        // Calcular precio sin ITBIS a partir del precio con ITBIS
+        const itbisRate = item.product.itbis_rate ?? 18;
+        const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
         // Subtotal sin ITBIS: (precio sin ITBIS * cantidad) - descuento
-        const baseAmount = item.unitPrice * quantity;
+        const baseAmount = priceWithoutTax * quantity;
         const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
         const subtotal = Math.max(0, discounted);
         return { ...item, quantity, subtotal };
@@ -389,8 +395,12 @@ export const PointOfSaleModule = () => {
     setCart(cart.map(item => {
       if (item.product.id === productId) {
         const roundedPrice = Math.round((price || 0) * 100) / 100;
+        // El precio ingresado se asume que es CON ITBIS
+        // Calcular precio sin ITBIS a partir del precio con ITBIS
+        const itbisRate = item.product.itbis_rate ?? 18;
+        const priceWithoutTax = roundedPrice / (1 + itbisRate / 100);
         // Subtotal sin ITBIS: (precio sin ITBIS * cantidad) - descuento
-        const baseAmount = roundedPrice * item.quantity;
+        const baseAmount = priceWithoutTax * item.quantity;
         const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
         const subtotal = Math.max(0, discounted);
         return { ...item, unitPrice: roundedPrice, subtotal };
@@ -403,8 +413,11 @@ export const PointOfSaleModule = () => {
     setCart(cart.map(item => {
       if (item.product.id === productId) {
         const percent = Math.min(Math.max(discountPercent, 0), 100);
+        // Calcular precio sin ITBIS a partir del precio con ITBIS
+        const itbisRate = item.product.itbis_rate ?? 18;
+        const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
         // Subtotal sin ITBIS: (precio sin ITBIS * cantidad) - descuento
-        const baseAmount = item.unitPrice * item.quantity;
+        const baseAmount = priceWithoutTax * item.quantity;
         const discounted = baseAmount * (1 - percent / 100);
         const subtotal = Math.max(0, discounted);
         return { ...item, discountPercent: percent, subtotal };
@@ -418,7 +431,7 @@ export const PointOfSaleModule = () => {
     toast.success('Producto eliminado del carrito');
   };
 
-  const clearCart = () => {
+  const clearCart = (showToast = true) => {
     setCart([]);
     setSelectedCustomer(null);
     setSaleData(prev => ({
@@ -433,7 +446,9 @@ export const PointOfSaleModule = () => {
       paymentAmount: 0,
       change: 0
     }));
+    if (showToast) {
     toast.success('Carrito vaciado');
+    }
   };
 
   const selectCustomer = (customer: Customer) => {
@@ -462,6 +477,7 @@ export const PointOfSaleModule = () => {
 
     // Persistir venta en base de datos (sales + sale_details)
     const persistSale = async () => {
+      let saleSaved = false;
       try {
         const paymentMethod = saleData.paymentMethod?.id || 'cash';
         // Verificar stock en servidor antes de persistir
@@ -478,16 +494,8 @@ export const PointOfSaleModule = () => {
             return;
           }
         }
-        // Actualizar stock primero para asegurar la baja de inventario
-        for (const ci of cart) {
-          const newStock = Math.max(0, (idToStock.get(ci.product.id) || ci.product.current_stock || 0) - ci.quantity);
-          await supabase
-            .from('products')
-            .update({ current_stock: newStock })
-            .eq('id', ci.product.id);
-        }
 
-        // Intento 1: insertar encabezado + detalles con columnas mínimas
+        // Primero intentar esquema nuevo (con sale_details)
         try {
           const { data: saleInsert, error: saleError } = await supabase
             .from('sales')
@@ -496,14 +504,18 @@ export const PointOfSaleModule = () => {
                 user_id: user?.id,
                 sale_date: new Date().toISOString().split('T')[0],
                 total_amount: saleData.total,
-                notes: saleData.notes || null
+                sale_number: `SALE-${Date.now()}`,
+                payment_method: saleData.paymentMethod?.id || 'cash',
+                status: 'completed',
+                notes: saleData.notes || null,
+                client_id: saleData.customer?.id || null
               }
             ])
             .select()
             .single();
 
-          if (saleError) throw saleError;
-
+          if (!saleError && saleInsert) {
+            // Intentar insertar detalles
           const details = cart.map(ci => ({
             sale_id: saleInsert.id,
             product_id: ci.product.id,
@@ -513,42 +525,102 @@ export const PointOfSaleModule = () => {
           }));
 
           const { error: detailsError } = await supabase.from('sale_details').insert(details);
-          if (detailsError) throw detailsError;
+            if (!detailsError) {
+              saleSaved = true;
+              // Actualizar stock
+              for (const ci of cart) {
+                const newStock = Math.max(0, (idToStock.get(ci.product.id) || ci.product.current_stock || 0) - ci.quantity);
+                await supabase
+                  .from('products')
+                  .update({ current_stock: newStock })
+                  .eq('id', ci.product.id);
+              }
+            }
+          }
         } catch (inner) {
-          console.warn('Header/details insert failed, falling back to simple rows:', inner);
-          // Fall back silently to simple insert below
+          // Ignorar error, intentar esquema simple
         }
-      } catch (e: any) {
-        console.error('Error saving sale:', e);
-        // Fallback: intentar esquema simple por cada ítem (sales con columnas mínimas)
-        try {
-          const paymentMethod = saleData.paymentMethod?.id || 'cash';
-          const rows = cart.map(ci => ({
+
+        // Si no se insertó con el esquema nuevo, usar esquema simple
+        if (!saleSaved) {
+          const customerName = saleData.customer?.full_name || 'Cliente General';
+          
+          // En el esquema simple, cada producto es una fila separada
+          // Solo incluir campos que existen en la tabla
+          const rows = cart.map(ci => {
+            const row: any = {
             user_id: user?.id,
             product_id: ci.product.id,
             quantity: ci.quantity,
             unit_price: ci.unitPrice,
             total_price: ci.subtotal,
-            sale_date: new Date().toISOString().split('T')[0],
-            // Campos opcionales removidos para evitar errores por columnas inexistentes
-          }));
+              customer_name: customerName,
+              payment_method: paymentMethod,
+              sale_type: saleData.saleType || 'cash',
+              sale_date: new Date().toISOString()
+            };
+            
+            // Campos opcionales - solo agregar si tienen valor
+            if (saleData.customer?.phone) row.customer_phone = saleData.customer.phone;
+            if (saleData.customer?.email) row.customer_email = saleData.customer.email;
+            if (saleData.customer?.rnc) row.customer_rnc = saleData.customer.rnc;
+            if (saleData.customer?.address) row.customer_address = saleData.customer.address;
+            if (saleData.ncfType) row.ncf_type = saleData.ncfType;
+            if (saleData.notes) row.notes = saleData.notes;
+            
+            return row;
+          });
+
           const { error: simpleError } = await supabase.from('sales').insert(rows);
           if (simpleError) {
-            console.error('Fallback simple sales insert failed:', simpleError);
-            toast.error('No se pudo registrar la venta en base de datos');
+            // Si falla, intentar sin campos opcionales que pueden no existir
+            console.warn('First insert attempt failed, trying minimal fields:', simpleError);
+            const minimalRows = cart.map(ci => ({
+              user_id: user?.id,
+              product_id: ci.product.id,
+              quantity: ci.quantity,
+              unit_price: ci.unitPrice,
+              total_price: ci.subtotal,
+              customer_name: customerName,
+              payment_method: paymentMethod,
+              sale_type: saleData.saleType || 'cash',
+              sale_date: new Date().toISOString()
+            }));
+            
+            const { error: minimalError } = await supabase.from('sales').insert(minimalRows);
+            if (minimalError) {
+              console.error('Minimal sales insert also failed:', minimalError);
+              toast.error(`No se pudo registrar la venta: ${minimalError.message}`);
+              return; // No continuar si falló
+            }
+            // Si el insert mínimo funcionó, continuar
           }
-        } catch (e2) {
-          console.error('Fallback insert exception:', e2);
-          toast.error('No se pudo registrar la venta');
+          
+          saleSaved = true;
+          // Actualizar stock
+          for (const ci of cart) {
+            const newStock = Math.max(0, (idToStock.get(ci.product.id) || ci.product.current_stock || 0) - ci.quantity);
+            await supabase
+              .from('products')
+              .update({ current_stock: newStock })
+              .eq('id', ci.product.id);
+          }
         }
-      } finally {
+
+        // Solo si se guardó exitosamente, continuar
+        if (saleSaved) {
     setShowPaymentModal(false);
     setShowReceiptModal(true);
     toast.success('Venta procesada exitosamente');
-        // Refrescar inventario y limpiar carrito
+          // Refrescar inventario
         await fetchData();
-        // No limpiar el carrito aún: se necesita para la factura.
-        // Se limpia al cerrar o al crear "Nueva Venta" desde el modal.
+          // Limpiar el carrito después de guardar la venta (sin mostrar toast)
+          clearCart(false);
+        }
+      } catch (e: any) {
+        console.error('Error saving sale:', e);
+        toast.error('No se pudo registrar la venta');
+        setShowPaymentModal(false);
       }
     };
 
@@ -561,9 +633,29 @@ export const PointOfSaleModule = () => {
     const companyAddress = companyInfo.address;
     const companyPhone = companyInfo.phone;
     const companyEmail = companyInfo.email;
-    const cashier = companyName; // Mostrar nombre de la empresa como vendedor
+    const cashier = companyName;
     const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
-    const itemsRows = cart.map(item => `
+    
+    const isThermal = format === 'POS80' || format === 'POS58';
+    const isPOS58 = format === 'POS58';
+    
+    // Para impresoras térmicas, formato más compacto
+    const itemsRows = isThermal
+      ? cart.map(item => {
+          const productName = isPOS58 
+            ? (item.product.name.length > 20 ? item.product.name.substring(0, 20) + '...' : item.product.name)
+            : item.product.name;
+          const discountCol = isPOS58 ? '' : `<td class="right">${(item.discountPercent || 0).toFixed(0)}%</td>`;
+          return `
+            <tr>
+              <td>${productName}</td>
+              <td class="right">${item.quantity}</td>
+              ${discountCol}
+              <td class="right">${money(item.subtotal)}</td>
+            </tr>
+          `;
+        }).join('')
+      : cart.map(item => `
               <tr>
                 <td>${item.product.name}</td>
                 <td class="right">${item.quantity}</td>
@@ -572,7 +664,8 @@ export const PointOfSaleModule = () => {
                 <td class="right">${money(item.subtotal)}</td>
               </tr>
             `).join('');
-    const customerExtra = saleData.ncfNumber
+
+    const customerExtra = saleData.ncfNumber && !isThermal
       ? `
         <div class="field"><span class="label">Teléfono</span><span class="value">${saleData.customer?.phone || '—'}</span></div>
         <div class="field"><span class="label">Correo</span><span class="value">${saleData.customer?.email || '—'}</span></div>
@@ -580,14 +673,127 @@ export const PointOfSaleModule = () => {
       `
       : '';
 
+    // CSS específico para cada formato
     const pageCss = format === 'A4'
       ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
       : format === 'POS80'
-        ? '@page { size: 80mm auto; margin: 4mm; } .invoice{width:72mm;margin:0 auto;}'
-        : '@page { size: 58mm auto; margin: 3mm; } .invoice{width:54mm;margin:0 auto;}';
-    const smallCss = format === 'A4' ? '' : '.brand-logo{display:none}.grid-2{grid-template-columns:1fr}.section{padding:8px}.brand-name{font-size:14px}.doc-type{font-size:16px}.summary{padding:6px}.sum-row{padding:4px 0} table th,table td{padding:6px} body{font-size:11px}';
+        ? '@page { size: 80mm auto; margin: 2mm; } .invoice{width:76mm;margin:0 auto;font-size:9px;}'
+        : '@page { size: 58mm auto; margin: 2mm; } .invoice{width:54mm;margin:0 auto;font-size:8px;}';
+    
+    // CSS compacto para térmicas
+    const thermalCss = isThermal ? `
+      body { font-size: ${isPOS58 ? '8px' : '9px'}; font-family: 'Courier New', monospace; }
+      .invoice { width: ${isPOS58 ? '54mm' : '76mm'}; margin: 0 auto; }
+      .header { padding: 4px 0; border-bottom: 1px solid #000; text-align: center; }
+      .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+      .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+      .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; }
+      .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .section { padding: 4px 0; margin: 4px 0; border: none; }
+      .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 2px; }
+      .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .label { font-weight: bold; }
+      table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      th, td { padding: 2px 1px; border-bottom: 1px dashed #ccc; }
+      thead th { background: transparent; border-bottom: 1px solid #000; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      tbody td { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .summary { padding: 4px 0; border-top: 1px solid #000; margin-top: 4px; }
+      .sum-row { padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
+      .footer { margin-top: 8px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+      .notes { padding: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .brand-logo { display: none; }
+      .grid-2 { grid-template-columns: 1fr; gap: 2px; }
+      .row { flex-direction: column; gap: 4px; }
+      .totals { grid-template-columns: 1fr; gap: 4px; }
+    ` : '';
 
-    const receiptHTML = `
+    // Generar HTML según el formato
+    const receiptHTML = isThermal ? `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Factura</title>
+        <style>
+          ${pageCss}
+          ${thermalCss}
+          body { font-family: 'Courier New', monospace; color: #000; margin: 0; padding: 0; }
+          .invoice { }
+          .header { text-align: center; padding: 4px 0; border-bottom: 1px solid #000; }
+          .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+          .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+          .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+          .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .section { padding: 2px 0; margin: 2px 0; }
+          .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 1px; }
+          .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
+          .label { font-weight: bold; }
+          table { width: 100%; border-collapse: collapse; margin: 2px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          th, td { padding: 1px 0; text-align: left; }
+          th.right, td.right { text-align: right; }
+          thead th { border-bottom: 1px solid #000; font-weight: bold; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .summary { padding: 2px 0; border-top: 1px solid #000; margin-top: 2px; }
+          .sum-row { display: flex; justify-content: space-between; padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
+          .footer { margin-top: 4px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+          .notes { padding: 2px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .divider { border-top: 1px dashed #000; margin: 2px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="invoice">
+          <div class="header">
+            <div class="brand-name">${companyName}</div>
+            <div class="brand-meta">${companyAddress}</div>
+            <div class="brand-meta">${companyPhone}${companyEmail ? ' | ' + companyEmail : ''}</div>
+            <div class="doc-type">FACTURA</div>
+            <div class="doc-number">NCF: ${invoiceNumber}</div>
+          </div>
+
+          <div class="section">
+            <div class="field"><span class="label">Cliente:</span><span>${saleData.customer?.full_name || 'Cliente General'}</span></div>
+            <div class="field"><span class="label">Fecha:</span><span>${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span></div>
+            <div class="field"><span class="label">Pago:</span><span>${saleData.paymentMethod?.name || 'Efectivo'}</span></div>
+            ${saleData.paymentMethod?.type === 'cash' && saleData.change > 0 ? `<div class="field"><span class="label">Cambio:</span><span>${money(saleData.change)}</span></div>` : ''}
+          </div>
+
+          <div class="divider"></div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Descripción</th>
+                <th class="right">Cant</th>
+                ${isPOS58 ? '' : '<th class="right">Desc%</th>'}
+                <th class="right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsRows}
+            </tbody>
+          </table>
+
+          <div class="divider"></div>
+
+          <div class="summary">
+            <div class="sum-row"><span>Subtotal:</span><span>${money(saleData.subtotal)}</span></div>
+            ${saleData.discount > 0 ? `<div class="sum-row"><span>Descuento:</span><span>-${money(saleData.discount)}</span></div>` : ''}
+            ${saleData.tax > 0 ? `<div class="sum-row"><span>ITBIS:</span><span>${money(saleData.tax)}</span></div>` : ''}
+            <div class="sum-row total"><span>TOTAL:</span><span>${money(saleData.total)}</span></div>
+          </div>
+
+          ${saleData.notes ? `<div class="notes"><strong>Notas:</strong> ${saleData.notes}</div>` : ''}
+
+          <div class="footer">
+            <div>Gracias por su preferencia</div>
+            <div>${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</div>
+          </div>
+        </div>
+      </body>
+      </html>
+    ` : `
       <!DOCTYPE html>
       <html lang="es">
       <head>
@@ -626,7 +832,6 @@ export const PointOfSaleModule = () => {
           .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
           .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
           .footer { margin-top: 16px; font-size: 11px; color: #6b7280; display: flex; justify-content: space-between; align-items: center; }
-          ${smallCss}
         </style>
       </head>
       <body>
@@ -717,20 +922,170 @@ export const PointOfSaleModule = () => {
     const companyPhone = companyInfo.phone;
     const companyEmail = companyInfo.email;
     const cashier = user?.email || 'Cajero';
+    const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+    
+    const isThermal = receiptFormat === 'POS80' || receiptFormat === 'POS58';
+    const isPOS58 = receiptFormat === 'POS58';
+    
+    // Para impresoras térmicas, formato más compacto
+    const itemsRows = isThermal
+      ? cart.map(item => {
+          const productName = isPOS58 
+            ? (item.product.name.length > 20 ? item.product.name.substring(0, 20) + '...' : item.product.name)
+            : item.product.name;
+          const discountCol = isPOS58 ? '' : `<td class="right">${(item.discountPercent || 0).toFixed(0)}%</td>`;
+          return `
+            <tr>
+              <td>${productName}</td>
+              <td class="right">${item.quantity}</td>
+              ${discountCol}
+              <td class="right">${money(item.subtotal)}</td>
+            </tr>
+          `;
+        }).join('')
+      : cart.map(item => `
+          <tr>
+            <td>${item.product.name}</td>
+            <td class="right">${item.quantity}</td>
+            <td class="right">${money(item.unitPrice)}</td>
+            <td class="right">${(item.discountPercent || 0).toFixed(2)}%</td>
+            <td class="right">${money(item.subtotal)}</td>
+          </tr>
+        `).join('');
+
+    const customerExtra = saleData.ncfNumber && !isThermal
+      ? `
+        <div class="field"><span class="label">Teléfono</span><span class="value">${saleData.customer?.phone || '—'}</span></div>
+        <div class="field"><span class="label">Correo</span><span class="value">${saleData.customer?.email || '—'}</span></div>
+        <div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${saleData.customer?.address || '—'}</span></div>
+      `
+      : '';
 
     const pageCss = receiptFormat === 'A4'
       ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
       : receiptFormat === 'POS80'
-        ? '@page { size: 80mm auto; margin: 4mm; } .invoice{width:72mm;margin:0 auto;}'
-        : '@page { size: 58mm auto; margin: 3mm; } .invoice{width:54mm;margin:0 auto;}';
-    const smallCss = receiptFormat === 'A4' ? '' : '.brand-logo{display:none}.grid-2{grid-template-columns:1fr}.section{padding:8px}.brand-name{font-size:14px}.doc-type{font-size:16px}.summary{padding:6px}.sum-row{padding:4px 0} table th,table td{padding:6px} body{font-size:11px}';
+        ? '@page { size: 80mm auto; margin: 2mm; } .invoice{width:76mm;margin:0 auto;font-size:9px;}'
+        : '@page { size: 58mm auto; margin: 2mm; } .invoice{width:54mm;margin:0 auto;font-size:8px;}';
+    
+    // CSS compacto para térmicas
+    const thermalCss = isThermal ? `
+      body { font-size: ${isPOS58 ? '8px' : '9px'}; font-family: 'Courier New', monospace; }
+      .invoice { width: ${isPOS58 ? '54mm' : '76mm'}; margin: 0 auto; }
+      .header { padding: 4px 0; border-bottom: 1px solid #000; text-align: center; }
+      .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+      .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+      .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; }
+      .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .section { padding: 4px 0; margin: 4px 0; border: none; }
+      .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 2px; }
+      .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .label { font-weight: bold; }
+      table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      th, td { padding: 2px 1px; border-bottom: 1px dashed #ccc; }
+      thead th { background: transparent; border-bottom: 1px solid #000; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      tbody td { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .summary { padding: 4px 0; border-top: 1px solid #000; margin-top: 4px; }
+      .sum-row { padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
+      .footer { margin-top: 8px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+      .notes { padding: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .brand-logo { display: none; }
+      .grid-2 { grid-template-columns: 1fr; gap: 2px; }
+      .row { flex-direction: column; gap: 4px; }
+      .totals { grid-template-columns: 1fr; gap: 4px; }
+    ` : '';
 
-    const receiptHTML = `
+    // Generar HTML según el formato (igual que generateReceipt)
+    const receiptHTML = isThermal ? `
       <!DOCTYPE html>
-      <html lang=\"es\">
+      <html lang="es">
       <head>
-        <meta charset=\"UTF-8\">
-        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Factura</title>
+        <style>
+          ${pageCss}
+          ${thermalCss}
+          body { font-family: 'Courier New', monospace; color: #000; margin: 0; padding: 0; }
+          .invoice { }
+          .header { text-align: center; padding: 4px 0; border-bottom: 1px solid #000; }
+          .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+          .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+          .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+          .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .section { padding: 2px 0; margin: 2px 0; }
+          .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 1px; }
+          .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
+          .label { font-weight: bold; }
+          table { width: 100%; border-collapse: collapse; margin: 2px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          th, td { padding: 1px 0; text-align: left; }
+          th.right, td.right { text-align: right; }
+          thead th { border-bottom: 1px solid #000; font-weight: bold; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .summary { padding: 2px 0; border-top: 1px solid #000; margin-top: 2px; }
+          .sum-row { display: flex; justify-content: space-between; padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
+          .footer { margin-top: 4px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+          .notes { padding: 2px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .divider { border-top: 1px dashed #000; margin: 2px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="invoice">
+          <div class="header">
+            <div class="brand-name">${companyName}</div>
+            <div class="brand-meta">${companyAddress}</div>
+            <div class="brand-meta">${companyPhone}${companyEmail ? ' | ' + companyEmail : ''}</div>
+            <div class="doc-type">FACTURA</div>
+            <div class="doc-number">NCF: ${invoiceNumber}</div>
+          </div>
+
+          <div class="section">
+            <div class="field"><span class="label">Cliente:</span><span>${saleData.customer?.full_name || 'Cliente General'}</span></div>
+            <div class="field"><span class="label">Fecha:</span><span>${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span></div>
+            <div class="field"><span class="label">Pago:</span><span>${saleData.paymentMethod?.name || 'Efectivo'}</span></div>
+            ${saleData.paymentMethod?.type === 'cash' && saleData.change > 0 ? `<div class="field"><span class="label">Cambio:</span><span>${money(saleData.change)}</span></div>` : ''}
+          </div>
+
+          <div class="divider"></div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Descripción</th>
+                <th class="right">Cant</th>
+                ${isPOS58 ? '' : '<th class="right">Desc%</th>'}
+                <th class="right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsRows}
+            </tbody>
+          </table>
+
+          <div class="divider"></div>
+
+          <div class="summary">
+            <div class="sum-row"><span>Subtotal:</span><span>${money(saleData.subtotal)}</span></div>
+            ${saleData.discount > 0 ? `<div class="sum-row"><span>Descuento:</span><span>-${money(saleData.discount)}</span></div>` : ''}
+            ${saleData.tax > 0 ? `<div class="sum-row"><span>ITBIS:</span><span>${money(saleData.tax)}</span></div>` : ''}
+            <div class="sum-row total"><span>TOTAL:</span><span>${money(saleData.total)}</span></div>
+          </div>
+
+          ${saleData.notes ? `<div class="notes"><strong>Notas:</strong> ${saleData.notes}</div>` : ''}
+
+          <div class="footer">
+            <div>Gracias por su preferencia</div>
+            <div>${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</div>
+          </div>
+        </div>
+      </body>
+      </html>
+    ` : `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Factura</title>
         <style>
           ${pageCss}
@@ -764,43 +1119,40 @@ export const PointOfSaleModule = () => {
           .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
           .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
           .footer { margin-top: 16px; font-size: 11px; color: #6b7280; display: flex; justify-content: space-between; align-items: center; }
-          ${smallCss}
         </style>
       </head>
       <body>
-        <div class=\"invoice\">
-          <div class=\"header\">
-            <div class=\"brand\">
-              <div class=\"brand-logo\">CL</div>
-              <div class=\"brand-text\">
-                <div class=\"brand-name\">${companyName}</div>
-                <div class=\"brand-meta\">${companyAddress} · ${companyPhone} · ${companyEmail}</div>
+        <div class="invoice">
+        <div class="header">
+            <div class="brand">
+              <div class="brand-logo">CL</div>
+              <div class="brand-text">
+                <div class="brand-name">${companyName}</div>
+                <div class="brand-meta">${companyAddress} · ${companyPhone} · ${companyEmail}</div>
               </div>
             </div>
-            <div class=\"doc-title\">
-              <div class=\"doc-type\">FACTURA</div>
-              <div class=\"doc-number\">NCF: ${invoiceNumber}</div>
+            <div class="doc-title">
+              <div class="doc-type">FACTURA</div>
+              <div class="doc-number">NCF: ${invoiceNumber}</div>
             </div>
         </div>
 
-          <div class=\"row\" style=\"margin-top:12px;\">
-            <div class=\"col section\">
-              <div class=\"section-title\">Datos del Cliente</div>
-              <div class=\"grid-2\">
-                <div class=\"field\"><span class=\"label\">Nombre</span><span class=\"value\">${saleData.customer?.full_name || 'Cliente General'}</span></div>
-                <div class=\"field\"><span class=\"label\">Fecha</span><span class=\"value\">${new Date().toLocaleDateString('es-DO')}</span></div>
-                <div class=\"field\"><span class=\"label\">Teléfono</span><span class=\"value\">${saleData.customer?.phone || '—'}</span></div>
-                <div class=\"field\"><span class=\"label\">Correo</span><span class=\"value\">${saleData.customer?.email || '—'}</span></div>
-                <div class=\"field\" style=\"grid-column: 1 / span 2\"><span class=\"label\">Dirección</span><span class=\"value\">${saleData.customer?.address || '—'}</span></div>
+          <div class="row" style="margin-top:12px;">
+            <div class="col section">
+              <div class="section-title">Datos del Cliente</div>
+              <div class="grid-2">
+                <div class="field"><span class="label">Nombre</span><span class="value">${saleData.customer?.full_name || 'Cliente General'}</span></div>
+                <div class="field"><span class="label">Fecha</span><span class="value">${new Date().toLocaleDateString('es-DO')}</span></div>
+                ${customerExtra}
           </div>
           </div>
-            <div class=\"col section\">
-              <div class=\"section-title\">Detalles</div>
-              <div class=\"grid-2\">
-                <div class=\"field\"><span class=\"label\">Vendedor</span><span class=\"value\">${cashier}</span></div>
-                <div class=\"field\"><span class=\"label\">Condición</span><span class=\"value\">${saleData.saleType === 'cash' ? 'Contado' : saleData.saleType === 'credit' ? 'Crédito' : 'Financiamiento'}</span></div>
-                <div class=\"field\"><span class=\"label\">Método de pago</span><span class=\"value\">${saleData.paymentMethod?.name || '—'}</span></div>
-                <div class=\"field\"><span class=\"label\">Cambio</span><span class=\"value\">${saleData.paymentMethod?.type === 'cash' ? '$' + saleData.change.toFixed(2) : '—'}</span></div>
+            <div class="col section">
+              <div class="section-title">Detalles</div>
+              <div class="grid-2">
+                <div class="field"><span class="label">Vendedor</span><span class="value">${cashier}</span></div>
+                <div class="field"><span class="label">Condición</span><span class="value">${saleData.saleType === 'cash' ? 'Contado' : saleData.saleType === 'credit' ? 'Crédito' : 'Financiamiento'}</span></div>
+                <div class="field"><span class="label">Método de pago</span><span class="value">${saleData.paymentMethod?.name || '—'}</span></div>
+                <div class="field"><span class="label">Cambio</span><span class="value">${saleData.paymentMethod?.type === 'cash' ? '$' + saleData.change.toFixed(2) : '—'}</span></div>
           </div>
           </div>
         </div>
@@ -808,40 +1160,32 @@ export const PointOfSaleModule = () => {
           <table>
           <thead>
             <tr>
-                <th style=\"width:45%\">Descripción</th>
-                <th class=\"right\" style=\"width:10%\">Cant.</th>
-                <th class=\"right\" style=\"width:15%\">Precio</th>
-                <th class=\"right\" style=\"width:15%\">Desc.</th>
-                <th class=\"right\" style=\"width:15%\">Importe</th>
+                <th style="width:45%">Descripción</th>
+                <th class="right" style="width:10%">Cant.</th>
+                <th class="right" style="width:15%">Precio</th>
+                <th class="right" style="width:15%">Desc.</th>
+                <th class="right" style="width:15%">Importe</th>
             </tr>
           </thead>
           <tbody>
-            ${cart.map(item => `
-              <tr>
-                <td>${item.product.name}</td>
-                  <td class=\\"right\\">${item.quantity}</td>
-                  <td class=\\"right\\">$${item.unitPrice.toFixed(2)}</td>
-                  <td class=\\"right\\">${(item.discountPercent || 0).toFixed(2)}%</td>
-                  <td class=\\"right\\">$${item.subtotal.toFixed(2)}</td>
-              </tr>
-            `).join('')}
+            ${itemsRows}
           </tbody>
         </table>
 
-          <div class=\"totals\">
-            <div class=\"notes\">
-              <div style=\"font-weight:700; margin-bottom:6px;\">Notas</div>
+          <div class="totals">
+            <div class="notes">
+              <div style="font-weight:700; margin-bottom:6px;">Notas</div>
               ${saleData.notes || '—'}
           </div>
-            <div class=\"summary\">
-              <div class=\"sum-row\"><span>Subtotal</span><span>$${saleData.subtotal.toFixed(2)}</span></div>
-              <div class=\"sum-row\"><span>Descuento</span><span>-$${saleData.discount.toFixed(2)}</span></div>
-              <div class=\"sum-row\"><span>ITBIS</span><span>$${saleData.tax.toFixed(2)}</span></div>
-              <div class=\"sum-row total\"><span>Total a Pagar</span><span>$${saleData.total.toFixed(2)}</span></div>
+            <div class="summary">
+              <div class="sum-row"><span>Subtotal</span><span>${money(saleData.subtotal)}</span></div>
+              <div class="sum-row"><span>Descuento</span><span>- ${money(saleData.discount)}</span></div>
+              <div class="sum-row"><span>ITBIS</span><span>${money(saleData.tax)}</span></div>
+              <div class="sum-row total"><span>Total a Pagar</span><span>${money(saleData.total)}</span></div>
           </div>
         </div>
 
-          <div class=\"footer\">
+        <div class="footer">
             <div>Gracias por su preferencia</div>
             <div>Generado el ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}</div>
           </div>
@@ -878,7 +1222,7 @@ export const PointOfSaleModule = () => {
               <div className="text-sm text-gray-600">Cajero</div>
               <div className="font-semibold">{user?.email}</div>
             </div>
-            <Button onClick={clearCart} variant="outline" size="sm">
+            <Button onClick={() => clearCart()} variant="outline" size="sm">
               <Trash2 className="h-4 w-4 mr-2" />
               Limpiar
             </Button>
@@ -1387,7 +1731,7 @@ export const PointOfSaleModule = () => {
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => {
               setShowReceiptModal(false);
-              clearCart();
+              clearCart(false);
             }}>
               Nueva Venta
             </Button>
