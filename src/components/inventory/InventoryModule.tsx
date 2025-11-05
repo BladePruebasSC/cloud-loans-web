@@ -95,6 +95,7 @@ const InventoryModule = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedBrand, setSelectedBrand] = useState('all');
   const [showProductForm, setShowProductForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const { user } = useAuth();
@@ -124,6 +125,8 @@ const InventoryModule = () => {
   const [salesDateFrom, setSalesDateFrom] = useState<string>('');
   const [salesDateTo, setSalesDateTo] = useState<string>('');
   const [salesProductFilter, setSalesProductFilter] = useState<string>('all');
+  const [salesCategoryFilter, setSalesCategoryFilter] = useState<string>('all');
+  const [salesBrandFilter, setSalesBrandFilter] = useState<string>('all');
   
   // Inicializar fechas por defecto al montar el componente
   useEffect(() => {
@@ -142,6 +145,8 @@ const InventoryModule = () => {
   const [movementDateFrom, setMovementDateFrom] = useState<string>('');
   const [movementDateTo, setMovementDateTo] = useState<string>('');
   const [movementProductFilter, setMovementProductFilter] = useState<string>('all');
+  const [movementCategoryFilter, setMovementCategoryFilter] = useState<string>('all');
+  const [movementBrandFilter, setMovementBrandFilter] = useState<string>('all');
   
   // Estados para acciones de ventas
   const [selectedSale, setSelectedSale] = useState<SaleWithDetails | null>(null);
@@ -198,14 +203,15 @@ const InventoryModule = () => {
       fetchSales();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, salesDateFrom, salesDateTo, salesProductFilter]);
+  }, [user, salesDateFrom, salesDateTo, salesProductFilter, salesCategoryFilter, salesBrandFilter]);
 
   // Cargar movimientos cuando cambian los filtros
   useEffect(() => {
     if (user) {
       fetchMovements();
     }
-  }, [user, movementDateFrom, movementDateTo, movementProductFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, movementDateFrom, movementDateTo, movementProductFilter, movementCategoryFilter, movementBrandFilter]);
 
   // Obtener categorías únicas de productos existentes
   const getAllCategories = () => {
@@ -463,11 +469,20 @@ const InventoryModule = () => {
           clientName = saleAny.customer_name;
         }
 
-        // Aplicar filtro de producto
-        // Incluir la venta incluso si no tiene detalles (para debug)
-        if (salesProductFilter === 'all' || 
+        // Aplicar filtros de producto, categoría y marca
+        const matchesProduct = salesProductFilter === 'all' || 
             saleDetails.length === 0 || // Si no hay detalles, mostrar igual
-            saleDetails.some(d => d.product_id === salesProductFilter)) {
+            saleDetails.some(d => d.product_id === salesProductFilter);
+        
+        const matchesCategory = salesCategoryFilter === 'all' || 
+            saleDetails.length === 0 ||
+            saleDetails.some(d => d.product?.category === salesCategoryFilter);
+        
+        const matchesBrand = salesBrandFilter === 'all' || 
+            saleDetails.length === 0 ||
+            saleDetails.some(d => d.product?.brand === salesBrandFilter);
+        
+        if (matchesProduct && matchesCategory && matchesBrand) {
           salesWithDetails.push({
             id: sale.id,
             sale_date: saleAny.sale_date || saleAny.created_at,
@@ -527,7 +542,9 @@ const InventoryModule = () => {
             quantity,
             products (
               id,
-              name
+              name,
+              category,
+              brand
             )
           `)
           .eq('sale_id', sale.id);
@@ -537,8 +554,14 @@ const InventoryModule = () => {
             const product = (detail.products as any);
             if (!product) continue;
 
-            // Aplicar filtro de producto
+            // Aplicar filtros de producto, categoría y marca
             if (movementProductFilter !== 'all' && detail.product_id !== movementProductFilter) {
+              continue;
+            }
+            if (movementCategoryFilter !== 'all' && product.category !== movementCategoryFilter) {
+              continue;
+            }
+            if (movementBrandFilter !== 'all' && product.brand !== movementBrandFilter) {
               continue;
             }
 
@@ -557,20 +580,27 @@ const InventoryModule = () => {
           if ((sale as any).product_id) {
             const { data: product } = await supabase
               .from('products')
-              .select('name')
+              .select('name, category, brand')
               .eq('id', (sale as any).product_id)
               .single();
 
-            if (product && (movementProductFilter === 'all' || (sale as any).product_id === movementProductFilter)) {
-              movementsList.push({
-                id: sale.id,
-                type: 'sale',
-                product_id: (sale as any).product_id,
-                product_name: product.name || 'Producto desconocido',
-                quantity: -((sale as any).quantity || 0),
-                date: sale.sale_date || sale.created_at,
-                reference: `Venta #${sale.id.substring(0, 8)}`
-              });
+            if (product) {
+              // Aplicar filtros de producto, categoría y marca
+              const matchesProduct = movementProductFilter === 'all' || (sale as any).product_id === movementProductFilter;
+              const matchesCategory = movementCategoryFilter === 'all' || product.category === movementCategoryFilter;
+              const matchesBrand = movementBrandFilter === 'all' || product.brand === movementBrandFilter;
+              
+              if (matchesProduct && matchesCategory && matchesBrand) {
+                movementsList.push({
+                  id: sale.id,
+                  type: 'sale',
+                  product_id: (sale as any).product_id,
+                  product_name: product.name || 'Producto desconocido',
+                  quantity: -((sale as any).quantity || 0),
+                  date: sale.sale_date || sale.created_at,
+                  reference: `Venta #${sale.id.substring(0, 8)}`
+                });
+              }
             }
           }
         }
@@ -596,7 +626,9 @@ const InventoryModule = () => {
               quantity,
               products (
                 id,
-                name
+                name,
+                category,
+                brand
               )
             `)
             .eq('purchase_id', purchase.id);
@@ -606,7 +638,14 @@ const InventoryModule = () => {
               const product = (detail.products as any);
               if (!product) continue;
 
+              // Aplicar filtros de producto, categoría y marca
               if (movementProductFilter !== 'all' && detail.product_id !== movementProductFilter) {
+                continue;
+              }
+              if (movementCategoryFilter !== 'all' && product.category !== movementCategoryFilter) {
+                continue;
+              }
+              if (movementBrandFilter !== 'all' && product.brand !== movementBrandFilter) {
                 continue;
               }
 
@@ -648,10 +687,16 @@ const InventoryModule = () => {
     try {
       // Guardar siempre sin ITBIS en BD
       // Asegurar que category y brand usen los valores de búsqueda si están disponibles
+      // Convertir SKU y barcode vacíos a null para evitar problemas con restricciones únicas
+      const skuValue = formData.sku?.trim() || null;
+      const barcodeValue = formData.barcode?.trim() || null;
+      
       const productData = {
         ...formData,
-        category: categorySearch.trim() || formData.category.trim(),
-        brand: brandSearch.trim() || formData.brand.trim(),
+        sku: skuValue,
+        barcode: barcodeValue,
+        category: categorySearch.trim() || formData.category.trim() || null,
+        brand: brandSearch.trim() || formData.brand.trim() || null,
         purchase_price: purchaseNoTax,
         selling_price: sellingNoTax,
         itbis_rate: itbisRate,
@@ -679,9 +724,22 @@ const InventoryModule = () => {
       setEditingProduct(null);
       resetForm();
       fetchProducts();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving product:', error);
-      toast.error('Error al guardar producto');
+      
+      // Manejar errores específicos
+      if (error?.code === '23505') {
+        // Violación de restricción única
+        if (error?.message?.includes('sku')) {
+          toast.error('El código de producto (SKU) ya existe. Por favor, use un código diferente o déjelo vacío.');
+        } else if (error?.message?.includes('barcode')) {
+          toast.error('El código de barras ya existe. Por favor, use un código diferente o déjelo vacío.');
+        } else {
+          toast.error('Ya existe un producto con estos datos. Verifique que el código o código de barras sean únicos.');
+        }
+      } else {
+        toast.error(`Error al guardar producto: ${error?.message || 'Error desconocido'}`);
+      }
     }
   };
 
@@ -781,12 +839,15 @@ const InventoryModule = () => {
     const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          (product.sku && product.sku.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+    const matchesBrand = selectedBrand === 'all' || product.brand === selectedBrand;
+    return matchesSearch && matchesCategory && matchesBrand;
   });
 
-  const lowStockProducts = products.filter(p => p.current_stock === 0);
+  // Stock bajo: productos con stock actual igual o menor al stock mínimo
+  const lowStockProducts = products.filter(p => p.current_stock <= p.min_stock);
   const totalValue = products.reduce((sum, p) => sum + (p.current_stock * p.purchase_price), 0);
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
+  const brands = [...new Set(products.map(p => p.brand).filter(Boolean))];
 
   // Funciones para acciones de ventas
   const handleViewSaleDetails = (sale: SaleWithDetails) => {
@@ -1242,12 +1303,12 @@ const InventoryModule = () => {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Sin Stock</CardTitle>
-                <AlertTriangle className="h-4 w-4 text-red-600" />
+                <CardTitle className="text-sm font-medium">Stock Bajo</CardTitle>
+                <AlertTriangle className="h-4 w-4 text-yellow-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-red-600">{lowStockProducts.length}</div>
-                <p className="text-xs text-muted-foreground">Productos sin stock</p>
+                <div className="text-2xl font-bold text-yellow-600">{lowStockProducts.length}</div>
+                <p className="text-xs text-muted-foreground">Productos con stock igual o menor al mínimo</p>
               </CardContent>
             </Card>
 
@@ -1277,7 +1338,7 @@ const InventoryModule = () => {
       <Tabs defaultValue="productos">
         <TabsList>
           <TabsTrigger value="productos">Productos</TabsTrigger>
-          <TabsTrigger value="stock-bajo">Sin Stock</TabsTrigger>
+          <TabsTrigger value="stock-bajo">Stock Bajo</TabsTrigger>
           <TabsTrigger value="ventas-pos">Ventas POS</TabsTrigger>
           <TabsTrigger value="movimientos">Movimientos</TabsTrigger>
           <TabsTrigger value="reportes">Reportes</TabsTrigger>
@@ -1290,8 +1351,8 @@ const InventoryModule = () => {
               <CardTitle>Filtros</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex gap-4">
-                <div className="flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="md:col-span-2">
                   <Input
                     placeholder="Buscar productos..."
                     value={searchTerm}
@@ -1299,13 +1360,24 @@ const InventoryModule = () => {
                   />
                 </div>
                 <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger className="w-48">
+                  <SelectTrigger>
                     <SelectValue placeholder="Todas las categorías" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todas las categorías</SelectItem>
                     {categories.map(category => (
                       <SelectItem key={category} value={category!}>{category}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={selectedBrand} onValueChange={setSelectedBrand}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todas las marcas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas las marcas</SelectItem>
+                    {brands.map(brand => (
+                      <SelectItem key={brand} value={brand!}>{brand}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -1339,6 +1411,9 @@ const InventoryModule = () => {
                             </Badge>
                             {product.current_stock === 0 && (
                               <Badge variant="destructive">Sin Stock</Badge>
+                            )}
+                            {product.current_stock > 0 && product.current_stock <= product.min_stock && (
+                              <Badge variant="outline" className="border-yellow-500 text-yellow-700">Stock Bajo</Badge>
                             )}
                           </div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
@@ -1388,22 +1463,32 @@ const InventoryModule = () => {
         <TabsContent value="stock-bajo">
           <Card>
             <CardHeader>
-              <CardTitle>Productos Sin Stock</CardTitle>
+              <CardTitle>Productos con Stock Bajo</CardTitle>
             </CardHeader>
             <CardContent>
               {lowStockProducts.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <AlertTriangle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No hay productos sin stock</p>
+                  <p>No hay productos con stock bajo</p>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {lowStockProducts.map((product) => (
-                    <div key={product.id} className="border rounded-lg p-4 border-red-200">
+                    <div key={product.id} className={`border rounded-lg p-4 ${product.current_stock === 0 ? 'border-red-200' : 'border-yellow-200'}`}>
                       <div className="flex items-center justify-between">
                         <div>
-                          <h3 className="font-semibold text-lg">{product.name}</h3>
-                          <p className="text-red-600">Stock actual: {product.current_stock} | Stock mínimo: {product.min_stock}</p>
+                          <div className="flex items-center gap-2 mb-1">
+                            <h3 className="font-semibold text-lg">{product.name}</h3>
+                            {product.current_stock === 0 && (
+                              <Badge variant="destructive">Sin Stock</Badge>
+                            )}
+                            {product.current_stock > 0 && product.current_stock <= product.min_stock && (
+                              <Badge variant="outline" className="border-yellow-500 text-yellow-700">Stock Bajo</Badge>
+                            )}
+                          </div>
+                          <p className={product.current_stock === 0 ? 'text-red-600' : (product.current_stock <= product.min_stock ? 'text-yellow-600' : 'text-gray-600')}>
+                            Stock actual: {product.current_stock} | Stock mínimo: {product.min_stock}
+                          </p>
                         </div>
                         <Button variant="outline" onClick={() => handleEdit(product)}>
                           Actualizar Stock
@@ -1424,7 +1509,7 @@ const InventoryModule = () => {
               <CardTitle>Filtros de Ventas</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 <div>
                   <Label>Fecha Desde</Label>
                   <Input
@@ -1457,6 +1542,34 @@ const InventoryModule = () => {
                     </SelectContent>
                   </Select>
                 </div>
+                <div>
+                  <Label>Categoría</Label>
+                  <Select value={salesCategoryFilter} onValueChange={setSalesCategoryFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas las categorías" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las categorías</SelectItem>
+                      {categories.map(category => (
+                        <SelectItem key={category} value={category!}>{category}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Marca</Label>
+                  <Select value={salesBrandFilter} onValueChange={setSalesBrandFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas las marcas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las marcas</SelectItem>
+                      {brands.map(brand => (
+                        <SelectItem key={brand} value={brand!}>{brand}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="flex items-end">
                   <Button 
                     variant="outline" 
@@ -1464,10 +1577,12 @@ const InventoryModule = () => {
                       setSalesDateFrom(getTodayStart());
                       setSalesDateTo(getTodayEnd());
                       setSalesProductFilter('all');
+                      setSalesCategoryFilter('all');
+                      setSalesBrandFilter('all');
                     }}
                     className="w-full"
                   >
-                    Restablecer Filtros
+                    Restablecer
                   </Button>
                 </div>
               </div>
@@ -1629,7 +1744,7 @@ const InventoryModule = () => {
               <CardTitle>Filtros de Movimientos</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 <div>
                   <Label>Fecha Desde</Label>
                   <Input
@@ -1662,6 +1777,34 @@ const InventoryModule = () => {
                     </SelectContent>
                   </Select>
                 </div>
+                <div>
+                  <Label>Categoría</Label>
+                  <Select value={movementCategoryFilter} onValueChange={setMovementCategoryFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas las categorías" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las categorías</SelectItem>
+                      {categories.map(category => (
+                        <SelectItem key={category} value={category!}>{category}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Marca</Label>
+                  <Select value={movementBrandFilter} onValueChange={setMovementBrandFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas las marcas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las marcas</SelectItem>
+                      {brands.map(brand => (
+                        <SelectItem key={brand} value={brand!}>{brand}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="flex items-end">
                   <Button 
                     variant="outline" 
@@ -1669,6 +1812,8 @@ const InventoryModule = () => {
                       setMovementDateFrom('');
                       setMovementDateTo('');
                       setMovementProductFilter('all');
+                      setMovementCategoryFilter('all');
+                      setMovementBrandFilter('all');
                     }}
                     className="w-full"
                   >
@@ -1789,8 +1934,8 @@ const InventoryModule = () => {
                     <span className="font-semibold">${totalValue.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Productos sin stock:</span>
-                    <span className="font-semibold text-red-600">{lowStockProducts.length}</span>
+                    <span>Productos con stock bajo:</span>
+                    <span className="font-semibold text-yellow-600">{lowStockProducts.length}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Categorías activas:</span>
@@ -2230,7 +2375,7 @@ const InventoryModule = () => {
 
       {/* Product Form Dialog */}
       <Dialog open={showProductForm} onOpenChange={setShowProductForm}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingProduct ? 'Editar Producto' : 'Agregar Producto'}</DialogTitle>
           </DialogHeader>
