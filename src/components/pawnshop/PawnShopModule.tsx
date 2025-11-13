@@ -1873,7 +1873,7 @@ export const PawnShopModule = () => {
     };
   }, [selectedTransaction, showTransactionDetails, paymentHistory]);
 
-  const generateReceiptHTML = (payment: PawnPayment, transaction: PawnTransaction, format: string = 'LETTER') => {
+  const generateReceiptHTML = async (payment: PawnPayment, transaction: PawnTransaction, format: string = 'LETTER') => {
     const formatCurrency = (amount: number) => {
       return new Intl.NumberFormat('es-DO', {
         style: 'currency',
@@ -1897,6 +1897,45 @@ export const PawnShopModule = () => {
       };
       return types[type as keyof typeof types] || type;
     };
+
+    // Calcular el monto pendiente después del pago
+    let remainingBalance = 0;
+    let remainingInterest = 0;
+    let totalPending = 0;
+    
+    try {
+      // Obtener el capital pendiente después del pago
+      const currentPrincipal = await getCurrentRemainingPrincipal(transaction.id, Number(transaction.loan_amount));
+      remainingBalance = currentPrincipal;
+      
+      // Obtener la fecha efectiva (última fecha de pago de capital o fecha de inicio)
+      const effectiveStartDate = await getLastPaymentDate(transaction.id, transaction.start_date);
+      
+      // Calcular el interés acumulado desde la fecha efectiva hasta hoy sobre el capital pendiente actual
+      const today = new Date().toISOString().split('T')[0];
+      const daysSinceLastPayment = calculateDaysDifference(effectiveStartDate, today);
+      const dailyRate = Number(transaction.interest_rate) / 30;
+      const accumulatedInterest = currentPrincipal * (dailyRate / 100) * daysSinceLastPayment;
+      
+      // Obtener todos los pagos de interés realizados después de la última fecha de pago de capital
+      const { data: allPayments } = await supabase
+        .from('pawn_payments')
+        .select('interest_payment, payment_date')
+        .eq('pawn_transaction_id', transaction.id)
+        .not('interest_payment', 'is', null)
+        .gte('payment_date', effectiveStartDate);
+      
+      const totalInterestPaid = allPayments?.reduce((sum, p) => sum + Number(p.interest_payment || 0), 0) || 0;
+      
+      // El interés pendiente es el acumulado menos lo pagado
+      remainingInterest = Math.max(0, accumulatedInterest - totalInterestPaid);
+      
+      // El monto total pendiente es capital pendiente + interés pendiente
+      totalPending = remainingBalance + remainingInterest;
+    } catch (error) {
+      console.error('Error calculando monto pendiente:', error);
+      // Si hay error, dejar los valores en 0
+    }
 
     return `
       <!DOCTYPE html>
@@ -2033,9 +2072,23 @@ export const PawnShopModule = () => {
               <span class="info-label">Abono al Capital:</span>
               <span>${formatCurrency(Number(payment.principal_payment || 0))}</span>
             </div>
-            <div class="info-row" style="justify-content: space-between;">
+            <div class="info-row" style="justify-content: space-between; margin-bottom: 15px;">
               <span class="info-label">Abono al Interés:</span>
               <span>${formatCurrency(Number(payment.interest_payment || 0))}</span>
+            </div>
+            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ccc;">
+              <div class="info-row" style="justify-content: space-between; margin-bottom: 8px;">
+                <span class="info-label">Capital Pendiente:</span>
+                <span>${formatCurrency(remainingBalance)}</span>
+              </div>
+              <div class="info-row" style="justify-content: space-between; margin-bottom: 8px;">
+                <span class="info-label">Interés Pendiente:</span>
+                <span>${formatCurrency(remainingInterest)}</span>
+              </div>
+              <div class="info-row" style="justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid #999;">
+                <span class="info-label" style="font-size: 14px; font-weight: bold;">Monto Total Pendiente:</span>
+                <span style="font-size: 16px; font-weight: bold; color: #d32f2f;">${formatCurrency(totalPending)}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -2065,18 +2118,18 @@ export const PawnShopModule = () => {
     `;
   };
 
-  const printReceipt = (payment: PawnPayment, transaction: PawnTransaction, format: string = 'LETTER') => {
+  const printReceipt = async (payment: PawnPayment, transaction: PawnTransaction, format: string = 'LETTER') => {
     const printWindow = window.open('', '_blank');
     if (printWindow) {
-      const receiptHTML = generateReceiptHTML(payment, transaction, format);
+      const receiptHTML = await generateReceiptHTML(payment, transaction, format);
       printWindow.document.write(receiptHTML);
       printWindow.document.close();
       printWindow.print();
     }
   };
 
-  const downloadReceipt = (payment: PawnPayment, transaction: PawnTransaction, format: string = 'LETTER') => {
-    const receiptHTML = generateReceiptHTML(payment, transaction, format);
+  const downloadReceipt = async (payment: PawnPayment, transaction: PawnTransaction, format: string = 'LETTER') => {
+    const receiptHTML = await generateReceiptHTML(payment, transaction, format);
     const blob = new Blob([receiptHTML], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
