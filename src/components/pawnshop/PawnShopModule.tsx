@@ -69,6 +69,9 @@ interface PawnPayment {
   payment_date: string;
   payment_type: 'partial' | 'full' | 'interest' | 'extension';
   notes: string | null;
+  interest_payment?: number | null;
+  principal_payment?: number | null;
+  remaining_balance?: number | null;
 }
 
 interface Client {
@@ -355,6 +358,15 @@ export const PawnShopModule = () => {
     amount: 0,
     payment_method: 'cash' as 'cash' | 'transfer' | 'card' | 'check' | 'other',
     notes: ''
+  });
+
+  const [detailsSummary, setDetailsSummary] = useState({
+    capitalPending: 0,
+    interestAccrued: 0,
+    totalPaid: 0,
+    totalPrincipalPaid: 0,
+    totalInterestPaid: 0,
+    loading: true
   });
 
   const [rateUpdateData, setRateUpdateData] = useState({
@@ -1285,22 +1297,22 @@ export const PawnShopModule = () => {
       return;
     }
     if (monthlyRate <= 0) {
-      toast.error('La tasa de interés debe ser mayor a 0');
-      return;
-    }
-    
-    const days = calculateDaysDifference(startDate, dueDate);
-    if (days <= 0) {
-      toast.error('La fecha de vencimiento debe ser posterior a la fecha de inicio');
-      return;
-    }
-    
-    try {
-      const preview = generateInterestPreview(principal, monthlyRate, days, startDate);
-      setInterestPreviewData(preview);
-      setShowInterestPreview(true);
-    } catch (error) {
-      console.error('Error generando previsualización:', error);
+        toast.error('La tasa de interés debe ser mayor a 0');
+        return;
+      }
+      
+      const days = calculateDaysDifference(startDate, dueDate);
+      if (days <= 0) {
+        toast.error('La fecha de vencimiento debe ser posterior a la fecha de inicio');
+        return;
+      }
+      
+      try {
+        const preview = generateInterestPreview(principal, monthlyRate, days, startDate);
+        setInterestPreviewData(preview);
+        setShowInterestPreview(true);
+      } catch (error) {
+        console.error('Error generando previsualización:', error);
       toast.error('Error al generar la previsualización de interés');
     }
   };
@@ -1767,6 +1779,7 @@ export const PawnShopModule = () => {
 
   const fetchPaymentHistory = async (transactionId: string) => {
     try {
+      setPaymentHistory([]);
       const { data, error } = await supabase
         .from('pawn_payments')
         .select('*')
@@ -1780,6 +1793,75 @@ export const PawnShopModule = () => {
       toast.error('Error al cargar historial de pagos');
     }
   };
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const computeDetailsSummary = async () => {
+      if (!selectedTransaction || !showTransactionDetails) {
+        return;
+      }
+
+      setDetailsSummary({
+        capitalPending: 0,
+        interestAccrued: 0,
+        totalPaid: 0,
+        totalPrincipalPaid: 0,
+        totalInterestPaid: 0,
+        loading: true
+      });
+
+      try {
+        const capitalPending = await getCurrentRemainingPrincipal(
+          selectedTransaction.id,
+          Number(selectedTransaction.loan_amount)
+        );
+
+        const today = new Date().toISOString().split('T')[0];
+        const interestAccrued = calculateAccumulatedInterest(selectedTransaction, today);
+
+        const paymentTotals = paymentHistory.reduce(
+          (acc, payment) => {
+            const interest = Number(payment.interest_payment || 0);
+            const principal = Number(payment.principal_payment || 0);
+            const amount = Number(payment.amount || 0);
+
+            return {
+              totalPaid: acc.totalPaid + amount,
+              totalPrincipalPaid: acc.totalPrincipalPaid + principal,
+              totalInterestPaid: acc.totalInterestPaid + interest
+            };
+          },
+          { totalPaid: 0, totalPrincipalPaid: 0, totalInterestPaid: 0 }
+        );
+
+        if (isMounted) {
+          setDetailsSummary({
+            capitalPending,
+            interestAccrued,
+            totalPaid: paymentTotals.totalPaid,
+            totalPrincipalPaid: paymentTotals.totalPrincipalPaid,
+            totalInterestPaid: paymentTotals.totalInterestPaid,
+            loading: false
+          });
+        }
+      } catch (error) {
+        console.error('Error calculating details summary:', error);
+        if (isMounted) {
+          setDetailsSummary(prev => ({
+            ...prev,
+            loading: false
+          }));
+        }
+      }
+    };
+
+    computeDetailsSummary();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedTransaction, showTransactionDetails, paymentHistory]);
 
   const generateReceiptHTML = (payment: PawnPayment, transaction: PawnTransaction, format: string = 'LETTER') => {
     const formatCurrency = (amount: number) => {
@@ -3248,6 +3330,30 @@ export const PawnShopModule = () => {
                                   </div>
                                 )}
                               </div>
+                              {payment.payment_type !== 'extension' && (
+                                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                                  <div className="p-3 bg-white rounded-lg border">
+                                    <div className="text-gray-600 text-xs uppercase">Abono a Interés</div>
+                                    <div className="text-base font-semibold text-orange-600">
+                                      ${Number(payment.interest_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                  <div className="p-3 bg-white rounded-lg border">
+                                    <div className="text-gray-600 text-xs uppercase">Abono a Capital</div>
+                                    <div className="text-base font-semibold text-blue-600">
+                                      ${Number(payment.principal_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </div>
+                                  {typeof payment.remaining_balance === 'number' && !Number.isNaN(Number(payment.remaining_balance)) && (
+                                    <div className="p-3 bg-white rounded-lg border">
+                                      <div className="text-gray-600 text-xs uppercase">Capital Pendiente</div>
+                                      <div className="text-base font-semibold text-blue-700">
+                                        ${Number(payment.remaining_balance || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="flex gap-2 flex-wrap">
@@ -3405,44 +3511,75 @@ export const PawnShopModule = () => {
                   
                   {/* Resumen de Pagos e Intereses */}
                   {(() => {
-                    const totalPaid = paymentHistory.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-                    const today = new Date().toISOString().split('T')[0];
-                    const loanAmount = Number(selectedTransaction.loan_amount || 0);
                     const estimatedValue = Number(selectedTransaction.estimated_value || 0);
-                    const interestEarned = loanAmount > 0 ? calculateAccumulatedInterest(selectedTransaction, today) : 0;
-                    const totalDue = loanAmount + interestEarned;
-                    const pendingAmount = Math.max(0, totalDue - totalPaid);
-                    
+                    const loanAmount = Number(selectedTransaction.loan_amount || 0);
+                    const totalDue = Math.max(0, detailsSummary.capitalPending + detailsSummary.interestAccrued);
+
                     return (
                       <>
                         <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border-2 border-blue-200">
                           <h4 className="font-semibold text-lg mb-4 text-center">Resumen de Pagos</h4>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="text-center p-3 bg-white rounded-lg shadow-sm">
-                              <div className="text-sm font-medium text-gray-600 mb-1">Total Pagado</div>
-                              <div className="text-2xl font-bold text-green-600">
-                                ${totalPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </div>
+                          {detailsSummary.loading ? (
+                            <div className="text-center text-sm text-gray-500">
+                              Calculando información financiera...
                             </div>
-                            <div className="text-center p-3 bg-white rounded-lg shadow-sm">
-                              <div className="text-sm font-medium text-gray-600 mb-1">Interés Ganado (Hasta Hoy)</div>
-                              <div className="text-2xl font-bold text-blue-600">
-                                ${interestEarned.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                                  <div className="text-sm font-medium text-gray-600 mb-1">Capital Pendiente</div>
+                                  <div className="text-2xl font-bold text-blue-600">
+                                    ${detailsSummary.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+                                <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                                  <div className="text-sm font-medium text-gray-600 mb-1">Interés Acumulado</div>
+                                  <div className="text-2xl font-bold text-orange-600">
+                                    ${detailsSummary.interestAccrued.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+                                <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                                  <div className="text-sm font-medium text-gray-600 mb-1">Monto Pendiente</div>
+                                  <div className="text-2xl font-bold text-red-600">
+                                    ${totalDue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                            <div className="text-center p-3 bg-white rounded-lg shadow-sm">
-                              <div className="text-sm font-medium text-gray-600 mb-1">Monto Pendiente</div>
-                              <div className="text-2xl font-bold text-red-600">
-                                ${pendingAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                                  <div className="text-sm font-medium text-gray-600 mb-1">Abonado a Capital</div>
+                                  <div className="text-2xl font-bold text-blue-700">
+                                    ${detailsSummary.totalPrincipalPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+                                <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                                  <div className="text-sm font-medium text-gray-600 mb-1">Abonado a Interés</div>
+                                  <div className="text-2xl font-bold text-orange-500">
+                                    ${detailsSummary.totalInterestPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+                                <div className="text-center p-3 bg-white rounded-lg shadow-sm">
+                                  <div className="text-sm font-medium text-gray-600 mb-1">Total Pagado</div>
+                                  <div className="text-2xl font-bold text-green-600">
+                                    ${detailsSummary.totalPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          </div>
-                          <div className="mt-4 text-center text-sm text-gray-600">
-                            <p>Total a Pagar: <span className="font-semibold">${totalDue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></p>
-                            <p className="text-xs mt-1">(Préstamo: ${loanAmount.toLocaleString()} + Interés: ${interestEarned.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</p>
-                          </div>
+                              <div className="mt-4 text-center text-sm text-gray-600">
+                                <p>
+                                  Total a Pagar:{' '}
+                                  <span className="font-semibold">
+                                    ${totalDue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                </p>
+                                <p className="text-xs mt-1">
+                                  (Capital pendiente: ${detailsSummary.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} + Interés acumulado: ${detailsSummary.interestAccrued.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                </p>
+                              </div>
+                            </>
+                          )}
                         </div>
-                        
+
                         <div className="mt-4 p-4 bg-gray-50 rounded-lg">
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
@@ -3507,33 +3644,17 @@ export const PawnShopModule = () => {
               </Card>
 
               {/* Action Buttons */}
-              <div className="flex gap-2 justify-end">
+              <div className="flex justify-center pt-4 border-t">
                 <Button
-                  variant="outline"
+                  variant="default"
+                  size="lg"
+                  className="min-w-[120px] bg-blue-600 hover:bg-blue-700 text-white shadow-md hover:shadow-lg transition-all duration-200"
                   onClick={() => {
                     setSelectedTransaction(null);
                     setShowTransactionDetails(false);
                   }}
                 >
                   Cerrar
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowQuickUpdate(true);
-                    setShowTransactionDetails(false);
-                  }}
-                >
-                  Actualizar
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowRateUpdateForm(true);
-                    setShowTransactionDetails(false);
-                  }}
-                >
-                  Actualizar Tasa
                 </Button>
               </div>
             </div>
