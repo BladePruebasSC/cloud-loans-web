@@ -1273,12 +1273,13 @@ export const PawnShopModule = () => {
   };
 
   // Previsualización desde una transacción existente (Detalles)
-  const previewInterestFromTransaction = (transaction: PawnTransaction) => {
+  const previewInterestFromTransaction = async (transaction: PawnTransaction) => {
     if (!transaction) {
       toast.error('No hay transacción seleccionada');
       return;
     }
-    const principal = Number(transaction.loan_amount || 0);
+    
+    const initialPrincipal = Number(transaction.loan_amount || 0);
     const monthlyRate = Number(transaction.interest_rate || 0);
     const startDate = transaction.start_date;
     const dueDate = transaction.due_date;
@@ -1292,27 +1293,36 @@ export const PawnShopModule = () => {
       toast.error('La transacción no tiene fecha de vencimiento');
       return;
     }
-    if (principal <= 0) {
+    if (initialPrincipal <= 0) {
       toast.error('El monto del préstamo debe ser mayor a 0');
       return;
     }
     if (monthlyRate <= 0) {
-        toast.error('La tasa de interés debe ser mayor a 0');
-        return;
-      }
+      toast.error('La tasa de interés debe ser mayor a 0');
+      return;
+    }
+    
+    try {
+      // Obtener el capital pendiente actual
+      const currentPrincipal = await getCurrentRemainingPrincipal(transaction.id, initialPrincipal);
       
-      const days = calculateDaysDifference(startDate, dueDate);
+      // Obtener la fecha de inicio correcta (última fecha de pago de capital o fecha de inicio)
+      const effectiveStartDate = await getLastPaymentDate(transaction.id, startDate);
+      
+      // Calcular días desde la fecha efectiva hasta la fecha de vencimiento
+      const days = calculateDaysDifference(effectiveStartDate, dueDate);
+      
       if (days <= 0) {
-        toast.error('La fecha de vencimiento debe ser posterior a la fecha de inicio');
+        toast.error('La fecha de vencimiento debe ser posterior a la fecha de inicio efectiva');
         return;
       }
       
-      try {
-        const preview = generateInterestPreview(principal, monthlyRate, days, startDate);
-        setInterestPreviewData(preview);
-        setShowInterestPreview(true);
-      } catch (error) {
-        console.error('Error generando previsualización:', error);
+      // Usar el capital pendiente actual para la previsualización
+      const preview = generateInterestPreview(currentPrincipal, monthlyRate, days, effectiveStartDate);
+      setInterestPreviewData(preview);
+      setShowInterestPreview(true);
+    } catch (error) {
+      console.error('Error generando previsualización:', error);
       toast.error('Error al generar la previsualización de interés');
     }
   };
@@ -2006,10 +2016,6 @@ export const PawnShopModule = () => {
             <span>${formatCurrency(Number(transaction.loan_amount))}</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Valor Estimado:</span>
-            <span>${formatCurrency(Number(transaction.estimated_value))}</span>
-          </div>
-          <div class="info-row">
             <span class="info-label">Tasa de Interés:</span>
             <span>${transaction.interest_rate}%</span>
           </div>
@@ -2022,6 +2028,16 @@ export const PawnShopModule = () => {
         <div class="amount-section">
           <div>MONTO DEL PAGO</div>
           <div class="amount">${formatCurrency(payment.amount)}</div>
+          <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ccc;">
+            <div class="info-row" style="justify-content: space-between; margin-bottom: 8px;">
+              <span class="info-label">Abono al Capital:</span>
+              <span>${formatCurrency(Number(payment.principal_payment || 0))}</span>
+            </div>
+            <div class="info-row" style="justify-content: space-between;">
+              <span class="info-label">Abono al Interés:</span>
+              <span>${formatCurrency(Number(payment.interest_payment || 0))}</span>
+            </div>
+          </div>
         </div>
 
         ${payment.notes ? `
@@ -3887,7 +3903,7 @@ export const PawnShopModule = () => {
                       <div className="text-2xl font-bold text-blue-600">
                         ${interestPreviewData.principal.toLocaleString()}
                       </div>
-                      <div className="text-sm text-gray-600">Capital Inicial</div>
+                      <div className="text-sm text-gray-600">Capital Pendiente</div>
                     </div>
                     
                     <div className="text-center p-4 bg-green-50 rounded-lg">
@@ -3987,8 +4003,8 @@ export const PawnShopModule = () => {
                   
                   <div className="mt-4 text-xs text-gray-500">
                     <p>• Las filas azules marcan el final de cada semana</p>
-                    <p>• El interés se calcula diariamente sobre el capital inicial</p>
-                    <p>• Al final del período, el interés total será exactamente {interestPreviewData.rate}% del capital</p>
+                    <p>• El interés se calcula diariamente sobre el capital pendiente actual</p>
+                    <p>• Al final del período, el interés total será exactamente {interestPreviewData.rate}% del capital pendiente</p>
                   </div>
                 </CardContent>
               </Card>
