@@ -3565,17 +3565,6 @@ export const PawnShopModule = () => {
                                   </div>
                                 </div>
                               </div>
-                              <div className="mt-4 text-center text-sm text-gray-600">
-                                <p>
-                                  Total a Pagar:{' '}
-                                  <span className="font-semibold">
-                                    ${totalDue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </span>
-                                </p>
-                                <p className="text-xs mt-1">
-                                  (Capital pendiente: ${detailsSummary.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} + Interés acumulado: ${detailsSummary.interestAccrued.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                                </p>
-                              </div>
                             </>
                           )}
                         </div>
