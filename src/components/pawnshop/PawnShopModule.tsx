@@ -26,7 +26,10 @@ import {
   History,
   Receipt,
   Printer,
-  Download
+  Download,
+  Eye,
+  Edit,
+  X
 } from 'lucide-react';
 
 interface PawnTransaction {
@@ -72,6 +75,7 @@ interface PawnPayment {
   interest_payment?: number | null;
   principal_payment?: number | null;
   remaining_balance?: number | null;
+  remaining_interest?: number | null;
 }
 
 interface Client {
@@ -304,6 +308,15 @@ export const PawnShopModule = () => {
   const [extendDays, setExtendDays] = useState<number>(30);
   const [selectedTransaction, setSelectedTransaction] = useState<PawnTransaction | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
+  const [selectedPayment, setSelectedPayment] = useState<PawnPayment | null>(null);
+  const [isLatestPawnPayment, setIsLatestPawnPayment] = useState(false);
+  const [editPaymentForm, setEditPaymentForm] = useState({
+    amount: 0,
+    payment_date: '',
+    notes: ''
+  });
   const [interestPreviewData, setInterestPreviewData] = useState<{
     principal: number;
     rate: number;
@@ -946,6 +959,7 @@ export const PawnShopModule = () => {
         interest_payment: paymentBreakdown.interestPayment,
         principal_payment: paymentBreakdown.principalPayment,
         remaining_balance: paymentBreakdown.remainingBalance,
+        remaining_interest: paymentBreakdown.accumulatedInterest, // Interés pendiente ANTES del pago (valor histórico)
         notes: notesWithMethod
       };
 
@@ -1898,43 +1912,53 @@ export const PawnShopModule = () => {
       return types[type as keyof typeof types] || type;
     };
 
-    // Calcular el monto pendiente después del pago
+    // Usar los valores históricos guardados en el pago (al momento del recibo)
+    // Si no están disponibles, calcularlos como fallback
     let remainingBalance = 0;
     let remainingInterest = 0;
     let totalPending = 0;
     
     try {
-      // Obtener el capital pendiente después del pago
-      const currentPrincipal = await getCurrentRemainingPrincipal(transaction.id, Number(transaction.loan_amount));
-      remainingBalance = currentPrincipal;
+      // Usar el capital pendiente guardado en el pago (después del pago)
+      if (payment.remaining_balance !== null && payment.remaining_balance !== undefined) {
+        remainingBalance = Number(payment.remaining_balance);
+      } else {
+        // Fallback: calcular dinámicamente si no está guardado
+        remainingBalance = await getCurrentRemainingPrincipal(transaction.id, Number(transaction.loan_amount));
+      }
       
-      // Obtener la fecha efectiva (última fecha de pago de capital o fecha de inicio)
-      const effectiveStartDate = await getLastPaymentDate(transaction.id, transaction.start_date);
-      
-      // Calcular el interés acumulado desde la fecha efectiva hasta hoy sobre el capital pendiente actual
-      const today = new Date().toISOString().split('T')[0];
-      const daysSinceLastPayment = calculateDaysDifference(effectiveStartDate, today);
-      const dailyRate = Number(transaction.interest_rate) / 30;
-      const accumulatedInterest = currentPrincipal * (dailyRate / 100) * daysSinceLastPayment;
-      
-      // Obtener todos los pagos de interés realizados después de la última fecha de pago de capital
-      const { data: allPayments } = await supabase
-        .from('pawn_payments')
-        .select('interest_payment, payment_date')
-        .eq('pawn_transaction_id', transaction.id)
-        .not('interest_payment', 'is', null)
-        .gte('payment_date', effectiveStartDate);
-      
-      const totalInterestPaid = allPayments?.reduce((sum, p) => sum + Number(p.interest_payment || 0), 0) || 0;
-      
-      // El interés pendiente es el acumulado menos lo pagado
-      remainingInterest = Math.max(0, accumulatedInterest - totalInterestPaid);
+      // Usar el interés pendiente guardado en el pago (antes del pago) y restar lo pagado
+      if (payment.remaining_interest !== null && payment.remaining_interest !== undefined) {
+        // El interés pendiente DESPUÉS del pago = interés pendiente ANTES - lo pagado
+        const interestPaid = Number(payment.interest_payment || 0);
+        remainingInterest = Math.max(0, Number(payment.remaining_interest) - interestPaid);
+      } else {
+        // Fallback: calcular dinámicamente si no está guardado
+        const effectiveStartDate = await getLastPaymentDate(transaction.id, transaction.start_date);
+        const today = new Date().toISOString().split('T')[0];
+        const daysSinceLastPayment = calculateDaysDifference(effectiveStartDate, today);
+        const dailyRate = Number(transaction.interest_rate) / 30;
+        const accumulatedInterest = remainingBalance * (dailyRate / 100) * daysSinceLastPayment;
+        
+        const { data: allPayments } = await supabase
+          .from('pawn_payments')
+          .select('interest_payment, payment_date')
+          .eq('pawn_transaction_id', transaction.id)
+          .not('interest_payment', 'is', null)
+          .gte('payment_date', effectiveStartDate);
+        
+        const totalInterestPaid = allPayments?.reduce((sum, p) => sum + Number(p.interest_payment || 0), 0) || 0;
+        remainingInterest = Math.max(0, accumulatedInterest - totalInterestPaid);
+      }
       
       // El monto total pendiente es capital pendiente + interés pendiente
       totalPending = remainingBalance + remainingInterest;
     } catch (error) {
       console.error('Error calculando monto pendiente:', error);
-      // Si hay error, dejar los valores en 0
+      // Si hay error, intentar usar valores guardados directamente
+      remainingBalance = Number(payment.remaining_balance || 0);
+      remainingInterest = Number(payment.remaining_interest || 0) - Number(payment.interest_payment || 0);
+      totalPending = remainingBalance + remainingInterest;
     }
 
     return `
@@ -2139,6 +2163,139 @@ export const PawnShopModule = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleViewReceipt = (payment: PawnPayment) => {
+    setSelectedPayment(payment);
+    setShowReceiptModal(true);
+  };
+
+  const handleEditPayment = async (payment: PawnPayment) => {
+    setSelectedPayment(payment);
+    // Extraer solo la fecha (sin hora) para el input de tipo date
+    const paymentDate = payment.payment_date.split('T')[0];
+    setEditPaymentForm({
+      amount: payment.amount,
+      payment_date: paymentDate,
+      notes: payment.notes || ''
+    });
+    
+    // Verificar si es el último pago
+    if (selectedTransaction) {
+      const { data: allPayments } = await supabase
+        .from('pawn_payments')
+        .select('id, payment_date')
+        .eq('pawn_transaction_id', selectedTransaction.id)
+        .order('payment_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      
+      const isLatest = allPayments && allPayments.length > 0 && allPayments[0].id === payment.id;
+      setIsLatestPawnPayment(isLatest || false);
+    }
+    
+    setShowEditPaymentModal(true);
+  };
+
+  // Función para recalcular el desglose cuando se cambia el monto
+  const recalculatePawnPaymentBreakdown = async (newAmount: number) => {
+    if (!selectedTransaction || !selectedPayment || !isLatestPawnPayment) return;
+
+    try {
+      // Obtener el capital pendiente antes de este pago
+      const { data: otherPayments } = await supabase
+        .from('pawn_payments')
+        .select('principal_payment')
+        .eq('pawn_transaction_id', selectedTransaction.id)
+        .neq('id', selectedPayment.id);
+      
+      const totalPrincipalPaid = (otherPayments || []).reduce((sum, p) => sum + (Number(p.principal_payment) || 0), 0);
+      const currentPrincipal = Number(selectedTransaction.loan_amount) - totalPrincipalPaid;
+      
+      // Calcular interés acumulado hasta la fecha del pago
+      const paymentDateOnly = selectedPayment.payment_date.split('T')[0];
+      const accumulatedInterest = calculateAccumulatedInterest(selectedTransaction, paymentDateOnly);
+      
+      // Primero pagar interés, luego el resto va al capital
+      const interestPayment = Math.min(newAmount, accumulatedInterest);
+      const principalPayment = Math.max(0, newAmount - interestPayment);
+      
+      // Actualizar el formulario (los valores se guardarán en handleUpdatePayment)
+      setEditPaymentForm(prev => ({
+        ...prev,
+        amount: newAmount
+      }));
+      
+      // Guardar los valores calculados en el estado del pago seleccionado para usarlos al guardar
+      setSelectedPayment({
+        ...selectedPayment,
+        amount: newAmount,
+        interest_payment: interestPayment,
+        principal_payment: principalPayment
+      });
+    } catch (error) {
+      console.error('Error recalculating breakdown:', error);
+      toast.error('Error al recalcular el desglose');
+    }
+  };
+
+  const handleUpdatePayment = async () => {
+    if (!selectedPayment) return;
+
+    try {
+      // Mantener la hora original del pago, solo cambiar la fecha
+      const originalDate = new Date(selectedPayment.payment_date);
+      const newDate = new Date(editPaymentForm.payment_date);
+      
+      // Copiar la hora del pago original a la nueva fecha
+      newDate.setHours(originalDate.getHours());
+      newDate.setMinutes(originalDate.getMinutes());
+      newDate.setSeconds(originalDate.getSeconds());
+      
+      // Convertir a formato ISO
+      const paymentDateISO = newDate.toISOString();
+
+      const updateData: any = {
+        payment_date: paymentDateISO,
+        notes: editPaymentForm.notes
+      };
+
+      // Solo permitir actualizar montos si es el último pago
+      if (isLatestPawnPayment && selectedPayment.interest_payment !== undefined && selectedPayment.principal_payment !== undefined) {
+        updateData.amount = selectedPayment.amount;
+        updateData.interest_payment = selectedPayment.interest_payment;
+        updateData.principal_payment = selectedPayment.principal_payment;
+        
+        // Recalcular el remaining_balance
+        const { data: otherPayments } = await supabase
+          .from('pawn_payments')
+          .select('principal_payment')
+          .eq('pawn_transaction_id', selectedTransaction!.id)
+          .neq('id', selectedPayment.id);
+        
+        const totalPrincipalPaid = (otherPayments || []).reduce((sum, p) => sum + (Number(p.principal_payment) || 0), 0);
+        const newRemainingBalance = Math.max(0, Number(selectedTransaction!.loan_amount) - totalPrincipalPaid - (selectedPayment.principal_payment || 0));
+        updateData.remaining_balance = newRemainingBalance;
+      }
+
+      const { error } = await supabase
+        .from('pawn_payments')
+        .update(updateData)
+        .eq('id', selectedPayment.id);
+
+      if (error) throw error;
+
+      toast.success(isLatestPawnPayment ? 'Recibo actualizado exitosamente' : 'Pago actualizado exitosamente');
+      setShowEditPaymentModal(false);
+      setSelectedPayment(null);
+      
+      // Refrescar el historial de pagos
+      if (selectedTransaction) {
+        fetchPaymentHistory(selectedTransaction.id);
+      }
+    } catch (error) {
+      console.error('Error actualizando pago:', error);
+      toast.error('Error al actualizar pago');
+    }
   };
 
   const filteredTransactions = transactions.filter(transaction => {
@@ -3429,6 +3586,22 @@ export const PawnShopModule = () => {
                             <Button 
                               size="sm" 
                               variant="outline"
+                              onClick={() => handleViewReceipt(payment)}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              Ver Recibo
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => handleEditPayment(payment)}
+                            >
+                              <Edit className="h-4 w-4 mr-1" />
+                              Editar
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="outline"
                               onClick={() => printReceipt(payment, selectedTransaction)}
                             >
                               <Printer className="h-4 w-4 mr-1" />
@@ -4068,6 +4241,313 @@ export const PawnShopModule = () => {
             <Button variant="outline" onClick={() => setShowInterestPreview(false)}>
               Cerrar
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Recibo */}
+      <Dialog open={showReceiptModal} onOpenChange={setShowReceiptModal}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Receipt className="h-5 w-5" />
+                Recibo de Pago - {selectedTransaction?.clients?.full_name || 'Cliente'}
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => selectedPayment && selectedTransaction && printReceipt(selectedPayment, selectedTransaction)}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Imprimir
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => selectedPayment && selectedTransaction && downloadReceipt(selectedPayment, selectedTransaction)}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Descargar
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowReceiptModal(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedPayment && selectedTransaction && (
+            <div className="space-y-6">
+              {/* Información del Cliente */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <User className="h-5 w-5" />
+                    Información del Cliente
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <span className="font-medium text-gray-600">Nombre:</span>
+                      <div className="font-semibold">{selectedTransaction.clients?.full_name || 'N/A'}</div>
+                    </div>
+                    {selectedTransaction.clients?.phone && (
+                      <div>
+                        <span className="font-medium text-gray-600">Teléfono:</span>
+                        <div className="font-semibold">{selectedTransaction.clients.phone}</div>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Detalles de la Transacción */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="h-5 w-5" />
+                    Detalles de la Transacción
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <span className="font-medium text-gray-600">Artículo:</span>
+                      <div className="font-semibold">{selectedTransaction.product_name}</div>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">Monto del Préstamo:</span>
+                      <div className="font-semibold">RD${Number(selectedTransaction.loan_amount).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">Tasa de Interés:</span>
+                      <div className="font-semibold">{selectedTransaction.interest_rate}%</div>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">Valor Estimado:</span>
+                      <div className="font-semibold">RD${Number(selectedTransaction.estimated_value).toLocaleString()}</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Detalles del Pago */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Receipt className="h-5 w-5" />
+                    Detalles del Pago
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <span className="font-medium text-gray-600">Fecha de Pago:</span>
+                      <div className="font-semibold">{new Date(selectedPayment.payment_date).toLocaleDateString('es-DO')}</div>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">Tipo de Pago:</span>
+                      <div className="font-semibold">
+                        {selectedPayment.payment_type === 'full' ? 'Pago Completo (Redención)' :
+                         selectedPayment.payment_type === 'partial' ? 'Pago Parcial' :
+                         selectedPayment.payment_type === 'interest' ? 'Solo Interés' :
+                         selectedPayment.payment_type}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Desglose del Pago */}
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h4 className="font-semibold mb-3">Desglose del Pago</h4>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Pago a Interés:</span>
+                        <span className="font-semibold">RD${Number(selectedPayment.interest_payment || 0).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Pago a Capital:</span>
+                        <span className="font-semibold">RD${Number(selectedPayment.principal_payment || 0).toLocaleString()}</span>
+                      </div>
+                      <hr className="my-2" />
+                      <div className="flex justify-between text-lg font-bold text-green-600">
+                        <span>TOTAL:</span>
+                        <span>RD${Number(selectedPayment.amount).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Montos Pendientes */}
+                  {(() => {
+                    const remainingBalance = Number(selectedPayment.remaining_balance || 0);
+                    const remainingInterest = selectedPayment.remaining_interest 
+                      ? Math.max(0, Number(selectedPayment.remaining_interest) - Number(selectedPayment.interest_payment || 0))
+                      : 0;
+                    const totalPending = remainingBalance + remainingInterest;
+
+                    return (
+                      <div className="mt-4 bg-blue-50 p-4 rounded-lg">
+                        <h4 className="font-semibold mb-3">Montos Pendientes</h4>
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Capital Pendiente:</span>
+                            <span className="font-semibold">RD${remainingBalance.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Interés Pendiente:</span>
+                            <span className="font-semibold">RD${remainingInterest.toLocaleString()}</span>
+                          </div>
+                          <hr className="my-2" />
+                          <div className="flex justify-between text-lg font-bold text-red-600">
+                            <span>Total Pendiente:</span>
+                            <span>RD${totalPending.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {selectedPayment.notes && (
+                    <div className="mt-4">
+                      <span className="font-medium text-gray-600">Notas:</span>
+                      <div className="mt-2 p-3 bg-blue-50 rounded-lg">
+                        {selectedPayment.notes}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowReceiptModal(false)}>
+                  Cerrar
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Edición de Pago */}
+      <Dialog open={showEditPaymentModal} onOpenChange={setShowEditPaymentModal}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Edit className="h-5 w-5" />
+              Editar Pago
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            {/* Información del Cliente */}
+            {selectedTransaction && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <User className="h-5 w-5" />
+                    Cliente: {selectedTransaction.clients?.full_name || 'N/A'}
+                  </CardTitle>
+                </CardHeader>
+              </Card>
+            )}
+
+            {/* Formulario de Edición */}
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <h3 className="text-sm font-medium text-blue-800 mb-1">📝 Edición de Recibo</h3>
+                <p className="text-xs text-blue-700">
+                  {isLatestPawnPayment 
+                    ? 'Puedes editar el monto total y se recalculará automáticamente el desglose (interés, capital). También puedes editar la información del recibo.'
+                    : 'Solo puedes editar la información del recibo (fecha, notas). Los montos solo se pueden modificar en el último pago.'}
+                </p>
+              </div>
+
+              {selectedPayment && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Monto Total</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editPaymentForm.amount}
+                        disabled={!isLatestPawnPayment}
+                        onChange={(e) => {
+                          const newAmount = parseFloat(e.target.value) || 0;
+                          setEditPaymentForm({...editPaymentForm, amount: newAmount});
+                          recalculatePawnPaymentBreakdown(newAmount);
+                        }}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-md ${
+                          isLatestPawnPayment 
+                            ? 'focus:outline-none focus:ring-2 focus:ring-blue-500' 
+                            : 'bg-gray-100 text-gray-600 cursor-not-allowed'
+                        }`}
+                      />
+                      {!isLatestPawnPayment && (
+                        <p className="text-xs text-gray-500 mt-1">⚠️ Solo se puede modificar el monto del último pago</p>
+                      )}
+                      {isLatestPawnPayment && (
+                        <p className="text-xs text-blue-600 mt-1">✅ El desglose se recalculará automáticamente</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Pago a Interés</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={selectedPayment.interest_payment?.toFixed(2) || '0.00'}
+                        disabled
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Calculado automáticamente</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Pago a Capital</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={selectedPayment.principal_payment?.toFixed(2) || '0.00'}
+                        disabled
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Calculado automáticamente</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Fecha de Pago *</label>
+                      <input
+                        type="date"
+                        value={editPaymentForm.payment_date}
+                        onChange={(e) => setEditPaymentForm({...editPaymentForm, payment_date: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        required
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium text-gray-700">Notas</label>
+                    <textarea
+                      value={editPaymentForm.notes}
+                      onChange={(e) => setEditPaymentForm({...editPaymentForm, notes: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      rows={3}
+                      placeholder="Notas adicionales..."
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setShowEditPaymentModal(false);
+                  setSelectedPayment(null);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={handleUpdatePayment}
+              >
+                Actualizar Pago
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

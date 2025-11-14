@@ -148,6 +148,61 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
     notes: payment.notes || ''
   });
 
+  // Función para recalcular el desglose cuando se cambia el monto
+  const recalculateBreakdown = async (newAmount: number) => {
+    if (!loan || !isLatestPayment) return;
+
+    try {
+      // Obtener todos los pagos excepto el actual
+      const { data: otherPayments } = await supabase
+        .from('payments')
+        .select('interest_amount, principal_amount, late_fee')
+        .eq('loan_id', payment.loan_id)
+        .neq('id', payment.id);
+
+      // Calcular interés fijo por cuota
+      const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+      
+      // Calcular interés ya pagado (excluyendo el pago actual)
+      const totalInterestPaid = (otherPayments || []).reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+      const remainingInterest = Math.max(0, fixedInterestPerPayment - (totalInterestPaid % fixedInterestPerPayment));
+      
+      // Calcular mora pendiente (simplificado - usar la mora del pago original como referencia)
+      // En un caso real, necesitarías recalcular la mora basada en la fecha de vencimiento
+      const remainingLateFee = Math.max(0, payment.late_fee || 0);
+      
+      // Distribuir el nuevo monto: primero mora, luego interés, luego capital
+      let newLateFee = 0;
+      let newInterestAmount = 0;
+      let newPrincipalAmount = 0;
+      
+      if (newAmount <= remainingLateFee) {
+        newLateFee = newAmount;
+      } else {
+        newLateFee = remainingLateFee;
+        const remainingAfterLateFee = newAmount - remainingLateFee;
+        
+        if (remainingAfterLateFee <= remainingInterest) {
+          newInterestAmount = remainingAfterLateFee;
+        } else {
+          newInterestAmount = remainingInterest;
+          newPrincipalAmount = remainingAfterLateFee - remainingInterest;
+        }
+      }
+      
+      setEditForm(prev => ({
+        ...prev,
+        amount: newAmount,
+        late_fee: newLateFee,
+        interest_amount: newInterestAmount,
+        principal_amount: newPrincipalAmount
+      }));
+    } catch (error) {
+      console.error('Error recalculating breakdown:', error);
+      toast.error('Error al recalcular el desglose');
+    }
+  };
+
   const fetchLoanDetails = async () => {
     try {
       const { data, error } = await supabase
@@ -335,28 +390,30 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
     try {
       setLoading(true);
       
-      // Solo permitir actualizar campos del recibo, NO los montos
+      const updateData: any = {
+        payment_date: editForm.payment_date,
+        due_date: editForm.due_date,
+        payment_method: editForm.payment_method,
+        reference_number: editForm.reference_number || null,
+        notes: editForm.notes || null
+      };
+
+      // Solo permitir actualizar montos si es el último pago
+      if (isLatestPayment) {
+        updateData.amount = editForm.amount;
+        updateData.principal_amount = editForm.principal_amount;
+        updateData.interest_amount = editForm.interest_amount;
+        updateData.late_fee = editForm.late_fee;
+      }
+      
       const { error } = await supabase
         .from('payments')
-        .update({
-          // NO actualizar estos campos (mantener valores originales):
-          // amount: editForm.amount,
-          // principal_amount: editForm.principal_amount,
-          // interest_amount: editForm.interest_amount,
-          // late_fee: editForm.late_fee,
-          
-          // Solo actualizar campos del recibo:
-          payment_date: editForm.payment_date,
-          due_date: editForm.due_date,
-          payment_method: editForm.payment_method,
-          reference_number: editForm.reference_number || null,
-          notes: editForm.notes || null
-        })
+        .update(updateData)
         .eq('id', payment.id);
 
       if (error) throw error;
 
-      toast.success('Información del recibo actualizada exitosamente');
+      toast.success(isLatestPayment ? 'Recibo actualizado exitosamente' : 'Información del recibo actualizada exitosamente');
       setShowEditModal(false);
       onPaymentUpdated?.();
     } catch (error) {
@@ -982,8 +1039,9 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                  <h3 className="text-sm font-medium text-blue-800 mb-1">📝 Edición de Recibo</h3>
                  <p className="text-xs text-blue-700">
-                   Solo puedes editar la información del recibo (fecha, método de pago, cobrador, comentarios). 
-                   Los montos no se pueden modificar una vez que el pago ha sido registrado.
+                   {isLatestPayment 
+                     ? 'Puedes editar el monto total y se recalculará automáticamente el desglose (mora, interés, capital). También puedes editar la información del recibo.'
+                     : 'Solo puedes editar la información del recibo (fecha, método de pago, comentarios). Los montos solo se pueden modificar en el último pago.'}
                  </p>
                </div>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -991,38 +1049,58 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                    <label className="text-sm font-medium text-gray-700">Monto Total</label>
                    <input
                      type="number"
+                     step="0.01"
                      value={editForm.amount}
-                     disabled
-                     className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
+                     disabled={!isLatestPayment}
+                     onChange={(e) => {
+                       const newAmount = parseFloat(e.target.value) || 0;
+                       recalculateBreakdown(newAmount);
+                     }}
+                     className={`w-full px-3 py-2 border border-gray-300 rounded-md ${
+                       isLatestPayment 
+                         ? 'focus:outline-none focus:ring-2 focus:ring-blue-500' 
+                         : 'bg-gray-100 text-gray-600 cursor-not-allowed'
+                     }`}
                    />
-                   <p className="text-xs text-gray-500 mt-1">⚠️ No se puede modificar el monto una vez pagado</p>
+                   {!isLatestPayment && (
+                     <p className="text-xs text-gray-500 mt-1">⚠️ Solo se puede modificar el monto del último pago</p>
+                   )}
+                   {isLatestPayment && (
+                     <p className="text-xs text-blue-600 mt-1">✅ El desglose se recalculará automáticamente</p>
+                   )}
                  </div>
                  <div>
                    <label className="text-sm font-medium text-gray-700">Pago a Principal</label>
                    <input
                      type="number"
-                     value={editForm.principal_amount}
+                     step="0.01"
+                     value={editForm.principal_amount.toFixed(2)}
                      disabled
                      className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
                    />
+                   <p className="text-xs text-gray-500 mt-1">Calculado automáticamente</p>
                  </div>
                  <div>
                    <label className="text-sm font-medium text-gray-700">Pago a Intereses</label>
                    <input
                      type="number"
-                     value={editForm.interest_amount}
+                     step="0.01"
+                     value={editForm.interest_amount.toFixed(2)}
                      disabled
                      className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
                    />
+                   <p className="text-xs text-gray-500 mt-1">Calculado automáticamente</p>
                  </div>
                  <div>
                    <label className="text-sm font-medium text-gray-700">Cargo por Mora</label>
                    <input
                      type="number"
-                     value={editForm.late_fee}
+                     step="0.01"
+                     value={editForm.late_fee.toFixed(2)}
                      disabled
                      className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
                    />
+                   <p className="text-xs text-gray-500 mt-1">Calculado automáticamente</p>
                  </div>
                  <div>
                    <label className="text-sm font-medium text-gray-700">Fecha de Pago</label>

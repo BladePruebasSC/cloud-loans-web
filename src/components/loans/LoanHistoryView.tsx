@@ -190,7 +190,23 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
         .order('payment_date', { ascending: false });
 
       if (error) throw error;
-      setPayments(data || []);
+      
+      // Ordenar por fecha de pago (descendente) y luego por created_at (descendente) como orden secundario
+      const sortedPayments = (data || []).sort((a, b) => {
+        const dateA = new Date(a.payment_date).getTime();
+        const dateB = new Date(b.payment_date).getTime();
+        
+        // Si las fechas son iguales, ordenar por created_at (más reciente primero)
+        if (dateA === dateB) {
+          const createdA = new Date(a.created_at).getTime();
+          const createdB = new Date(b.created_at).getTime();
+          return createdB - createdA; // Descendente
+        }
+        
+        return dateB - dateA; // Descendente (más reciente primero)
+      });
+      
+      setPayments(sortedPayments);
     } catch (error) {
       console.error('Error fetching payments:', error);
       toast.error('Error al cargar historial de pagos');
