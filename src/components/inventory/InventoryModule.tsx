@@ -171,14 +171,6 @@ const InventoryModule = () => {
   // Estados para acciones de ventas
   const [selectedSale, setSelectedSale] = useState<SaleWithDetails | null>(null);
   const [showSaleDetails, setShowSaleDetails] = useState(false);
-  const [showEditSale, setShowEditSale] = useState(false);
-  const [editingSaleDetails, setEditingSaleDetails] = useState<SaleDetail[]>([]);
-  const [editingSaleNotes, setEditingSaleNotes] = useState<string>('');
-  const [editingSaleStatus, setEditingSaleStatus] = useState<string>('');
-  const [editingSalePaymentMethod, setEditingSalePaymentMethod] = useState<string>('');
-  const [editingSaleTotal, setEditingSaleTotal] = useState<number>(0);
-  const [productSearchEdit, setProductSearchEdit] = useState<string>('');
-  const [filteredProductsEdit, setFilteredProductsEdit] = useState<Product[]>([]);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -1122,265 +1114,7 @@ const InventoryModule = () => {
     setShowSaleDetails(true);
   };
 
-  const handleEditSale = (sale: SaleWithDetails) => {
-    setSelectedSale(sale);
-    setEditingSaleDetails([...sale.details]);
-    setEditingSaleNotes(sale.notes || '');
-    setEditingSaleStatus(sale.status || 'completed');
-    setEditingSalePaymentMethod(sale.payment_method || 'cash');
-    setEditingSaleTotal(sale.total_amount || 0);
-    setProductSearchEdit('');
-    setShowEditSale(true);
-  };
 
-  // Filtrar productos para agregar en edición
-  useEffect(() => {
-    if (productSearchEdit.trim() === '') {
-      setFilteredProductsEdit(products.filter(p => p.status === 'active'));
-    } else {
-      const searchTerm = productSearchEdit.toLowerCase().trim();
-      const exactMatches = products.filter(p => 
-        p.status === 'active' && (
-          p.name.toLowerCase() === searchTerm ||
-          (p.sku && p.sku.toLowerCase() === searchTerm)
-        )
-      );
-      
-      const startsWithMatches = products.filter(p => 
-        p.status === 'active' && (
-          (p.name.toLowerCase().startsWith(searchTerm) && p.name.toLowerCase() !== searchTerm) ||
-          (p.sku && p.sku.toLowerCase().startsWith(searchTerm) && p.sku.toLowerCase() !== searchTerm)
-        )
-      );
-      
-      const containsMatches = products.filter(p => 
-        p.status === 'active' && (
-          (p.name.toLowerCase().includes(searchTerm) && !p.name.toLowerCase().startsWith(searchTerm)) ||
-          (p.sku && p.sku.toLowerCase().includes(searchTerm) && !(p.sku.toLowerCase().startsWith(searchTerm)))
-        )
-      );
-      
-      setFilteredProductsEdit([...exactMatches, ...startsWithMatches, ...containsMatches]);
-    }
-  }, [productSearchEdit, products]);
-
-  // Recalcular total cuando cambian los detalles
-  useEffect(() => {
-    if (showEditSale && editingSaleDetails.length > 0) {
-      const newTotal = editingSaleDetails.reduce((sum, detail) => sum + detail.total_price, 0);
-      setEditingSaleTotal(newTotal);
-    }
-  }, [editingSaleDetails, showEditSale]);
-
-  const addProductToSale = (product: Product) => {
-    const existingDetail = editingSaleDetails.find(d => d.product_id === product.id);
-    
-    if (existingDetail) {
-      // Incrementar cantidad si ya existe
-      setEditingSaleDetails(editingSaleDetails.map(d => {
-        if (d.product_id === product.id) {
-          const newQuantity = d.quantity + 1;
-          const newTotalPrice = d.unit_price * newQuantity;
-          return { ...d, quantity: newQuantity, total_price: newTotalPrice };
-        }
-        return d;
-      }));
-    } else {
-      // Agregar nuevo producto
-      const itbisRate = product.itbis_rate ?? 18;
-      const priceWithoutTax = product.selling_price || 0;
-      const priceWithTax = Math.round((priceWithoutTax * (1 + itbisRate / 100)) * 100) / 100;
-      
-      const newDetail: SaleDetail = {
-        id: `new-${Date.now()}`,
-        sale_id: selectedSale?.id || '',
-        product_id: product.id,
-        quantity: 1,
-        unit_price: priceWithTax,
-        total_price: priceWithoutTax,
-        product
-      };
-      setEditingSaleDetails([...editingSaleDetails, newDetail]);
-    }
-    setProductSearchEdit('');
-    toast.success(`${product.name} agregado`);
-  };
-
-  const removeProductFromSale = (detailId: string) => {
-    setEditingSaleDetails(editingSaleDetails.filter(d => d.id !== detailId));
-    toast.success('Producto eliminado');
-  };
-
-  const updateDetailQuantity = (detailId: string, quantity: number) => {
-    if (quantity <= 0) {
-      removeProductFromSale(detailId);
-      return;
-    }
-    
-    setEditingSaleDetails(editingSaleDetails.map(d => {
-      if (d.id === detailId) {
-        const newTotalPrice = d.unit_price * quantity;
-        return { ...d, quantity, total_price: newTotalPrice };
-      }
-      return d;
-    }));
-  };
-
-  const updateDetailPrice = (detailId: string, price: number) => {
-    setEditingSaleDetails(editingSaleDetails.map(d => {
-      if (d.id === detailId) {
-        const newTotalPrice = price * d.quantity;
-        return { ...d, unit_price: price, total_price: newTotalPrice };
-      }
-      return d;
-    }));
-  };
-
-  const saveSaleChanges = async () => {
-    if (!selectedSale || !user) return;
-
-    try {
-      // Verificar si usa esquema nuevo (con sale_details) o simple
-      const saleAny = selectedSale as any;
-      const hasSaleDetails = saleAny.details && saleAny.details.length > 0 && saleAny.details[0].sale_id;
-
-      if (hasSaleDetails && saleAny.details[0].sale_id === selectedSale.id) {
-        // Esquema nuevo: actualizar sales y sale_details
-        // Actualizar encabezado de venta
-        const { error: updateError } = await supabase
-          .from('sales')
-          .update({
-            notes: editingSaleNotes || null,
-            status: editingSaleStatus,
-            payment_method: editingSalePaymentMethod,
-            total_amount: editingSaleTotal
-          })
-          .eq('id', selectedSale.id);
-
-        if (updateError) throw updateError;
-
-        // Eliminar detalles existentes
-        await supabase
-          .from('sale_details')
-          .delete()
-          .eq('sale_id', selectedSale.id);
-
-        // Insertar nuevos detalles
-        const newDetails = editingSaleDetails.map(d => ({
-          sale_id: selectedSale.id,
-          product_id: d.product_id,
-          quantity: d.quantity,
-          unit_price: d.unit_price,
-          total_price: d.total_price
-        }));
-
-        const { error: detailsError } = await supabase
-          .from('sale_details')
-          .insert(newDetails);
-
-        if (detailsError) throw detailsError;
-      } else {
-        // Esquema simple: cada producto es una fila separada
-        // En el esquema simple, cuando agrupamos ventas, usamos el ID de la primera fila
-        // Necesitamos encontrar todas las filas relacionadas
-        
-        // Primero, intentar obtener la fecha de creación de la venta original
-        const saleDate = new Date(selectedSale.sale_date || (selectedSale as any).created_at || new Date());
-        const startDate = new Date(saleDate.getTime() - 300000); // 5 minutos antes
-        const endDate = new Date(saleDate.getTime() + 300000); // 5 minutos después
-        
-        // Buscar todas las filas que pertenecen a esta venta
-        // Usamos fecha, cliente y usuario para identificar
-        const { data: existingRows } = await supabase
-          .from('sales')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('customer_name', selectedSale.client_name || 'Cliente General')
-          .gte('created_at', startDate.toISOString())
-          .lte('created_at', endDate.toISOString())
-          .order('created_at', { ascending: true });
-
-        // Si no encontramos filas, intentar buscar por el ID de la venta directamente
-        let rowsToDelete: string[] = [];
-        if (existingRows && existingRows.length > 0) {
-          rowsToDelete = existingRows.map(r => r.id);
-        } else {
-          // Fallback: buscar por el ID de la venta (puede ser que solo haya una fila)
-          const { data: singleRow } = await supabase
-            .from('sales')
-            .select('id, created_at')
-            .eq('id', selectedSale.id)
-            .single();
-          
-          if (singleRow) {
-            // Si encontramos una fila, buscar otras con la misma fecha (dentro de 10 segundos)
-            const rowDate = new Date(singleRow.created_at);
-            const rowStart = new Date(rowDate.getTime() - 10000);
-            const rowEnd = new Date(rowDate.getTime() + 10000);
-            
-            const { data: relatedRows } = await supabase
-              .from('sales')
-              .select('id')
-              .eq('user_id', user.id)
-              .eq('customer_name', selectedSale.client_name || 'Cliente General')
-              .gte('created_at', rowStart.toISOString())
-              .lte('created_at', rowEnd.toISOString());
-            
-            if (relatedRows) {
-              rowsToDelete = relatedRows.map(r => r.id);
-            }
-          }
-        }
-
-        // Crear nuevas filas para cada detalle
-        const customerName = selectedSale.client_name || 'Cliente General';
-        const saleDateStr = selectedSale.sale_date || new Date().toISOString();
-        
-        const rows = editingSaleDetails.map(d => ({
-          user_id: user.id,
-          product_id: d.product_id,
-          quantity: d.quantity,
-          unit_price: d.unit_price,
-          total_price: d.total_price,
-          customer_name: customerName,
-          payment_method: editingSalePaymentMethod,
-          sale_type: 'cash',
-          notes: editingSaleNotes || null,
-          sale_date: saleDateStr
-        }));
-
-        // Eliminar todas las filas existentes relacionadas
-        if (rowsToDelete.length > 0) {
-          const { error: deleteError } = await supabase
-            .from('sales')
-            .delete()
-            .in('id', rowsToDelete);
-          
-          if (deleteError) {
-            console.warn('Error deleting existing rows:', deleteError);
-            // Continuar de todas formas, intentar insertar
-          }
-        }
-
-        // Insertar todas las nuevas filas
-        if (rows.length > 0) {
-          const { error: insertError } = await supabase
-            .from('sales')
-            .insert(rows);
-          
-          if (insertError) throw insertError;
-        }
-      }
-
-      toast.success('Venta actualizada exitosamente');
-      setShowEditSale(false);
-      setSelectedSale(null);
-      fetchSales(); // Refrescar lista
-    } catch (error: any) {
-      console.error('Error updating sale:', error);
-      toast.error(`Error al actualizar venta: ${error.message}`);
-    }
-  };
 
   const generateReceiptFromSale = (sale: SaleWithDetails, format: 'A4' | 'POS80' | 'POS58' = 'A4') => {
     const invoiceNumber = `${sale.id.substring(0, 8)}`;
@@ -2237,14 +1971,43 @@ const InventoryModule = () => {
                             <Download className="h-4 w-4 mr-2" />
                             Descargar
                           </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleEditSale(sale)}
-                          >
-                            <Edit className="h-4 w-4 mr-2" />
-                            Editar
-                          </Button>
+                          {sales.length > 0 && sales[0].id === sale.id && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={async () => {
+                                if (confirm('¿Estás seguro de que quieres eliminar esta venta? Esta acción no se puede deshacer.')) {
+                                  try {
+                                    // Eliminar detalles primero
+                                    const { error: detailsError } = await supabase
+                                      .from('sale_details')
+                                      .delete()
+                                      .eq('sale_id', sale.id);
+                                    
+                                    if (detailsError) throw detailsError;
+                                    
+                                    // Eliminar la venta
+                                    const { error: saleError } = await supabase
+                                      .from('sales')
+                                      .delete()
+                                      .eq('id', sale.id);
+                                    
+                                    if (saleError) throw saleError;
+                                    
+                                    toast.success('Venta eliminada exitosamente');
+                                    fetchSales();
+                                  } catch (error: any) {
+                                    console.error('Error eliminando venta:', error);
+                                    toast.error(`Error al eliminar venta: ${error.message}`);
+                                  }
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Eliminar
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2679,195 +2442,6 @@ const InventoryModule = () => {
         </TabsContent>
       </Tabs>
 
-      {/* Edit Sale Dialog */}
-      <Dialog open={showEditSale} onOpenChange={setShowEditSale}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Editar Venta #{selectedSale?.sale_number || selectedSale?.id.substring(0, 8)}</DialogTitle>
-          </DialogHeader>
-          {selectedSale && (
-            <div className="space-y-6">
-              {/* Información General */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <Label>Estado</Label>
-                  <Select value={editingSaleStatus} onValueChange={setEditingSaleStatus}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="completed">Completada</SelectItem>
-                      <SelectItem value="pending">Pendiente</SelectItem>
-                      <SelectItem value="cancelled">Cancelada</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Método de Pago</Label>
-                  <Select value={editingSalePaymentMethod} onValueChange={setEditingSalePaymentMethod}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cash">Efectivo</SelectItem>
-                      <SelectItem value="card">Tarjeta</SelectItem>
-                      <SelectItem value="transfer">Transferencia</SelectItem>
-                      <SelectItem value="check">Cheque</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Total</Label>
-                  <div className="text-2xl font-bold text-green-600 pt-2">
-                    ${editingSaleTotal.toFixed(2)}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <Label>Notas</Label>
-                <Textarea
-                  value={editingSaleNotes}
-                  onChange={(e) => setEditingSaleNotes(e.target.value)}
-                  placeholder="Notas adicionales..."
-                  rows={3}
-                />
-              </div>
-
-              {/* Agregar Productos */}
-              <div>
-                <Label>Agregar Producto</Label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                  <Input
-                    placeholder="Buscar producto por nombre o código..."
-                    value={productSearchEdit}
-                    onChange={(e) => setProductSearchEdit(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-                {productSearchEdit && filteredProductsEdit.length > 0 && (
-                  <div className="mt-2 border rounded-lg max-h-40 overflow-y-auto">
-                    {filteredProductsEdit.slice(0, 5).map((product) => (
-                      <div
-                        key={product.id}
-                        className="p-2 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
-                        onClick={() => addProductToSale(product)}
-                      >
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <p className="font-medium">{product.name}</p>
-                            {product.sku && (
-                              <p className="text-sm text-gray-600">Código: {product.sku}</p>
-                            )}
-                          </div>
-                          <div className="text-right">
-                            <p className="font-semibold">${((product.selling_price || 0) * (1 + (product.itbis_rate || 18) / 100)).toFixed(2)}</p>
-                            <p className="text-xs text-gray-600">Stock: {product.current_stock}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Lista de Productos */}
-              <div>
-                <Label>Productos de la Venta</Label>
-                <div className="space-y-2 mt-2">
-                  {editingSaleDetails.length === 0 ? (
-                    <div className="text-center py-8 text-gray-500 border rounded-lg">
-                      <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>No hay productos en esta venta</p>
-                      <p className="text-sm">Busca productos arriba para agregarlos</p>
-                    </div>
-                  ) : (
-                    editingSaleDetails.map((detail) => (
-                      <Card key={detail.id}>
-                        <CardContent className="p-4">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <h4 className="font-semibold">{detail.product?.name || 'Producto desconocido'}</h4>
-                              {detail.product?.sku && (
-                                <p className="text-sm text-gray-600">Código: {detail.product.sku}</p>
-                              )}
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => removeProductFromSale(detail.id)}
-                              className="text-red-600 hover:text-red-700"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-3 gap-4 mt-3">
-                            <div>
-                              <Label className="text-xs">Cantidad</Label>
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => updateDetailQuantity(detail.id, detail.quantity - 1)}
-                                >
-                                  <Minus className="h-3 w-3" />
-                                </Button>
-                                <Input
-                                  type="number"
-                                  value={detail.quantity}
-                                  onChange={(e) => updateDetailQuantity(detail.id, parseInt(e.target.value) || 0)}
-                                  className="text-center text-sm h-9"
-                                  min="1"
-                                />
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => updateDetailQuantity(detail.id, detail.quantity + 1)}
-                                >
-                                  <Plus className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </div>
-                            <div>
-                              <Label className="text-xs">Precio Unitario</Label>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                value={detail.unit_price.toFixed(2)}
-                                onChange={(e) => updateDetailPrice(detail.id, parseFloat(e.target.value) || 0)}
-                                className="text-sm h-9"
-                              />
-                            </div>
-                            <div>
-                              <Label className="text-xs">Subtotal</Label>
-                              <div className="font-semibold text-green-600 pt-2">
-                                ${detail.total_price.toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Botones de Acción */}
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button variant="outline" onClick={() => setShowEditSale(false)}>
-                  <X className="h-4 w-4 mr-2" />
-                  Cancelar
-                </Button>
-                <Button onClick={saveSaleChanges} disabled={editingSaleDetails.length === 0}>
-                  <Save className="h-4 w-4 mr-2" />
-                  Guardar Cambios
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Sale Details Dialog */}
       <Dialog open={showSaleDetails} onOpenChange={setShowSaleDetails}>

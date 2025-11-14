@@ -309,14 +309,7 @@ export const PawnShopModule = () => {
   const [selectedTransaction, setSelectedTransaction] = useState<PawnTransaction | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
-  const [showEditPaymentModal, setShowEditPaymentModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<PawnPayment | null>(null);
-  const [isLatestPawnPayment, setIsLatestPawnPayment] = useState(false);
-  const [editPaymentForm, setEditPaymentForm] = useState({
-    amount: 0,
-    payment_date: '',
-    notes: ''
-  });
   const [interestPreviewData, setInterestPreviewData] = useState<{
     principal: number;
     rate: number;
@@ -2170,133 +2163,6 @@ export const PawnShopModule = () => {
     setShowReceiptModal(true);
   };
 
-  const handleEditPayment = async (payment: PawnPayment) => {
-    setSelectedPayment(payment);
-    // Extraer solo la fecha (sin hora) para el input de tipo date
-    const paymentDate = payment.payment_date.split('T')[0];
-    setEditPaymentForm({
-      amount: payment.amount,
-      payment_date: paymentDate,
-      notes: payment.notes || ''
-    });
-    
-    // Verificar si es el último pago
-    if (selectedTransaction) {
-      const { data: allPayments } = await supabase
-        .from('pawn_payments')
-        .select('id, payment_date')
-        .eq('pawn_transaction_id', selectedTransaction.id)
-        .order('payment_date', { ascending: false })
-        .order('created_at', { ascending: false });
-      
-      const isLatest = allPayments && allPayments.length > 0 && allPayments[0].id === payment.id;
-      setIsLatestPawnPayment(isLatest || false);
-    }
-    
-    setShowEditPaymentModal(true);
-  };
-
-  // Función para recalcular el desglose cuando se cambia el monto
-  const recalculatePawnPaymentBreakdown = async (newAmount: number) => {
-    if (!selectedTransaction || !selectedPayment || !isLatestPawnPayment) return;
-
-    try {
-      // Obtener el capital pendiente antes de este pago
-      const { data: otherPayments } = await supabase
-        .from('pawn_payments')
-        .select('principal_payment')
-        .eq('pawn_transaction_id', selectedTransaction.id)
-        .neq('id', selectedPayment.id);
-      
-      const totalPrincipalPaid = (otherPayments || []).reduce((sum, p) => sum + (Number(p.principal_payment) || 0), 0);
-      const currentPrincipal = Number(selectedTransaction.loan_amount) - totalPrincipalPaid;
-      
-      // Calcular interés acumulado hasta la fecha del pago
-      const paymentDateOnly = selectedPayment.payment_date.split('T')[0];
-      const accumulatedInterest = calculateAccumulatedInterest(selectedTransaction, paymentDateOnly);
-      
-      // Primero pagar interés, luego el resto va al capital
-      const interestPayment = Math.min(newAmount, accumulatedInterest);
-      const principalPayment = Math.max(0, newAmount - interestPayment);
-      
-      // Actualizar el formulario (los valores se guardarán en handleUpdatePayment)
-      setEditPaymentForm(prev => ({
-        ...prev,
-        amount: newAmount
-      }));
-      
-      // Guardar los valores calculados en el estado del pago seleccionado para usarlos al guardar
-      setSelectedPayment({
-        ...selectedPayment,
-        amount: newAmount,
-        interest_payment: interestPayment,
-        principal_payment: principalPayment
-      });
-    } catch (error) {
-      console.error('Error recalculating breakdown:', error);
-      toast.error('Error al recalcular el desglose');
-    }
-  };
-
-  const handleUpdatePayment = async () => {
-    if (!selectedPayment) return;
-
-    try {
-      // Mantener la hora original del pago, solo cambiar la fecha
-      const originalDate = new Date(selectedPayment.payment_date);
-      const newDate = new Date(editPaymentForm.payment_date);
-      
-      // Copiar la hora del pago original a la nueva fecha
-      newDate.setHours(originalDate.getHours());
-      newDate.setMinutes(originalDate.getMinutes());
-      newDate.setSeconds(originalDate.getSeconds());
-      
-      // Convertir a formato ISO
-      const paymentDateISO = newDate.toISOString();
-
-      const updateData: any = {
-        payment_date: paymentDateISO,
-        notes: editPaymentForm.notes
-      };
-
-      // Solo permitir actualizar montos si es el último pago
-      if (isLatestPawnPayment && selectedPayment.interest_payment !== undefined && selectedPayment.principal_payment !== undefined) {
-        updateData.amount = selectedPayment.amount;
-        updateData.interest_payment = selectedPayment.interest_payment;
-        updateData.principal_payment = selectedPayment.principal_payment;
-        
-        // Recalcular el remaining_balance
-        const { data: otherPayments } = await supabase
-          .from('pawn_payments')
-          .select('principal_payment')
-          .eq('pawn_transaction_id', selectedTransaction!.id)
-          .neq('id', selectedPayment.id);
-        
-        const totalPrincipalPaid = (otherPayments || []).reduce((sum, p) => sum + (Number(p.principal_payment) || 0), 0);
-        const newRemainingBalance = Math.max(0, Number(selectedTransaction!.loan_amount) - totalPrincipalPaid - (selectedPayment.principal_payment || 0));
-        updateData.remaining_balance = newRemainingBalance;
-      }
-
-      const { error } = await supabase
-        .from('pawn_payments')
-        .update(updateData)
-        .eq('id', selectedPayment.id);
-
-      if (error) throw error;
-
-      toast.success(isLatestPawnPayment ? 'Recibo actualizado exitosamente' : 'Pago actualizado exitosamente');
-      setShowEditPaymentModal(false);
-      setSelectedPayment(null);
-      
-      // Refrescar el historial de pagos
-      if (selectedTransaction) {
-        fetchPaymentHistory(selectedTransaction.id);
-      }
-    } catch (error) {
-      console.error('Error actualizando pago:', error);
-      toast.error('Error al actualizar pago');
-    }
-  };
 
   const filteredTransactions = transactions.filter(transaction => {
     const matchesSearch = 
@@ -3594,14 +3460,6 @@ export const PawnShopModule = () => {
                             <Button 
                               size="sm" 
                               variant="outline"
-                              onClick={() => handleEditPayment(payment)}
-                            >
-                              <Edit className="h-4 w-4 mr-1" />
-                              Editar
-                            </Button>
-                            <Button 
-                              size="sm" 
-                              variant="outline"
                               onClick={() => printReceipt(payment, selectedTransaction)}
                             >
                               <Printer className="h-4 w-4 mr-1" />
@@ -3615,6 +3473,36 @@ export const PawnShopModule = () => {
                               <Download className="h-4 w-4 mr-1" />
                               Descargar
                             </Button>
+                            {paymentHistory.length > 0 && paymentHistory[0].id === payment.id && (
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                className="text-red-600 hover:text-red-700"
+                                onClick={async () => {
+                                  if (confirm('¿Estás seguro de que quieres eliminar este pago? Esta acción no se puede deshacer.')) {
+                                    try {
+                                      const { error } = await supabase
+                                        .from('pawn_payments')
+                                        .delete()
+                                        .eq('id', payment.id);
+                                      
+                                      if (error) throw error;
+                                      
+                                      toast.success('Pago eliminado exitosamente');
+                                      if (selectedTransaction) {
+                                        fetchPaymentHistory(selectedTransaction.id);
+                                      }
+                                    } catch (error) {
+                                      console.error('Error eliminando pago:', error);
+                                      toast.error('Error al eliminar pago');
+                                    }
+                                  }
+                                }}
+                              >
+                                <X className="h-4 w-4 mr-1" />
+                                Eliminar
+                              </Button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -4422,135 +4310,6 @@ export const PawnShopModule = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Modal de Edición de Pago */}
-      <Dialog open={showEditPaymentModal} onOpenChange={setShowEditPaymentModal}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Edit className="h-5 w-5" />
-              Editar Pago
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            {/* Información del Cliente */}
-            {selectedTransaction && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <User className="h-5 w-5" />
-                    Cliente: {selectedTransaction.clients?.full_name || 'N/A'}
-                  </CardTitle>
-                </CardHeader>
-              </Card>
-            )}
-
-            {/* Formulario de Edición */}
-            <div className="space-y-4">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <h3 className="text-sm font-medium text-blue-800 mb-1">📝 Edición de Recibo</h3>
-                <p className="text-xs text-blue-700">
-                  {isLatestPawnPayment 
-                    ? 'Puedes editar el monto total y se recalculará automáticamente el desglose (interés, capital). También puedes editar la información del recibo.'
-                    : 'Solo puedes editar la información del recibo (fecha, notas). Los montos solo se pueden modificar en el último pago.'}
-                </p>
-              </div>
-
-              {selectedPayment && (
-                <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-sm font-medium text-gray-700">Monto Total</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={editPaymentForm.amount}
-                        disabled={!isLatestPawnPayment}
-                        onChange={(e) => {
-                          const newAmount = parseFloat(e.target.value) || 0;
-                          setEditPaymentForm({...editPaymentForm, amount: newAmount});
-                          recalculatePawnPaymentBreakdown(newAmount);
-                        }}
-                        className={`w-full px-3 py-2 border border-gray-300 rounded-md ${
-                          isLatestPawnPayment 
-                            ? 'focus:outline-none focus:ring-2 focus:ring-blue-500' 
-                            : 'bg-gray-100 text-gray-600 cursor-not-allowed'
-                        }`}
-                      />
-                      {!isLatestPawnPayment && (
-                        <p className="text-xs text-gray-500 mt-1">⚠️ Solo se puede modificar el monto del último pago</p>
-                      )}
-                      {isLatestPawnPayment && (
-                        <p className="text-xs text-blue-600 mt-1">✅ El desglose se recalculará automáticamente</p>
-                      )}
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-700">Pago a Interés</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={selectedPayment.interest_payment?.toFixed(2) || '0.00'}
-                        disabled
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">Calculado automáticamente</p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-700">Pago a Capital</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={selectedPayment.principal_payment?.toFixed(2) || '0.00'}
-                        disabled
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-600 cursor-not-allowed"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">Calculado automáticamente</p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-700">Fecha de Pago *</label>
-                      <input
-                        type="date"
-                        value={editPaymentForm.payment_date}
-                        onChange={(e) => setEditPaymentForm({...editPaymentForm, payment_date: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        required
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="text-sm font-medium text-gray-700">Notas</label>
-                    <textarea
-                      value={editPaymentForm.notes}
-                      onChange={(e) => setEditPaymentForm({...editPaymentForm, notes: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      rows={3}
-                      placeholder="Notas adicionales..."
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button 
-                variant="outline" 
-                onClick={() => {
-                  setShowEditPaymentModal(false);
-                  setSelectedPayment(null);
-                }}
-              >
-                Cancelar
-              </Button>
-              <Button 
-                onClick={handleUpdatePayment}
-              >
-                Actualizar Pago
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
     </div>
   );
