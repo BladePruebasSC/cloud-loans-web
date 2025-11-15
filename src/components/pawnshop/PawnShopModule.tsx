@@ -101,7 +101,7 @@ interface PaymentFormContentProps {
   onCancel: () => void;
   onSubmit: (e: React.FormEvent) => void;
   getCurrentRemainingPrincipal: (transactionId: string, initialLoanAmount: number) => Promise<number>;
-  calculateAccumulatedInterest: (transaction: PawnTransaction, currentDate: string) => number;
+  calculateAccumulatedInterest: (transaction: PawnTransaction, currentDate: string, interestPayments?: number) => Promise<number>;
 }
 
 const PaymentFormContent: React.FC<PaymentFormContentProps> = ({
@@ -126,12 +126,31 @@ const PaymentFormContent: React.FC<PaymentFormContentProps> = ({
     const calculatePaymentInfo = async () => {
       setLoading(true);
       try {
-        const principal = await getCurrentRemainingPrincipal(transaction.id, Number(transaction.loan_amount));
+        // Obtener ambos datos en paralelo para optimizar
+        const [principal, totalInterestPaid] = await Promise.all([
+          getCurrentRemainingPrincipal(transaction.id, Number(transaction.loan_amount)),
+          // Obtener total de pagos de interés para optimizar
+          (async () => {
+            try {
+              const { data: payments } = await supabase
+                .from('pawn_payments')
+                .select('interest_payment')
+                .eq('pawn_transaction_id', transaction.id)
+                .not('interest_payment', 'is', null);
+              
+              return payments?.reduce((sum, p) => sum + Number(p.interest_payment || 0), 0) || 0;
+            } catch (error) {
+              console.error('Error obteniendo pagos de interés:', error);
+              return 0;
+            }
+          })()
+        ]);
+        
         setCurrentPrincipal(principal);
         
         // Usar la misma función que las estadísticas: desde start_date hasta hoy
         const today = new Date().toISOString().split('T')[0];
-        const interest = calculateAccumulatedInterest(transaction, today);
+        const interest = await calculateAccumulatedInterest(transaction, today, totalInterestPaid);
         setAccumulatedInterest(interest);
       } catch (error) {
         console.error('Error calculating payment info:', error);
@@ -962,32 +981,24 @@ export const PawnShopModule = () => {
 
       if (paymentError) throw paymentError;
 
-      // Actualizar start_date al día siguiente al pago para reiniciar el cálculo de interés
-      // El interés debe empezar desde mañana después del pago
-      const paymentDateObj = new Date(paymentDate);
-      const tomorrow = new Date(paymentDateObj);
-      tomorrow.setDate(paymentDateObj.getDate() + 1);
-      
-      // Convertir a formato YYYY-MM-DD y agregar hora en UTC-4 (Santo Domingo)
-      // Crear fecha en zona horaria de Santo Domingo (UTC-4)
-      const tomorrowStr = tomorrow.toISOString().split('T')[0];
-      const tomorrowInSantoDomingo = `${tomorrowStr}T00:00:00-04:00`;
-      
-      const updateData: any = {
-        start_date: tomorrowInSantoDomingo
-      };
+      // NO actualizar start_date - el interés se calcula siempre desde la fecha original
+      // y se resta lo que ya se ha pagado
+      const updateData: any = {};
       
       // Update transaction status if full payment (balance is 0)
       if (paymentBreakdown.remainingBalance <= 0) {
         updateData.status = 'redeemed';
       }
 
-      const { error: updateError } = await supabase
-        .from('pawn_transactions')
-        .update(updateData)
-        .eq('id', selectedTransaction.id);
+      // Solo actualizar si hay cambios
+      if (Object.keys(updateData).length > 0) {
+        const { error: updateError } = await supabase
+          .from('pawn_transactions')
+          .update(updateData)
+          .eq('id', selectedTransaction.id);
 
-      if (updateError) throw updateError;
+        if (updateError) throw updateError;
+      }
 
       toast.success('Pago registrado exitosamente');
       setShowPaymentForm(false);
@@ -1341,17 +1352,39 @@ export const PawnShopModule = () => {
   };
 
   // Función para calcular el interés acumulado hasta una fecha específica
-  const calculateAccumulatedInterest = (transaction: PawnTransaction, currentDate: string) => {
+  // Resta los pagos de interés ya realizados
+  const calculateAccumulatedInterest = async (transaction: PawnTransaction, currentDate: string, interestPayments?: number) => {
     const startDate = new Date(transaction.start_date);
     const endDate = new Date(currentDate);
     // Asegurar que la fecha de inicio sea la base del cálculo
     const daysDiff = Math.max(0, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
     
-    return calculateDailyInterest(
+    // Calcular interés total desde la fecha original
+    const totalInterest = calculateDailyInterest(
       Number(transaction.loan_amount), 
       Number(transaction.interest_rate), 
       daysDiff
     );
+    
+    // Si no se proporciona el total de pagos de interés, obtenerlo de la base de datos
+    let totalInterestPaid = interestPayments;
+    if (totalInterestPaid === undefined) {
+      try {
+        const { data: payments } = await supabase
+          .from('pawn_payments')
+          .select('interest_payment')
+          .eq('pawn_transaction_id', transaction.id)
+          .not('interest_payment', 'is', null);
+        
+        totalInterestPaid = payments?.reduce((sum, p) => sum + Number(p.interest_payment || 0), 0) || 0;
+      } catch (error) {
+        console.error('Error obteniendo pagos de interés:', error);
+        totalInterestPaid = 0;
+      }
+    }
+    
+    // Restar los pagos de interés ya realizados
+    return Math.max(0, totalInterest - totalInterestPaid);
   };
 
   // Función auxiliar para calcular interés acumulado desde datos del formulario
@@ -1538,10 +1571,24 @@ export const PawnShopModule = () => {
       Number(transaction.loan_amount)
     );
     
+    // Obtener total de pagos de interés para optimizar el cálculo
+    let totalInterestPaid = 0;
+    try {
+      const { data: payments } = await supabase
+        .from('pawn_payments')
+        .select('interest_payment')
+        .eq('pawn_transaction_id', transaction.id)
+        .not('interest_payment', 'is', null);
+      
+      totalInterestPaid = payments?.reduce((sum, p) => sum + Number(p.interest_payment || 0), 0) || 0;
+    } catch (error) {
+      console.error('Error obteniendo pagos de interés:', error);
+    }
+    
     // Usar la misma función que las estadísticas: calcular desde start_date hasta la fecha del pago
     // Extraer solo la fecha (sin hora) para el cálculo
     const paymentDateOnly = paymentDate.split('T')[0];
-    const accumulatedInterest = calculateAccumulatedInterest(transaction, paymentDateOnly);
+    const accumulatedInterest = await calculateAccumulatedInterest(transaction, paymentDateOnly, totalInterestPaid);
     
     // Primero pagar interés, luego el resto va al capital
     const interestPayment = Math.min(paymentAmount, accumulatedInterest);
@@ -1829,14 +1876,7 @@ export const PawnShopModule = () => {
       });
 
       try {
-        const capitalPending = await getCurrentRemainingPrincipal(
-          selectedTransaction.id,
-          Number(selectedTransaction.loan_amount)
-        );
-
-        const today = new Date().toISOString().split('T')[0];
-        const interestAccrued = calculateAccumulatedInterest(selectedTransaction, today);
-
+        // Calcular totales de pagos primero (síncrono, rápido)
         const paymentTotals = paymentHistory.reduce(
           (acc, payment) => {
             const interest = Number(payment.interest_payment || 0);
@@ -1851,6 +1891,18 @@ export const PawnShopModule = () => {
           },
           { totalPaid: 0, totalPrincipalPaid: 0, totalInterestPaid: 0 }
         );
+
+        // Calcular capital pendiente e interés en paralelo
+        const [capitalPending, interestAccrued] = await Promise.all([
+          getCurrentRemainingPrincipal(
+            selectedTransaction.id,
+            Number(selectedTransaction.loan_amount)
+          ),
+          (async () => {
+            const today = new Date().toISOString().split('T')[0];
+            return await calculateAccumulatedInterest(selectedTransaction, today, paymentTotals.totalInterestPaid);
+          })()
+        ]);
 
         if (isMounted) {
           setDetailsSummary({
@@ -1873,12 +1925,15 @@ export const PawnShopModule = () => {
       }
     };
 
-    computeDetailsSummary();
+    // Solo calcular si tenemos la transacción seleccionada y el diálogo está abierto
+    if (selectedTransaction && showTransactionDetails) {
+      computeDetailsSummary();
+    }
 
     return () => {
       isMounted = false;
     };
-  }, [selectedTransaction, showTransactionDetails, paymentHistory]);
+  }, [selectedTransaction?.id, showTransactionDetails, paymentHistory.length]);
 
   const generateReceiptHTML = async (payment: PawnPayment, transaction: PawnTransaction, format: string = 'LETTER') => {
     const formatCurrency = (amount: number) => {
@@ -2385,26 +2440,39 @@ export const PawnShopModule = () => {
                               size="sm" 
                               variant="outline"
                               onClick={async () => {
-                                // Fetch fresh transaction data from database to ensure we have the latest values
-                                const { data: freshTransaction, error } = await supabase
-                                  .from('pawn_transactions')
-                                  .select(`
-                                    *,
-                                    clients(id, full_name, phone),
-                                    products!pawn_transactions_product_id_fkey(id, name)
-                                  `)
-                                  .eq('id', transaction.id)
-                                  .single();
+                                // Cargar transacción e historial de pagos en paralelo ANTES de abrir el diálogo
+                                const [transactionResult, paymentResult] = await Promise.all([
+                                  supabase
+                                    .from('pawn_transactions')
+                                    .select(`
+                                      *,
+                                      clients(id, full_name, phone),
+                                      products!pawn_transactions_product_id_fkey(id, name)
+                                    `)
+                                    .eq('id', transaction.id)
+                                    .single(),
+                                  supabase
+                                    .from('pawn_payments')
+                                    .select('*')
+                                    .eq('pawn_transaction_id', transaction.id)
+                                    .order('payment_date', { ascending: false })
+                                ]);
                                 
-                                if (error) {
-                                  console.error('Error fetching transaction:', error);
+                                if (transactionResult.error) {
+                                  console.error('Error fetching transaction:', transactionResult.error);
                                   toast.error('Error al cargar datos de la transacción');
                                   return;
                                 }
                                 
-                                if (freshTransaction) {
-                                  setSelectedTransaction(freshTransaction as PawnTransaction);
-                                  fetchPaymentHistory(transaction.id);
+                                if (paymentResult.error) {
+                                  console.error('Error fetching payment history:', paymentResult.error);
+                                  // No bloquear si falla el historial, solo mostrar warning
+                                  console.warn('Warning: No se pudo cargar historial de pagos');
+                                }
+                                
+                                if (transactionResult.data) {
+                                  setSelectedTransaction(transactionResult.data as PawnTransaction);
+                                  setPaymentHistory(paymentResult.data || []);
                                   setShowTransactionDetails(true);
                                 }
                               }}
@@ -2564,26 +2632,39 @@ export const PawnShopModule = () => {
                               size="sm" 
                               variant="outline"
                               onClick={async () => {
-                                // Fetch fresh transaction data from database to ensure we have the latest values
-                                const { data: freshTransaction, error } = await supabase
-                                  .from('pawn_transactions')
-                                  .select(`
-                                    *,
-                                    clients(id, full_name, phone),
-                                    products!pawn_transactions_product_id_fkey(id, name)
-                                  `)
-                                  .eq('id', transaction.id)
-                                  .single();
+                                // Cargar transacción e historial de pagos en paralelo ANTES de abrir el diálogo
+                                const [transactionResult, paymentResult] = await Promise.all([
+                                  supabase
+                                    .from('pawn_transactions')
+                                    .select(`
+                                      *,
+                                      clients(id, full_name, phone),
+                                      products!pawn_transactions_product_id_fkey(id, name)
+                                    `)
+                                    .eq('id', transaction.id)
+                                    .single(),
+                                  supabase
+                                    .from('pawn_payments')
+                                    .select('*')
+                                    .eq('pawn_transaction_id', transaction.id)
+                                    .order('payment_date', { ascending: false })
+                                ]);
                                 
-                                if (error) {
-                                  console.error('Error fetching transaction:', error);
+                                if (transactionResult.error) {
+                                  console.error('Error fetching transaction:', transactionResult.error);
                                   toast.error('Error al cargar datos de la transacción');
                                   return;
                                 }
                                 
-                                if (freshTransaction) {
-                                  setSelectedTransaction(freshTransaction as PawnTransaction);
-                                  fetchPaymentHistory(transaction.id);
+                                if (paymentResult.error) {
+                                  console.error('Error fetching payment history:', paymentResult.error);
+                                  // No bloquear si falla el historial, solo mostrar warning
+                                  console.warn('Warning: No se pudo cargar historial de pagos');
+                                }
+                                
+                                if (transactionResult.data) {
+                                  setSelectedTransaction(transactionResult.data as PawnTransaction);
+                                  setPaymentHistory(paymentResult.data || []);
                                   setShowTransactionDetails(true);
                                 }
                               }}
@@ -3488,25 +3569,10 @@ export const PawnShopModule = () => {
 
                                       console.log('🗑️ Iniciando eliminación de pago:', payment.id);
 
-                                      // PASO 1: Obtener el pago anterior (si existe) para restaurar start_date
-                                      const { data: previousPayment, error: prevError } = await supabase
-                                        .from('pawn_payments')
-                                        .select('payment_date')
-                                        .eq('pawn_transaction_id', selectedTransaction.id)
-                                        .neq('id', payment.id)
-                                        .order('payment_date', { ascending: false })
-                                        .limit(1)
-                                        .maybeSingle();
-
-                                      if (prevError) {
-                                        console.error('Error obteniendo pago anterior:', prevError);
-                                        throw prevError;
-                                      }
-
-                                      // PASO 2: Obtener el estado actual de la transacción
+                                      // PASO 1: Obtener el estado actual de la transacción
                                       const { data: currentTransaction, error: transError } = await supabase
                                         .from('pawn_transactions')
-                                        .select('start_date, status')
+                                        .select('status')
                                         .eq('id', selectedTransaction.id)
                                         .single();
 
@@ -3515,26 +3581,8 @@ export const PawnShopModule = () => {
                                         throw new Error('No se pudo obtener la transacción');
                                       }
 
-                                      // PASO 3: Restaurar start_date
-                                      // Si hay un pago anterior, usar su payment_date + 1 día
-                                      // Si no hay pago anterior, usar el start_date original de la transacción
-                                      let newStartDate: string;
-                                      
-                                      if (previousPayment) {
-                                        // Usar la fecha del pago anterior + 1 día
-                                        const prevPaymentDate = new Date(previousPayment.payment_date);
-                                        const nextDay = new Date(prevPaymentDate);
-                                        nextDay.setDate(prevPaymentDate.getDate() + 1);
-                                        const nextDayStr = nextDay.toISOString().split('T')[0];
-                                        newStartDate = `${nextDayStr}T00:00:00-04:00`;
-                                      } else {
-                                        // No hay pagos anteriores, usar el start_date original de la transacción
-                                        newStartDate = selectedTransaction.start_date;
-                                      }
-
-                                      console.log('🗑️ Nuevo start_date:', newStartDate);
-
-                                      // PASO 4: Eliminar el pago PRIMERO
+                                      // PASO 2: Eliminar el pago
+                                      // NO necesitamos restaurar start_date porque nunca lo modificamos
                                       console.log('🗑️ Eliminando pago de la base de datos...');
                                       const { error: deleteError } = await supabase
                                         .from('pawn_payments')
@@ -3564,30 +3612,21 @@ export const PawnShopModule = () => {
 
                                       console.log('🗑️ Pago eliminado exitosamente');
 
-                                      // PASO 5: Actualizar la transacción
-                                      const updateData: any = {
-                                        start_date: newStartDate
-                                      };
-
+                                      // PASO 3: Actualizar la transacción si es necesario
                                       // Si el status era 'redeemed' (porque el balance llegó a 0), cambiarlo a 'active'
                                       // El remaining_balance se calcula dinámicamente, no se guarda en la tabla
                                       if (currentTransaction.status === 'redeemed') {
-                                        updateData.status = 'active';
+                                        const { error: updateError } = await supabase
+                                          .from('pawn_transactions')
+                                          .update({ status: 'active' })
+                                          .eq('id', selectedTransaction.id);
+
+                                        if (updateError) {
+                                          console.error('Error actualizando transacción:', updateError);
+                                          throw updateError;
+                                        }
                                         console.log('🗑️ Cambiando status de redeemed a active');
                                       }
-
-                                      console.log('🗑️ Actualizando transacción con:', updateData);
-                                      const { error: updateError } = await supabase
-                                        .from('pawn_transactions')
-                                        .update(updateData)
-                                        .eq('id', selectedTransaction.id);
-
-                                      if (updateError) {
-                                        console.error('Error actualizando transacción:', updateError);
-                                        throw updateError;
-                                      }
-
-                                      console.log('🗑️ Transacción actualizada exitosamente');
                                       
                                       toast.success('Pago eliminado exitosamente');
                                       
