@@ -1325,10 +1325,44 @@ export const PawnShopModule = () => {
       const currentPrincipal = await getCurrentRemainingPrincipal(transaction.id, initialPrincipal);
       
       // Obtener la fecha de inicio correcta (última fecha de pago de capital o fecha de inicio)
-      const effectiveStartDate = await getLastPaymentDate(transaction.id, startDate);
+      let effectiveStartDate = await getLastPaymentDate(transaction.id, startDate);
+      
+      // Extraer solo la parte de fecha (YYYY-MM-DD) si viene como timestamp
+      // Esto asegura que no haya problemas con la zona horaria
+      // IMPORTANTE: Extraer la fecha ANTES de cualquier conversión para mantener la fecha original
+      let dateOnly: string;
+      if (effectiveStartDate.includes('T')) {
+        // Si tiene 'T', extraer solo la parte antes de 'T'
+        dateOnly = effectiveStartDate.split('T')[0];
+      } else if (effectiveStartDate.includes(' ')) {
+        // Si tiene espacio, extraer solo la parte antes del espacio
+        dateOnly = effectiveStartDate.split(' ')[0];
+      } else {
+        // Ya es solo fecha
+        dateOnly = effectiveStartDate;
+      }
+      
+      // Validar formato YYYY-MM-DD
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+        console.error('Formato de fecha inválido después de extracción:', dateOnly, 'Original:', effectiveStartDate);
+        toast.error('Error: Formato de fecha inválido');
+        return;
+      }
+      
+      effectiveStartDate = dateOnly;
+      
+      // Debug: verificar que la fecha extraída sea correcta
+      const beforeExtraction = await getLastPaymentDate(transaction.id, startDate);
+      console.log('🔍 Fecha de inicio extraída para previsualización:', effectiveStartDate, 'Original startDate:', startDate, 'effectiveStartDate antes de extraer:', beforeExtraction);
+      
+      // También normalizar la fecha de vencimiento
+      let normalizedDueDate = dueDate;
+      if (normalizedDueDate.includes('T') || normalizedDueDate.includes(' ')) {
+        normalizedDueDate = normalizedDueDate.split('T')[0].split(' ')[0];
+      }
       
       // Calcular días desde la fecha efectiva hasta la fecha de vencimiento
-      const days = calculateDaysDifference(effectiveStartDate, dueDate);
+      const days = calculateDaysDifference(effectiveStartDate, normalizedDueDate);
       
       if (days <= 0) {
         toast.error('La fecha de vencimiento debe ser posterior a la fecha de inicio efectiva');
@@ -1441,41 +1475,103 @@ export const PawnShopModule = () => {
     let accumulatedInterest = 0;
     
     // Usar la fecha de inicio proporcionada como base del cálculo
-    // Asegurar que se use la fecha sin tiempo para evitar problemas de zona horaria
-    let baseStartDate: Date;
+    // Trabajar directamente con fechas en formato YYYY-MM-DD para evitar problemas de zona horaria
+    // Parsear la fecha manualmente
+    let year: number, month: number, day: number;
     try {
-      // Intentar crear la fecha en diferentes formatos
-      baseStartDate = new Date(effectiveStartDate + 'T00:00:00');
-      
-      // Si falla, intentar con otro formato
-      if (isNaN(baseStartDate.getTime())) {
-        baseStartDate = new Date(effectiveStartDate);
+      const dateParts = effectiveStartDate.split('-').map(Number);
+      if (dateParts.length !== 3) {
+        throw new Error('Formato de fecha inválido');
       }
+      [year, month, day] = dateParts;
       
-      // Validar que la fecha sea válida
-      if (isNaN(baseStartDate.getTime())) {
-        throw new Error('No se pudo parsear la fecha');
+      // Validar que los valores sean válidos
+      if (isNaN(year) || isNaN(month) || isNaN(day)) {
+        throw new Error('Valores de fecha inválidos');
+      }
+      if (month < 1 || month > 12 || day < 1 || day > 31) {
+        throw new Error('Valores de fecha fuera de rango');
       }
     } catch (error) {
-      console.error('Error creando fecha:', error, 'Fecha procesada:', effectiveStartDate);
+      console.error('Error parseando fecha:', error, 'Fecha procesada:', effectiveStartDate);
       throw new Error(`La fecha de inicio no es válida: ${effectiveStartDate}`);
     }
     
-    for (let day = 1; day <= days; day++) {
-      const currentDate = new Date(baseStartDate);
-      currentDate.setDate(baseStartDate.getDate() + day - 1);
+    // Función auxiliar para sumar días a una fecha trabajando directamente con strings
+    // Esto evita completamente problemas de zona horaria
+    const addDaysToString = (dateStr: string, daysToAdd: number): string => {
+      if (daysToAdd === 0) {
+        // Si no hay días que sumar, devolver la fecha original directamente
+        return dateStr;
+      }
       
-      const dailyInterest = principal * (dailyRate / 100);
-      accumulatedInterest += dailyInterest;
-      const totalAmount = principal + accumulatedInterest;
+      // Parsear la fecha
+      const [y, m, d] = dateStr.split('-').map(Number);
       
-      dailyBreakdown.push({
-        day,
-        date: currentDate.toISOString().split('T')[0],
-        dailyInterest,
-        accumulatedInterest,
-        totalAmount
-      });
+      // Crear un objeto Date en UTC para sumar días
+      // Usar UTC para evitar desplazamientos por zona horaria
+      const date = new Date(Date.UTC(y, m - 1, d));
+      date.setUTCDate(date.getUTCDate() + daysToAdd);
+      
+      // Formatear de vuelta a YYYY-MM-DD usando UTC
+      const newYear = date.getUTCFullYear();
+      const newMonth = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const newDay = String(date.getUTCDate()).padStart(2, '0');
+      return `${newYear}-${newMonth}-${newDay}`;
+    };
+    
+    // Crear la fecha de inicio como string en formato YYYY-MM-DD
+    // IMPORTANTE: Usar directamente la fecha extraída sin modificarla
+    const startDateStr = effectiveStartDate; // Ya está en formato YYYY-MM-DD
+    
+    console.log('🔍 Fecha de inicio para cálculo:', startDateStr, 'Año:', year, 'Mes:', month, 'Día:', day, 'effectiveStartDate recibido:', effectiveStartDate);
+    
+    // Validar que startDateStr coincida con los valores parseados
+    const [expectedYear, expectedMonth, expectedDay] = startDateStr.split('-').map(Number);
+    if (expectedYear !== year || expectedMonth !== month || expectedDay !== day) {
+      console.warn('⚠️ Discrepancia en fecha parseada:', { expectedYear, expectedMonth, expectedDay, year, month, day });
+      // Usar los valores de la fecha string en lugar de los parseados
+      const correctedDateStr = `${expectedYear}-${String(expectedMonth).padStart(2, '0')}-${String(expectedDay).padStart(2, '0')}`;
+      console.log('🔍 Usando fecha corregida:', correctedDateStr);
+      
+      for (let dayIndex = 1; dayIndex <= days; dayIndex++) {
+        const currentDateStr = addDaysToString(correctedDateStr, dayIndex - 1);
+        console.log(`🔍 Día ${dayIndex}: fecha calculada = ${currentDateStr}`);
+        
+        const dailyInterest = principal * (dailyRate / 100);
+        accumulatedInterest += dailyInterest;
+        const totalAmount = principal + accumulatedInterest;
+        
+        dailyBreakdown.push({
+          day: dayIndex,
+          date: currentDateStr,
+          dailyInterest,
+          accumulatedInterest,
+          totalAmount
+        });
+      }
+    } else {
+      for (let dayIndex = 1; dayIndex <= days; dayIndex++) {
+        // Calcular la fecha para este día
+        // Día 1 = fecha de inicio (sin sumar días, usar la fecha exacta)
+        // Día 2 = fecha de inicio + 1 día
+        // Día 3 = fecha de inicio + 2 días, etc.
+        const currentDateStr = addDaysToString(startDateStr, dayIndex - 1);
+        
+        console.log(`🔍 Día ${dayIndex}: fecha calculada = ${currentDateStr}`);
+        
+        const dailyInterest = principal * (dailyRate / 100);
+        accumulatedInterest += dailyInterest;
+        const totalAmount = principal + accumulatedInterest;
+        
+        dailyBreakdown.push({
+          day: dayIndex,
+          date: currentDateStr,
+          dailyInterest,
+          accumulatedInterest,
+          totalAmount
+        });
+      }
     }
     
     return {
@@ -4244,7 +4340,18 @@ export const PawnShopModule = () => {
                               )}
                             </td>
                             <td className="p-2 text-gray-600">
-                              {new Date(day.date).toLocaleDateString('es-DO')}
+                              {(() => {
+                                // Formatear la fecha directamente desde el string para evitar problemas de zona horaria
+                                // day.date ya está en formato YYYY-MM-DD
+                                const [year, month, dayNum] = day.date.split('-').map(Number);
+                                // Crear fecha en UTC-4 (Santo Domingo) para mostrar correctamente
+                                const date = new Date(`${year}-${String(month).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}T00:00:00-04:00`);
+                                return date.toLocaleDateString('es-DO', {
+                                  year: 'numeric',
+                                  month: 'numeric',
+                                  day: 'numeric'
+                                });
+                              })()}
                             </td>
                             <td className="p-2 text-right font-mono">
                               ${day.dailyInterest.toFixed(2)}
