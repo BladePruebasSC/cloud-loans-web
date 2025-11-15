@@ -3481,20 +3481,127 @@ export const PawnShopModule = () => {
                                 onClick={async () => {
                                   if (confirm('¿Estás seguro de que quieres eliminar este pago? Esta acción no se puede deshacer.')) {
                                     try {
-                                      const { error } = await supabase
+                                      if (!selectedTransaction) {
+                                        toast.error('No hay transacción seleccionada');
+                                        return;
+                                      }
+
+                                      console.log('🗑️ Iniciando eliminación de pago:', payment.id);
+
+                                      // PASO 1: Obtener el pago anterior (si existe) para restaurar start_date
+                                      const { data: previousPayment, error: prevError } = await supabase
+                                        .from('pawn_payments')
+                                        .select('payment_date')
+                                        .eq('pawn_transaction_id', selectedTransaction.id)
+                                        .neq('id', payment.id)
+                                        .order('payment_date', { ascending: false })
+                                        .limit(1)
+                                        .maybeSingle();
+
+                                      if (prevError) {
+                                        console.error('Error obteniendo pago anterior:', prevError);
+                                        throw prevError;
+                                      }
+
+                                      // PASO 2: Obtener el estado actual de la transacción
+                                      const { data: currentTransaction, error: transError } = await supabase
+                                        .from('pawn_transactions')
+                                        .select('start_date, status')
+                                        .eq('id', selectedTransaction.id)
+                                        .single();
+
+                                      if (transError || !currentTransaction) {
+                                        console.error('Error obteniendo transacción:', transError);
+                                        throw new Error('No se pudo obtener la transacción');
+                                      }
+
+                                      // PASO 3: Restaurar start_date
+                                      // Si hay un pago anterior, usar su payment_date + 1 día
+                                      // Si no hay pago anterior, usar el start_date original de la transacción
+                                      let newStartDate: string;
+                                      
+                                      if (previousPayment) {
+                                        // Usar la fecha del pago anterior + 1 día
+                                        const prevPaymentDate = new Date(previousPayment.payment_date);
+                                        const nextDay = new Date(prevPaymentDate);
+                                        nextDay.setDate(prevPaymentDate.getDate() + 1);
+                                        const nextDayStr = nextDay.toISOString().split('T')[0];
+                                        newStartDate = `${nextDayStr}T00:00:00-04:00`;
+                                      } else {
+                                        // No hay pagos anteriores, usar el start_date original de la transacción
+                                        newStartDate = selectedTransaction.start_date;
+                                      }
+
+                                      console.log('🗑️ Nuevo start_date:', newStartDate);
+
+                                      // PASO 4: Eliminar el pago PRIMERO
+                                      console.log('🗑️ Eliminando pago de la base de datos...');
+                                      const { error: deleteError } = await supabase
                                         .from('pawn_payments')
                                         .delete()
                                         .eq('id', payment.id);
                                       
-                                      if (error) throw error;
+                                      if (deleteError) {
+                                        console.error('Error eliminando pago:', deleteError);
+                                        throw deleteError;
+                                      }
+
+                                      // Verificar que realmente se eliminó consultando de nuevo
+                                      const { data: verifyPayment, error: verifyError } = await supabase
+                                        .from('pawn_payments')
+                                        .select('id')
+                                        .eq('id', payment.id)
+                                        .maybeSingle();
+
+                                      if (verifyError) {
+                                        console.error('Error verificando eliminación:', verifyError);
+                                        // No lanzar error aquí, puede ser que simplemente no existe
+                                      }
+
+                                      if (verifyPayment) {
+                                        throw new Error('El pago aún existe después de intentar eliminarlo. Puede ser un problema de permisos.');
+                                      }
+
+                                      console.log('🗑️ Pago eliminado exitosamente');
+
+                                      // PASO 5: Actualizar la transacción
+                                      const updateData: any = {
+                                        start_date: newStartDate
+                                      };
+
+                                      // Si el status era 'redeemed' (porque el balance llegó a 0), cambiarlo a 'active'
+                                      // El remaining_balance se calcula dinámicamente, no se guarda en la tabla
+                                      if (currentTransaction.status === 'redeemed') {
+                                        updateData.status = 'active';
+                                        console.log('🗑️ Cambiando status de redeemed a active');
+                                      }
+
+                                      console.log('🗑️ Actualizando transacción con:', updateData);
+                                      const { error: updateError } = await supabase
+                                        .from('pawn_transactions')
+                                        .update(updateData)
+                                        .eq('id', selectedTransaction.id);
+
+                                      if (updateError) {
+                                        console.error('Error actualizando transacción:', updateError);
+                                        throw updateError;
+                                      }
+
+                                      console.log('🗑️ Transacción actualizada exitosamente');
                                       
                                       toast.success('Pago eliminado exitosamente');
+                                      
+                                      // Refrescar datos DESPUÉS de que todo se complete
+                                      // Esperar un momento para asegurar que la base de datos se actualice
+                                      await new Promise(resolve => setTimeout(resolve, 100));
+                                      
                                       if (selectedTransaction) {
-                                        fetchPaymentHistory(selectedTransaction.id);
+                                        await fetchPaymentHistory(selectedTransaction.id);
+                                        await fetchData(); // Refrescar lista de transacciones
                                       }
-                                    } catch (error) {
+                                    } catch (error: any) {
                                       console.error('Error eliminando pago:', error);
-                                      toast.error('Error al eliminar pago');
+                                      toast.error(`Error al eliminar pago: ${error.message || 'Error desconocido'}`);
                                     }
                                   }
                                 }}
