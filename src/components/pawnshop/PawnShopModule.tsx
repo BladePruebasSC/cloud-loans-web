@@ -1535,8 +1535,12 @@ export const PawnShopModule = () => {
       console.log('🔍 Usando fecha corregida:', correctedDateStr);
       
       for (let dayIndex = 1; dayIndex <= days; dayIndex++) {
-        const currentDateStr = addDaysToString(correctedDateStr, dayIndex - 1);
-        console.log(`🔍 Día ${dayIndex}: fecha calculada = ${currentDateStr}`);
+        // Calcular la fecha para este día
+        // Día 1 = fecha de inicio + 1 día (el interés comienza al día siguiente)
+        // Día 2 = fecha de inicio + 2 días
+        // Día 3 = fecha de inicio + 3 días, etc.
+        const currentDateStr = addDaysToString(correctedDateStr, dayIndex);
+        console.log(`🔍 Día ${dayIndex}: fecha calculada = ${currentDateStr}, correctedDateStr = ${correctedDateStr}`);
         
         const dailyInterest = principal * (dailyRate / 100);
         accumulatedInterest += dailyInterest;
@@ -1553,12 +1557,12 @@ export const PawnShopModule = () => {
     } else {
       for (let dayIndex = 1; dayIndex <= days; dayIndex++) {
         // Calcular la fecha para este día
-        // Día 1 = fecha de inicio (sin sumar días, usar la fecha exacta)
-        // Día 2 = fecha de inicio + 1 día
-        // Día 3 = fecha de inicio + 2 días, etc.
-        const currentDateStr = addDaysToString(startDateStr, dayIndex - 1);
+        // Día 1 = fecha de inicio + 1 día (el interés comienza al día siguiente)
+        // Día 2 = fecha de inicio + 2 días
+        // Día 3 = fecha de inicio + 3 días, etc.
+        const currentDateStr = addDaysToString(startDateStr, dayIndex);
         
-        console.log(`🔍 Día ${dayIndex}: fecha calculada = ${currentDateStr}`);
+        console.log(`🔍 Día ${dayIndex}: fecha calculada = ${currentDateStr}, startDateStr = ${startDateStr}`);
         
         const dailyInterest = principal * (dailyRate / 100);
         accumulatedInterest += dailyInterest;
@@ -4341,16 +4345,12 @@ export const PawnShopModule = () => {
                             </td>
                             <td className="p-2 text-gray-600">
                               {(() => {
-                                // Formatear la fecha directamente desde el string para evitar problemas de zona horaria
+                                // Formatear la fecha directamente desde el string sin crear objeto Date
+                                // Esto evita completamente problemas de zona horaria
                                 // day.date ya está en formato YYYY-MM-DD
                                 const [year, month, dayNum] = day.date.split('-').map(Number);
-                                // Crear fecha en UTC-4 (Santo Domingo) para mostrar correctamente
-                                const date = new Date(`${year}-${String(month).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}T00:00:00-04:00`);
-                                return date.toLocaleDateString('es-DO', {
-                                  year: 'numeric',
-                                  month: 'numeric',
-                                  day: 'numeric'
-                                });
+                                // Formatear directamente como DD/MM/YYYY para mostrar
+                                return `${String(dayNum).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
                               })()}
                             </td>
                             <td className="p-2 text-right font-mono">

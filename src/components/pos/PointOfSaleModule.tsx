@@ -105,12 +105,56 @@ export const PointOfSaleModule = () => {
   const [loading, setLoading] = useState(true);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
+  // Inicializar carrito desde localStorage si existe
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    try {
+      const savedCart = localStorage.getItem('pos_cart');
+      if (savedCart) {
+        return JSON.parse(savedCart);
+      }
+    } catch (error) {
+      console.error('Error loading cart from localStorage:', error);
+    }
+    return [];
+  });
+  
+  // Guardar carrito en localStorage cada vez que cambie
+  useEffect(() => {
+    try {
+      localStorage.setItem('pos_cart', JSON.stringify(cart));
+    } catch (error) {
+      console.error('Error saving cart to localStorage:', error);
+    }
+  }, [cart]);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptFormat, setReceiptFormat] = useState<'A4' | 'POS80' | 'POS58'>('A4');
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  // Inicializar cliente seleccionado desde localStorage si existe
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(() => {
+    try {
+      const savedCustomer = localStorage.getItem('pos_selected_customer');
+      if (savedCustomer) {
+        return JSON.parse(savedCustomer);
+      }
+    } catch (error) {
+      console.error('Error loading selected customer from localStorage:', error);
+    }
+    return null;
+  });
+  
+  // Guardar cliente seleccionado en localStorage cada vez que cambie
+  useEffect(() => {
+    try {
+      if (selectedCustomer) {
+        localStorage.setItem('pos_selected_customer', JSON.stringify(selectedCustomer));
+      } else {
+        localStorage.removeItem('pos_selected_customer');
+      }
+    } catch (error) {
+      console.error('Error saving selected customer to localStorage:', error);
+    }
+  }, [selectedCustomer]);
   const [customerSearch, setCustomerSearch] = useState('');
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
   const { user, companyId } = useAuth();
@@ -446,8 +490,15 @@ export const PointOfSaleModule = () => {
       paymentAmount: 0,
       change: 0
     }));
+    // Limpiar también de localStorage
+    try {
+      localStorage.removeItem('pos_cart');
+      localStorage.removeItem('pos_selected_customer');
+    } catch (error) {
+      console.error('Error clearing cart from localStorage:', error);
+    }
     if (showToast) {
-    toast.success('Carrito vaciado');
+      toast.success('Carrito vaciado');
     }
   };
 
