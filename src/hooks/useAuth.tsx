@@ -164,8 +164,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         password,
       });
 
-      if (error) throw error;
-      if (!data.user) throw new Error('No se pudo autenticar al usuario.');
+      // Si el error es de email no confirmado y es un empleado, intentar confirmar automáticamente
+      const errorMessage = error?.message?.toLowerCase() || '';
+      const errorCode = error?.status || error?.code || '';
+      const isEmailNotConfirmed = 
+        errorMessage.includes('email_not_confirmed') || 
+        errorMessage.includes('email not confirmed') || 
+        errorMessage.includes('correo no confirmado') ||
+        errorMessage.includes('correo electrónico no está confirmado') ||
+        errorCode === 'email_not_confirmed' ||
+        error?.name === 'EmailNotConfirmed';
+
+      if (error && isEmailNotConfirmed) {
+        if (role === 'employee') {
+          console.log('🔍 Email no confirmado detectado para empleado, intentando confirmar automáticamente...');
+          console.log('🔍 Error completo:', error);
+          
+          try {
+            // Intentar confirmar el correo usando la función Edge Function (sin autenticación requerida)
+            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://jabiezfpkfyzfpiswcwz.supabase.co';
+            console.log('🔍 Llamando a función para confirmar correo:', `${supabaseUrl}/functions/v1/confirm-employee-email`);
+            
+            const response = await fetch(`${supabaseUrl}/functions/v1/confirm-employee-email`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ email }),
+            });
+
+            console.log('🔍 Respuesta de confirmación:', response.status, response.statusText);
+
+            if (response.ok) {
+              console.log('✅ Correo confirmado automáticamente, reintentando login...');
+              // Esperar un momento para que Supabase procese la confirmación
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
+              // Reintentar el login después de confirmar el correo
+              const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+                email,
+                password,
+              });
+
+              if (retryError) {
+                console.error('❌ Error al reintentar login:', retryError);
+                throw retryError;
+              }
+              if (!retryData.user) {
+                throw new Error('No se pudo autenticar al usuario después de confirmar el correo.');
+              }
+
+              // Continuar con el flujo normal usando retryData
+              const data = retryData;
+              setUser(data.user);
+            } else {
+              const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+              console.error('❌ Error al confirmar correo automáticamente:', errorData);
+              throw new Error('Tu correo electrónico no está confirmado. Por favor, contacta al administrador para confirmar tu correo.');
+            }
+          } catch (confirmError: any) {
+            console.error('Error al confirmar correo:', confirmError);
+            throw new Error('Tu correo electrónico no está confirmado. Por favor, contacta al administrador para confirmar tu correo.');
+          }
+        } else {
+          throw error;
+        }
+      } else if (error) {
+        throw error;
+      }
+
+      if (!data?.user) throw new Error('No se pudo autenticar al usuario.');
 
       setUser(data.user);
 

@@ -89,9 +89,35 @@ serve(async (req) => {
     let isReusedUser = false;
 
     if (authUser) {
-      // User already exists, reuse it
+      // User already exists, reuse it and confirm email
       console.log('Reusing existing user:', authUser.id);
-      authData = { user: authUser };
+      
+      // Confirmar el correo del usuario existente
+      const { data: updatedUser, error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+        authUser.id,
+        {
+          email_confirm: true,
+          user_metadata: {
+            ...authUser.user_metadata,
+            full_name: employeeData.full_name,
+            role: employeeData.role,
+            company_owner_id: employeeData.company_owner_id,
+          }
+        }
+      );
+
+      if (updateError) {
+        console.error('Error updating user:', updateError);
+        return new Response(
+          JSON.stringify({ error: `Error al actualizar usuario: ${updateError.message}` }),
+          { 
+            status: 400, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        );
+      }
+
+      authData = { user: updatedUser.user || authUser };
       isReusedUser = true;
     } else {
       // Create new user

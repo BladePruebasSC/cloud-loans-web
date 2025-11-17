@@ -33,7 +33,8 @@ import {
   Eye,
   EyeOff,
   Building,
-  Briefcase
+  Briefcase,
+  CheckCircle2
 } from 'lucide-react';
 
 const employeeSchema = z.object({
@@ -491,6 +492,85 @@ export const EmployeesModule = () => {
     } catch (error) {
       console.error('Error updating employee status:', error);
       toast.error('Error al actualizar estado del empleado');
+    }
+  };
+
+  const confirmEmployeeEmail = async (employee: Employee) => {
+    if (!employee.email) {
+      toast.error('El empleado no tiene email');
+      return;
+    }
+
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session?.session) {
+        toast.error('No estás autenticado');
+        return;
+      }
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://jabiezfpkfyzfpiswcwz.supabase.co';
+      const response = await fetch(`${supabaseUrl}/functions/v1/confirm-employee-emails`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: employee.email }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        toast.success('Correo del empleado confirmado exitosamente');
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        toast.error(`Error al confirmar correo: ${errorData.error || 'Error desconocido'}`);
+      }
+    } catch (error) {
+      console.error('Error confirming employee email:', error);
+      toast.error('Error al confirmar correo del empleado');
+    }
+  };
+
+  const confirmAllEmployeeEmails = async () => {
+    if (!companyId) return;
+    
+    const activeEmployees = employees.filter(emp => emp.status === 'active' && emp.email);
+    if (activeEmployees.length === 0) {
+      toast.info('No hay empleados activos con email para confirmar');
+      return;
+    }
+
+    if (!confirm(`¿Confirmar el correo de ${activeEmployees.length} empleado(s)?`)) return;
+
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session?.session) {
+        toast.error('No estás autenticado');
+        return;
+      }
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://jabiezfpkfyzfpiswcwz.supabase.co';
+      const response = await fetch(`${supabaseUrl}/functions/v1/confirm-employee-emails`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        toast.success(`${result.confirmed || 0} correo(s) confirmado(s) exitosamente`);
+        if (result.errors && result.errors.length > 0) {
+          console.warn('Errores al confirmar algunos correos:', result.errors);
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        toast.error(`Error al confirmar correos: ${errorData.error || 'Error desconocido'}`);
+      }
+    } catch (error) {
+      console.error('Error confirming all employee emails:', error);
+      toast.error('Error al confirmar correos de empleados');
     }
   };
 
@@ -958,8 +1038,17 @@ export const EmployeesModule = () => {
 
       {/* Employees List */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Lista de Empleados</CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={confirmAllEmployeeEmails}
+            title="Confirmar correos de todos los empleados activos"
+          >
+            <CheckCircle2 className="h-4 w-4 mr-2" />
+            Confirmar Todos los Correos
+          </Button>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -1033,6 +1122,15 @@ export const EmployeesModule = () => {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => confirmEmployeeEmail(employee)}
+                        title="Confirmar correo electrónico"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                      </Button>
+                      
                       <Button
                         variant="outline"
                         size="sm"
