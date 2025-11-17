@@ -34,7 +34,8 @@ import {
   EyeOff,
   Building,
   Briefcase,
-  CheckCircle2
+  CheckCircle2,
+  Key
 } from 'lucide-react';
 
 const employeeSchema = z.object({
@@ -217,6 +218,10 @@ export const EmployeesModule = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
   const [diagnosticEmail, setDiagnosticEmail] = useState('');
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
+  const [employeeForPasswordChange, setEmployeeForPasswordChange] = useState<Employee | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const { user, companyId } = useAuth();
 
   const form = useForm<EmployeeFormData | EmployeeEditFormData>({
@@ -571,6 +576,58 @@ export const EmployeesModule = () => {
     } catch (error) {
       console.error('Error confirming all employee emails:', error);
       toast.error('Error al confirmar correos de empleados');
+    }
+  };
+
+  const handleChangePassword = (employee: Employee) => {
+    setEmployeeForPasswordChange(employee);
+    setNewPassword('');
+    setIsPasswordDialogOpen(true);
+  };
+
+  const changeEmployeePassword = async () => {
+    if (!employeeForPasswordChange || !employeeForPasswordChange.email) {
+      toast.error('No se ha seleccionado un empleado');
+      return;
+    }
+
+    if (!newPassword || newPassword.length < 6) {
+      toast.error('La contraseña debe tener al menos 6 caracteres');
+      return;
+    }
+
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session?.session) {
+        toast.error('No estás autenticado');
+        return;
+      }
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://jabiezfpkfyzfpiswcwz.supabase.co';
+      const response = await fetch(`${supabaseUrl}/functions/v1/change-employee-password`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          email: employeeForPasswordChange.email,
+          password: newPassword 
+        }),
+      });
+
+      if (response.ok) {
+        toast.success('Contraseña cambiada exitosamente');
+        setIsPasswordDialogOpen(false);
+        setNewPassword('');
+        setEmployeeForPasswordChange(null);
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        toast.error(`Error al cambiar contraseña: ${errorData.error || 'Error desconocido'}`);
+      }
+    } catch (error) {
+      console.error('Error changing password:', error);
+      toast.error('Error al cambiar contraseña del empleado');
     }
   };
 
@@ -1134,6 +1191,15 @@ export const EmployeesModule = () => {
                       <Button
                         variant="outline"
                         size="sm"
+                        onClick={() => handleChangePassword(employee)}
+                        title="Cambiar contraseña"
+                      >
+                        <Key className="h-4 w-4" />
+                      </Button>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => toggleStatus(employee.id, employee.status)}
                       >
                         {employee.status === 'active' ? (
@@ -1163,6 +1229,62 @@ export const EmployeesModule = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Dialog para cambiar contraseña */}
+      <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cambiar Contraseña</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {employeeForPasswordChange && (
+              <div>
+                <Label>Empleado</Label>
+                <p className="text-sm text-gray-600">{employeeForPasswordChange.full_name} ({employeeForPasswordChange.email})</p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="newPassword">Nueva Contraseña</Label>
+              <div className="relative">
+                <Input
+                  id="newPassword"
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Mínimo 6 caracteres"
+                  minLength={6}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                >
+                  {showNewPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-gray-500">La contraseña debe tener al menos 6 caracteres</p>
+            </div>
+            <div className="flex gap-4 justify-end">
+              <Button variant="outline" onClick={() => {
+                setIsPasswordDialogOpen(false);
+                setNewPassword('');
+                setEmployeeForPasswordChange(null);
+              }}>
+                Cancelar
+              </Button>
+              <Button onClick={changeEmployeePassword} disabled={!newPassword || newPassword.length < 6}>
+                Cambiar Contraseña
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
