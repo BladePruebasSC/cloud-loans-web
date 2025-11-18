@@ -263,6 +263,7 @@ export type Database = {
           id: string
           marital_status: string | null
           monthly_income: number | null
+          neighborhood: string | null
           occupation: string | null
           phone: string
           references_json: Json | null
@@ -296,6 +297,7 @@ export type Database = {
           id?: string
           marital_status?: string | null
           monthly_income?: number | null
+          neighborhood?: string | null
           occupation?: string | null
           phone: string
           references_json?: Json | null
@@ -329,6 +331,7 @@ export type Database = {
           id?: string
           marital_status?: string | null
           monthly_income?: number | null
+          neighborhood?: string | null
           occupation?: string | null
           phone?: string
           references_json?: Json | null

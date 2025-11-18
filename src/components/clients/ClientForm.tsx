@@ -13,6 +13,23 @@ import { toast } from 'sonner';
 import { useNavigate, useParams } from 'react-router-dom';
 import { User, Heart, Briefcase, CreditCard, Users, Star } from 'lucide-react';
 
+const DEFAULT_REFERENCE_ROWS = 2;
+const MAX_REFERENCES = 5;
+
+const createEmptyReference = () => ({
+  name: '',
+  phone: '',
+  relationship: ''
+});
+
+const ensureReferenceRows = (references: { name: string; phone: string; relationship: string }[]) => {
+  const cloned = [...references];
+  while (cloned.length < DEFAULT_REFERENCE_ROWS) {
+    cloned.push(createEmptyReference());
+  }
+  return cloned.slice(0, MAX_REFERENCES);
+};
+
 const ClientForm = () => {
   const { user, companyId } = useAuth();
   const navigate = useNavigate();
@@ -30,6 +47,7 @@ const ClientForm = () => {
     email: '',
     address: '',
     city: '',
+    neighborhood: '',
     
     // Información Marital
     marital_status: '',
@@ -59,10 +77,7 @@ const ClientForm = () => {
     credit_score: '',
     
     // Referencias
-    references: [
-      { name: '', phone: '', relationship: '' },
-      { name: '', phone: '', relationship: '' },
-    ]
+    references: ensureReferenceRows([])
   });
 
   // Detectar si estamos editando basado en el ID en la URL
@@ -91,11 +106,8 @@ const ClientForm = () => {
 
       if (data) {
         const references = Array.isArray(data.references_json)
-          ? (data.references_json as { name: string; phone: string; relationship: string }[])
-          : [
-            { name: '', phone: '', relationship: '' },
-            { name: '', phone: '', relationship: '' }
-          ];
+          ? ensureReferenceRows(data.references_json as { name: string; phone: string; relationship: string }[])
+          : ensureReferenceRows([]);
 
         setFormData({
           full_name: data.full_name || '',
@@ -105,6 +117,7 @@ const ClientForm = () => {
           email: data.email || '',
           address: data.address || '',
           city: data.city || '',
+          neighborhood: data.neighborhood || '',
           marital_status: data.marital_status || '',
           spouse_name: data.spouse_name || '',
           spouse_phone: data.spouse_phone || '',
@@ -156,6 +169,14 @@ const ClientForm = () => {
 
     setLoading(true);
     try {
+      const sanitizedReferences = formData.references
+        .map(ref => ({
+          name: ref.name.trim(),
+          phone: ref.phone.trim(),
+          relationship: ref.relationship.trim(),
+        }))
+        .filter(ref => ref.name && ref.phone);
+
       const clientData = {
         user_id: companyId,
         full_name: formData.full_name,
@@ -165,6 +186,7 @@ const ClientForm = () => {
         email: formData.email || null,
         address: formData.address || null,
         city: formData.city || null,
+        neighborhood: formData.neighborhood || null,
         marital_status: formData.marital_status || null,
         spouse_name: formData.spouse_name || null,
         spouse_phone: formData.spouse_phone || null,
@@ -182,7 +204,7 @@ const ClientForm = () => {
         account_number: formData.account_number || null,
         routing_number: formData.routing_number || null,
         credit_score: formData.credit_score ? parseInt(formData.credit_score) : null,
-        references_json: formData.references.filter(ref => ref.name || ref.phone),
+        references_json: sanitizedReferences,
         status: 'active'
       };
 
@@ -223,6 +245,25 @@ const ClientForm = () => {
       setLoading(false);
     }
   };
+
+  const handleAddReference = () => {
+    if (!canAddMoreReferences) return;
+    setFormData(prev => ({
+      ...prev,
+      references: [...prev.references, createEmptyReference()]
+    }));
+  };
+
+  const handleRemoveReference = (index: number) => {
+    if (formData.references.length <= 1) return;
+    setFormData(prev => ({
+      ...prev,
+      references: prev.references.filter((_, i) => i !== index)
+    }));
+  };
+
+  const canAddMoreReferences = formData.references.length < MAX_REFERENCES;
+  const canRemoveReferences = formData.references.length > 1;
 
   return (
     <div className="p-6 space-y-6">
@@ -315,12 +356,26 @@ const ClientForm = () => {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="city">Ciudad</Label>
+                    <Label htmlFor="city">Ciudad *</Label>
                     <Input
                       id="city"
                       value={formData.city}
                       onChange={(e) => handleInputChange('city', e.target.value)}
+                      placeholder="Ej: Santo Domingo"
+                      required
                     />
+                  </div>
+                  <div>
+                    <Label htmlFor="neighborhood">Barrio / Sector</Label>
+                    <Input
+                      id="neighborhood"
+                      value={formData.neighborhood}
+                      onChange={(e) => handleInputChange('neighborhood', e.target.value)}
+                      placeholder="Ej: Los Ríos, Alma Rosa"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Se usa para filtrar clientes por barrio/sector en el módulo de mapa.
+                    </p>
                   </div>
                 </div>
                 <div>
@@ -515,16 +570,43 @@ const ClientForm = () => {
 
           <TabsContent value="referencias" className="space-y-6">
             <Card>
-              <CardHeader>
-                <CardTitle>Referencias Personales</CardTitle>
+              <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <CardTitle>Referencias Personales</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Opcional, pero recomendado. Puedes agregar hasta {MAX_REFERENCES} referencias.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleAddReference}
+                  disabled={!canAddMoreReferences}
+                >
+                  Agregar referencia
+                </Button>
               </CardHeader>
               <CardContent className="space-y-4">
                 {formData.references.map((reference, index) => (
-                  <div key={index} className="border rounded-lg p-4">
-                    <h3 className="font-medium mb-3">Referencia {index + 1}</h3>
+                  <div key={index} className="border rounded-lg p-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-medium">Referencia #{index + 1}</h3>
+                      {canRemoveReferences && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRemoveReference(index)}
+                        >
+                          Eliminar
+                        </Button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div>
-                        <Label htmlFor={`reference_name_${index}`}>Nombre</Label>
+                        <Label htmlFor={`reference_name_${index}`}>
+                          Nombre
+                        </Label>
                         <Input
                           id={`reference_name_${index}`}
                           value={reference.name}
@@ -532,11 +614,14 @@ const ClientForm = () => {
                         />
                       </div>
                       <div>
-                        <Label htmlFor={`reference_phone_${index}`}>Teléfono</Label>
+                        <Label htmlFor={`reference_phone_${index}`}>
+                          Teléfono
+                        </Label>
                         <Input
                           id={`reference_phone_${index}`}
                           value={reference.phone}
                           onChange={(e) => handleReferenceChange(index, 'phone', e.target.value)}
+                          placeholder="809-000-0000"
                         />
                       </div>
                       <div>
@@ -545,12 +630,17 @@ const ClientForm = () => {
                           id={`reference_relationship_${index}`}
                           value={reference.relationship}
                           onChange={(e) => handleReferenceChange(index, 'relationship', e.target.value)}
-                          placeholder="Ej: Amigo, Familiar"
+                          placeholder="Ej: Amigo, Familia, Compañero"
                         />
                       </div>
                     </div>
                   </div>
                 ))}
+                {!canAddMoreReferences && (
+                  <p className="text-xs text-muted-foreground">
+                    Alcanzaste el máximo de {MAX_REFERENCES} referencias.
+                  </p>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
