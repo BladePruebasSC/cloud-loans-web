@@ -42,7 +42,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
     <header className="bg-white border-b border-gray-200 px-4 py-3 shadow-sm">
       <div className="flex items-center justify-between">
         {/* Lado izquierdo - Menú hamburguesa y título */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
           {/* Botón hamburguesa limpio */}
           <button
             onClick={onToggleSidebar}
@@ -55,9 +55,19 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           </button>
           
           {/* Título */}
-          <h1 className="text-lg font-semibold text-gray-900 truncate">
-            {companyName}
-          </h1>
+          <img
+            src="/favicon.ico"
+            alt="ProPréstamos logo"
+            className="h-9 w-9 rounded-lg border border-gray-200 shadow-sm"
+          />
+          <div>
+            <p className="text-[11px] text-gray-400 uppercase tracking-tight">
+              ProPréstamos
+            </p>
+            <h1 className="text-base sm:text-lg font-semibold text-gray-900 truncate">
+              {companyName}
+            </h1>
+          </div>
         </div>
 
         {/* Lado derecho - Acciones */}

@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Eye, EyeOff, DollarSign, Building, Users } from 'lucide-react';
+import { Eye, EyeOff, Building, Users } from 'lucide-react';
 
 interface LoginFormProps {
   onLogin: (email: string, password: string, role: 'owner' | 'employee', companyCode?: string, adminCode?: string) => Promise<void>;
@@ -43,8 +43,12 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
     <div className="min-h-screen bg-gradient-to-br from-primary-50 to-primary-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-6 sm:mb-8">
-          <div className="bg-primary-500 p-3 rounded-xl inline-block mb-4">
-            <DollarSign className="h-6 w-6 sm:h-8 sm:w-8 text-white" />
+          <div className="p-2 sm:p-3 rounded-2xl inline-flex items-center justify-center mb-3 shadow-lg bg-white border border-primary/20">
+            <img
+              src="/favicon.ico"
+              alt="ProPréstamos logo"
+              className="h-10 w-10 sm:h-12 sm:w-12 rounded-xl"
+            />
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">ProPréstamos</h1>
           <p className="text-sm sm:text-base text-gray-600 mt-2">Sistema de gestión de préstamos</p>

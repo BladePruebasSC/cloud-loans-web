@@ -1282,9 +1282,9 @@ export const PointOfSaleModule = () => {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+      <div className="flex-1 flex flex-col gap-4 lg:gap-0 lg:flex-row lg:overflow-hidden">
         {/* Left Panel - Products */}
-        <div className="w-full lg:w-1/2 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col order-2 lg:order-1">
+        <div className="w-full lg:w-1/2 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col order-2 lg:order-1 lg:h-[calc(100vh-140px)]">
           {/* Product Search */}
           <div className="p-3 sm:p-4 border-b border-gray-200">
             <div className="relative">
@@ -1312,7 +1312,7 @@ export const PointOfSaleModule = () => {
           </div>
 
           {/* Products Grid */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+          <div className="flex-1 overflow-visible lg:overflow-y-auto p-3 sm:p-4 lg:max-h-[calc(100vh-220px)]">
             {loading ? (
               <div className="text-center py-8">Cargando productos...</div>
             ) : filteredProducts.length === 0 ? (
@@ -1329,7 +1329,7 @@ export const PointOfSaleModule = () => {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
+              <div className="grid grid-cols-2 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
                 {filteredProducts.map((product) => (
                   <Card key={product.id} className="hover:shadow-md transition-shadow cursor-pointer">
                     <CardContent className="p-2 sm:p-3">
@@ -1390,7 +1390,7 @@ export const PointOfSaleModule = () => {
         </div>
 
         {/* Right Panel - Cart & Checkout */}
-        <div className="w-full lg:w-1/2 flex flex-col order-1 lg:order-2">
+        <div className="w-full lg:w-1/2 flex flex-col order-1 lg:order-2 lg:h-[calc(100vh-140px)]">
           {/* Cart Header */}
           <div className="p-3 sm:p-4 border-b border-gray-200 bg-gray-50">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
@@ -1410,7 +1410,7 @@ export const PointOfSaleModule = () => {
           </div>
 
           {/* Cart Items */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+          <div className="flex-1 overflow-visible lg:overflow-y-auto p-3 sm:p-4 lg:max-h-[calc(100vh-220px)]">
             {cart.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 <ShoppingCart className="h-12 w-12 mx-auto mb-4 opacity-50" />
