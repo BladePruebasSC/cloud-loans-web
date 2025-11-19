@@ -1257,7 +1257,7 @@ export const PointOfSaleModule = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 pb-32 lg:pb-0">
+    <div className="min-h-screen flex flex-col bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 p-3 sm:p-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
@@ -1282,26 +1282,26 @@ export const PointOfSaleModule = () => {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col gap-4 lg:gap-0 lg:flex-row lg:overflow-hidden">
+      <div className="flex-1 flex flex-col gap-0 lg:gap-0 lg:flex-row lg:overflow-hidden">
         {/* Left Panel - Products */}
-        <div className="w-full lg:w-1/2 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col order-2 lg:order-1 lg:h-[calc(100vh-140px)]">
+        <div className="w-full lg:w-1/2 bg-white border-b lg:border-b-0 lg:border-r border-gray-200 flex flex-col order-1 lg:order-1 h-[50vh] lg:h-[calc(100vh-140px)] min-h-[400px]">
           {/* Product Search */}
-          <div className="p-3 sm:p-4 border-b border-gray-200">
+          <div className="p-3 sm:p-4 border-b border-gray-200 flex-shrink-0">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
               <Input
-                placeholder="Buscar por nombre del producto..."
+                placeholder="Buscar producto..."
                 value={productSearchTerm}
                 onChange={(e) => setProductSearchTerm(e.target.value)}
-                className="pl-10"
+                className="pl-10 h-10"
               />
             </div>
             <div className="mt-2 flex items-center justify-between text-xs sm:text-sm text-gray-600">
               <span>{filteredProducts.length} {filteredProducts.length === 1 ? 'producto' : 'productos'}</span>
               {productSearchTerm && (
                 <div className="flex items-center gap-2">
-                  <span className="text-blue-600">
-                    Búsqueda: "{productSearchTerm}"
+                  <span className="text-blue-600 text-xs">
+                    "{productSearchTerm}"
                   </span>
                   <Badge variant="outline" className="text-blue-600 border-blue-600 text-xs">
                     Cascada
@@ -1311,8 +1311,8 @@ export const PointOfSaleModule = () => {
             </div>
           </div>
 
-          {/* Products Grid */}
-          <div className="flex-1 overflow-visible lg:overflow-y-auto p-3 sm:p-4 lg:max-h-[calc(100vh-220px)]">
+          {/* Products Grid - Mejorado para móvil */}
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:max-h-[calc(100vh-220px)] -webkit-overflow-scrolling-touch">
             {loading ? (
               <div className="text-center py-8">Cargando productos...</div>
             ) : filteredProducts.length === 0 ? (
@@ -1320,67 +1320,64 @@ export const PointOfSaleModule = () => {
                 <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 {productSearchTerm ? (
                   <div>
-                    <p>No se encontraron productos que coincidan con</p>
-                    <p className="font-semibold text-gray-700">"{productSearchTerm}"</p>
-                    <p className="text-sm mt-2">Intenta con otro término de búsqueda</p>
+                    <p className="text-sm">No se encontraron productos</p>
+                    <p className="font-semibold text-gray-700 text-sm">"{productSearchTerm}"</p>
                   </div>
                 ) : (
-                  <p>No hay productos disponibles en el inventario</p>
+                  <p className="text-sm">No hay productos disponibles</p>
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-2 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-3">
                 {filteredProducts.map((product) => (
-                  <Card key={product.id} className="hover:shadow-md transition-shadow cursor-pointer">
-                    <CardContent className="p-2 sm:p-3">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-sm line-clamp-2">{product.name}</h3>
-                          <div className="text-xs text-gray-600 space-y-1">
+                  <Card key={product.id} className="hover:shadow-md transition-shadow flex flex-col h-full">
+                    <CardContent className="p-3 sm:p-4 flex flex-col flex-1">
+                      <div className="flex items-start justify-between mb-3 flex-shrink-0">
+                        <div className="flex-1 min-w-0 pr-2">
+                          <h3 className="font-semibold text-sm sm:text-base mb-2 line-clamp-2 leading-tight">{product.name}</h3>
+                          <div className="text-xs text-gray-600 space-y-0.5">
                             <p>
                               Stock: <span className={`font-semibold ${product.current_stock <= 5 ? 'text-orange-600' : 'text-blue-600'}`}>{product.current_stock}</span>
                             </p>
                             {product.category && (
-                              <p>Categoría: <span className="text-gray-500">{product.category}</span></p>
-                            )}
-                            {product.sku && (
-                              <p>SKU: <span className="text-gray-500">{product.sku}</span></p>
-                            )}
-                          </div>
-                          <div className="mt-2">
-                            {product.selling_price ? (
-                              (() => {
-                                const itbisRate = product.itbis_rate ?? 18;
-                                const itbisMultiplier = 1 + (itbisRate / 100);
-                                const priceWithTax = ((product.selling_price || 0) * itbisMultiplier);
-                                return <p className="text-sm font-bold text-green-600">${priceWithTax.toFixed(2)}</p>;
-                              })()
-                            ) : (
-                              <p className="text-xs text-gray-500">Precio no definido</p>
+                              <p className="truncate">Cat: <span className="text-gray-500">{product.category}</span></p>
                             )}
                           </div>
                         </div>
-                        <div className="flex flex-col items-end gap-1">
-                          <Badge className={`${product.current_stock === 0 ? 'bg-gray-400' : 'bg-green-500'} text-white text-xs`}>
-                            {product.current_stock === 0 ? 'Agotado' : 'En Inventario'}
+                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                          <Badge className={`${product.current_stock === 0 ? 'bg-gray-400' : 'bg-green-500'} text-white text-xs whitespace-nowrap`}>
+                            {product.current_stock === 0 ? 'Agotado' : 'Disponible'}
                           </Badge>
-                          {product.current_stock <= 5 && (
-                            <Badge variant="outline" className="text-orange-600 border-orange-600 text-xs">
-                              Stock Bajo
+                          {product.current_stock <= 5 && product.current_stock > 0 && (
+                            <Badge variant="outline" className="text-orange-600 border-orange-600 text-xs whitespace-nowrap">
+                              Bajo
                             </Badge>
                           )}
                         </div>
                       </div>
-                      <Button 
-                        size="sm" 
-                        onClick={() => addToCart(product)}
-                        className="w-full text-xs sm:text-sm h-8 sm:h-9"
-                        disabled={product.current_stock === 0}
-                      >
-                        <Plus className="h-3 w-3 sm:mr-1" />
-                        <span className="hidden sm:inline">Agregar al Carrito</span>
-                        <span className="sm:hidden">Agregar</span>
-                      </Button>
+                      <div className="mt-auto pt-2 border-t border-gray-100">
+                        <div className="mb-2">
+                          {product.selling_price ? (
+                            (() => {
+                              const itbisRate = product.itbis_rate ?? 18;
+                              const itbisMultiplier = 1 + (itbisRate / 100);
+                              const priceWithTax = ((product.selling_price || 0) * itbisMultiplier);
+                              return <p className="text-base sm:text-lg font-bold text-green-600">${priceWithTax.toFixed(2)}</p>;
+                            })()
+                          ) : (
+                            <p className="text-xs text-gray-500">Sin precio</p>
+                          )}
+                        </div>
+                        <Button 
+                          size="sm" 
+                          onClick={() => addToCart(product)}
+                          className="w-full h-10 sm:h-9 text-sm font-medium"
+                          disabled={product.current_stock === 0}
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Agregar
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 ))}
@@ -1390,9 +1387,9 @@ export const PointOfSaleModule = () => {
         </div>
 
         {/* Right Panel - Cart & Checkout */}
-        <div className="w-full lg:w-1/2 flex flex-col order-1 lg:order-2 lg:h-[calc(100vh-140px)]">
+        <div className="w-full lg:w-1/2 flex flex-col order-2 lg:order-2 h-[50vh] lg:h-[calc(100vh-140px)] min-h-[400px] border-t lg:border-t-0 border-gray-200">
           {/* Cart Header */}
-          <div className="p-3 sm:p-4 border-b border-gray-200 bg-gray-50">
+          <div className="p-3 sm:p-4 border-b border-gray-200 bg-gray-50 flex-shrink-0">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
               <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2">
                 <ShoppingCart className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -1401,7 +1398,7 @@ export const PointOfSaleModule = () => {
               <Button 
                 onClick={() => setShowCustomerModal(true)} 
                 variant="outline" 
-                className="h-8 sm:h-9 px-2 sm:px-3 text-xs sm:text-sm w-full sm:w-auto"
+                className="h-9 px-3 text-xs sm:text-sm w-full sm:w-auto"
               >
                 <User className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-2" />
                 <span className="truncate">{selectedCustomer ? selectedCustomer.full_name : 'Cliente'}</span>
@@ -1410,7 +1407,7 @@ export const PointOfSaleModule = () => {
           </div>
 
           {/* Cart Items */}
-          <div className="flex-1 overflow-visible lg:overflow-y-auto p-3 sm:p-4 lg:max-h-[calc(100vh-220px)]">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:max-h-[calc(100vh-220px)] -webkit-overflow-scrolling-touch pb-32 lg:pb-4">
             {cart.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 <ShoppingCart className="h-12 w-12 mx-auto mb-4 opacity-50" />
