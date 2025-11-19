@@ -46,7 +46,7 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
           <div className="bg-primary-500 p-3 rounded-xl inline-block mb-4">
             <DollarSign className="h-6 w-6 sm:h-8 sm:w-8 text-white" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">PrestamosFácil</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">ProPréstamos</h1>
           <p className="text-sm sm:text-base text-gray-600 mt-2">Sistema de gestión de préstamos</p>
         </div>
 

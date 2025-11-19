@@ -195,7 +195,7 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
           <div className="mb-8">
             {isOpen ? (
               <div>
-                <h1 className="text-xl font-bold text-gray-800">Prestamos Facil</h1>
+                <h1 className="text-xl font-bold text-gray-800">ProPréstamos</h1>
                 {profile?.is_employee && (
                   <p className="text-xs text-blue-600 mt-1">
                     {profile.role === 'admin' ? 'Administrador' :
