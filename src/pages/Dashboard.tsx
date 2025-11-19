@@ -475,7 +475,7 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="pt-4 pb-4 px-4 sm:pt-8 sm:pb-6 sm:px-6 space-y-4 sm:space-y-6">
+    <div className="pt-4 pb-4 px-4 sm:pt-8 sm:pb-6 sm:px-6 lg:px-8 space-y-5 sm:space-y-6 max-w-7xl mx-auto w-full">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <p className="text-sm text-gray-500 uppercase tracking-wide">Panel general</p>
@@ -511,9 +511,9 @@ const Dashboard = () => {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+      <div className="grid grid-flow-col auto-cols-[minmax(230px,1fr)] gap-4 overflow-x-auto pb-2 hide-scrollbar sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 lg:grid-cols-3 sm:overflow-visible sm:pb-0">
         {quickActions.map((action, index) => (
-          <Card key={index} className="hover:shadow-lg transition-shadow">
+          <Card key={index} className="hover:shadow-lg transition-shadow h-full">
             <CardHeader>
               <CardTitle className="flex items-center space-x-2">
                 <action.icon className="h-5 w-5" />
@@ -569,9 +569,9 @@ const Dashboard = () => {
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+          <div className="grid grid-flow-col auto-cols-[minmax(230px,1fr)] gap-4 overflow-x-auto hide-scrollbar sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 md:grid-cols-3 sm:overflow-visible">
             {generalStats.map((card) => (
-              <Card key={card.title} className="overflow-hidden">
+              <Card key={card.title} className="overflow-hidden h-full">
                 <CardHeader className="space-y-1">
                   <div className="flex items-center justify-between">
                     <p
