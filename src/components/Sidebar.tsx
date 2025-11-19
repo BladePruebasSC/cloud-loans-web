@@ -194,20 +194,31 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
           {/* Logo/Title */}
           <div className="mb-8">
             {isOpen ? (
-              <div>
-                <h1 className="text-xl font-bold text-gray-800">ProPréstamos</h1>
-                {profile?.is_employee && (
-                  <p className="text-xs text-blue-600 mt-1">
-                    {profile.role === 'admin' ? 'Administrador' :
-                     profile.role === 'manager' ? 'Gerente' :
-                     profile.role === 'collector' ? 'Cobrador' :
-                     profile.role === 'accountant' ? 'Contador' : 'Empleado'}
-                  </p>
-                )}
+              <div className="flex items-center gap-3">
+                <img 
+                  src="/favicon.ico" 
+                  alt="ProPréstamos" 
+                  className="w-10 h-10 object-contain"
+                />
+                <div>
+                  <h1 className="text-xl font-bold text-gray-800">ProPréstamos</h1>
+                  {profile?.is_employee && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      {profile.role === 'admin' ? 'Administrador' :
+                       profile.role === 'manager' ? 'Gerente' :
+                       profile.role === 'collector' ? 'Cobrador' :
+                       profile.role === 'accountant' ? 'Contador' : 'Empleado'}
+                    </p>
+                  )}
+                </div>
               </div>
             ) : (
-              <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">
-                <span className="text-white font-bold text-sm">P</span>
+              <div className="flex items-center justify-center">
+                <img 
+                  src="/favicon.ico" 
+                  alt="ProPréstamos" 
+                  className="w-8 h-8 object-contain"
+                />
               </div>
             )}
           </div>

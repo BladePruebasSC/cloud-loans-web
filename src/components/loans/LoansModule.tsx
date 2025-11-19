@@ -471,14 +471,22 @@ export const LoansModule = () => {
     // Filtro por estado
     let matchesStatus = false;
     if (statusFilter === 'all') {
-      // Mostrar todos excepto completados por defecto
-      matchesStatus = loan.status !== 'paid';
+      // Mostrar todos excepto completados y cancelados por defecto
+      const isCancelled = loan.status === 'deleted' && 
+                          (loan.deleted_reason?.toLowerCase().includes('cancelado') || 
+                           loan.deleted_reason?.toLowerCase().includes('cancel'));
+      matchesStatus = loan.status !== 'paid' && !isCancelled;
     } else if (statusFilter === 'active') {
       // Mostrar solo activos y vencidos (NO pendientes)
       matchesStatus = loan.status === 'active' || loan.status === 'overdue';
     } else if (statusFilter === 'pending') {
       // Mostrar solo pendientes
       matchesStatus = loan.status === 'pending';
+    } else if (statusFilter === 'cancelled') {
+      // Mostrar préstamos cancelados (deleted con deleted_reason que indique cancelación)
+      matchesStatus = loan.status === 'deleted' && 
+                      (loan.deleted_reason?.toLowerCase().includes('cancelado') || 
+                       loan.deleted_reason?.toLowerCase().includes('cancel'));
     } else {
       // Mostrar el estado específico seleccionado
       matchesStatus = loan.status === statusFilter;
@@ -782,6 +790,7 @@ export const LoansModule = () => {
                     <SelectItem value="active">Activos y Vencidos</SelectItem>
                     <SelectItem value="pending">Pendientes</SelectItem>
                     <SelectItem value="overdue">Solo Vencidos</SelectItem>
+                    <SelectItem value="cancelled">Cancelados</SelectItem>
                     <SelectItem value="paid">Completados</SelectItem>
                     <SelectItem value="deleted">Eliminados</SelectItem>
                   </SelectContent>
@@ -1464,6 +1473,10 @@ export const LoansModule = () => {
                </CardHeader>
                <CardContent>
                  <div className="text-2xl font-bold text-orange-600">{loans.filter(loan => {
+                   // Excluir préstamos cancelados o pagados
+                   if (loan.status === 'cancelled' || loan.status === 'paid') {
+                     return false;
+                   }
                    const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
                    const today = getCurrentDateInSantoDomingo();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -1482,7 +1495,9 @@ export const LoansModule = () => {
                  <AlertCircle className="h-4 w-4 text-red-600" />
                </CardHeader>
                <CardContent>
-                 <div className="text-2xl font-bold text-red-600">{loans.filter(loan => loan.status === 'overdue').length}</div>
+                 <div className="text-2xl font-bold text-red-600">{loans.filter(loan => 
+                   loan.status === 'overdue' && loan.status !== 'cancelled' && loan.status !== 'paid'
+                 ).length}</div>
                  <p className="text-xs text-muted-foreground">Pagos atrasados</p>
                </CardContent>
              </Card>
@@ -1494,6 +1509,10 @@ export const LoansModule = () => {
                </CardHeader>
                <CardContent>
                  <div className="text-2xl font-bold text-yellow-600">{loans.filter(loan => {
+                   // Excluir préstamos cancelados o pagados
+                   if (loan.status === 'cancelled' || loan.status === 'paid') {
+                     return false;
+                   }
                    const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
                    const today = getCurrentDateInSantoDomingo();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -1510,6 +1529,10 @@ export const LoansModule = () => {
                </CardHeader>
                <CardContent>
                  <div className="text-2xl font-bold">${formatCurrencyNumber(loans.filter(loan => {
+                   // Excluir préstamos cancelados o pagados
+                   if (loan.status === 'cancelled' || loan.status === 'paid') {
+                     return false;
+                   }
                    const nextPayment = new Date(loan.next_payment_date);
                    const today = new Date();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -1536,6 +1559,11 @@ export const LoansModule = () => {
                  <div className="text-center py-8 text-gray-500">Cargando préstamos pendientes...</div>
                ) : (() => {
                  const pendingLoans = loans.filter(loan => {
+                   // Excluir préstamos cancelados o pagados completamente
+                   if (loan.status === 'cancelled' || loan.status === 'paid') {
+                     return false;
+                   }
+                   
                    const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
                    const today = getCurrentDateInSantoDomingo();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));

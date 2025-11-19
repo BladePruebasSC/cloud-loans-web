@@ -240,11 +240,15 @@ const Dashboard = () => {
 
       const totalLoans = loansData?.length || 0;
       const activeLoans = loansData?.filter((loan) => loan.status === 'active').length || 0;
+      // Contar préstamos en mora (estados que indican mora pero que aún no están cancelados)
       const delinquentLoans =
         loansData?.filter((loan) => ['late', 'delinquent', 'past_due'].includes(loan.status)).length || 0;
 
+      // Filtrar solo préstamos activos para cálculos de cartera activa
+      const activeLoansForBalance = loansData?.filter((loan) => loan.status === 'active') || [];
+      
       const totalLent = loansData?.reduce((sum, loan) => sum + (loan.amount || 0), 0) || 0;
-      const totalBalance = loansData?.reduce((sum, loan) => sum + (loan.remaining_balance || 0), 0) || 0;
+      const totalBalance = activeLoansForBalance.reduce((sum, loan) => sum + (loan.remaining_balance || 0), 0) || 0;
 
       const totalCollected =
         paymentsData?.reduce((sum, payment) => sum + (payment.amount ?? 0), 0) || 0;
@@ -256,16 +260,19 @@ const Dashboard = () => {
         end: endOfWeek(new Date(), { weekStartsOn: 1 })
       };
 
+      // Filtrar solo préstamos activos para cálculos de pagos
+      const activeLoansData = loansData?.filter((loan) => loan.status === 'active') || [];
+
       const dueThisWeek =
-        loansData?.filter(
+        activeLoansData.filter(
           (loan) =>
             loan.next_payment_date &&
             isWithinInterval(parseISO(loan.next_payment_date), currentWeek)
         ).length || 0;
 
       const upcomingPayments =
-        loansData
-          ?.filter((loan) => Boolean(loan.next_payment_date))
+        activeLoansData
+          .filter((loan) => Boolean(loan.next_payment_date))
           .sort(
             (a, b) =>
               new Date(a.next_payment_date as string).getTime() -

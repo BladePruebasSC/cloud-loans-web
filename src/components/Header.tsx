@@ -55,11 +55,6 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           </button>
           
           {/* Título */}
-          <img
-            src="/favicon.ico"
-            alt="ProPréstamos logo"
-            className="h-9 w-9 rounded-lg border border-gray-200 shadow-sm"
-          />
           <div>
             <p className="text-[11px] text-gray-400 uppercase tracking-tight">
               ProPréstamos
