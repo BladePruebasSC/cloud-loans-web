@@ -541,7 +541,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Solo verificar código de registro para dueños de empresa (no empleados)
         const { data: usedCode } = await supabase
           .from('registration_codes')
-          .select('id')
+          .select('id, expires_at')
           .eq('used_by', data.user.id)
           .maybeSingle();
 
@@ -549,6 +549,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // El usuario necesita un código de registro
           setNeedsRegistrationCode(true);
           return;
+        }
+
+        // Verificar si el código usado ha expirado
+        if (usedCode.expires_at) {
+          const expirationDate = new Date(usedCode.expires_at);
+          const now = new Date();
+          
+          if (expirationDate < now) {
+            // El código usado ha expirado, necesita un nuevo código
+            console.log('⚠️ El código de registro usado ha expirado. Fecha de expiración:', expirationDate);
+            setNeedsRegistrationCode(true);
+            return;
+          }
         }
 
         await loadOwnerProfile(data.user);
@@ -711,7 +724,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // Para propietarios, verificar si necesitan código de registro
               const { data: usedCode } = await supabase
                 .from('registration_codes')
-                .select('id')
+                .select('id, expires_at')
                 .eq('used_by', session.user.id)
                 .maybeSingle();
 
@@ -720,7 +733,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setProfile(null);
                 setCompanyId(null);
               } else {
-                await loadOwnerProfile(session.user);
+                // Verificar si el código usado ha expirado
+                if (usedCode.expires_at) {
+                  const expirationDate = new Date(usedCode.expires_at);
+                  const now = new Date();
+                  
+                  if (expirationDate < now) {
+                    // El código usado ha expirado, necesita un nuevo código
+                    console.log('⚠️ El código de registro usado ha expirado. Fecha de expiración:', expirationDate);
+                    setNeedsRegistrationCode(true);
+                    setProfile(null);
+                    setCompanyId(null);
+                  } else {
+                    await loadOwnerProfile(session.user);
+                  }
+                } else {
+                  // El código no tiene fecha de expiración, es válido permanentemente
+                  await loadOwnerProfile(session.user);
+                }
               }
             }
           };

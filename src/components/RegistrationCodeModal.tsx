@@ -5,16 +5,46 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
-import { Key } from 'lucide-react';
+import { Key, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 
 const RegistrationCodeModal = () => {
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const { validateRegistrationCode, signOut } = useAuth();
+  const [isExpired, setIsExpired] = useState(false);
+  const { validateRegistrationCode, signOut, user } = useAuth();
   const navigate = useNavigate();
+
+  // Verificar si el código usado ha expirado al cargar el componente
+  React.useEffect(() => {
+    const checkCodeExpiration = async () => {
+      if (!user) return;
+      
+      try {
+        const { data: usedCode } = await supabase
+          .from('registration_codes')
+          .select('expires_at')
+          .eq('used_by', user.id)
+          .maybeSingle();
+
+        if (usedCode?.expires_at) {
+          const expirationDate = new Date(usedCode.expires_at);
+          const now = new Date();
+          
+          if (expirationDate < now) {
+            setIsExpired(true);
+          }
+        }
+      } catch (error) {
+        console.error('Error verificando expiración:', error);
+      }
+    };
+
+    checkCodeExpiration();
+  }, [user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,9 +83,13 @@ const RegistrationCodeModal = () => {
           <div className="mx-auto mb-4 w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
             <Key className="h-6 w-6 text-blue-600" />
           </div>
-          <CardTitle className="text-xl">Código de Registro Requerido</CardTitle>
+          <CardTitle className="text-xl">
+            {isExpired ? 'Código de Registro Expirado' : 'Código de Registro Requerido'}
+          </CardTitle>
           <CardDescription>
-            Necesitas un código de registro para acceder al sistema por primera vez
+            {isExpired 
+              ? 'Tu código de registro ha expirado. Necesitas un nuevo código para continuar.'
+              : 'Necesitas un código de registro para acceder al sistema por primera vez'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -73,6 +107,15 @@ const RegistrationCodeModal = () => {
                 disabled={isLoading}
               />
             </div>
+
+            {isExpired && !error && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  Tu código de registro anterior ha expirado. Por favor, ingresa un nuevo código válido para continuar.
+                </AlertDescription>
+              </Alert>
+            )}
 
             {error && (
               <Alert variant="destructive">

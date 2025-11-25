@@ -88,6 +88,7 @@ const Notifications: React.FC = () => {
           clients!inner(full_name)
         `)
         .eq('status', 'active')
+        .neq('status', 'deleted')
         .lt('next_payment_date', today.toISOString().split('T')[0]);
 
       if (!overdueError && overdueLoans) {
@@ -133,6 +134,7 @@ const Notifications: React.FC = () => {
           clients!inner(full_name)
         `)
         .eq('status', 'active')
+        .neq('status', 'deleted')
         .gte('next_payment_date', today.toISOString().split('T')[0])
         .lte('next_payment_date', nextWeek.toISOString().split('T')[0]);
 
@@ -191,6 +193,7 @@ const Notifications: React.FC = () => {
           contact_type,
           loans!inner(
             id,
+            status,
             clients!inner(full_name)
           )
         `)
@@ -200,6 +203,12 @@ const Notifications: React.FC = () => {
 
       if (!followUpError && upcomingFollowUps) {
         upcomingFollowUps.forEach(followUp => {
+          // Excluir seguimientos de préstamos eliminados
+          const loan = followUp.loans as any;
+          if (loan?.status === 'deleted') {
+            return;
+          }
+          
           const daysUntilFollowUp = Math.floor((new Date(followUp.next_contact_date).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
           const contactTypeLabels = {
             phone: 'Llamada',
@@ -211,7 +220,7 @@ const Notifications: React.FC = () => {
           };
           
           // Acceder correctamente al nombre del cliente
-          const clientName = (followUp.loans as any)?.clients?.full_name || 'Cliente desconocido';
+          const clientName = loan?.clients?.full_name || 'Cliente desconocido';
           
           notificationsList.push({
             id: `followup-${followUp.id}`,
@@ -243,6 +252,7 @@ const Notifications: React.FC = () => {
           )
         `)
         .eq('loan_officer_id', companyId as string)
+        .neq('status', 'deleted')
         .eq('late_fee_enabled', true)
         .gt('current_late_fee', 0);
 

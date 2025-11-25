@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,7 +14,8 @@ import {
   ArrowUpRight,
   PiggyBank,
   BarChart3,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
@@ -81,9 +82,10 @@ type PortfolioInsights = {
   totalPosSales: number;
   totalIncome: number;
   collectionRate: number;
-  averageTicket: number;
   delinquentLoans: number;
+  overdueAmount: number;
   dueThisWeek: number;
+  amountDueThisWeek: number;
   upcomingPayments: {
     id: string;
     clientName: string;
@@ -122,10 +124,10 @@ const Dashboard = () => {
   const { user, companyId } = useAuth();
   const [stats, setStats] = useState<DashboardStat[]>([
     {
-      title: 'Total Clientes',
-      value: '0',
-      description: 'Clientes registrados',
-      icon: Users,
+      title: 'Cartera Activa',
+      value: '$0',
+      description: '0 préstamos activos',
+      icon: CreditCard,
       color: 'text-blue-600',
       bgColor: 'bg-blue-100'
     },
@@ -146,12 +148,12 @@ const Dashboard = () => {
       bgColor: 'bg-yellow-100'
     },
     {
-      title: 'Ganancias',
-      value: '$0',
-      description: 'Intereses cobrados',
-      icon: TrendingUp,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-100'
+      title: 'Préstamos en Mora',
+      value: '0',
+      description: 'Requieren atención',
+      icon: AlertCircle,
+      color: 'text-red-600',
+      bgColor: 'bg-red-100'
     }
   ]);
   const [loading, setLoading] = useState(true);
@@ -166,9 +168,10 @@ const Dashboard = () => {
     totalPosSales: 0,
     totalIncome: 0,
     collectionRate: 0,
-    averageTicket: 0,
     delinquentLoans: 0,
+    overdueAmount: 0,
     dueThisWeek: 0,
+    amountDueThisWeek: 0,
     upcomingPayments: [],
     monthlyCollected: 0,
     monthlyPosSales: 0,
@@ -179,11 +182,45 @@ const Dashboard = () => {
     totalInterest: 0
   });
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Función para refrescar datos
+  const refreshData = useCallback(async () => {
+    if (companyId && !isRefreshing && !loading) {
+      setIsRefreshing(true);
+      await fetchDashboardData(companyId, true);
+      setIsRefreshing(false);
+    }
+  }, [companyId, isRefreshing, loading]);
+
   useEffect(() => {
     if (user && companyId) {
       fetchDashboardData(companyId);
     }
   }, [user, companyId]);
+
+  // Actualizar cuando la ventana recupera el foco
+  useEffect(() => {
+    const handleFocus = () => {
+      if (user && companyId) {
+        refreshData();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [user, companyId, refreshData]);
+
+  // Actualizar periódicamente cada 2 minutos
+  useEffect(() => {
+    if (!user || !companyId) return;
+
+    const interval = setInterval(() => {
+      refreshData();
+    }, 2 * 60 * 1000); // 2 minutos
+
+    return () => clearInterval(interval);
+  }, [user, companyId, refreshData]);
 
   const getClientDisplayName = (loan: LoanRecord) => {
     if (!loan.clients) return 'Cliente sin nombre';
@@ -193,9 +230,11 @@ const Dashboard = () => {
     return loan.clients.full_name || 'Cliente sin nombre';
   };
 
-  const fetchDashboardData = async (ownerCompanyId: string) => {
+  const fetchDashboardData = async (ownerCompanyId: string, silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
 
       const [
         { data: companySettings, error: companySettingsError },
@@ -212,13 +251,14 @@ const Dashboard = () => {
         supabase.from('clients').select('id, status').eq('user_id', ownerCompanyId),
         supabase
           .from('loans')
-          .select('id, amount, remaining_balance, status, total_amount, next_payment_date, clients(full_name)')
-          .eq('loan_officer_id', ownerCompanyId),
+          .select('id, amount, remaining_balance, status, total_amount, next_payment_date, monthly_payment, clients(full_name)')
+          .eq('loan_officer_id', ownerCompanyId)
+          .neq('status', 'deleted'),
         supabase
           .from('payments')
-          .select('amount, interest_amount, created_at')
+          .select('amount, interest_amount, created_at, payment_date')
           .eq('created_by', ownerCompanyId)
-          .eq('status', 'paid'),
+          .in('status', ['paid', 'completed']),
         supabase
           .from('sales')
           .select('*')
@@ -238,17 +278,45 @@ const Dashboard = () => {
       const totalClients = clientsData?.length || 0;
       const activeClients = clientsData?.filter((client) => client.status === 'active').length || 0;
 
-      const totalLoans = loansData?.length || 0;
-      const activeLoans = loansData?.filter((loan) => loan.status === 'active').length || 0;
-      // Contar préstamos en mora (estados que indican mora pero que aún no están cancelados)
-      const delinquentLoans =
-        loansData?.filter((loan) => ['late', 'delinquent', 'past_due'].includes(loan.status)).length || 0;
+      // Los préstamos eliminados ya están filtrados en la consulta, pero por seguridad:
+      const validLoansData = loansData?.filter((loan) => loan.status !== 'deleted') || [];
 
-      // Filtrar solo préstamos activos para cálculos de cartera activa
-      const activeLoansForBalance = loansData?.filter((loan) => loan.status === 'active') || [];
+      const totalLoans = validLoansData.length || 0;
+      const activeLoans = validLoansData.filter((loan) => loan.status === 'active').length || 0;
       
-      const totalLent = loansData?.reduce((sum, loan) => sum + (loan.amount || 0), 0) || 0;
+      // Filtrar solo préstamos activos para cálculos de cartera activa (excluir eliminados)
+      const activeLoansForBalance = validLoansData.filter((loan) => loan.status === 'active') || [];
+      
+      const totalLent = validLoansData.reduce((sum, loan) => sum + (loan.amount || 0), 0) || 0;
       const totalBalance = activeLoansForBalance.reduce((sum, loan) => sum + (loan.remaining_balance || 0), 0) || 0;
+
+      // Calcular préstamos en mora (vencidos) - mejorado
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const overdueLoans = validLoansData.filter((loan) => {
+        // Excluir préstamos pagados o cancelados
+        if (loan.status === 'paid' || loan.status === 'cancelled') {
+          return false;
+        }
+        
+        // Incluir préstamos con status 'overdue' o 'late'
+        if (loan.status === 'overdue' || loan.status === 'late' || loan.status === 'delinquent' || loan.status === 'past_due') {
+          return true;
+        }
+        
+        // Incluir préstamos activos cuya fecha de pago ya pasó
+        if (loan.status === 'active' && loan.next_payment_date) {
+          const paymentDate = new Date(loan.next_payment_date);
+          paymentDate.setHours(0, 0, 0, 0);
+          return paymentDate < today;
+        }
+        
+        return false;
+      });
+      
+      const delinquentLoans = overdueLoans.length;
+      const overdueAmount = overdueLoans.reduce((sum, loan) => sum + (loan.remaining_balance || 0), 0);
 
       const totalCollected =
         paymentsData?.reduce((sum, payment) => sum + (payment.amount ?? 0), 0) || 0;
@@ -260,15 +328,20 @@ const Dashboard = () => {
         end: endOfWeek(new Date(), { weekStartsOn: 1 })
       };
 
-      // Filtrar solo préstamos activos para cálculos de pagos
-      const activeLoansData = loansData?.filter((loan) => loan.status === 'active') || [];
+      // Filtrar solo préstamos activos para cálculos de pagos (excluir eliminados)
+      const activeLoansData = validLoansData.filter((loan) => loan.status === 'active') || [];
 
-      const dueThisWeek =
-        activeLoansData.filter(
-          (loan) =>
-            loan.next_payment_date &&
-            isWithinInterval(parseISO(loan.next_payment_date), currentWeek)
-        ).length || 0;
+      const loansDueThisWeek = activeLoansData.filter(
+        (loan) =>
+          loan.next_payment_date &&
+          isWithinInterval(parseISO(loan.next_payment_date), currentWeek)
+      );
+      
+      const dueThisWeek = loansDueThisWeek.length || 0;
+      const amountDueThisWeek = loansDueThisWeek.reduce(
+        (sum, loan) => sum + (loan.monthly_payment || 0),
+        0
+      );
 
       const upcomingPayments =
         activeLoansData
@@ -289,14 +362,22 @@ const Dashboard = () => {
             };
           }) || [];
 
+      // Usar payment_date en lugar de created_at para cálculos mensuales
+      const currentMonth = new Date();
       const monthlyCollected =
         paymentsData
-          ?.filter((payment) => payment.created_at && isSameMonth(parseISO(payment.created_at), new Date()))
+          ?.filter((payment) => {
+            const paymentDate = payment.payment_date || payment.created_at;
+            return paymentDate && isSameMonth(parseISO(paymentDate), currentMonth);
+          })
           .reduce((sum, payment) => sum + (payment.amount ?? 0), 0) || 0;
 
       const monthlyInterest =
         paymentsData
-          ?.filter((payment) => payment.created_at && isSameMonth(parseISO(payment.created_at), new Date()))
+          ?.filter((payment) => {
+            const paymentDate = payment.payment_date || payment.created_at;
+            return paymentDate && isSameMonth(parseISO(paymentDate), currentMonth);
+          })
           .reduce((sum, payment) => sum + (payment.interest_amount ?? 0), 0) || 0;
 
       const relevantSales = (salesData || []).filter(
@@ -313,18 +394,19 @@ const Dashboard = () => {
           })
           .reduce((sum, sale) => sum + getSaleAmount(sale), 0) || 0;
 
-      const totalIncome = totalCollected + totalPosSales;
-      const monthlyIncome = monthlyCollected + monthlyPosSales;
+      // Ingresos totales = intereses cobrados + ventas POS (el capital no es ingreso, es recuperación)
+      const totalIncome = totalInterest + totalPosSales;
+      // Ingresos del mes = intereses del mes + ventas POS del mes
+      const monthlyIncome = monthlyInterest + monthlyPosSales;
 
       const collectionRate = totalLent > 0 ? Math.min(100, (totalCollected / totalLent) * 100) : 0;
-      const averageTicket = activeLoans > 0 ? totalLent / activeLoans : 0;
 
       setStats([
         {
-          title: 'Total Clientes',
-          value: totalClients.toString(),
-          description: `${activeClients} activos`,
-          icon: Users,
+          title: 'Cartera Activa',
+          value: formatCurrency(totalBalance),
+          description: `${activeLoans} préstamos activos`,
+          icon: CreditCard,
           color: 'text-blue-600',
           bgColor: 'bg-blue-100'
         },
@@ -345,12 +427,12 @@ const Dashboard = () => {
           bgColor: 'bg-yellow-100'
         },
         {
-          title: 'Ganancias',
-          value: formatCurrency(totalInterest),
-          description: 'Intereses cobrados',
-          icon: TrendingUp,
-          color: 'text-purple-600',
-          bgColor: 'bg-purple-100'
+          title: 'Préstamos en Mora',
+          value: delinquentLoans.toString(),
+          description: formatCurrency(overdueAmount),
+          icon: AlertCircle,
+          color: 'text-red-600',
+          bgColor: 'bg-red-100'
         }
       ]);
 
@@ -365,9 +447,10 @@ const Dashboard = () => {
         totalPosSales,
         totalIncome,
         collectionRate,
-        averageTicket,
         delinquentLoans,
+        overdueAmount,
         dueThisWeek,
+        amountDueThisWeek,
         upcomingPayments,
         monthlyCollected,
         monthlyPosSales,
@@ -416,7 +499,7 @@ const Dashboard = () => {
     {
       title: 'Cartera activa',
       value: formatCurrency(portfolioInsights.totalBalance),
-      detail: `${portfolioInsights.delinquentLoans} préstamos en mora`,
+      detail: `${portfolioInsights.delinquentLoans} préstamos en mora (${formatCurrency(portfolioInsights.overdueAmount)})`,
       badge: 'Préstamos',
       icon: CreditCard,
       badgeColor: 'bg-emerald-50 text-emerald-700',
@@ -425,8 +508,8 @@ const Dashboard = () => {
     {
       title: 'Ingresos del mes',
       value: formatCurrency(portfolioInsights.monthlyIncome),
-      detail: `POS: ${formatCurrency(portfolioInsights.monthlyPosSales)} • Préstamos: ${formatCurrency(
-        portfolioInsights.monthlyCollected
+      detail: `Intereses: ${formatCurrency(portfolioInsights.monthlyInterest)} • POS: ${formatCurrency(
+        portfolioInsights.monthlyPosSales
       )}`,
       badge: 'Cobros',
       icon: PiggyBank,
@@ -434,9 +517,9 @@ const Dashboard = () => {
       accent: 'text-amber-600'
     },
     {
-      title: 'Salud general',
+      title: 'Salud de la cartera',
       value: `${portfolioInsights.collectionRate.toFixed(1)}%`,
-      detail: `${portfolioInsights.dueThisWeek} pagos esta semana`,
+      detail: `${portfolioInsights.dueThisWeek} pagos esta semana • ${portfolioInsights.delinquentLoans} en mora`,
       badge: 'Seguimiento',
       icon: ShieldCheck,
       badgeColor: 'bg-sky-50 text-sky-700',
@@ -495,10 +578,22 @@ const Dashboard = () => {
             </p>
           )}
         </div>
-        <Button onClick={() => navigate('/mi-empresa')} className="w-full sm:w-auto">
-          <Plus className="h-4 w-4 mr-2" />
-          Configurar Empresa
-        </Button>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <Button 
+            onClick={refreshData} 
+            variant="outline"
+            disabled={isRefreshing || loading}
+            className="w-full sm:w-auto"
+            title="Actualizar estadísticas"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Actualizando...' : 'Actualizar'}
+          </Button>
+          <Button onClick={() => navigate('/mi-empresa')} className="w-full sm:w-auto">
+            <Plus className="h-4 w-4 mr-2" />
+            Configurar Empresa
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
@@ -612,7 +707,7 @@ const Dashboard = () => {
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="p-4 rounded-lg border border-gray-100">
-                    <p className="text-sm text-gray-500">Capital prestado</p>
+                    <p className="text-sm font-semibold text-blue-600">Capital prestado</p>
                     <p className="text-2xl font-semibold text-gray-900 mt-1">
                       {formatCurrency(portfolioInsights.totalLent)}
                     </p>
@@ -621,56 +716,57 @@ const Dashboard = () => {
                     </p>
                   </div>
                   <div className="p-4 rounded-lg border border-gray-100">
-                    <p className="text-sm text-gray-500">Ingresos cobrados</p>
+                    <p className="text-sm font-semibold text-green-600">Ingresos cobrados</p>
                     <p className="text-2xl font-semibold text-gray-900 mt-1">
                     {formatCurrency(portfolioInsights.totalIncome)}
                     </p>
                   <p className="text-xs text-gray-500 mt-1">
-                    POS acumulado: {formatCurrency(portfolioInsights.totalPosSales)}
+                    Intereses acumulados: {formatCurrency(portfolioInsights.totalInterest)}
                   </p>
                   <p className="text-xs text-gray-500">
-                    Préstamos cobrados: {formatCurrency(portfolioInsights.totalCollected)}
+                    POS acumulado: {formatCurrency(portfolioInsights.totalPosSales)}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Interés acumulado: {formatCurrency(portfolioInsights.totalInterest)}
+                  <p className="text-xs text-gray-400 mt-1">
+                    Total cobrado: {formatCurrency(portfolioInsights.totalCollected)} (capital + intereses)
                   </p>
                   </div>
                   <div className="p-4 rounded-lg border border-gray-100">
-                    <p className="text-sm text-gray-500">Ticket promedio</p>
+                    <p className="text-sm font-semibold text-orange-600">Pendiente esta semana</p>
                     <p className="text-2xl font-semibold text-gray-900 mt-1">
-                      {formatCurrency(portfolioInsights.averageTicket)}
+                      {formatCurrency(portfolioInsights.amountDueThisWeek)}
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">Basado en préstamos activos</p>
+                    <p className="text-xs text-gray-500 mt-1">{portfolioInsights.dueThisWeek} pagos programados</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="p-4 rounded-lg bg-gray-50">
-                    <p className="text-sm text-gray-500 uppercase tracking-wide">Ventas / Cobros del mes</p>
+                    <p className="text-sm font-semibold text-purple-600 uppercase tracking-wide">Ingresos del mes</p>
                     <p className="text-3xl font-bold text-gray-900 mt-2">
                     {formatCurrency(portfolioInsights.monthlyIncome)}
                     </p>
                   <p className="text-sm text-gray-600">
-                    POS del mes: {formatCurrency(portfolioInsights.monthlyPosSales)} • Préstamos: {formatCurrency(
-                      portfolioInsights.monthlyCollected
+                    Intereses: {formatCurrency(portfolioInsights.monthlyInterest)} • POS: {formatCurrency(
+                      portfolioInsights.monthlyPosSales
                     )}
                   </p>
-                  <p className="text-sm text-gray-600">
-                    Intereses del mes: {formatCurrency(portfolioInsights.monthlyInterest)}
+                  <p className="text-xs text-gray-400 mt-1">
+                    Total cobrado: {formatCurrency(portfolioInsights.monthlyCollected)} (capital + intereses)
                   </p>
                   </div>
                   <div className="p-4 rounded-lg bg-gray-50">
-                    <p className="text-sm text-gray-500 uppercase tracking-wide">Salud de la cartera</p>
-                    <div className="flex items-center justify-between mt-2">
-                      <div>
-                        <p className="text-3xl font-bold text-gray-900">{portfolioInsights.collectionRate.toFixed(1)}%</p>
-                        <p className="text-sm text-gray-600">Tasa de cobro</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-3xl font-bold text-gray-900">{portfolioInsights.delinquentLoans}</p>
-                        <p className="text-sm text-gray-600">Préstamos en mora</p>
-                      </div>
-                    </div>
+                    <p className="text-sm font-semibold text-indigo-600 uppercase tracking-wide">Intereses del mes</p>
+                    <p className="text-3xl font-bold text-gray-900 mt-2">
+                      {formatCurrency(portfolioInsights.monthlyInterest)}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-1">
+                      {portfolioInsights.monthlyInterest > 0 
+                        ? `${((portfolioInsights.monthlyInterest / portfolioInsights.monthlyCollected) * 100).toFixed(1)}% de los cobros del mes`
+                        : 'Sin intereses este mes'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Total acumulado: {formatCurrency(portfolioInsights.totalInterest)}
+                    </p>
                   </div>
                 </div>
               </CardContent>

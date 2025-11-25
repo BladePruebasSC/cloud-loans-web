@@ -6,16 +6,21 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, Save, Building, Globe, Phone, Mail, MapPin, CreditCard, Settings, Shield, Bell, FileText, TrendingUp, Clock, Copy, Check } from 'lucide-react';
+import { Upload, Save, Building, Globe, Phone, Mail, MapPin, CreditCard, Settings, Shield, Bell, FileText, TrendingUp, Clock, Copy, Check, AlertTriangle, Trash2, Key, RefreshCw } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 const CompanySettings = () => {
-  const { user, profile } = useAuth();
+  const { user, profile, companyId } = useAuth();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const [copied, setCopied] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [resetCode, setResetCode] = useState('');
+  const [resetting, setResetting] = useState(false);
+  const [resetCodeError, setResetCodeError] = useState('');
   const [formData, setFormData] = useState({
     company_name: '',
     business_type: '',
@@ -204,6 +209,139 @@ const CompanySettings = () => {
     } catch (error) {
       console.error('Error al copiar:', error);
       toast.error('Error al copiar el código. Intenta seleccionar y copiar manualmente.');
+    }
+  };
+
+  const validateResetCode = async (code: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase
+        .from('registration_codes')
+        .select('*')
+        .eq('code', code.toUpperCase().trim())
+        .single();
+
+      if (error || !data) {
+        return false;
+      }
+
+      // Verificar si ha expirado
+      if (data.expires_at && new Date(data.expires_at) < new Date()) {
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error validating reset code:', error);
+      return false;
+    }
+  };
+
+  const resetCompanyData = async () => {
+    if (!user || !companyId) {
+      toast.error('Error: Usuario no autenticado');
+      return;
+    }
+
+    if (!resetCode.trim()) {
+      setResetCodeError('Por favor ingresa el código de confirmación');
+      return;
+    }
+
+    setResetCodeError('');
+    setResetting(true);
+
+    try {
+      // Validar el código y obtener sus datos
+      const { data: codeData, error: codeError } = await supabase
+        .from('registration_codes')
+        .select('*')
+        .eq('code', resetCode.toUpperCase().trim())
+        .single();
+
+      if (codeError || !codeData) {
+        setResetCodeError('Código inválido');
+        setResetting(false);
+        return;
+      }
+
+      // Verificar si ha expirado
+      if (codeData.expires_at && new Date(codeData.expires_at) < new Date()) {
+        setResetCodeError('El código ha expirado');
+        setResetting(false);
+        return;
+      }
+
+      const ownerId = companyId;
+
+      console.log('🔄 Iniciando reset de empresa para ownerId:', ownerId);
+
+      // Marcar el código como usado ANTES de resetear los datos
+      const { error: markUsedError } = await supabase
+        .from('registration_codes')
+        .update({
+          is_used: true,
+          used_by: ownerId,
+          used_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('code', resetCode.toUpperCase().trim())
+        .eq('is_used', false); // Solo actualizar si no está usado
+
+      if (markUsedError) {
+        // Si el código ya estaba usado, verificar si fue usado por otro usuario
+        if (codeData.is_used && codeData.used_by !== ownerId) {
+          setResetCodeError('Este código ya fue usado por otra empresa');
+        } else {
+          setResetCodeError('Error al marcar el código como usado');
+        }
+        setResetting(false);
+        return;
+      }
+
+      // Llamar a la función de base de datos que tiene permisos elevados
+      const { data, error } = await supabase.rpc('reset_company_data', {
+        p_owner_id: ownerId
+      });
+
+      if (error) {
+        console.error('❌ Error al resetear datos:', error);
+        toast.error('Error al eliminar los datos: ' + (error.message || 'Error desconocido'));
+        setResetting(false);
+        return;
+      }
+
+      if (data) {
+        const result = data as any;
+        if (result.success) {
+          const deleted = result.deleted || {};
+          const errors = result.errors || [];
+          
+          console.log('✅ Datos eliminados:', deleted);
+          
+          if (errors.length > 0) {
+            console.warn('⚠️ Errores durante la eliminación:', errors);
+            toast.warning(`Algunos datos no se pudieron eliminar. Revisa la consola para más detalles.`);
+          } else {
+            toast.success('Todos los datos de la empresa han sido eliminados exitosamente');
+          }
+          
+          setShowResetDialog(false);
+          setResetCode('');
+          
+          // Recargar la página para reflejar los cambios
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+        } else {
+          toast.error('Error al eliminar los datos. Revisa la consola para más detalles.');
+          console.error('Error en resultado:', result);
+        }
+      }
+    } catch (error: any) {
+      console.error('Error al resetear datos:', error);
+      toast.error('Error al eliminar los datos: ' + (error.message || 'Error desconocido'));
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -739,7 +877,7 @@ const CompanySettings = () => {
                   <input
                     type="checkbox"
                     checked={!!formData.auto_sequential_codes}
-                    onChange={(e) => handleInputChange('auto_sequential_codes', e.target.checked)}
+                    onChange={(e) => handleInputChange('auto_sequential_codes', e.target.checked ? 1 : 0)}
                     className="h-5 w-5 rounded"
                   />
                 </div>
@@ -1296,9 +1434,128 @@ const CompanySettings = () => {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Reset de Empresa */}
+            <Card className="border-red-200 bg-red-50">
+              <CardHeader>
+                <CardTitle className="flex items-center text-red-800">
+                  <AlertTriangle className="h-5 w-5 mr-2" />
+                  Zona de Peligro
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-3">
+                  <p className="text-sm text-red-700">
+                    <strong>⚠️ ADVERTENCIA:</strong> Esta acción eliminará permanentemente todos los datos de tu empresa.
+                  </p>
+                  <ul className="text-sm text-red-600 space-y-1 list-disc list-inside">
+                    <li>Todos los préstamos (activos, pendientes, eliminados)</li>
+                    <li>Todos los clientes</li>
+                    <li>Todos los pagos y cuotas</li>
+                    <li>Todos los productos en inventario</li>
+                    <li>Todos los empeños</li>
+                    <li>Todos los empleados</li>
+                    <li>Todos los acuerdos y solicitudes</li>
+                    <li>Todas las ventas y compras</li>
+                    <li>Todos los reportes guardados</li>
+                  </ul>
+                  <p className="text-sm font-semibold text-red-800">
+                    Solo se conservará la cuenta de empresa y su configuración.
+                  </p>
+                  <p className="text-xs text-red-600">
+                    Esta acción NO se puede deshacer. Necesitarás un código de registro válido para confirmar.
+                  </p>
+                </div>
+                <Button
+                  variant="destructive"
+                  onClick={() => setShowResetDialog(true)}
+                  className="w-full"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Resetear Empresa a Cero
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Dialog de Confirmación de Reset */}
+      <Dialog open={showResetDialog} onOpenChange={setShowResetDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center text-red-600">
+              <AlertTriangle className="h-5 w-5 mr-2" />
+              Confirmar Reset de Empresa
+            </DialogTitle>
+            <DialogDescription className="pt-4">
+              Esta acción eliminará <strong>permanentemente</strong> todos los datos de tu empresa.
+              Solo se conservará la cuenta y configuración de empresa.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="reset-code" className="flex items-center gap-2">
+                <Key className="h-4 w-4" />
+                Código de Confirmación
+              </Label>
+              <Input
+                id="reset-code"
+                type="text"
+                placeholder="Ingresa un código de registro válido"
+                value={resetCode}
+                onChange={(e) => {
+                  setResetCode(e.target.value);
+                  setResetCodeError('');
+                }}
+                className="mt-2 font-mono"
+                disabled={resetting}
+              />
+              {resetCodeError && (
+                <p className="text-sm text-red-600 mt-1">{resetCodeError}</p>
+              )}
+              <p className="text-xs text-gray-500 mt-1">
+                Necesitas un código generado en el Generador de Códigos para confirmar esta acción.
+              </p>
+            </div>
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-sm text-red-800 font-semibold">
+                ⚠️ Esta acción NO se puede deshacer
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowResetDialog(false);
+                setResetCode('');
+                setResetCodeError('');
+              }}
+              disabled={resetting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={resetCompanyData}
+              disabled={resetting || !resetCode.trim()}
+            >
+              {resetting ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Eliminando...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Confirmar y Eliminar Todo
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

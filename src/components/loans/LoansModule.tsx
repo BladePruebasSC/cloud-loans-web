@@ -48,7 +48,8 @@ import {
   Trash2,
   RotateCcw,
   BarChart3,
-  Phone
+  Phone,
+  Eye
 } from 'lucide-react';
 
 export const LoansModule = () => {
@@ -1057,15 +1058,29 @@ export const LoansModule = () => {
                               </Button>
                             </div>
                           ) : loan.status === 'deleted' ? (
-                            <Button
-                              variant="default"
-                              size="lg"
-                              onClick={() => handleRecoverLoan(loan.id)}
-                              className="h-12 text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transition-all duration-200 w-full"
-                            >
-                              <RotateCcw className="h-5 w-5 mr-2" />
-                              Recuperar Préstamo
-                            </Button>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
+                              <Button
+                                variant="default"
+                                size="lg"
+                                onClick={() => handleRecoverLoan(loan.id)}
+                                className="h-12 text-base font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-lg hover:shadow-xl transition-all duration-200"
+                              >
+                                <RotateCcw className="h-5 w-5 mr-2" />
+                                Recuperar Préstamo
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="lg"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowUpdateForm(true);
+                                }}
+                                className="h-12 text-base font-semibold border-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
+                              >
+                                <Eye className="h-5 w-5 mr-2" />
+                                Ver Préstamo
+                              </Button>
+                            </div>
                           ) : (
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                               <Button
@@ -1389,16 +1404,31 @@ export const LoansModule = () => {
                                </Button>
                              </div>
                            ) : loan.status === 'deleted' ? (
-                             <Button
-                               variant="default"
-                               size="sm"
-                               onClick={() => handleRecoverLoan(loan.id)}
-                               className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700"
-                             >
-                               <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                               <span className="sm:hidden">Recuperar</span>
-                               <span className="hidden sm:inline">Recuperar Préstamo</span>
-                             </Button>
+                             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                               <Button
+                                 variant="default"
+                                 size="sm"
+                                 onClick={() => handleRecoverLoan(loan.id)}
+                                 className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700"
+                               >
+                                 <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                 <span className="sm:hidden">Recuperar</span>
+                                 <span className="hidden sm:inline">Recuperar Préstamo</span>
+                               </Button>
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 onClick={() => {
+                                   setSelectedLoan(loan);
+                                   setShowUpdateForm(true);
+                                 }}
+                                 className="w-full sm:w-auto text-xs"
+                               >
+                                 <Eye className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                 <span className="sm:hidden">Ver</span>
+                                 <span className="hidden sm:inline">Ver Préstamo</span>
+                               </Button>
+                             </div>
                            ) : (
                              <>
                                <Button
@@ -1559,8 +1589,8 @@ export const LoansModule = () => {
                  <div className="text-center py-8 text-gray-500">Cargando préstamos pendientes...</div>
                ) : (() => {
                  const pendingLoans = loans.filter(loan => {
-                   // Excluir préstamos cancelados o pagados completamente
-                   if (loan.status === 'cancelled' || loan.status === 'paid') {
+                   // Excluir préstamos eliminados, cancelados o pagados completamente
+                   if (loan.status === 'deleted' || loan.status === 'cancelled' || loan.status === 'paid') {
                      return false;
                    }
                    
@@ -1700,16 +1730,31 @@ export const LoansModule = () => {
                                    </Button>
                                  </div>
                                ) : loan.status === 'deleted' ? (
-                                 <Button
-                                   variant="default"
-                                   size="sm"
-                                   onClick={() => handleRecoverLoan(loan.id)}
-                                   className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700"
-                                 >
-                                   <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
-                                   <span className="sm:hidden">Recuperar</span>
-                                   <span className="hidden sm:inline">Recuperar Préstamo</span>
-                                 </Button>
+                                 <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                                   <Button
+                                     variant="default"
+                                     size="sm"
+                                     onClick={() => handleRecoverLoan(loan.id)}
+                                     className="w-full sm:w-auto text-xs bg-blue-600 hover:bg-blue-700"
+                                   >
+                                     <RotateCcw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                     <span className="sm:hidden">Recuperar</span>
+                                     <span className="hidden sm:inline">Recuperar Préstamo</span>
+                                   </Button>
+                                   <Button
+                                     variant="outline"
+                                     size="sm"
+                                     onClick={() => {
+                                       setSelectedLoan(loan);
+                                       setShowUpdateForm(true);
+                                     }}
+                                     className="w-full sm:w-auto text-xs"
+                                   >
+                                     <Eye className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                                     <span className="sm:hidden">Ver</span>
+                                     <span className="hidden sm:inline">Ver Préstamo</span>
+                                   </Button>
+                                 </div>
                                ) : (
                                  <>
                                    <Button
@@ -2471,6 +2516,7 @@ export const LoansModule = () => {
                          <SelectItem value="overdue">Vencido</SelectItem>
                          <SelectItem value="paid">Pagado</SelectItem>
                          <SelectItem value="pending">Pendiente</SelectItem>
+                         <SelectItem value="deleted">Eliminados</SelectItem>
                        </SelectContent>
                      </Select>
 
@@ -2504,20 +2550,26 @@ export const LoansModule = () => {
                    </div>
                  ) : (() => {
                    const filteredLoans = loans.filter(loan => {
-                         // Filtrar préstamos eliminados
-                         if (loan.status === 'deleted') return false;
+                         // Si el filtro es 'deleted', mostrar solo eliminados
+                         // Si el filtro no es 'deleted' ni 'all', excluir eliminados
+                         if (statementStatusFilter === 'deleted') {
+                           // Solo mostrar eliminados cuando el filtro es 'deleted'
+                           if (loan.status !== 'deleted') return false;
+                         } else if (statementStatusFilter !== 'all') {
+                           // Para otros filtros, excluir eliminados
+                           if (loan.status === 'deleted') return false;
+                           if (loan.status !== statementStatusFilter) {
+                             return false;
+                           }
+                         } else {
+                           // Para 'all', excluir eliminados por defecto
+                           if (loan.status === 'deleted') return false;
+                         }
                          
                          // Filtro por búsqueda
                          if (statementSearchTerm) {
                            const searchLower = statementSearchTerm.toLowerCase();
                            if (!loan.client?.full_name?.toLowerCase().includes(searchLower)) {
-                             return false;
-                           }
-                         }
-                         
-                         // Filtro por estado
-                         if (statementStatusFilter !== 'all') {
-                           if (loan.status !== statementStatusFilter) {
                              return false;
                            }
                          }
@@ -2573,11 +2625,13 @@ export const LoansModule = () => {
                                  <Badge variant={
                                    loan.status === 'active' ? 'default' :
                                    loan.status === 'overdue' ? 'destructive' :
-                                   loan.status === 'paid' ? 'secondary' : 'outline'
+                                   loan.status === 'paid' ? 'secondary' :
+                                   loan.status === 'deleted' ? 'outline' : 'outline'
                                  }>
                                    {loan.status === 'active' ? 'Activo' :
                                     loan.status === 'overdue' ? 'Vencido' :
-                                    loan.status === 'paid' ? 'Pagado' : loan.status}
+                                    loan.status === 'paid' ? 'Pagado' :
+                                    loan.status === 'deleted' ? 'Eliminado' : loan.status}
                                  </Badge>
                                </div>
                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm text-gray-600">
@@ -2599,16 +2653,41 @@ export const LoansModule = () => {
                                  </div>
                                </div>
                              </div>
-                             <Button 
-                               onClick={() => {
-                                 setSelectedLoanForStatement(loan);
-                                 setShowAccountStatement(true);
-                               }}
-                               className="ml-4"
-                             >
-                               <FileText className="h-4 w-4 mr-1" />
-                               Ver Estado
-                             </Button>
+                             <div className="flex gap-2 ml-4">
+                               {loan.status === 'deleted' ? (
+                                 <>
+                                   <Button 
+                                     onClick={() => handleRecoverLoan(loan.id)}
+                                     variant="outline"
+                                     className="flex items-center gap-1"
+                                   >
+                                     <RotateCcw className="h-4 w-4" />
+                                     Recuperar
+                                   </Button>
+                                   <Button 
+                                     onClick={() => {
+                                       setSelectedLoan(loan);
+                                       setShowUpdateForm(true);
+                                     }}
+                                     variant="ghost"
+                                     className="flex items-center gap-1"
+                                   >
+                                     <Eye className="h-4 w-4" />
+                                     Ver Préstamo
+                                   </Button>
+                                 </>
+                               ) : (
+                                 <Button 
+                                   onClick={() => {
+                                     setSelectedLoanForStatement(loan);
+                                     setShowAccountStatement(true);
+                                   }}
+                                 >
+                                   <FileText className="h-4 w-4 mr-1" />
+                                   Ver Estado
+                                 </Button>
+                               )}
+                             </div>
                            </div>
                          </CardContent>
                        </Card>
