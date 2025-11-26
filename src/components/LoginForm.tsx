@@ -185,7 +185,7 @@ const LoginForm = ({ onLogin, onSwitchToRegister, error, loading }: LoginFormPro
                 onClick={onSwitchToRegister}
                 className="text-sm"
               >
-                ¿No tienes cuenta? Regístrate como empresa
+                ¿No tienes cuenta? <span className="font-semibold">Regístrate como empresa</span>
               </Button>
             </div>
             

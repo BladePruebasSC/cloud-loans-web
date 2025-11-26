@@ -8,6 +8,7 @@ import Index from '@/pages/Index'
 import NotFound from '@/pages/NotFound'
 import AdminCodesPanel from '@/components/admin/AdminCodesPanel'
 import RegistrationCodeModal from '@/components/RegistrationCodeModal'
+import LandingPage from '@/pages/LandingPage'
 
 function App() {
   const { user, loading, signIn, signUp, signOut, needsRegistrationCode, validateRegistrationCode } = useAuth()
@@ -119,7 +120,8 @@ function App() {
   if (!user) {
     return (
       <Routes>
-        <Route path="/" element={
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={
           <LoginForm 
             onLogin={signIn}
             onSwitchToRegister={() => navigate('/register')}
@@ -128,16 +130,11 @@ function App() {
         <Route path="/register" element={
           <RegisterForm 
             onRegister={handleSignUp}
-            onSwitchToLogin={() => navigate('/')}
+            onSwitchToLogin={() => navigate('/login')}
           />
         } />
         <Route path="/admin/codigos-registro" element={<AdminCodesPanel />} />
-        <Route path="*" element={
-          <LoginForm 
-            onLogin={signIn}
-            onSwitchToRegister={() => navigate('/register')}
-          />
-        } />
+        <Route path="*" element={<LandingPage />} />
       </Routes>
     )
   }
