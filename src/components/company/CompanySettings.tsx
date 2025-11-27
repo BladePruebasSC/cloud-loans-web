@@ -43,7 +43,6 @@ const CompanySettings = () => {
     description: '',
     currency: 'DOP',
     interest_rate_default: 15.0,
-    late_fee_percentage: 5.0,
     grace_period_days: 3,
     min_loan_amount: 1000,
     max_loan_amount: 500000,
@@ -78,7 +77,6 @@ const CompanySettings = () => {
           ...prev,
           ...data,
           interest_rate_default: sanitizeNumber(data.interest_rate_default, prev.interest_rate_default),
-          late_fee_percentage: sanitizeNumber(data.late_fee_percentage, prev.late_fee_percentage),
           grace_period_days: sanitizeNumber(data.grace_period_days, prev.grace_period_days),
           default_late_fee_rate: sanitizeNumber(data.default_late_fee_rate, prev.default_late_fee_rate),
           default_pawn_period_days: sanitizeNumber(data.default_pawn_period_days, prev.default_pawn_period_days),
@@ -703,17 +701,6 @@ const CompanySettings = () => {
                       onChange={(e) => handleInputChange('default_pawn_period_days', sanitizeNumber(e.target.value, 0))}
                     />
                   </div>
-                </div>
-
-                <div>
-                  <Label htmlFor="late_fee_percentage">Mora por Atraso (%)</Label>
-                  <Input
-                    id="late_fee_percentage"
-                    type="number"
-                    step="0.1"
-                    value={formData.late_fee_percentage ?? ''}
-                    onChange={(e) => handleInputChange('late_fee_percentage', sanitizeNumber(e.target.value, 0))}
-                  />
                 </div>
 
                 <div>
