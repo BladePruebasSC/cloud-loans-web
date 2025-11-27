@@ -275,28 +275,15 @@ const CompanySettings = () => {
 
       console.log('🔄 Iniciando reset de empresa para ownerId:', ownerId);
 
-      // Marcar el código como usado ANTES de resetear los datos
-      const { error: markUsedError } = await supabase
+      // Registrar uso del código para auditoría sin invalidarlo
+      await supabase
         .from('registration_codes')
         .update({
-          is_used: true,
+          updated_at: new Date().toISOString(),
           used_by: ownerId,
-          used_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          used_at: new Date().toISOString()
         })
-        .eq('code', resetCode.toUpperCase().trim())
-        .eq('is_used', false); // Solo actualizar si no está usado
-
-      if (markUsedError) {
-        // Si el código ya estaba usado, verificar si fue usado por otro usuario
-        if (codeData.is_used && codeData.used_by !== ownerId) {
-          setResetCodeError('Este código ya fue usado por otra empresa');
-        } else {
-          setResetCodeError('Error al marcar el código como usado');
-        }
-        setResetting(false);
-        return;
-      }
+        .eq('code', resetCode.toUpperCase().trim());
 
       // Llamar a la función de base de datos que tiene permisos elevados
       const { data, error } = await supabase.rpc('reset_company_data', {
@@ -319,8 +306,8 @@ const CompanySettings = () => {
           console.log('✅ Datos eliminados:', deleted);
           
           if (errors.length > 0) {
-            console.warn('⚠️ Errores durante la eliminación:', errors);
-            toast.warning(`Algunos datos no se pudieron eliminar. Revisa la consola para más detalles.`);
+            console.warn('⚠️ Advertencias durante la eliminación:', errors);
+            toast.success('Los datos se eliminaron, pero algunas operaciones arrojaron advertencias. Revisa la consola para más detalles.');
           } else {
             toast.success('Todos los datos de la empresa han sido eliminados exitosamente');
           }

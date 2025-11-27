@@ -4,6 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import useEmblaCarousel from 'embla-carousel-react';
 import {
   DollarSign,
@@ -26,7 +33,10 @@ import {
   PieChart,
   MapPin,
   Handshake,
-  ChevronLeft
+  ChevronLeft,
+  ShoppingCart,
+  Scale,
+  CreditCard
 } from 'lucide-react';
 
 const LandingPage = () => {
@@ -34,6 +44,7 @@ const LandingPage = () => {
   const [loanAmount, setLoanAmount] = useState(10000);
   const [interestRate, setInterestRate] = useState(3);
   const [months, setMonths] = useState(12);
+  const [amortizationType, setAmortizationType] = useState<'french' | 'german' | 'american' | 'simple'>('simple');
   
   // Carrusel de imágenes profesionales
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true });
@@ -50,21 +61,33 @@ const LandingPage = () => {
     return () => clearInterval(autoplayInterval);
   }, [emblaApi]);
   
-  const carouselImages = [
+  const heroSlides = [
     {
-      url: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=1920&q=80',
+      image: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?w=1920&q=80',
       alt: 'Financiamiento empresarial profesional',
-      title: 'Gestión Financiera Profesional'
+      badge: 'Gestión de Préstamos Simplificada',
+      title: 'Gestiona tus Préstamos con',
+      highlight: 'Facilidad y Eficiencia',
+      description: 'Calcula intereses, controla moras y visualiza el estado de cada crédito en segundos.',
+      bullets: ['Automatiza cobros y recordatorios', 'Seguimiento de clientes en una sola vista']
     },
     {
-      url: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=1920&q=80',
-      alt: 'Análisis financiero y gráficos de préstamos',
-      title: 'Análisis Inteligente de Préstamos'
+      image: 'https://images.unsplash.com/photo-1521791055366-0d553872125f?w=1920&q=80',
+      alt: 'Compra y venta de artículos',
+      badge: 'Compra/Venta & Empeños',
+      title: 'Controla tu inventario y capital con',
+      highlight: 'Compra Venta Inteligente',
+      description: 'Registra empeños, evalúa artículos y controla entradas y salidas con trazabilidad completa.',
+      bullets: ['Inventario enlazado a tasaciones', 'Alertas de vencimiento y utilidad']
     },
     {
-      url: 'https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?w=1920&q=80',
-      alt: 'Documentos financieros y calculadora',
-      title: 'Análisis y Cálculo Preciso'
+      image: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?w=1920&q=80',
+      alt: 'Punto de venta moderno',
+      badge: 'Punto de Venta Omnicanal',
+      title: 'Vende y cobra desde cualquier dispositivo con',
+      highlight: 'POS Integrado',
+      description: 'Ticket rápido, múltiples medios de pago y conciliación automática para tu caja.',
+      bullets: ['Impresión térmica & recibos digitales', 'Sincronizado con inventario y caja diaria']
     }
   ];
 
@@ -85,83 +108,172 @@ const LandingPage = () => {
 
   const scrollPrev = () => emblaApi?.scrollPrev();
   const scrollNext = () => emblaApi?.scrollNext();
+  const currentSlide = heroSlides[selectedIndex] || heroSlides[0];
 
-  const monthlyPayment = loanAmount > 0 && interestRate > 0 && months > 0
-    ? (loanAmount * (interestRate / 100) * Math.pow(1 + interestRate / 100, months)) /
-      (Math.pow(1 + interestRate / 100, months) - 1)
-    : 0;
+  const rate = interestRate / 100;
 
-  const totalPayment = monthlyPayment * months;
-  const totalInterest = totalPayment - loanAmount;
+  const calculateAmortization = () => {
+    if (loanAmount <= 0 || rate <= 0 || months <= 0) {
+      return { payment: 0, totalPayment: 0, totalInterest: 0, note: '' };
+    }
+
+    if (amortizationType === 'french') {
+      const payment =
+        (loanAmount * rate * Math.pow(1 + rate, months)) /
+        (Math.pow(1 + rate, months) - 1);
+      const totalPayment = payment * months;
+      return {
+        payment,
+        totalPayment,
+        totalInterest: totalPayment - loanAmount,
+        note: 'Cuota fija mensual (sistema francés).',
+      };
+    }
+
+    if (amortizationType === 'german') {
+      const principalPortion = loanAmount / months;
+      let totalInterest = 0;
+      let remaining = loanAmount;
+
+      for (let i = 0; i < months; i++) {
+        const interest = remaining * rate;
+        totalInterest += interest;
+        remaining -= principalPortion;
+      }
+
+      const firstPayment = principalPortion + loanAmount * rate;
+      const lastPayment = principalPortion + principalPortion * rate;
+      const totalPayment = loanAmount + totalInterest;
+
+      return {
+        payment: (firstPayment + lastPayment) / 2,
+        totalPayment,
+        totalInterest,
+        note: 'Pagos decrecientes: el promedio mostrado es entre la primera y última cuota.',
+      };
+    }
+
+    if (amortizationType === 'simple') {
+      const principalPortion = loanAmount / months;
+      const interest = loanAmount * rate;
+      const payment = principalPortion + interest;
+      const totalPayment = payment * months;
+      return {
+        payment,
+        totalPayment,
+        totalInterest: interest * months,
+        note: 'Capital fijo por período + interés sobre el capital original.',
+      };
+    }
+
+    // American
+    const interestOnly = loanAmount * rate;
+    const totalPayment = loanAmount + interestOnly * months;
+    return {
+      payment: interestOnly,
+      totalPayment,
+      totalInterest: interestOnly * months,
+      note: 'Pagos solo de intereses hasta el último mes; la última cuota incluye el capital.',
+    };
+  };
+
+  const { payment: monthlyPayment, totalPayment, totalInterest, note: amortizationNote } = calculateAmortization();
+
+  const posItems = [
+    { name: 'Producto 1', quantity: 1, price: 25, tax: '18%', total: 29 },
+    { name: 'Producto 2', quantity: 2, price: 50, tax: '18%', total: 58 },
+    { name: 'Producto 3', quantity: 3, price: 75, tax: '18%', total: 87 },
+  ];
+
+  const solutionHighlights = [
+    {
+      icon: DollarSign,
+      title: 'Gestión de Préstamos',
+      description: 'Automatiza intereses, moras, recordatorios y reportes.',
+      bullets: ['Calendario de pagos y mora dinámica', 'Recordatorios por WhatsApp/Email', 'Dashboards financieros']
+    },
+    {
+      icon: Scale,
+      title: 'Compra/Venta & Empeños',
+      description: 'Controla inventario, tasaciones, empeños y utilidades por artículo.',
+      bullets: ['Registro fotográfico y tasaciones', 'Alertas de vencimiento y liquidación', 'Depósitos y retiros conectados con caja']
+    },
+    {
+      icon: CreditCard,
+      title: 'Punto de Venta',
+      description: 'Cobros rápidos con impuestos, descuentos y conciliación instantánea.',
+      bullets: ['Tickets digitales e impresión térmica', 'Múltiples métodos de pago', 'Caja diaria y arqueos automáticos']
+    }
+  ];
 
   const benefits = [
     {
       icon: Zap,
-      title: 'Aprobación Rápida',
-      description: 'Procesa préstamos en minutos, no en días'
+      title: 'Automatiza tus procesos',
+      description: 'Definir flujos para préstamos, ventas y empeños sin hojas de cálculo.'
     },
     {
       icon: Shield,
-      title: 'Seguro y Confiable',
-      description: 'Tus datos están protegidos con tecnología de última generación'
+      title: 'Seguridad y permisos',
+      description: 'Perfiles para dueños, empleados de ventas, cobradores y cajeros.'
     },
     {
       icon: BarChart3,
-      title: 'Control Total',
-      description: 'Gestiona todos tus préstamos desde un solo lugar'
+      title: 'Indicadores en vivo',
+      description: 'Tableros para cartera, ventas, caja y desempeño de rutas.'
     },
     {
       icon: Users,
-      title: 'Gestión de Clientes',
-      description: 'Mantén un registro completo de todos tus clientes'
+      title: '360° de clientes',
+      description: 'Historial de préstamos, compras, empeños y tickets en una ficha.'
     },
     {
       icon: FileText,
-      title: 'Reportes Detallados',
-      description: 'Genera reportes completos y análisis en tiempo real'
+      title: 'Reportes inteligentes',
+      description: 'Descarga proyecciones, estados de cuenta, arqueos y auditorías.'
     },
     {
       icon: Clock,
-      title: 'Disponible 24/7',
-      description: 'Accede a tu sistema desde cualquier lugar y en cualquier momento'
+      title: 'Disponibilidad 24/7',
+      description: 'Opera desde móvil, tablet o escritorio sin instalaciones extras.'
     }
   ];
 
   const features = [
     {
       icon: DollarSign,
-      title: 'Gestión de Préstamos',
-      description: 'Crea, modifica y gestiona préstamos con facilidad. Calcula intereses, moras y pagos automáticamente.',
+      title: 'Cartera y préstamos',
+      description: 'Calcula intereses, renegocia cuotas y visualiza tu cartera en tiempo real.',
       color: 'text-blue-600'
     },
     {
-      icon: Users,
-      title: 'Base de Datos de Clientes',
-      description: 'Mantén un registro completo de tus clientes con historial de préstamos y pagos.',
-      color: 'text-green-600'
+      icon: ShoppingCart,
+      title: 'Punto de Venta',
+      description: 'Tickets rápidos, combos, códigos de barras e integración con inventario.',
+      color: 'text-rose-600'
     },
     {
-      icon: PieChart,
-      title: 'Reportes y Estadísticas',
-      description: 'Visualiza el rendimiento de tu negocio con gráficos y reportes detallados.',
-      color: 'text-purple-600'
+      icon: Scale,
+      title: 'Compra/Venta & Empeños',
+      description: 'Valora artículos, maneja empeños y calcula utilidades al instante.',
+      color: 'text-amber-600'
     },
     {
       icon: MapPin,
-      title: 'Gestión de Rutas',
-      description: 'Organiza y gestiona las rutas de cobro de tus empleados de manera eficiente.',
+      title: 'Rutas y cobranzas',
+      description: 'Planea rutas, registra visitas y mide la efectividad de tus cobradores.',
       color: 'text-orange-600'
     },
     {
       icon: Handshake,
-      title: 'Acuerdos de Pago',
-      description: 'Gestiona acuerdos de pago con tus clientes y realiza seguimiento de cumplimiento.',
+      title: 'Acuerdos y recordatorios',
+      description: 'Configura planes especiales, alertas y comunicaciones automáticas.',
       color: 'text-red-600'
     },
     {
-      icon: Building2,
-      title: 'Multi-empresa',
-      description: 'Gestiona múltiples empresas y sucursales desde una sola plataforma.',
+      icon: BarChart3,
+      title: 'Reportes 360°',
+      description: 'Consolida ventas, caja, préstamos y stock en un solo tablero.',
       color: 'text-indigo-600'
     }
   ];
@@ -222,11 +334,11 @@ const LandingPage = () => {
         <div className="absolute inset-0 z-0">
           <div className="embla overflow-hidden h-full" ref={emblaRef}>
             <div className="embla__container flex h-full">
-              {carouselImages.map((image, index) => (
+              {heroSlides.map((slide, index) => (
                 <div key={index} className="embla__slide flex-[0_0_100%] min-w-0 relative">
                   <div 
                     className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-                    style={{ backgroundImage: `url(${image.url})` }}
+                    style={{ backgroundImage: `url(${slide.image})` }}
                   >
                     <div className="absolute inset-0 bg-gradient-to-r from-primary-900/80 via-primary-800/70 to-primary-900/80"></div>
                   </div>
@@ -246,7 +358,7 @@ const LandingPage = () => {
               <ChevronLeft className="h-5 w-5" />
             </Button>
             <div className="flex gap-2">
-              {carouselImages.map((_, index) => (
+              {heroSlides.map((_, index) => (
                 <button
                   key={index}
                   onClick={() => emblaApi?.scrollTo(index)}
@@ -272,19 +384,29 @@ const LandingPage = () => {
         
         {/* Contenido sobre el carrusel */}
         <div className="container px-4 relative z-10">
-          <div className="mx-auto max-w-4xl text-center">
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/20 backdrop-blur-sm px-4 py-2 text-sm font-medium text-white border border-white/30">
+          <div className="mx-auto max-w-4xl text-center px-2 sm:px-0">
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/20 backdrop-blur-sm px-4 py-2 text-xs sm:text-sm font-medium text-white border border-white/30">
               <Zap className="h-4 w-4" />
-              <span>Gestión de Préstamos Simplificada</span>
+              <span className="uppercase tracking-wide">{currentSlide?.badge}</span>
             </div>
-            <h1 className="mb-6 text-4xl font-bold tracking-tight text-white sm:text-6xl drop-shadow-lg">
-              Gestiona tus Préstamos con
-              <span className="text-primary-200"> Facilidad y Eficiencia</span>
+            <h1 className="mb-4 text-3xl sm:text-5xl font-bold tracking-tight text-white drop-shadow-lg">
+              {currentSlide?.title}{' '}
+              <span className="block text-primary-200">{currentSlide?.highlight}</span>
             </h1>
-            <p className="mb-8 text-lg text-white/95 sm:text-xl drop-shadow-md">
-              La plataforma completa para administrar préstamos, clientes y cobros.
-              Diseñada para empresas que buscan profesionalizar su gestión financiera.
+            <p className="mb-6 text-base sm:text-lg text-white/95 drop-shadow-md">
+              {currentSlide?.description}
             </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-6">
+              {currentSlide?.bullets?.map((bullet, idx) => (
+                <span
+                  key={idx}
+                  className="inline-flex items-center rounded-full bg-white/15 border border-white/30 px-4 py-2 text-sm text-white backdrop-blur"
+                >
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  {bullet}
+                </span>
+              ))}
+            </div>
             <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
               <Button
                 size="lg"
@@ -307,6 +429,45 @@ const LandingPage = () => {
         </div>
         <div className="absolute inset-x-0 top-[calc(100%-13rem)] -z-10 transform-gpu overflow-hidden blur-3xl sm:top-[calc(100%-30rem)]">
           <div className="relative left-[calc(50%+3rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 bg-gradient-to-tr from-primary-200 to-primary-400 opacity-20 sm:left-[calc(50%+36rem)] sm:w-[72.1875rem]"></div>
+        </div>
+      </section>
+
+      {/* Solutions Overview */}
+      <section className="py-16 bg-white">
+        <div className="container px-4">
+          <div className="mx-auto max-w-2xl text-center mb-12">
+            <h2 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
+              Operaciones integrales en un solo sistema
+            </h2>
+            <p className="mt-4 text-lg text-gray-600">
+              ProPréstamos cubre todo el ciclo financiero: créditos, compra/venta y punto de venta.
+            </p>
+          </div>
+          <div className="grid gap-8 md:grid-cols-3">
+            {solutionHighlights.map((solution, index) => (
+              <Card key={index} className="h-full border-2 hover:border-primary-200 transition-shadow">
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="h-12 w-12 rounded-full bg-primary-100 flex items-center justify-center">
+                      <solution.icon className="h-6 w-6 text-primary-600" />
+                    </div>
+                    <CardTitle className="text-xl">{solution.title}</CardTitle>
+                  </div>
+                  <CardDescription className="text-base text-gray-600 mt-4">
+                    {solution.description}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {solution.bullets.map((item, bulletIndex) => (
+                    <div key={bulletIndex} className="flex items-start gap-3">
+                      <CheckCircle2 className="h-4 w-4 text-primary-500 mt-1" />
+                      <p className="text-sm text-gray-600">{item}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -429,6 +590,28 @@ const LandingPage = () => {
                     />
                   </div>
                 </div>
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Tipo de Amortización</Label>
+                    <Select value={amortizationType} onValueChange={(value) => setAmortizationType(value as 'french' | 'german' | 'american' | 'simple')}>
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="Selecciona un tipo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="french">Francés (cuota fija)</SelectItem>
+                        <SelectItem value="german">Alemán (decreciente)</SelectItem>
+                        <SelectItem value="american">Americano (interés + capital final)</SelectItem>
+                        <SelectItem value="simple">Simple / Absoluto</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 text-sm text-gray-500">
+                    <Label className="text-sm text-gray-700">Descripción</Label>
+                    <p className="rounded-lg border bg-gray-50 p-3 h-24 overflow-auto">
+                      {amortizationNote || 'Selecciona un tipo para ver la descripción.'}
+                    </p>
+                  </div>
+                </div>
                 <div className="rounded-lg bg-primary-50 p-6 space-y-4">
                   <div className="flex justify-between items-center">
                     <span className="text-gray-600">Pago Mensual:</span>
@@ -544,45 +727,78 @@ const LandingPage = () => {
                       <div className="h-3 w-3 rounded-full bg-green-500"></div>
                     </div>
                     <div className="flex-1 mx-4 bg-gray-600 rounded px-4 py-1 text-xs text-gray-300">
-                      proprestamos.com/clientes
+                      proprestamos.com/pos
                     </div>
                   </div>
                   <div className="bg-white p-8 rounded-b">
-                    <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-8 border-2 border-green-200">
+                    <div className="bg-gradient-to-br from-rose-50 to-orange-100 rounded-lg p-8 border-2 border-rose-200">
                       <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-2xl font-bold text-gray-900">Gestión de Clientes</h2>
+                        <h2 className="text-2xl font-bold text-gray-900">Punto de Venta</h2>
                         <Button className="bg-primary-500 hover:bg-primary-600">
-                          <Users className="h-4 w-4 mr-2" />
-                          Nuevo Cliente
+                          <ShoppingCart className="h-4 w-4 mr-2" />
+                          Nueva Venta
                         </Button>
                       </div>
                       <div className="bg-white rounded-lg shadow-md border border-gray-200 overflow-hidden">
-                        <div className="grid grid-cols-4 gap-4 p-4 bg-gray-50 border-b font-semibold text-sm text-gray-700">
-                          <div>Nombre</div>
-                          <div>Teléfono</div>
-                          <div>Préstamos</div>
-                          <div>Estado</div>
+                        <div className="hidden sm:grid grid-cols-5 gap-4 p-4 bg-gray-50 border-b font-semibold text-xs sm:text-sm text-gray-700">
+                          <div>Artículo</div>
+                          <div>Cant.</div>
+                          <div>Precio</div>
+                          <div>Impuesto</div>
+                          <div>Total</div>
                         </div>
-                        {[1, 2, 3].map((i) => (
-                          <div key={i} className="grid grid-cols-4 gap-4 p-4 border-b hover:bg-gray-50">
-                            <div className="font-medium text-gray-900">Cliente {i}</div>
-                            <div className="text-gray-600">+1 234 567 890{i}</div>
-                            <div className="text-gray-600">{i * 2} activos</div>
-                            <div className="flex items-center gap-2">
-                              <div className="h-2 w-2 rounded-full bg-green-500"></div>
-                              <span className="text-sm text-gray-600">Activo</span>
+                        <div className="hidden sm:block">
+                          {posItems.map((item, index) => (
+                            <div key={index} className="grid grid-cols-5 gap-4 p-4 border-b hover:bg-gray-50 text-sm">
+                              <div className="font-medium text-gray-900 truncate">{item.name}</div>
+                              <div className="text-gray-600">{item.quantity}</div>
+                              <div className="text-gray-600">${item.price.toFixed(2)}</div>
+                              <div className="text-gray-600">{item.tax}</div>
+                              <div className="text-gray-900 font-semibold">${item.total.toFixed(2)}</div>
                             </div>
+                          ))}
+                        </div>
+                        <div className="sm:hidden divide-y">
+                          {posItems.map((item, index) => (
+                            <div key={index} className="p-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-gray-900">{item.name}</span>
+                                <span className="text-gray-600">x{item.quantity}</span>
+                              </div>
+                              <div className="flex justify-between text-sm text-gray-600">
+                                <span>Precio:</span>
+                                <span>${item.price.toFixed(2)}</span>
+                              </div>
+                              <div className="flex justify-between text-sm text-gray-600">
+                                <span>Impuesto:</span>
+                                <span>{item.tax}</span>
+                              </div>
+                              <div className="flex justify-between text-sm font-semibold text-gray-900">
+                                <span>Total:</span>
+                                <span>${item.total.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex flex-col sm:flex-row justify-between gap-4 p-4 bg-gray-50">
+                          <div className="space-y-1 text-sm text-gray-600">
+                            <p>N° Ticket: POS-0041</p>
+                            <p>Método: Tarjeta + Efectivo</p>
                           </div>
-                        ))}
+                          <div className="text-right">
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Total</p>
+                            <p className="text-2xl font-bold text-gray-900">$145.70</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
               <div className="text-center mt-6">
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">Gestión de Clientes</h3>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">Punto de Venta y Caja</h3>
                 <p className="text-gray-600">
-                  Administra toda la información de tus clientes de forma organizada
+                  Vende rápido, imprime tickets y concilia tu caja al instante
                 </p>
               </div>
             </div>

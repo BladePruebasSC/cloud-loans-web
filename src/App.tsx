@@ -1,5 +1,5 @@
   
-import { Routes, Route, useNavigate } from 'react-router-dom'
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useEffect, useState } from 'react'
 import LoginForm from '@/components/LoginForm'
@@ -13,6 +13,7 @@ import LandingPage from '@/pages/LandingPage'
 function App() {
   const { user, loading, signIn, signUp, signOut, needsRegistrationCode, validateRegistrationCode } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [loadingTime, setLoadingTime] = useState(0)
 
   // Efecto global para detectar Ctrl + Alt + A desde cualquier lugar
@@ -61,6 +62,16 @@ function App() {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, []);
+
+  // Redirigir a la ruta principal si el usuario autenticado está en rutas públicas
+  useEffect(() => {
+    if (!user) return;
+
+    const publicPaths = ['/login', '/register', '/logi', '/log'];
+    if (publicPaths.includes(location.pathname)) {
+      navigate('/', { replace: true });
+    }
+  }, [user, location.pathname, navigate]);
 
 
 

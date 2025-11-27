@@ -155,6 +155,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const ensureOwnerAccessWithoutCode = async (authUser: User) => {
+    try {
+      const { data: existingCompany } = await supabase
+        .from('company_settings')
+        .select('user_id')
+        .eq('user_id', authUser.id)
+        .maybeSingle();
+
+      if (existingCompany) {
+        console.warn('⚠️ No se encontró código de registro, pero la empresa existe. Omitiendo verificación para evitar bloqueo post-reset.');
+        await loadOwnerProfile(authUser);
+        setNeedsRegistrationCode(false);
+        return true;
+      }
+    } catch (error) {
+      console.error('Error verifying company settings for owner access:', error);
+    }
+    return false;
+  };
+
   const signIn = async (email: string, password: string, role: 'owner' | 'employee', companyCode?: string, adminCode?: string) => {
     setLoading(true);
     setError(null);
@@ -546,25 +566,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .maybeSingle();
 
         if (!usedCode) {
-          // El usuario necesita un código de registro
-          setNeedsRegistrationCode(true);
-          return;
-        }
-
-        // Verificar si el código usado ha expirado
-        if (usedCode.expires_at) {
+          const recovered = await ensureOwnerAccessWithoutCode(data.user);
+          if (!recovered) {
+            setNeedsRegistrationCode(true);
+            return;
+          }
+        } else if (usedCode.expires_at) {
           const expirationDate = new Date(usedCode.expires_at);
           const now = new Date();
           
           if (expirationDate < now) {
-            // El código usado ha expirado, necesita un nuevo código
-            console.log('⚠️ El código de registro usado ha expirado. Fecha de expiración:', expirationDate);
-            setNeedsRegistrationCode(true);
-            return;
+            console.log('⚠️ El código de registro usado ha expirado. Intentando recuperar acceso basado en configuración existente.');
+            const recovered = await ensureOwnerAccessWithoutCode(data.user);
+            if (!recovered) {
+              setNeedsRegistrationCode(true);
+              return;
+            }
+          } else {
+            await loadOwnerProfile(data.user);
           }
+        } else {
+          await loadOwnerProfile(data.user);
         }
-
-        await loadOwnerProfile(data.user);
       }
 
       console.log('🎯 Estado final - needsRegistrationCode:', needsRegistrationCode);
@@ -729,28 +752,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 .maybeSingle();
 
               if (!usedCode) {
-                setNeedsRegistrationCode(true);
-                setProfile(null);
-                setCompanyId(null);
-              } else {
-                // Verificar si el código usado ha expirado
-                if (usedCode.expires_at) {
-                  const expirationDate = new Date(usedCode.expires_at);
-                  const now = new Date();
-                  
-                  if (expirationDate < now) {
-                    // El código usado ha expirado, necesita un nuevo código
-                    console.log('⚠️ El código de registro usado ha expirado. Fecha de expiración:', expirationDate);
+                const recovered = await ensureOwnerAccessWithoutCode(session.user);
+                if (!recovered) {
+                  setNeedsRegistrationCode(true);
+                  setProfile(null);
+                  setCompanyId(null);
+                }
+              } else if (usedCode.expires_at) {
+                const expirationDate = new Date(usedCode.expires_at);
+                const now = new Date();
+                
+                if (expirationDate < now) {
+                  console.log('⚠️ El código de registro usado ha expirado (session). Intentando recuperación.');
+                  const recovered = await ensureOwnerAccessWithoutCode(session.user);
+                  if (!recovered) {
                     setNeedsRegistrationCode(true);
                     setProfile(null);
                     setCompanyId(null);
-                  } else {
-                    await loadOwnerProfile(session.user);
                   }
                 } else {
-                  // El código no tiene fecha de expiración, es válido permanentemente
                   await loadOwnerProfile(session.user);
                 }
+              } else {
+                await loadOwnerProfile(session.user);
               }
             }
           };
