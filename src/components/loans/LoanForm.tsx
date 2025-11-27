@@ -385,59 +385,79 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
     },
   });
 
-  const clamp = (value: number, min?: number, max?: number) => {
-    let result = value;
-    if (typeof min === 'number' && value < min) result = min;
-    if (typeof max === 'number' && value > max) result = max;
-    return result;
-  };
-
+  // Solo actualizar valores por defecto una vez cuando se cargan las companySettings
+  // No tocar amount ni term_months para permitir al usuario escribir cualquier valor
   useEffect(() => {
-    if (companySettings) {
-      form.reset({
-        ...form.getValues(),
-        interest_rate: companySettings.interest_rate_default ?? form.getValues('interest_rate'),
-        late_fee_rate: companySettings.default_late_fee_rate ?? form.getValues('late_fee_rate'),
-        late_fee_enabled: companySettings.default_late_fee_rate ? true : form.getValues('late_fee_enabled'),
-        grace_period_days: companySettings.grace_period_days ?? form.getValues('grace_period_days'),
-        amount: clamp(
-          form.getValues('amount'),
-          companySettings.min_loan_amount ?? form.getValues('amount'),
-          companySettings.max_loan_amount ?? form.getValues('amount')
-        ),
-        term_months: clamp(
-          form.getValues('term_months'),
-          companySettings.min_term_months ?? form.getValues('term_months'),
-          companySettings.max_term_months ?? form.getValues('term_months')
-        ),
-      }, { keepDirtyValues: true });
+    if (companySettings && !form.formState.isDirty) {
+      // Solo actualizar si el formulario no ha sido modificado por el usuario
+      const currentValues = form.getValues();
+      if (currentValues.interest_rate === 0 || currentValues.interest_rate === undefined) {
+        form.setValue('interest_rate', companySettings.interest_rate_default ?? 0, { shouldDirty: false });
+      }
+      if (currentValues.late_fee_rate === 2.0 || currentValues.late_fee_rate === undefined) {
+        form.setValue('late_fee_rate', companySettings.default_late_fee_rate ?? 2.0, { shouldDirty: false });
+      }
+      if (!currentValues.late_fee_enabled && companySettings.default_late_fee_rate) {
+        form.setValue('late_fee_enabled', true, { shouldDirty: false });
+      }
+      if (currentValues.grace_period_days === 0 || currentValues.grace_period_days === undefined) {
+        form.setValue('grace_period_days', companySettings.grace_period_days ?? 0, { shouldDirty: false });
+      }
     }
-  }, [companySettings]);
+  }, [companySettings, form]);
 
   const watchedAmount = form.watch('amount');
   const watchedTerm = form.watch('term_months');
+  const [isAmountFocused, setIsAmountFocused] = useState(false);
+  const [isTermFocused, setIsTermFocused] = useState(false);
 
+  // Validación en tiempo real para mostrar errores sin bloquear la escritura
+  // Solo validar cuando el campo no está siendo editado activamente
   useEffect(() => {
     if (!companySettings) return;
     if (watchedAmount === undefined || watchedAmount === null) return;
-    const min = companySettings.min_loan_amount ?? undefined;
-    const max = companySettings.max_loan_amount ?? undefined;
-    const clamped = clamp(watchedAmount, min, max);
-    if (clamped !== watchedAmount) {
-      form.setValue('amount', clamped, { shouldValidate: true });
+    if (isAmountFocused) return; // No validar mientras el usuario está escribiendo
+    
+    const min = companySettings.min_loan_amount;
+    const max = companySettings.max_loan_amount;
+    
+    if (min !== null && min !== undefined && watchedAmount < min) {
+      form.setError('amount', {
+        type: 'manual',
+        message: `El monto mínimo permitido es RD$${min.toLocaleString()}`
+      });
+    } else if (max !== null && max !== undefined && watchedAmount > max) {
+      form.setError('amount', {
+        type: 'manual',
+        message: `El monto máximo permitido es RD$${max.toLocaleString()}`
+      });
+    } else {
+      form.clearErrors('amount');
     }
-  }, [watchedAmount, companySettings, form]);
+  }, [watchedAmount, companySettings, form, isAmountFocused]);
 
   useEffect(() => {
     if (!companySettings) return;
     if (watchedTerm === undefined || watchedTerm === null) return;
-    const min = companySettings.min_term_months ?? undefined;
-    const max = companySettings.max_term_months ?? undefined;
-    const clamped = clamp(watchedTerm, min, max);
-    if (clamped !== watchedTerm) {
-      form.setValue('term_months', clamped, { shouldValidate: true });
+    if (isTermFocused) return; // No validar mientras el usuario está escribiendo
+    
+    const min = companySettings.min_term_months;
+    const max = companySettings.max_term_months;
+    
+    if (min !== null && min !== undefined && watchedTerm < min) {
+      form.setError('term_months', {
+        type: 'manual',
+        message: `El plazo mínimo permitido es ${min} meses`
+      });
+    } else if (max !== null && max !== undefined && watchedTerm > max) {
+      form.setError('term_months', {
+        type: 'manual',
+        message: `El plazo máximo permitido es ${max} meses`
+      });
+    } else {
+      form.clearErrors('term_months');
     }
-  }, [watchedTerm, companySettings, form]);
+  }, [watchedTerm, companySettings, form, isTermFocused]);
 
   useEffect(() => {
     fetchClients();
@@ -1252,6 +1272,42 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       return;
     }
 
+    // Validar límites de monto y plazo según configuración de la empresa
+    if (companySettings) {
+      if (companySettings.min_loan_amount !== null && companySettings.min_loan_amount !== undefined && data.amount < companySettings.min_loan_amount) {
+        toast.error(`El monto mínimo permitido es RD$${companySettings.min_loan_amount.toLocaleString()}`);
+        form.setError('amount', {
+          type: 'manual',
+          message: `El monto mínimo permitido es RD$${companySettings.min_loan_amount.toLocaleString()}`
+        });
+        return;
+      }
+      if (companySettings.max_loan_amount !== null && companySettings.max_loan_amount !== undefined && data.amount > companySettings.max_loan_amount) {
+        toast.error(`El monto máximo permitido es RD$${companySettings.max_loan_amount.toLocaleString()}`);
+        form.setError('amount', {
+          type: 'manual',
+          message: `El monto máximo permitido es RD$${companySettings.max_loan_amount.toLocaleString()}`
+        });
+        return;
+      }
+      if (companySettings.min_term_months !== null && companySettings.min_term_months !== undefined && data.term_months < companySettings.min_term_months) {
+        toast.error(`El plazo mínimo permitido es ${companySettings.min_term_months} meses`);
+        form.setError('term_months', {
+          type: 'manual',
+          message: `El plazo mínimo permitido es ${companySettings.min_term_months} meses`
+        });
+        return;
+      }
+      if (companySettings.max_term_months !== null && companySettings.max_term_months !== undefined && data.term_months > companySettings.max_term_months) {
+        toast.error(`El plazo máximo permitido es ${companySettings.max_term_months} meses`);
+        form.setError('term_months', {
+          type: 'manual',
+          message: `El plazo máximo permitido es ${companySettings.max_term_months} meses`
+        });
+        return;
+      }
+    }
+
     // Evitar múltiples envíos
     if (loading) return;
 
@@ -1588,6 +1644,30 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                                     field.onChange(numValue);
                                   }
                                 }}
+                                onFocus={() => setIsAmountFocused(true)}
+                                onBlur={() => {
+                                  setIsAmountFocused(false);
+                                  // Validar cuando el campo pierde el foco
+                                  if (companySettings) {
+                                    const min = companySettings.min_loan_amount;
+                                    const max = companySettings.max_loan_amount;
+                                    const currentValue = form.getValues('amount');
+                                    if (min !== null && min !== undefined && currentValue < min) {
+                                      form.setError('amount', {
+                                        type: 'manual',
+                                        message: `El monto mínimo permitido es RD$${min.toLocaleString()}`
+                                      });
+                                    } else if (max !== null && max !== undefined && currentValue > max) {
+                                      form.setError('amount', {
+                                        type: 'manual',
+                                        message: `El monto máximo permitido es RD$${max.toLocaleString()}`
+                                      });
+                                    } else {
+                                      form.clearErrors('amount');
+                                    }
+                                  }
+                                  field.onBlur();
+                                }}
                                 className=""
                               />
                             </FormControl>
@@ -1729,13 +1809,36 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                                  <Input
                                    type="number"
                                    placeholder="0"
-                                   {...field}
                                    value={field.value || ''}
                                    onChange={(e) => {
                                      const value = e.target.value;
                                      if (value === '' || /^\d*$/.test(value)) {
                                        field.onChange(value === '' ? 0 : parseInt(value) || 0);
                                      }
+                                   }}
+                                   onFocus={() => setIsTermFocused(true)}
+                                   onBlur={() => {
+                                     setIsTermFocused(false);
+                                     // Validar cuando el campo pierde el foco
+                                     if (companySettings) {
+                                       const min = companySettings.min_term_months;
+                                       const max = companySettings.max_term_months;
+                                       const currentValue = form.getValues('term_months');
+                                       if (min !== null && min !== undefined && currentValue < min) {
+                                         form.setError('term_months', {
+                                           type: 'manual',
+                                           message: `El plazo mínimo permitido es ${min} meses`
+                                         });
+                                       } else if (max !== null && max !== undefined && currentValue > max) {
+                                         form.setError('term_months', {
+                                           type: 'manual',
+                                           message: `El plazo máximo permitido es ${max} meses`
+                                         });
+                                       } else {
+                                         form.clearErrors('term_months');
+                                       }
+                                     }
+                                     field.onBlur();
                                    }}
                                    className=""
                                  />
