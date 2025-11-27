@@ -342,7 +342,7 @@ export const PawnShopModule = () => {
       totalAmount: number;
     }>;
   } | null>(null);
-  const { user } = useAuth();
+  const { user, companySettings } = useAuth();
 
   const [formData, setFormData] = useState({
     client_id: '',
@@ -399,6 +399,7 @@ export const PawnShopModule = () => {
     reason: '',
     effective_date: ''
   });
+  const [hasManualPawnPeriod, setHasManualPawnPeriod] = useState(false);
   
   // Estados para búsqueda en cascada de clientes
   const [clientSearch, setClientSearch] = useState('');
@@ -1203,10 +1204,12 @@ export const PawnShopModule = () => {
     }
   };
 
+  const getDefaultPawnPeriod = () => companySettings?.default_pawn_period_days ?? 90;
+
   const resetForm = () => {
     const today = new Date().toISOString().split('T')[0];
     const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 90);
+    dueDate.setDate(dueDate.getDate() + getDefaultPawnPeriod());
     const dueDateString = dueDate.toISOString().split('T')[0];
     
     setFormData({
@@ -1221,11 +1224,12 @@ export const PawnShopModule = () => {
       loan_amount: 0,
       interest_rate: 20.0,
       interest_rate_type: 'monthly',
-      period_days: 90,
+      period_days: getDefaultPawnPeriod(),
       start_date: today,
       due_date: dueDateString,
       notes: ''
     });
+    setHasManualPawnPeriod(false);
     setClientSearch('');
     setSelectedClient(null);
     setCategorySearch('');
@@ -1264,13 +1268,26 @@ export const PawnShopModule = () => {
   };
 
   const handlePeriodChange = (periodDays: number) => {
+    setHasManualPawnPeriod(true);
     const newDueDate = calculateDueDate(formData.start_date, periodDays);
-    setFormData({
-      ...formData,
+    setFormData(prev => ({
+      ...prev,
       period_days: periodDays,
       due_date: newDueDate
-    });
+    }));
   };
+
+  useEffect(() => {
+    if (!companySettings || hasManualPawnPeriod) return;
+    setFormData(prev => {
+      const period = companySettings.default_pawn_period_days ?? prev.period_days;
+      return {
+        ...prev,
+        period_days: period,
+        due_date: calculateDueDate(prev.start_date, period)
+      };
+    });
+  }, [companySettings?.default_pawn_period_days, hasManualPawnPeriod]);
 
   const handleStartDateChange = (startDate: string) => {
     const newDueDate = calculateDueDate(startDate, formData.period_days);

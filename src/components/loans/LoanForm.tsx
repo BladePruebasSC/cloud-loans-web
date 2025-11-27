@@ -263,7 +263,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   });
   const [excludedDays, setExcludedDays] = useState<string[]>([]);
   const [isFixingQuota, setIsFixingQuota] = useState(false);
-  const { user, companyId } = useAuth();
+  const { user, companyId, companySettings } = useAuth();
 
   // Cargar configuración global de mora
   useEffect(() => {
@@ -359,21 +359,21 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   const form = useForm<LoanFormData>({
     resolver: zodResolver(loanSchema),
     defaultValues: {
-      amount: 0,
-      interest_rate: 0,
-      term_months: 1,
+      amount: companySettings?.min_loan_amount ?? 0,
+      interest_rate: companySettings?.interest_rate_default ?? 0,
+      term_months: companySettings?.min_term_months ?? 1,
       loan_type: 'personal',
       amortization_type: 'simple',
       payment_frequency: 'monthly',
-      first_payment_date: getCurrentDateString(), // Fecha de inicio del préstamo
+      first_payment_date: getCurrentDateString(),
       closing_costs: 0,
       minimum_payment_percentage: 100,
       minimum_payment_type: 'interest',
       fixed_payment_enabled: false,
       fixed_payment_amount: 0,
       late_fee_enabled: false,
-      late_fee_rate: 2.0,
-      grace_period_days: 0,
+      late_fee_rate: companySettings?.default_late_fee_rate ?? 2.0,
+      grace_period_days: companySettings?.grace_period_days ?? 0,
       max_late_fee: 0,
       late_fee_calculation_type: 'daily',
       portfolio: '',
@@ -384,6 +384,60 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       notes: '',
     },
   });
+
+  const clamp = (value: number, min?: number, max?: number) => {
+    let result = value;
+    if (typeof min === 'number' && value < min) result = min;
+    if (typeof max === 'number' && value > max) result = max;
+    return result;
+  };
+
+  useEffect(() => {
+    if (companySettings) {
+      form.reset({
+        ...form.getValues(),
+        interest_rate: companySettings.interest_rate_default ?? form.getValues('interest_rate'),
+        late_fee_rate: companySettings.default_late_fee_rate ?? form.getValues('late_fee_rate'),
+        late_fee_enabled: companySettings.default_late_fee_rate ? true : form.getValues('late_fee_enabled'),
+        grace_period_days: companySettings.grace_period_days ?? form.getValues('grace_period_days'),
+        amount: clamp(
+          form.getValues('amount'),
+          companySettings.min_loan_amount ?? form.getValues('amount'),
+          companySettings.max_loan_amount ?? form.getValues('amount')
+        ),
+        term_months: clamp(
+          form.getValues('term_months'),
+          companySettings.min_term_months ?? form.getValues('term_months'),
+          companySettings.max_term_months ?? form.getValues('term_months')
+        ),
+      }, { keepDirtyValues: true });
+    }
+  }, [companySettings]);
+
+  const watchedAmount = form.watch('amount');
+  const watchedTerm = form.watch('term_months');
+
+  useEffect(() => {
+    if (!companySettings) return;
+    if (watchedAmount === undefined || watchedAmount === null) return;
+    const min = companySettings.min_loan_amount ?? undefined;
+    const max = companySettings.max_loan_amount ?? undefined;
+    const clamped = clamp(watchedAmount, min, max);
+    if (clamped !== watchedAmount) {
+      form.setValue('amount', clamped, { shouldValidate: true });
+    }
+  }, [watchedAmount, companySettings, form]);
+
+  useEffect(() => {
+    if (!companySettings) return;
+    if (watchedTerm === undefined || watchedTerm === null) return;
+    const min = companySettings.min_term_months ?? undefined;
+    const max = companySettings.max_term_months ?? undefined;
+    const clamped = clamp(watchedTerm, min, max);
+    if (clamped !== watchedTerm) {
+      form.setValue('term_months', clamped, { shouldValidate: true });
+    }
+  }, [watchedTerm, companySettings, form]);
 
   useEffect(() => {
     fetchClients();

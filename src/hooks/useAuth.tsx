@@ -19,10 +19,33 @@ interface EmployeeProfile {
   company_name?: string;
 }
 
+interface RegisterData {
+  name: string;
+  email: string;
+  password: string;
+  phone: string;
+  dni: string;
+}
+
+interface CompanySettings {
+  currency: string | null;
+  interest_rate_default: number | null;
+  late_fee_percentage: number | null;
+  grace_period_days: number | null;
+  min_loan_amount: number | null;
+  max_loan_amount: number | null;
+  min_term_months: number | null;
+  max_term_months: number | null;
+  default_late_fee_rate: number | null;
+  default_pawn_period_days: number | null;
+}
+
 interface AuthContextType {
   user: User | null;
   profile: EmployeeProfile | null;
   companyId: string | null;
+  companySettings: CompanySettings | null;
+  refreshCompanySettings: () => Promise<void>;
   loading: boolean;
   error: Error | null;
   needsRegistrationCode: boolean;
@@ -32,20 +55,13 @@ interface AuthContextType {
   validateRegistrationCode: (code: string) => Promise<void>;
 }
 
-interface RegisterData {
-  name: string;
-  email: string;
-  password: string;
-  phone: string;
-  dni: string;
-}
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<EmployeeProfile | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
+  const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [needsRegistrationCode, setNeedsRegistrationCode] = useState(false);
@@ -106,6 +122,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.error('Error in loadEmployeeProfile:', error);
       return null;
+    }
+  };
+
+  const loadCompanySettings = async (ownerId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('company_settings')
+        .select('currency, interest_rate_default, late_fee_percentage, grace_period_days, min_loan_amount, max_loan_amount, min_term_months, max_term_months, default_late_fee_rate, default_pawn_period_days')
+        .eq('user_id', ownerId)
+        .maybeSingle();
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error loading company settings:', error);
+        return;
+      }
+      setCompanySettings(data || null);
+    } catch (error) {
+      console.error('Error loading company settings:', error);
     }
   };
 
@@ -702,6 +735,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshCompanySettings = async () => {
+    if (companyId) {
+      await loadCompanySettings(companyId);
+    }
+  };
+
+  useEffect(() => {
+    if (companyId) {
+      loadCompanySettings(companyId);
+    } else {
+      setCompanySettings(null);
+    }
+  }, [companyId]);
+
   useEffect(() => {
     let hasInitialized = false;
 
@@ -828,6 +875,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     profile,
     companyId,
+    companySettings,
+    refreshCompanySettings,
     loading,
     error,
     needsRegistrationCode,

@@ -12,8 +12,14 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
+const sanitizeNumber = (value: any, fallback: number) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const CompanySettings = () => {
-  const { user, profile, companyId } = useAuth();
+  const { user, profile, companyId, refreshCompanySettings } = useAuth();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const [copied, setCopied] = useState(false);
@@ -41,10 +47,10 @@ const CompanySettings = () => {
     grace_period_days: 3,
     min_loan_amount: 1000,
     max_loan_amount: 500000,
+    min_term_months: 6,
+    max_term_months: 60,
     company_code: '',
-    auto_sequential_codes: false,
     default_late_fee_rate: 2.0,
-    default_grace_period_days: 3,
     default_pawn_period_days: 90
   });
 
@@ -68,7 +74,19 @@ const CompanySettings = () => {
       }
 
       if (data) {
-        setFormData(data);
+        setFormData(prev => ({
+          ...prev,
+          ...data,
+          interest_rate_default: sanitizeNumber(data.interest_rate_default, prev.interest_rate_default),
+          late_fee_percentage: sanitizeNumber(data.late_fee_percentage, prev.late_fee_percentage),
+          grace_period_days: sanitizeNumber(data.grace_period_days, prev.grace_period_days),
+          default_late_fee_rate: sanitizeNumber(data.default_late_fee_rate, prev.default_late_fee_rate),
+          default_pawn_period_days: sanitizeNumber(data.default_pawn_period_days, prev.default_pawn_period_days),
+          min_loan_amount: sanitizeNumber(data.min_loan_amount, prev.min_loan_amount),
+          max_loan_amount: sanitizeNumber(data.max_loan_amount, prev.max_loan_amount),
+          min_term_months: sanitizeNumber(data.min_term_months, prev.min_term_months),
+          max_term_months: sanitizeNumber(data.max_term_months, prev.max_term_months),
+        }));
       } else {
         // Solo crear configuración si es el dueño de la empresa, no empleados
         if (user && !profile?.is_employee) {
@@ -118,6 +136,7 @@ const CompanySettings = () => {
 
       setFormData(data);
       toast.success('Configuración de empresa creada con código automático');
+      await refreshCompanySettings();
     } catch (error) {
       console.error('Error in createNewCompanySettings:', error);
       toast.error('Error al crear la configuración de empresa');
@@ -153,7 +172,7 @@ const CompanySettings = () => {
         // Fallback: guardar preferencia en localStorage si la columna no existe
         if ((error as any)?.code === 'PGRST204') {
           try {
-            localStorage.setItem('auto_sequential_codes', JSON.stringify(formData.auto_sequential_codes));
+            localStorage.setItem('auto_sequential_codes', 'false');
             toast.success('Configuración guardada localmente');
           } catch {}
         } else {
@@ -163,6 +182,7 @@ const CompanySettings = () => {
       }
 
       toast.success('Configuración guardada exitosamente');
+      await refreshCompanySettings();
     } catch (error) {
       console.error('Error in handleSave:', error);
       toast.error('Error al guardar la configuración');
@@ -658,8 +678,8 @@ const CompanySettings = () => {
                     id="interest_rate_default"
                     type="number"
                     step="0.1"
-                    value={formData.interest_rate_default}
-                    onChange={(e) => handleInputChange('interest_rate_default', parseFloat(e.target.value))}
+                    value={formData.interest_rate_default ?? ''}
+                    onChange={(e) => handleInputChange('interest_rate_default', sanitizeNumber(e.target.value, 0))}
                   />
                 </div>
 
@@ -670,17 +690,8 @@ const CompanySettings = () => {
                       id="default_late_fee_rate"
                       type="number"
                       step="0.1"
-                      value={formData.default_late_fee_rate}
-                      onChange={(e) => handleInputChange('default_late_fee_rate', parseFloat(e.target.value))}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="default_grace_period_days">Días de Gracia (mora)</Label>
-                    <Input
-                      id="default_grace_period_days"
-                      type="number"
-                      value={formData.default_grace_period_days}
-                      onChange={(e) => handleInputChange('default_grace_period_days', parseInt(e.target.value))}
+                      value={formData.default_late_fee_rate ?? ''}
+                      onChange={(e) => handleInputChange('default_late_fee_rate', sanitizeNumber(e.target.value, 0))}
                     />
                   </div>
                   <div>
@@ -688,8 +699,8 @@ const CompanySettings = () => {
                     <Input
                       id="default_pawn_period_days"
                       type="number"
-                      value={formData.default_pawn_period_days}
-                      onChange={(e) => handleInputChange('default_pawn_period_days', parseInt(e.target.value))}
+                      value={formData.default_pawn_period_days ?? ''}
+                      onChange={(e) => handleInputChange('default_pawn_period_days', sanitizeNumber(e.target.value, 0))}
                     />
                   </div>
                 </div>
@@ -700,8 +711,8 @@ const CompanySettings = () => {
                     id="late_fee_percentage"
                     type="number"
                     step="0.1"
-                    value={formData.late_fee_percentage}
-                    onChange={(e) => handleInputChange('late_fee_percentage', parseFloat(e.target.value))}
+                    value={formData.late_fee_percentage ?? ''}
+                    onChange={(e) => handleInputChange('late_fee_percentage', sanitizeNumber(e.target.value, 0))}
                   />
                 </div>
 
@@ -710,8 +721,8 @@ const CompanySettings = () => {
                   <Input
                     id="grace_period_days"
                     type="number"
-                    value={formData.grace_period_days}
-                    onChange={(e) => handleInputChange('grace_period_days', parseInt(e.target.value))}
+                    value={formData.grace_period_days ?? ''}
+                    onChange={(e) => handleInputChange('grace_period_days', sanitizeNumber(e.target.value, 0))}
                   />
                 </div>
               </CardContent>
@@ -732,8 +743,8 @@ const CompanySettings = () => {
                     <Input
                       id="min_loan_amount"
                       type="number"
-                      value={formData.min_loan_amount}
-                      onChange={(e) => handleInputChange('min_loan_amount', parseFloat(e.target.value))}
+                      value={formData.min_loan_amount ?? ''}
+                      onChange={(e) => handleInputChange('min_loan_amount', sanitizeNumber(e.target.value, 0))}
                     />
                   </div>
 
@@ -742,8 +753,8 @@ const CompanySettings = () => {
                     <Input
                       id="max_loan_amount"
                       type="number"
-                      value={formData.max_loan_amount}
-                      onChange={(e) => handleInputChange('max_loan_amount', parseFloat(e.target.value))}
+                      value={formData.max_loan_amount ?? ''}
+                      onChange={(e) => handleInputChange('max_loan_amount', sanitizeNumber(e.target.value, 0))}
                     />
                   </div>
                 </div>
@@ -754,7 +765,8 @@ const CompanySettings = () => {
                     <Input
                       id="min_term_months"
                       type="number"
-                      defaultValue="6"
+                      value={formData.min_term_months ?? ''}
+                      onChange={(e) => handleInputChange('min_term_months', sanitizeNumber(e.target.value, 0))}
                       placeholder="Plazo mínimo en meses"
                     />
                   </div>
@@ -764,7 +776,8 @@ const CompanySettings = () => {
                     <Input
                       id="max_term_months"
                       type="number"
-                      defaultValue="60"
+                      value={formData.max_term_months ?? ''}
+                      onChange={(e) => handleInputChange('max_term_months', sanitizeNumber(e.target.value, 0))}
                       placeholder="Plazo máximo en meses"
                     />
                   </div>
@@ -843,30 +856,6 @@ const CompanySettings = () => {
                       <Label className="text-sm">Registrar actividad de usuarios</Label>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Secuencias Automáticas */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Settings className="h-5 w-5 mr-2" />
-                  Códigos Secuenciales
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-sm font-medium">Generar códigos secuenciales automáticamente</Label>
-                    <p className="text-xs text-gray-500">Si está activo, al crear productos se generará un código consecutivo. Si está desactivado, podrás escribirlo manualmente.</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={!!formData.auto_sequential_codes}
-                    onChange={(e) => handleInputChange('auto_sequential_codes', e.target.checked ? 1 : 0)}
-                    className="h-5 w-5 rounded"
-                  />
                 </div>
               </CardContent>
             </Card>
