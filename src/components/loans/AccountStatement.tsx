@@ -28,6 +28,7 @@ import { getLateFeeBreakdownFromInstallments } from '@/utils/lateFeeCalculator';
 import { formatCurrency } from '@/lib/utils';
 import { formatInTimeZone } from 'date-fns-tz';
 import { addHours } from 'date-fns';
+import { formatDateStringForSantoDomingo, createDateInSantoDomingo } from '@/utils/dateUtils';
 
 interface Payment {
   id: string;
@@ -372,11 +373,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   const formatDate = (dateString: string) => {
     if (!dateString) return '-';
     try {
-      return new Date(dateString).toLocaleDateString('es-DO', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
+      // Usar la función de utilidad que maneja correctamente la zona horaria de Santo Domingo
+      return formatDateStringForSantoDomingo(dateString);
     } catch (error) {
       return '-';
     }
@@ -559,7 +557,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
     }
 
-    const startDate = new Date(loanData.start_date);
+    // Parsear la fecha de inicio correctamente en zona horaria de Santo Domingo
+    const startDateStr = loanData.start_date.split('T')[0]; // Obtener solo la parte de fecha
+    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+    const startDate = createDateInSantoDomingo(startYear, startMonth, startDay);
 
     // Crear un mapa de cuotas para acceso rápido
     const installmentsMap = new Map();
@@ -596,9 +597,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const originalInterest = installmentData.interestPayment;
       const monthlyPayment = installmentData.monthlyPayment;
 
-      // Calcular fecha de vencimiento
+      // Calcular fecha de vencimiento correctamente en zona horaria de Santo Domingo
       const dueDate = new Date(startDate);
-      dueDate.setMonth(dueDate.getMonth() + i);
+      dueDate.setMonth(startDate.getMonth() + i);
 
       // Obtener datos reales de la cuota si existe
       const realInstallment = installmentsMap.get(i);

@@ -75,15 +75,27 @@ export const formatDateForSantoDomingo = (date: Date): string => {
 
 /**
  * Formatea una fecha string (YYYY-MM-DD) para mostrar en la zona horaria de Santo Domingo
+ * Maneja correctamente las fechas para evitar problemas de zona horaria
  */
 export const formatDateStringForSantoDomingo = (dateString: string): string => {
-  const date = new Date(dateString + 'T00:00:00');
-  return date.toLocaleDateString('es-DO', {
-    timeZone: 'America/Santo_Domingo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
+  if (!dateString) return '-';
+  
+  try {
+    // Parsear la fecha como fecha local (no UTC) para evitar problemas de zona horaria
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month es 0-indexado, crear como fecha local
+    
+    // Formatear en zona horaria de Santo Domingo
+    return date.toLocaleDateString('es-DO', {
+      timeZone: 'America/Santo_Domingo',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  } catch (error) {
+    console.error('Error formatting date:', error);
+    return '-';
+  }
 };
 
 /**
@@ -114,4 +126,31 @@ export const formatDateTimeWithOffset = (dateString: string): string => {
     minute: '2-digit',
     hour12: true
   });
+};
+
+/**
+ * Calcula una fecha de vencimiento agregando días a una fecha de inicio,
+ * manejando correctamente la zona horaria de Santo Domingo (UTC-4)
+ * @param startDateString Fecha de inicio en formato YYYY-MM-DD
+ * @param daysToAdd Número de días a agregar
+ * @returns Fecha de vencimiento en formato YYYY-MM-DD
+ */
+export const calculateDueDateInSantoDomingo = (startDateString: string, daysToAdd: number): string => {
+  if (!startDateString) return '';
+  
+  // Parsear la fecha de inicio como fecha local en Santo Domingo
+  // Usar 'T12:00:00' para evitar problemas de zona horaria (mediodía local)
+  const [year, month, day] = startDateString.split('-').map(Number);
+  const startDate = new Date(year, month - 1, day); // month es 0-indexado
+  
+  // Agregar los días
+  const dueDate = new Date(startDate);
+  dueDate.setDate(startDate.getDate() + daysToAdd);
+  
+  // Formatear como YYYY-MM-DD
+  const dueYear = dueDate.getFullYear();
+  const dueMonth = String(dueDate.getMonth() + 1).padStart(2, '0');
+  const dueDay = String(dueDate.getDate()).padStart(2, '0');
+  
+  return `${dueYear}-${dueMonth}-${dueDay}`;
 };

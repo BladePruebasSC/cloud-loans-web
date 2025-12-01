@@ -24,12 +24,13 @@ import {
   Clock,
   CreditCard,
   Receipt,
-  Trash2
+  Trash2,
+  PlusCircle
 } from 'lucide-react';
 import { LateFeeInfo } from './LateFeeInfo';
 
 const updateSchema = z.object({
-  update_type: z.enum(['payment', 'partial_payment', 'term_extension', 'balance_adjustment', 'delete_loan']),
+  update_type: z.enum(['add_charge', 'term_extension', 'balance_adjustment', 'delete_loan']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
   adjustment_reason: z.string().min(1, 'Debe especificar la razón del ajuste'),
@@ -85,7 +86,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const form = useForm<UpdateFormData>({
     resolver: zodResolver(updateSchema),
     defaultValues: {
-      update_type: 'payment',
+      update_type: 'add_charge',
       payment_method: 'cash',
     },
   });
@@ -96,14 +97,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     calculateUpdatedValues();
   }, [watchedValues]);
 
-  // Pre-llenar el monto cuando se selecciona "Pago Completo de Cuota"
+  // Resetear el campo de razón cuando cambia el tipo de actualización
   useEffect(() => {
     const updateType = form.watch('update_type');
-    if (updateType === 'payment') {
-      // Para pago completo de cuota, usar la cuota mensual
-      form.setValue('amount', loan.monthly_payment);
-    }
-  }, [form.watch('update_type'), form, loan.monthly_payment]);
+    form.setValue('adjustment_reason', '');
+  }, [form.watch('update_type')]);
+
 
   const calculateUpdatedValues = () => {
     const [updateType, amount, additionalMonths] = watchedValues;
@@ -115,35 +114,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     let principalAmount = 0;
 
     switch (updateType) {
-        case 'payment':
-          if (amount) {
-            // Calcular el interés fijo por cuota (amortización simple)
-            // Fórmula: Interés por cuota = Monto Original × Tasa de Interés ÷ 100
-            const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
-            
-            // TODO: Implementar cálculo de interés ya pagado en esta cuota
-            // Por ahora, usar la lógica original hasta que se implemente completamente
-            if (amount <= fixedInterestPerPayment) {
-              interestAmount = amount;
-              principalAmount = 0;
-            } else {
-              interestAmount = fixedInterestPerPayment;
-              principalAmount = amount - fixedInterestPerPayment;
-            }
-            
-            newBalance = Math.max(0, loan.remaining_balance - amount);
-          }
-          break;
-        
-      case 'partial_payment':
+      case 'add_charge':
         if (amount) {
-          // Para abono parcial, todo va al principal
+          // Agregar el monto del cargo al balance
+          newBalance = loan.remaining_balance + amount;
           principalAmount = amount;
-          newBalance = Math.max(0, loan.remaining_balance - amount);
         }
         break;
-        
-
         
       case 'term_extension':
         if (additionalMonths) {
@@ -201,217 +178,97 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     try {
       const updateType = data.update_type;
       
-      // Registrar la transacción en la tabla de pagos si es un pago o abono
-      if (['payment', 'partial_payment'].includes(updateType) && data.amount) {
-        // Validaciones para pagos
-        if (data.amount > loan.remaining_balance) {
-          toast.error(`El pago no puede exceder el balance restante de RD$${loan.remaining_balance.toLocaleString()}`);
-          setLoading(false);
-          return;
-        }
-
-        if (data.amount <= 0) {
-          toast.error('El monto del pago debe ser mayor a 0');
-          setLoading(false);
-          return;
-        }
-
-        // Determinar si es pago completo o parcial
-        const isFullPayment = data.amount >= loan.monthly_payment;
-        const paymentStatus = isFullPayment ? 'completed' : 'pending';
-        
-        // Mostrar advertencia para pagos parciales
-        if (!isFullPayment && updateType === 'payment') {
-          const remainingAmount = loan.monthly_payment - data.amount;
-          toast.warning(`Pago parcial registrado. Queda pendiente RD$${remainingAmount.toLocaleString()} de la cuota mensual.`);
-        }
-
-        // Ajustar fecha para zona horaria de Santo Domingo antes de enviar
-        const now = new Date();
-        const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
-        const paymentDate = santoDomingoDate.toISOString().split('T')[0]; // YYYY-MM-DD en Santo Domingo
-        
-        console.log('🔍 LoanUpdateForm: Fecha del pago que se enviará:', paymentDate);
-
-        const paymentData = {
-          loan_id: loan.id,
-          amount: data.amount,
-          principal_amount: calculatedValues.principalAmount,
-          interest_amount: calculatedValues.interestAmount,
-          late_fee: 0,
-          due_date: loan.next_payment_date,
-          payment_date: paymentDate, // Agregar fecha del pago
-          payment_method: data.payment_method || 'cash',
-          reference_number: data.reference_number,
-          notes: `${updateType === 'partial_payment' ? 'Abono parcial' : 'Pago'}: ${data.notes || ''}`,
-          status: paymentStatus, // Agregar el status del pago
-          created_by: companyId,
-        };
-
-        const { error: paymentError } = await supabase
-          .from('payments')
-          .insert([paymentData]);
-
-        if (paymentError) throw paymentError;
-      }
-
       // Actualizar el préstamo según el tipo de actualización
       let loanUpdates: any = {};
 
       switch (updateType) {
-        case 'payment':
-        case 'partial_payment':
-          loanUpdates = {
-            remaining_balance: calculatedValues.newBalance,
-            status: calculatedValues.newBalance <= 0 ? 'paid' : loan.status,
+        case 'add_charge':
+          if (!data.amount || data.amount <= 0) {
+            toast.error('El monto del cargo debe ser mayor a 0');
+            setLoading(false);
+            return;
+          }
+
+          // Obtener todas las cuotas existentes para determinar el siguiente número
+          const { data: existingInstallments, error: installmentsError } = await supabase
+            .from('installments')
+            .select('installment_number')
+            .eq('loan_id', loan.id)
+            .order('installment_number', { ascending: false })
+            .limit(1);
+
+          if (installmentsError) {
+            console.error('Error obteniendo cuotas:', installmentsError);
+            toast.error('Error al obtener información de cuotas');
+            setLoading(false);
+            return;
+          }
+
+          // Calcular el número de la siguiente cuota
+          // Si no hay cuotas, usar el término original + 1
+          // Si hay cuotas, usar el máximo número de cuota + 1
+          const nextInstallmentNumber = existingInstallments && existingInstallments.length > 0
+            ? existingInstallments[0].installment_number + 1
+            : (loan.term_months || 0) + 1;
+
+          // Calcular la fecha de vencimiento de la nueva cuota
+          const frequency = loan.payment_frequency || 'monthly';
+          const lastPaymentDate = loan.next_payment_date ? new Date(loan.next_payment_date) : new Date();
+          const newDueDate = new Date(lastPaymentDate);
+
+          switch (frequency) {
+            case 'daily':
+              newDueDate.setDate(newDueDate.getDate() + 1);
+              break;
+            case 'weekly':
+              newDueDate.setDate(newDueDate.getDate() + 7);
+              break;
+            case 'biweekly':
+              newDueDate.setDate(newDueDate.getDate() + 14);
+              break;
+            case 'monthly':
+              newDueDate.setMonth(newDueDate.getMonth() + 1);
+              break;
+            case 'quarterly':
+              newDueDate.setMonth(newDueDate.getMonth() + 3);
+              break;
+            case 'yearly':
+              newDueDate.setFullYear(newDueDate.getFullYear() + 1);
+              break;
+            default:
+              newDueDate.setMonth(newDueDate.getMonth() + 1);
+          }
+
+          // Crear la nueva cuota con el cargo
+          const newChargeInstallment = {
+            loan_id: loan.id,
+            installment_number: nextInstallmentNumber,
+            due_date: newDueDate.toISOString().split('T')[0],
+            total_amount: data.amount,
+            principal_amount: data.amount,
+            interest_amount: 0,
+            is_paid: false,
+            late_fee_paid: 0
           };
 
-          // Si es un abono parcial, distribuir el pago entre las cuotas completas
-          if (updateType === 'partial_payment' && data.amount) {
-            try {
-              console.log('🔍 LoanUpdateForm: Distribuyendo abono parcial entre cuotas...');
-              
-              // Obtener cuotas no pagadas del préstamo ordenadas por número
-              const { data: installments, error: installmentsError } = await supabase
-                .from('installments')
-                .select('*')
-                .eq('loan_id', loan.id)
-                .eq('is_paid', false)
-                .order('installment_number', { ascending: true });
-              
-              if (installmentsError) throw installmentsError;
-              
-              if (installments && installments.length > 0) {
-                let remainingAmount = data.amount;
-                
-                console.log(`💰 Monto a distribuir: RD$${remainingAmount.toLocaleString()}`);
-                
-                // Distribuir el abono comenzando por las cuotas más antiguas
-                for (const installment of installments) {
-                  if (remainingAmount <= 0) break;
-                  
-                  // El total de la cuota es total_amount (principal + interés)
-                  const installmentTotal = installment.total_amount;
-                  
-                  console.log(`📋 Cuota ${installment.installment_number}: Total RD$${installmentTotal.toLocaleString()}, Restante: RD$${remainingAmount.toLocaleString()}`);
-                  
-                  if (remainingAmount >= installmentTotal) {
-                    // Pago completo de la cuota - marcar como pagada
-                    await supabase
-                      .from('installments')
-                      .update({ 
-                        is_paid: true, 
-                        paid_date: new Date().toISOString().split('T')[0],
-                        late_fee_paid: 0 // Resetear mora pagada ya que la cuota está completa
-                      })
-                      .eq('loan_id', loan.id)
-                      .eq('installment_number', installment.installment_number);
-                    
-                    remainingAmount -= installmentTotal;
-                    console.log(`✅ Cuota ${installment.installment_number} PAGADA COMPLETA (RD$${installmentTotal.toLocaleString()}). Restante: RD$${remainingAmount.toLocaleString()}`);
-                    
-                    // Actualizar paid_installments en el préstamo
-                    const updatedPaidInstallments = [...(loan.paid_installments || [])];
-                    if (!updatedPaidInstallments.includes(installment.installment_number)) {
-                      updatedPaidInstallments.push(installment.installment_number);
-                      updatedPaidInstallments.sort((a, b) => a - b);
-                      
-                      await supabase
-                        .from('loans')
-                        .update({ paid_installments: updatedPaidInstallments })
-                        .eq('id', loan.id);
-                    }
-                  } else if (remainingAmount > 0) {
-                    // Pago parcial de la cuota - NO marcar como pagada, solo registrar el abono
-                    console.log(`💵 Cuota ${installment.installment_number} ABONO PARCIAL: RD$${remainingAmount.toLocaleString()} de RD$${installmentTotal.toLocaleString()}`);
-                    
-                    // El abono parcial se registrará en la tabla de pagos pero la cuota sigue pendiente
-                    // No actualizamos installments aquí porque no está pagada completamente
-                    toast.info(`Abono de RD$${remainingAmount.toLocaleString()} aplicado a cuota ${installment.installment_number}. Faltan RD$${(installmentTotal - remainingAmount).toLocaleString()}`);
-                    
-                    remainingAmount = 0;
-                    break;
-                  }
-                }
-                
-                if (remainingAmount > 0) {
-                  console.log(`ℹ️ Sobrante de RD$${remainingAmount.toLocaleString()} - todas las cuotas pendientes están pagadas`);
-                }
-              }
-            } catch (error) {
-              console.error('Error distribuyendo abono parcial:', error);
-              toast.error('Error al distribuir el abono entre las cuotas');
-            }
+          const { error: insertError } = await supabase
+            .from('installments')
+            .insert([newChargeInstallment]);
+
+          if (insertError) {
+            console.error('Error creando nueva cuota de cargo:', insertError);
+            toast.error('Error al crear la nueva cuota');
+            setLoading(false);
+            return;
           }
 
-          // IMPORTANTE: Solo actualizar next_payment_date y paid_installments si es un pago COMPLETO
-          // Los abonos parciales (partial_payment) NO marcan cuotas como pagadas
-          // ni avanzan la fecha de próximo pago
-          if (updateType === 'payment' && calculatedValues.newBalance > 0) {
-            // Actualizar next_payment_date según la frecuencia de pago
-            const nextDate = new Date(loan.next_payment_date);
-            const frequency = loan.payment_frequency || 'monthly';
+          // Actualizar el balance del préstamo
+          loanUpdates = {
+            remaining_balance: calculatedValues.newBalance,
+            term_months: nextInstallmentNumber, // Actualizar el número total de cuotas
+          };
 
-            switch (frequency) {
-              case 'daily':
-                nextDate.setDate(nextDate.getDate() + 1);
-                break;
-              case 'weekly':
-                nextDate.setDate(nextDate.getDate() + 7);
-                break;
-              case 'biweekly':
-                nextDate.setDate(nextDate.getDate() + 14);
-                break;
-              case 'monthly':
-                nextDate.setMonth(nextDate.getMonth() + 1);
-                break;
-              case 'quarterly':
-                nextDate.setMonth(nextDate.getMonth() + 3);
-                break;
-              case 'yearly':
-                nextDate.setFullYear(nextDate.getFullYear() + 1);
-                break;
-              default:
-                nextDate.setMonth(nextDate.getMonth() + 1);
-            }
-
-            loanUpdates.next_payment_date = nextDate.toISOString().split('T')[0];
-
-            // Actualizar paid_installments: marcar la primera cuota NO pagada
-            const updatedPaidInstallments = [...(loan.paid_installments || [])];
-            const totalInstallments = loan.term_months || 4;
-            let firstUnpaidInstallment = null;
-
-            for (let i = 1; i <= totalInstallments; i++) {
-              if (!updatedPaidInstallments.includes(i)) {
-                firstUnpaidInstallment = i;
-                break;
-              }
-            }
-
-            if (firstUnpaidInstallment) {
-              updatedPaidInstallments.push(firstUnpaidInstallment);
-              updatedPaidInstallments.sort((a, b) => a - b);
-              loanUpdates.paid_installments = updatedPaidInstallments;
-
-              // Marcar la cuota como pagada en la tabla installments
-              try {
-                await supabase
-                  .from('installments')
-                  .update({
-                    is_paid: true,
-                    paid_date: new Date().toISOString().split('T')[0],
-                    late_fee_paid: 0
-                  })
-                  .eq('loan_id', loan.id)
-                  .eq('installment_number', firstUnpaidInstallment);
-
-                console.log(`✅ Cuota ${firstUnpaidInstallment} marcada como pagada`);
-              } catch (error) {
-                console.error('Error marcando cuota como pagada:', error);
-              }
-            }
-          }
+          console.log(`✅ Nueva cuota ${nextInstallmentNumber} creada con cargo de RD$${data.amount.toLocaleString()}`);
           break;
           
 
@@ -584,8 +441,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       }
 
       const actionMessages = {
-        payment: 'Pago registrado exitosamente',
-        partial_payment: 'Abono parcial registrado exitosamente',
+        add_charge: 'Cargo agregado exitosamente como nueva cuota',
         term_extension: 'Plazo extendido exitosamente',
         balance_adjustment: 'Balance ajustado exitosamente',
         delete_loan: 'Préstamo eliminado exitosamente (recuperable por 2 meses)'
@@ -604,8 +460,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
   const getUpdateTypeIcon = (type: string) => {
     switch (type) {
-      case 'payment': return <Receipt className="h-4 w-4" />;
-      case 'partial_payment': return <DollarSign className="h-4 w-4" />;
+      case 'add_charge': return <PlusCircle className="h-4 w-4" />;
       case 'term_extension': return <Calendar className="h-4 w-4" />;
       case 'balance_adjustment': return <Calculator className="h-4 w-4" />;
       case 'delete_loan': return <Trash2 className="h-4 w-4" />;
@@ -615,13 +470,67 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
   const getUpdateTypeLabel = (type: string) => {
     const labels = {
-      payment: 'Pago Completo',
-      partial_payment: 'Abono Parcial',
+      add_charge: 'Agregar Cargo',
       term_extension: 'Extensión de Plazo',
       balance_adjustment: 'Ajuste de Balance',
       delete_loan: 'Eliminar Préstamo'
     };
     return labels[type as keyof typeof labels] || type;
+  };
+
+  const getReasonsForUpdateType = (updateType: string) => {
+    switch (updateType) {
+      case 'add_charge':
+        return [
+          { value: 'late_payment_fee', label: 'Multa por Pago Tardío' },
+          { value: 'administrative_fee', label: 'Tarifa Administrativa' },
+          { value: 'penalty_fee', label: 'Cargo por Penalización' },
+          { value: 'insurance_fee', label: 'Seguro del Préstamo' },
+          { value: 'processing_fee', label: 'Tarifa de Procesamiento' },
+          { value: 'legal_fee', label: 'Gastos Legales' },
+          { value: 'collection_fee', label: 'Gastos de Cobranza' },
+          { value: 'other_charge', label: 'Otro Cargo' }
+        ];
+      case 'term_extension':
+        return [
+          { value: 'financial_difficulty', label: 'Dificultades Financieras' },
+          { value: 'job_loss', label: 'Pérdida de Empleo' },
+          { value: 'medical_emergency', label: 'Emergencia Médica' },
+          { value: 'family_emergency', label: 'Emergencia Familiar' },
+          { value: 'income_reduction', label: 'Reducción de Ingresos' },
+          { value: 'payment_plan', label: 'Plan de Pagos Especial' },
+          { value: 'rate_negotiation', label: 'Renegociación de Condiciones' },
+          { value: 'goodwill_extension', label: 'Extensión de Buena Voluntad' },
+          { value: 'other', label: 'Otra Razón' }
+        ];
+      case 'balance_adjustment':
+        return [
+          { value: 'error_correction', label: 'Corrección de Error' },
+          { value: 'administrative_adjustment', label: 'Ajuste Administrativo' },
+          { value: 'rate_adjustment', label: 'Ajuste de Tasa de Interés' },
+          { value: 'principal_reduction', label: 'Reducción de Capital' },
+          { value: 'interest_adjustment', label: 'Ajuste de Intereses' },
+          { value: 'forgiveness', label: 'Perdón de Deuda Parcial' },
+          { value: 'goodwill_adjustment', label: 'Ajuste de Buena Voluntad' },
+          { value: 'legal_settlement', label: 'Acuerdo Legal' },
+          { value: 'other', label: 'Otra Razón' }
+        ];
+      case 'delete_loan':
+        return [
+          { value: 'duplicate_entry', label: 'Entrada Duplicada' },
+          { value: 'data_entry_error', label: 'Error de Captura de Datos' },
+          { value: 'wrong_client', label: 'Cliente Incorrecto' },
+          { value: 'test_entry', label: 'Entrada de Prueba' },
+          { value: 'cancelled_loan', label: 'Préstamo Cancelado' },
+          { value: 'paid_outside_system', label: 'Pagado Fuera del Sistema' },
+          { value: 'fraud', label: 'Fraude Detectado' },
+          { value: 'other', label: 'Otra Razón' }
+        ];
+      default:
+        return [
+          { value: 'other', label: 'Otra Razón' }
+        ];
+    }
   };
 
   return (
@@ -656,19 +565,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="payment">
+                              <SelectItem value="add_charge">
                                 <div className="flex items-center gap-2">
-                                  <Receipt className="h-4 w-4" />
-                                  Pago Completo de Cuota
+                                  <PlusCircle className="h-4 w-4" />
+                                  Agregar Cargo
                                 </div>
                               </SelectItem>
-                              <SelectItem value="partial_payment">
-                                <div className="flex items-center gap-2">
-                                  <DollarSign className="h-4 w-4" />
-                                  Abono Parcial
-                                </div>
-                              </SelectItem>
-
                               <SelectItem value="term_extension">
                                 <div className="flex items-center gap-2">
                                   <Calendar className="h-4 w-4" />
@@ -695,15 +597,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     />
 
                     {/* Campos condicionales según el tipo de actualización */}
-                    {['payment', 'partial_payment', 'balance_adjustment'].includes(form.watch('update_type')) && (
+                    {['add_charge', 'balance_adjustment'].includes(form.watch('update_type')) && (
                       <FormField
                         control={form.control}
                         name="amount"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>
-                              {form.watch('update_type') === 'payment' ? 'Monto del Pago' :
-                               form.watch('update_type') === 'partial_payment' ? 'Monto del Abono' :
+                              {form.watch('update_type') === 'add_charge' ? 'Monto del Cargo' :
                                'Nuevo Balance'}
                             </FormLabel>
                             <FormControl>
@@ -756,47 +657,20 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     )}
 
 
-                    {['payment', 'partial_payment'].includes(form.watch('update_type')) && (
-                      <>
-                        <FormField
-                          control={form.control}
-                          name="payment_method"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Método de Pago</FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="cash">Efectivo</SelectItem>
-                                  <SelectItem value="bank_transfer">Transferencia Bancaria</SelectItem>
-                                  <SelectItem value="check">Cheque</SelectItem>
-                                  <SelectItem value="card">Tarjeta</SelectItem>
-                                  <SelectItem value="online">Pago en línea</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="reference_number"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Número de Referencia</FormLabel>
-                              <FormControl>
-                                <Input placeholder="Número de comprobante, cheque, etc." {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </>
+                    {form.watch('update_type') === 'add_charge' && (
+                      <FormField
+                        control={form.control}
+                        name="reference_number"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Número de Referencia</FormLabel>
+                            <FormControl>
+                              <Input placeholder="Número de comprobante, factura, etc." {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     )}
 
                     <FormField
@@ -804,24 +678,23 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       name="adjustment_reason"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Razón del Ajuste</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormLabel>
+                            {form.watch('update_type') === 'add_charge' ? 'Razón del Cargo' :
+                             form.watch('update_type') === 'delete_loan' ? 'Razón de Eliminación' :
+                             'Razón del Ajuste'}
+                          </FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Seleccionar razón" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="regular_payment">Pago Regular</SelectItem>
-                              <SelectItem value="early_payment">Pago Anticipado</SelectItem>
-                              <SelectItem value="partial_payment">Abono Parcial</SelectItem>
-                              <SelectItem value="financial_difficulty">Dificultades Financieras</SelectItem>
-                              <SelectItem value="rate_negotiation">Renegociación de Tasa</SelectItem>
-                              <SelectItem value="payment_plan">Plan de Pagos</SelectItem>
-                              <SelectItem value="administrative_adjustment">Ajuste Administrativo</SelectItem>
-                              <SelectItem value="error_correction">Corrección de Error</SelectItem>
-                              <SelectItem value="goodwill_adjustment">Ajuste de Buena Voluntad</SelectItem>
-                              <SelectItem value="other">Otro</SelectItem>
+                              {getReasonsForUpdateType(form.watch('update_type')).map((reason) => (
+                                <SelectItem key={reason.value} value={reason.value}>
+                                  {reason.label}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                           <FormMessage />
@@ -879,39 +752,30 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       <span className="font-semibold">${loan.remaining_balance.toLocaleString()}</span>
                     </div>
                     
-                    {['payment', 'partial_payment'].includes(form.watch('update_type')) && form.watch('amount') && (
+                    {form.watch('update_type') === 'add_charge' && form.watch('amount') && (
                       <>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Monto a Aplicar:</span>
+                          <span className="text-gray-600">Monto del Cargo:</span>
                           <span className="font-semibold text-blue-600">${form.watch('amount')?.toLocaleString()}</span>
                         </div>
                         
-                        {form.watch('update_type') === 'partial_payment' && (
-                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2">
-                            <div className="text-sm text-blue-800">
-                              <strong>💡 Distribución del Abono</strong>
-                              <p className="mt-1 text-xs">
-                                El abono se aplicará a las cuotas pendientes en orden. 
-                                Si el monto cubre cuotas completas (RD${loan.monthly_payment.toLocaleString()} c/u), 
-                                se marcarán como pagadas y desaparecerá su mora.
-                              </p>
-                              <p className="mt-1 text-xs">
-                                Ejemplo: Con RD${(loan.monthly_payment * 2).toLocaleString()} pagas 2 cuotas completas.
-                              </p>
-                            </div>
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2">
+                          <div className="text-sm text-blue-800">
+                            <strong>💡 Nueva Cuota</strong>
+                            <p className="mt-1 text-xs">
+                              Este cargo se agregará como una nueva cuota adicional al préstamo (ej: Cuota {loan.term_months + 1}). 
+                              Aparecerá en el desglose de cuotas y podrá generar mora si no se paga a tiempo.
+                            </p>
                           </div>
-                        )}
-                        
-                        {calculatedValues.interestAmount > 0 && form.watch('update_type') !== 'partial_payment' && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">A Intereses:</span>
-                            <span className="font-semibold text-orange-600">${calculatedValues.interestAmount.toLocaleString()}</span>
-                          </div>
-                        )}
-                        
+                        </div>
+                      </>
+                    )}
+                    
+                    {form.watch('update_type') === 'balance_adjustment' && form.watch('amount') && (
+                      <>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">A Principal:</span>
-                          <span className="font-semibold text-green-600">${calculatedValues.principalAmount.toLocaleString()}</span>
+                          <span className="text-gray-600">Nuevo Balance:</span>
+                          <span className="font-semibold text-blue-600">${form.watch('amount')?.toLocaleString()}</span>
                         </div>
                       </>
                     )}

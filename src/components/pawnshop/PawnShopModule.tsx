@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
-import { formatDateTimeWithOffset } from '@/utils/dateUtils';
+import { formatDateTimeWithOffset, calculateDueDateInSantoDomingo } from '@/utils/dateUtils';
 import { 
   DollarSign, 
   Plus, 
@@ -1208,9 +1208,8 @@ export const PawnShopModule = () => {
 
   const resetForm = () => {
     const today = new Date().toISOString().split('T')[0];
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + getDefaultPawnPeriod());
-    const dueDateString = dueDate.toISOString().split('T')[0];
+    // Usar la función helper que maneja correctamente la zona horaria de Santo Domingo
+    const dueDateString = calculateDueDateInSantoDomingo(today, getDefaultPawnPeriod());
     
     setFormData({
       client_id: '',
@@ -1246,10 +1245,8 @@ export const PawnShopModule = () => {
 
   const calculateDueDate = (startDate: string, periodDays: number) => {
     if (!startDate) return '';
-    const start = new Date(startDate);
-    const dueDate = new Date(start);
-    dueDate.setDate(start.getDate() + periodDays);
-    return dueDate.toISOString().split('T')[0];
+    // Usar la función helper que maneja correctamente la zona horaria de Santo Domingo
+    return calculateDueDateInSantoDomingo(startDate, periodDays);
   };
 
   const calculateDaysDifference = (startDate: string, endDate: string) => {
