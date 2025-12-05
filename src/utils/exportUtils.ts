@@ -276,6 +276,34 @@ export const importFromExcel = (file: File): Promise<any[]> => {
 };
 
 /**
+ * Lee un archivo Excel con múltiples hojas y las convierte a un objeto con arrays
+ */
+export const importFromExcelMultiSheet = (file: File): Promise<{ [sheetName: string]: any[] }> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        const workbook = XLSX.read(data, { type: 'binary' });
+        const result: { [sheetName: string]: any[] } = {};
+        
+        workbook.SheetNames.forEach(sheetName => {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+          result[sheetName] = jsonData;
+        });
+        
+        resolve(result);
+      } catch (error) {
+        reject(new Error(`Error al leer Excel: ${error instanceof Error ? error.message : 'Error desconocido'}`));
+      }
+    };
+    reader.onerror = () => reject(new Error('Error al leer el archivo'));
+    reader.readAsBinaryString(file);
+  });
+};
+
+/**
  * Valida los datos importados antes de insertarlos
  */
 export const validateImportedData = (data: any[], requiredFields: string[]): { valid: boolean; errors: string[] } => {

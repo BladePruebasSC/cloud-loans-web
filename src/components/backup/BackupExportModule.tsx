@@ -38,6 +38,7 @@ import {
   formatDataForExport,
   importFromCSV,
   importFromExcel,
+  importFromExcelMultiSheet,
   validateImportedData
 } from '@/utils/exportUtils';
 
@@ -150,7 +151,9 @@ export const BackupExportModule = () => {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importModule, setImportModule] = useState<ExportModule | null>(null);
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showImportAllDialog, setShowImportAllDialog] = useState(false);
   const [importPreview, setImportPreview] = useState<any[]>([]);
+  const [importAllPreview, setImportAllPreview] = useState<{ [key: string]: any[] }>({});
 
   const setLoadingState = (key: string, value: boolean) => {
     setLoading(prev => ({ ...prev, [key]: value }));
@@ -542,6 +545,21 @@ export const BackupExportModule = () => {
     }
   };
 
+  const handleFilePreviewAll = async (file: File) => {
+    try {
+      if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+        toast.error('La importación completa solo soporta archivos Excel (.xlsx, .xls)');
+        return;
+      }
+      
+      const sheets = await importFromExcelMultiSheet(file);
+      setImportAllPreview(sheets);
+    } catch (error: any) {
+      toast.error(`Error al leer el archivo: ${error.message}`);
+      setImportAllPreview({});
+    }
+  };
+
   const handleImport = async () => {
     if (!importFile || !importModule || !companyId || !user) {
       toast.error('Faltan datos para importar');
@@ -677,6 +695,164 @@ export const BackupExportModule = () => {
       setImportModule(null);
     } catch (error: any) {
       console.error('Error importing:', error);
+      toast.error(`Error al importar: ${error.message || 'Error desconocido'}`);
+    } finally {
+      setLoadingState(loadingKey, false);
+    }
+  };
+
+  const handleImportAll = async () => {
+    if (!importFile || !companyId || !user) {
+      toast.error('Faltan datos para importar');
+      return;
+    }
+
+    const loadingKey = 'import_all';
+    setLoadingState(loadingKey, true);
+
+    try {
+      // Leer todas las hojas del Excel
+      const sheets = await importFromExcelMultiSheet(importFile);
+      
+      // Mapeo de nombres de hojas a módulos
+      const sheetToModule: { [key: string]: ExportModule } = {
+        'Clientes': 'clients',
+        'Préstamos': 'loans',
+        'Pagos': 'payments',
+        'Inventario': 'inventory',
+        'Ventas': 'sales',
+        'Empeños': 'pawnshop',
+        'Documentos': 'documents',
+        'Solicitudes': 'requests',
+        'Acuerdos': 'agreements',
+        'Gastos': 'expenses'
+      };
+
+      const results: { [module: string]: { inserted: number; errors: number } } = {};
+      let totalInserted = 0;
+      let totalErrors = 0;
+
+      // Importar cada hoja
+      for (const [sheetName, data] of Object.entries(sheets)) {
+        const module = sheetToModule[sheetName];
+        if (!module || data.length === 0) {
+          continue; // Saltar hojas no reconocidas o vacías
+        }
+
+        let inserted = 0;
+        let errors = 0;
+
+        try {
+          switch (module) {
+            case 'clients':
+              for (const row of data) {
+                try {
+                  const { error } = await supabase
+                    .from('clients')
+                    .upsert({
+                      full_name: row.full_name,
+                      dni: row.dni,
+                      phone: row.phone || '',
+                      email: row.email || null,
+                      address: row.address || null,
+                      city: row.city || null,
+                      user_id: companyId,
+                      updated_at: new Date().toISOString()
+                    }, {
+                      onConflict: 'dni'
+                    });
+                  
+                  if (error) throw error;
+                  inserted++;
+                } catch (err) {
+                  console.error(`Error importing client:`, err);
+                  errors++;
+                }
+              }
+              break;
+
+            case 'expenses':
+              for (const row of data) {
+                try {
+                  const { error } = await supabase
+                    .from('expenses')
+                    .insert({
+                      category: row.category,
+                      description: row.description,
+                      amount: parseFloat(row.amount) || 0,
+                      expense_date: row.expense_date || new Date().toISOString().split('T')[0],
+                      created_by: companyId,
+                      status: 'approved'
+                    });
+                  
+                  if (error) throw error;
+                  inserted++;
+                } catch (err) {
+                  console.error(`Error importing expense:`, err);
+                  errors++;
+                }
+              }
+              break;
+
+            case 'inventory':
+              for (const row of data) {
+                try {
+                  const { error } = await supabase
+                    .from('products')
+                    .upsert({
+                      name: row.name,
+                      sku: row.sku || null,
+                      barcode: row.barcode || null,
+                      category: row.category || null,
+                      brand: row.brand || null,
+                      purchase_price: parseFloat(row.purchase_price) || 0,
+                      selling_price: parseFloat(row.selling_price) || 0,
+                      current_stock: parseFloat(row.current_stock) || 0,
+                      user_id: companyId
+                    }, {
+                      onConflict: 'sku'
+                    });
+                  
+                  if (error) throw error;
+                  inserted++;
+                } catch (err) {
+                  console.error(`Error importing product:`, err);
+                  errors++;
+                }
+              }
+              break;
+
+            // Otros módulos se pueden agregar aquí
+            default:
+              console.warn(`Importación para ${module} aún no implementada`);
+          }
+
+          results[sheetName] = { inserted, errors };
+          totalInserted += inserted;
+          totalErrors += errors;
+        } catch (error) {
+          console.error(`Error importing sheet ${sheetName}:`, error);
+          results[sheetName] = { inserted: 0, errors: data.length };
+          totalErrors += data.length;
+        }
+      }
+
+      // Mostrar resumen
+      const summary = Object.entries(results)
+        .map(([sheet, result]) => `${sheet}: ${result.inserted} importados${result.errors > 0 ? `, ${result.errors} errores` : ''}`)
+        .join('\n');
+
+      toast.success(
+        `Importación completa finalizada:\n${summary}\n\nTotal: ${totalInserted} registros importados${totalErrors > 0 ? `, ${totalErrors} errores` : ''}`,
+        { duration: 8000 }
+      );
+
+      setShowImportAllDialog(false);
+      setImportFile(null);
+      setImportAllPreview({});
+      setImportModule(null);
+    } catch (error: any) {
+      console.error('Error importing all:', error);
       toast.error(`Error al importar: ${error.message || 'Error desconocido'}`);
     } finally {
       setLoadingState(loadingKey, false);
@@ -882,6 +1058,40 @@ export const BackupExportModule = () => {
                 </div>
               </div>
 
+              {/* Opción de Importar Todo */}
+              <Card className="border-2 border-green-300 bg-green-50">
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 rounded-lg bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+                      <Database className="h-6 w-6" />
+                    </div>
+                    <div className="flex-1">
+                      <CardTitle className="text-lg">Importar Todo (Backup Completo)</CardTitle>
+                      <CardDescription>
+                        Importa todos los datos desde un archivo Excel con múltiples hojas
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    onClick={() => {
+                      setImportModule('all');
+                      setShowImportAllDialog(true);
+                    }}
+                    className="w-full border-green-300 hover:bg-green-100"
+                  >
+                    <Upload className="h-5 w-5 mr-2" />
+                    Importar Backup Completo (Excel)
+                  </Button>
+                  <p className="text-xs text-gray-600 mt-2 text-center">
+                    Requiere un archivo Excel con hojas: Clientes, Préstamos, Pagos, etc.
+                  </p>
+                </CardContent>
+              </Card>
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {exportOptions.filter(opt => opt.id !== 'all').map((option) => (
                   <Card key={option.id} className="hover:shadow-lg transition-shadow">
@@ -989,6 +1199,103 @@ export const BackupExportModule = () => {
                   <Upload className="h-4 w-4 mr-2" />
                 )}
                 Importar
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de importación completa */}
+      <Dialog open={showImportAllDialog} onOpenChange={setShowImportAllDialog}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Importar Backup Completo</DialogTitle>
+            <DialogDescription>
+              Selecciona un archivo Excel con múltiples hojas para importar todos los datos
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="import-all-file">Archivo Excel</Label>
+              <Input
+                id="import-all-file"
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setImportFile(file);
+                    handleFilePreviewAll(file);
+                  }
+                }}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                El archivo debe ser un Excel exportado desde "Backup Completo" con múltiples hojas
+              </p>
+            </div>
+
+            {Object.keys(importAllPreview).length > 0 && (
+              <div className="border rounded-lg p-4 max-h-96 overflow-y-auto">
+                <p className="text-sm font-semibold mb-3">
+                  Vista previa de hojas encontradas
+                </p>
+                <div className="space-y-3">
+                  {Object.entries(importAllPreview).map(([sheetName, data]) => (
+                    <div key={sheetName} className="border rounded p-3 bg-gray-50">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-semibold text-sm">{sheetName}</span>
+                        <Badge variant="outline">
+                          {data.length} registros
+                        </Badge>
+                      </div>
+                      {data.length > 0 && (
+                        <div className="text-xs text-gray-600">
+                          <p>Columnas: {Object.keys(data[0]).join(', ')}</p>
+                          {data.length > 0 && (
+                            <p className="mt-1 text-gray-500">
+                              Primer registro: {JSON.stringify(data[0]).substring(0, 100)}...
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-red-600 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-red-900">Advertencia Importante</p>
+                  <p className="text-xs text-red-700 mt-1">
+                    Esta operación importará todos los datos del archivo. Los datos existentes pueden ser sobrescritos.
+                    Se recomienda hacer un backup antes de continuar.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => {
+                setShowImportAllDialog(false);
+                setImportFile(null);
+                setImportAllPreview({});
+              }}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleImportAll}
+                disabled={!importFile || Object.keys(importAllPreview).length === 0 || loading['import_all']}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {loading['import_all'] ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4 mr-2" />
+                )}
+                Importar Todo
               </Button>
             </div>
           </div>
