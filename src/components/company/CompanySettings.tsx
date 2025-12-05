@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, Save, Building, Globe, Phone, Mail, MapPin, CreditCard, Settings, Shield, Bell, FileText, TrendingUp, Clock, Copy, Check, AlertTriangle, Trash2, Key, RefreshCw } from 'lucide-react';
+import { Upload, Save, Building, Globe, Phone, Mail, MapPin, CreditCard, Settings, Shield, Bell, FileText, TrendingUp, Clock, Copy, Check, AlertTriangle, Trash2, Key, RefreshCw, Database } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -50,7 +50,10 @@ const CompanySettings = () => {
     max_term_months: 60,
     company_code: '',
     default_late_fee_rate: 2.0,
-    default_pawn_period_days: 90
+    default_pawn_period_days: 90,
+    auto_backup_enabled: false,
+    auto_backup_interval_hours: 24,
+    auto_backup_format: 'excel' as 'excel' | 'csv' | 'pdf'
   });
 
   useEffect(() => {
@@ -84,6 +87,9 @@ const CompanySettings = () => {
           max_loan_amount: sanitizeNumber(data.max_loan_amount, prev.max_loan_amount),
           min_term_months: sanitizeNumber(data.min_term_months, prev.min_term_months),
           max_term_months: sanitizeNumber(data.max_term_months, prev.max_term_months),
+          auto_backup_enabled: data.auto_backup_enabled ?? false,
+          auto_backup_interval_hours: sanitizeNumber(data.auto_backup_interval_hours, 24),
+          auto_backup_format: data.auto_backup_format || 'excel',
         }));
       } else {
         // Solo crear configuración si es el dueño de la empresa, no empleados
@@ -143,7 +149,7 @@ const CompanySettings = () => {
     }
   };
 
-  const handleInputChange = (field: string, value: string | number) => {
+  const handleInputChange = (field: string, value: string | number | boolean) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
@@ -1304,6 +1310,106 @@ const CompanySettings = () => {
                       <Label className="text-sm">Reporte de nuevos clientes</Label>
                     </div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Configuraciones de Backup Automático */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Database className="h-5 w-5 mr-2" />
+                  Backup Automático
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <Database className="h-5 w-5 text-blue-600 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-blue-900 mb-1">Backups Automáticos</p>
+                      <p className="text-sm text-blue-700">
+                        Configura backups automáticos para proteger tus datos. El sistema creará un backup completo 
+                        según el intervalo configurado.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div className="flex-1">
+                      <Label htmlFor="auto_backup_enabled" className="text-base font-semibold">
+                        Habilitar Backup Automático
+                      </Label>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Activa los backups automáticos del sistema
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="auto_backup_enabled"
+                        checked={formData.auto_backup_enabled}
+                        onChange={(e) => handleInputChange('auto_backup_enabled', e.target.checked)}
+                        className="w-5 h-5 rounded"
+                      />
+                    </div>
+                  </div>
+
+                  {formData.auto_backup_enabled && (
+                    <>
+                      <div>
+                        <Label htmlFor="auto_backup_interval_hours">Intervalo entre Backups (horas)</Label>
+                        <Input
+                          id="auto_backup_interval_hours"
+                          type="number"
+                          min="1"
+                          max="720"
+                          value={formData.auto_backup_interval_hours}
+                          onChange={(e) => handleInputChange('auto_backup_interval_hours', sanitizeNumber(e.target.value, 24))}
+                          placeholder="24"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          El sistema creará un backup automáticamente cada {formData.auto_backup_interval_hours} hora(s).
+                          Mínimo: 1 hora, Máximo: 720 horas (30 días)
+                        </p>
+                        <div className="mt-2 space-y-1 text-xs text-gray-600">
+                          <p>• 1 hora = Backups cada hora</p>
+                          <p>• 24 horas = Backups diarios</p>
+                          <p>• 168 horas = Backups semanales</p>
+                          <p>• 720 horas = Backups mensuales</p>
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="auto_backup_format">Formato de Backup</Label>
+                        <Select
+                          value={formData.auto_backup_format}
+                          onValueChange={(value: 'excel' | 'csv' | 'pdf') => handleInputChange('auto_backup_format', value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="excel">Excel (Recomendado)</SelectItem>
+                            <SelectItem value="csv">CSV</SelectItem>
+                            <SelectItem value="pdf">PDF</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Formato en el que se guardarán los backups automáticos
+                        </p>
+                      </div>
+
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                        <p className="text-sm text-yellow-800">
+                          <strong>Nota:</strong> Los backups automáticos se ejecutarán en segundo plano. 
+                          Asegúrate de tener suficiente espacio de almacenamiento.
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </div>
               </CardContent>
             </Card>

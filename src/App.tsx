@@ -182,6 +182,7 @@ function App() {
       <Route path="/reportes" element={<Index />} />
       <Route path="/mapa" element={<Index />} />
       <Route path="/cobro-rapido" element={<Index />} />
+      <Route path="/backup" element={<Index />} />
       <Route path="/admin/codigos-registro" element={<Index />} />
       <Route path="*" element={<NotFound />} />
     </Routes>

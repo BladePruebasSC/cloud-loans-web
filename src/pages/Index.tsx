@@ -23,6 +23,8 @@ import RegistrationCodeModal from '@/components/RegistrationCodeModal';
 import { PawnShopModule } from '@/components/pawnshop/PawnShopModule';
 import PointOfSaleModule from '@/components/pos/PointOfSaleModule';
 import { QuickCollectionModule } from '@/components/collections/QuickCollectionModule';
+import { BackupExportModule } from '@/components/backup/BackupExportModule';
+import { useAutoBackup } from '@/hooks/useAutoBackup';
 import { Building, CreditCard, Package, Users, BarChart3, Key } from 'lucide-react';
 
 // Componente para mostrar acceso restringido
@@ -63,6 +65,9 @@ const Index = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false); // Cambiar a false para móviles
   const location = useLocation();
   const { profile, user, needsRegistrationCode, validateRegistrationCode } = useAuth();
+  
+  // Hook para backups automáticos
+  useAutoBackup();
 
   // Función para verificar permisos
   const hasPermission = (permission: string) => {
@@ -166,6 +171,12 @@ const Index = () => {
           return <RestrictedAccess module="reports" />;
         }
         return <ReportsModuleImproved />;
+      
+      case '/backup':
+        if (!hasPermission('settings.view')) {
+          return <RestrictedAccess module="company" />;
+        }
+        return <BackupExportModule />;
       
       case '/empresa':
       case '/mi-empresa':

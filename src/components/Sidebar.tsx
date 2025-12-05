@@ -22,7 +22,8 @@ import {
   Lock,
   ShoppingCart,
   Scale,
-  Zap
+  Zap,
+  Database
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -153,6 +154,12 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       icon: BarChart3,
       path: '/reportes',
       permission: 'reports.view',
+    },
+    {
+      name: 'Respaldo',
+      icon: Database,
+      path: '/backup',
+      permission: 'settings.view',
     },
     {
       name: 'Mi Empresa',
