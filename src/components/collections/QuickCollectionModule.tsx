@@ -824,23 +824,23 @@ export const QuickCollectionModule = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50 pb-20">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50 pb-24">
       {/* Header móvil optimizado */}
-      <div className="sticky top-0 z-10 bg-white border-b shadow-sm">
-        <div className="px-4 py-3">
+      <div className="sticky top-0 z-10 bg-white border-b shadow-md">
+        <div className="px-4 py-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-blue-100">
-              <Zap className="h-5 w-5 text-blue-600" />
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-md">
+              <Zap className="h-6 w-6 text-white" />
             </div>
             <div className="flex-1">
-              <h1 className="text-lg font-bold text-gray-900">Cobro Rápido</h1>
+              <h1 className="text-xl font-bold text-gray-900">Cobro Rápido</h1>
               <p className="text-xs text-gray-500">Búsqueda y cobro instantáneo</p>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="px-4 py-6 space-y-4 max-w-2xl mx-auto">
+      <div className="px-4 py-4 space-y-4 max-w-2xl mx-auto">
         {/* Búsqueda de préstamos */}
         {!showPaymentForm ? (
           <>
@@ -999,7 +999,7 @@ export const QuickCollectionModule = () => {
               </Card>
 
               {/* Monto del pago */}
-              <Card className="border-2 border-green-200">
+              <Card className="border-2 border-green-200 shadow-lg">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <DollarSign className="h-5 w-5 text-green-600" />
@@ -1012,14 +1012,14 @@ export const QuickCollectionModule = () => {
                     name="amount"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Monto de la Cuota</FormLabel>
+                        <FormLabel className="text-base font-semibold">Monto de la Cuota</FormLabel>
                         <FormControl>
                           <Input
                             type="number"
                             step="0.01"
                             min="0"
                             placeholder="0.00"
-                            className="h-14 text-lg font-semibold"
+                            className="h-16 text-2xl font-bold text-center"
                             {...field}
                             value={field.value || ''}
                             onChange={(e) => {
@@ -1034,27 +1034,40 @@ export const QuickCollectionModule = () => {
                     )}
                   />
 
-                  {/* Botones de monto rápido */}
+                  {/* Botones de monto rápido - Diseño tipo app móvil */}
                   {quickAmountButtons.length > 0 && (
-                    <div className="grid grid-cols-3 gap-2">
-                      {quickAmountButtons.map((btn, idx) => (
-                        <Button
-                          key={idx}
-                          type="button"
-                          variant="outline"
-                          className="h-12 text-sm"
-                          onClick={() => {
-                            form.setValue('amount', btn.amount);
-                            setPaymentAmount(btn.amount);
-                          }}
-                        >
-                          {btn.label}
-                          <br />
-                          <span className="text-xs text-gray-500">
-                            {formatCurrency(btn.amount)}
-                          </span>
-                        </Button>
-                      ))}
+                    <div className="space-y-2">
+                      <FormLabel className="text-sm font-medium text-gray-600">Opciones Rápidas</FormLabel>
+                      <div className="grid grid-cols-1 gap-3">
+                        {quickAmountButtons.map((btn, idx) => (
+                          <Button
+                            key={idx}
+                            type="button"
+                            variant={idx === 0 ? "default" : "outline"}
+                            className={`h-16 w-full flex items-center justify-between px-4 ${
+                              idx === 0 
+                                ? 'bg-green-600 hover:bg-green-700 text-white shadow-md' 
+                                : 'bg-white hover:bg-gray-50 border-2 border-gray-200'
+                            }`}
+                            onClick={() => {
+                              form.setValue('amount', btn.amount);
+                              setPaymentAmount(btn.amount);
+                            }}
+                          >
+                            <div className="flex flex-col items-start">
+                              <span className={`text-sm font-semibold ${idx === 0 ? 'text-white' : 'text-gray-700'}`}>
+                                {btn.label}
+                              </span>
+                              <span className={`text-xs ${idx === 0 ? 'text-green-100' : 'text-gray-500'}`}>
+                                {formatCurrency(btn.amount)}
+                              </span>
+                            </div>
+                            <div className={`text-lg font-bold ${idx === 0 ? 'text-white' : 'text-green-600'}`}>
+                              {formatCurrency(btn.amount)}
+                            </div>
+                          </Button>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -1065,39 +1078,40 @@ export const QuickCollectionModule = () => {
                       name="late_fee_amount"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className="flex items-center gap-2">
-                            <AlertTriangle className="h-4 w-4 text-orange-600" />
+                          <FormLabel className="flex items-center gap-2 text-base font-semibold">
+                            <AlertTriangle className="h-5 w-5 text-orange-600" />
                             Mora (Opcional)
                           </FormLabel>
-                          <div className="flex gap-2">
-                            <FormControl>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                max={lateFeeAmount}
-                                placeholder="0.00"
-                                className="h-12"
-                                {...field}
-                                value={field.value || ''}
-                                onChange={(e) => {
-                                  const value = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
-                                  field.onChange(value);
-                                }}
-                              />
-                            </FormControl>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => field.onChange(lateFeeAmount)}
-                              className="whitespace-nowrap"
-                            >
-                              Pagar Toda
-                            </Button>
-                          </div>
-                          <div className="text-xs text-orange-600">
-                            Mora pendiente: {formatCurrency(lateFeeAmount)}
+                          <div className="space-y-2">
+                            <div className="flex gap-2">
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  max={lateFeeAmount}
+                                  placeholder="0.00"
+                                  className="h-14 text-lg font-semibold"
+                                  {...field}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                                    field.onChange(value);
+                                  }}
+                                />
+                              </FormControl>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => field.onChange(lateFeeAmount)}
+                                className="h-14 px-4 whitespace-nowrap border-2 border-orange-300 hover:bg-orange-50"
+                              >
+                                Pagar Toda
+                              </Button>
+                            </div>
+                            <div className="text-sm text-orange-600 font-medium bg-orange-50 p-2 rounded">
+                              Mora pendiente: {formatCurrency(lateFeeAmount)}
+                            </div>
                           </div>
                           <FormMessage />
                         </FormItem>
@@ -1106,21 +1120,33 @@ export const QuickCollectionModule = () => {
                   )}
 
                   {/* Resumen del total */}
-                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold text-gray-700">Total a Cobrar:</span>
-                      <span className="text-2xl font-bold text-green-600">
+                  <div className="p-5 bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg">
+                    <div className="flex flex-col space-y-2">
+                      <span className="text-white text-sm font-medium opacity-90">Total a Cobrar</span>
+                      <span className="text-3xl font-bold text-white">
                         {formatCurrency(
                           paymentAmount + (form.watch('late_fee_amount') || 0)
                         )}
                       </span>
+                      {(form.watch('late_fee_amount') || 0) > 0 && (
+                        <div className="pt-2 border-t border-green-400/30">
+                          <div className="flex justify-between text-sm text-green-100">
+                            <span>Cuota:</span>
+                            <span>{formatCurrency(paymentAmount)}</span>
+                          </div>
+                          <div className="flex justify-between text-sm text-green-100">
+                            <span>Mora:</span>
+                            <span>{formatCurrency(form.watch('late_fee_amount') || 0)}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
               {/* Método de pago */}
-              <Card>
+              <Card className="border-2 border-gray-200 shadow-md">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <CreditCard className="h-5 w-5 text-gray-600" />
@@ -1135,15 +1161,15 @@ export const QuickCollectionModule = () => {
                       <FormItem>
                         <FormControl>
                           <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <SelectTrigger className="h-12 text-base">
+                            <SelectTrigger className="h-14 text-base font-medium">
                               <SelectValue placeholder="Seleccionar método" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="cash">💵 Efectivo</SelectItem>
-                              <SelectItem value="bank_transfer">🏦 Transferencia</SelectItem>
-                              <SelectItem value="card">💳 Tarjeta</SelectItem>
-                              <SelectItem value="check">📝 Cheque</SelectItem>
-                              <SelectItem value="online">🌐 En línea</SelectItem>
+                              <SelectItem value="cash" className="text-base py-3">💵 Efectivo</SelectItem>
+                              <SelectItem value="bank_transfer" className="text-base py-3">🏦 Transferencia</SelectItem>
+                              <SelectItem value="card" className="text-base py-3">💳 Tarjeta</SelectItem>
+                              <SelectItem value="check" className="text-base py-3">📝 Cheque</SelectItem>
+                              <SelectItem value="online" className="text-base py-3">🌐 En línea</SelectItem>
                             </SelectContent>
                           </Select>
                         </FormControl>
