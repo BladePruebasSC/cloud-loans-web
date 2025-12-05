@@ -256,31 +256,40 @@ export const LoansModule = () => {
     const loanId = urlParams.get('loanId');
     
     if (action && loanId) {
+      // Esperar a que los préstamos estén cargados
+      if (loading) {
+        return; // Esperar a que termine la carga
+      }
+      
       // Buscar el préstamo específico
       const targetLoan = loans.find(loan => loan.id === loanId);
       
       if (targetLoan) {
-        if (action === 'payment') {
-          // Abrir formulario de pago
-          setSelectedLoanForPayment(targetLoan);
-          setShowPaymentForm(true);
-          toast.success(`Abriendo formulario de pago para ${targetLoan.client?.full_name}`);
-        } else if (action === 'tracking') {
-          // Abrir formulario de seguimiento
-          setSelectedLoanForTracking(targetLoan);
-          setShowCollectionTracking(true);
-          toast.success(`Abriendo formulario de seguimiento para ${targetLoan.client?.full_name}`);
-        }
+        // Pequeño delay para asegurar que el componente esté listo
+        setTimeout(() => {
+          if (action === 'payment') {
+            // Abrir formulario de pago
+            setSelectedLoanForPayment(targetLoan);
+            setShowPaymentForm(true);
+            toast.success(`Abriendo formulario de pago para ${targetLoan.client?.full_name}`);
+          } else if (action === 'tracking') {
+            // Abrir formulario de seguimiento
+            setSelectedLoanForTracking(targetLoan);
+            setShowCollectionTracking(true);
+            toast.success(`Abriendo formulario de seguimiento para ${targetLoan.client?.full_name}`);
+          }
+        }, 100);
         
         // Limpiar URL para evitar re-aplicación
         window.history.replaceState({}, '', '/prestamos');
-      } else {
-        toast.error('Préstamo no encontrado');
+      } else if (!loading) {
+        // Solo mostrar error si ya terminó de cargar y no encontró el préstamo
+        toast.error('Préstamo no encontrado. Puede que haya sido eliminado o no tengas acceso.');
         // Limpiar URL incluso si no se encuentra el préstamo
         window.history.replaceState({}, '', '/prestamos');
       }
     }
-  }, [loans]); // Dependencia en loans para asegurar que estén cargados
+  }, [loans, loading]); // Dependencia en loans y loading
 
   // Función para actualizar mora de todos los préstamos
   const handleUpdateLateFees = async () => {

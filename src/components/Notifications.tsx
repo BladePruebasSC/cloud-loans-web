@@ -459,7 +459,17 @@ const Notifications: React.FC = () => {
               </div>
             ) : (
               notifications.map((notification) => (
-                <Card key={notification.id} className={`border-l-4 ${getPriorityColor(notification.priority, notification.type)}`}>
+                <Card 
+                  key={notification.id} 
+                  className={`border-l-4 ${getPriorityColor(notification.priority, notification.type)} ${
+                    notification.loanId ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
+                  }`}
+                  onClick={() => {
+                    if (notification.loanId) {
+                      handleNavigateToAction(notification.loanId, notification.type, notification.clientName);
+                    }
+                  }}
+                >
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-3 flex-1">
@@ -494,7 +504,7 @@ const Notifications: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="p-1 hover:bg-gray-100 transition-colors"
+                          className="p-1 hover:bg-gray-100 transition-colors flex-shrink-0"
                           title={
                             notification.type === 'payment_overdue' || notification.type === 'payment_due' 
                               ? "Registrar pago" 
@@ -504,7 +514,10 @@ const Notifications: React.FC = () => {
                                   ? "Gestionar mora"
                                   : "Ver préstamo"
                           }
-                          onClick={() => handleNavigateToAction(notification.loanId!, notification.type, notification.clientName)}
+                          onClick={(e) => {
+                            e.stopPropagation(); // Evitar doble click
+                            handleNavigateToAction(notification.loanId!, notification.type, notification.clientName);
+                          }}
                         >
                           <ChevronRight className="h-4 w-4" />
                         </Button>
