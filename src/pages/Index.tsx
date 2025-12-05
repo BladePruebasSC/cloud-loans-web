@@ -22,6 +22,7 @@ import RegistrationCodesModule from '@/components/admin/RegistrationCodesModule'
 import RegistrationCodeModal from '@/components/RegistrationCodeModal';
 import { PawnShopModule } from '@/components/pawnshop/PawnShopModule';
 import PointOfSaleModule from '@/components/pos/PointOfSaleModule';
+import { QuickCollectionModule } from '@/components/collections/QuickCollectionModule';
 import { Building, CreditCard, Package, Users, BarChart3, Key } from 'lucide-react';
 
 // Componente para mostrar acceso restringido
@@ -150,6 +151,12 @@ const Index = () => {
       
       case '/mapa':
         return <MapModule />;
+      
+      case '/cobro-rapido':
+        if (!hasPermission('loans.view')) {
+          return <RestrictedAccess module="loans" />;
+        }
+        return <QuickCollectionModule />;
       
       case '/acuerdos':
         return <PaymentAgreementsModule />;

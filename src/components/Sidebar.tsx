@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { 
+import {
   Home,
   CreditCard, 
   Package, 
@@ -21,7 +21,8 @@ import {
   Calculator,
   Lock,
   ShoppingCart,
-  Scale
+  Scale,
+  Zap
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -73,6 +74,12 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       name: 'Préstamos',
       icon: DollarSign,
       path: '/prestamos',
+      permission: 'loans.view',
+    },
+    {
+      name: 'Cobro Rápido',
+      icon: Zap,
+      path: '/cobro-rapido',
       permission: 'loans.view',
     },
     { 
