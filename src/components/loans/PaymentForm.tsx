@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -67,10 +68,16 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   preselectedLoan?: Loan;
   onPaymentSuccess?: () => void;
 }) => {
+  const navigate = useNavigate();
+  
   // Función helper para redondear a 2 decimales
   const roundToTwoDecimals = (value: number): number => {
     return Math.round(value * 100) / 100;
   };
+  
+  // Detectar si es dispositivo móvil
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+  
   const [loans, setLoans] = useState<Loan[]>([]);
   const [filteredLoans, setFilteredLoans] = useState<Loan[]>([]);
   const [loanSearch, setLoanSearch] = useState('');
@@ -1098,7 +1105,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         onPaymentSuccess();
       }
       
-      onBack();
+      // Si es móvil, redirigir a Cobro Rápido
+      if (isMobile) {
+        toast.success('Redirigiendo a Cobro Rápido...');
+        setTimeout(() => {
+          navigate('/cobro-rapido');
+        }, 1000);
+      } else {
+        onBack();
+      }
     } catch (error) {
       console.error('Error registering payment:', error);
       toast.error('Error al registrar el pago');

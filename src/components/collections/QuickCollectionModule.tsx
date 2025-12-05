@@ -79,6 +79,13 @@ export const QuickCollectionModule = () => {
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
 
+  const form = useForm<PaymentFormData>({
+    resolver: zodResolver(paymentSchema),
+    defaultValues: {
+      payment_method: 'cash',
+    },
+  });
+
   // Detectar si es dispositivo móvil
   useEffect(() => {
     const checkMobile = () => {
@@ -91,51 +98,12 @@ export const QuickCollectionModule = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Restringir acceso si no es móvil
-  if (!isMobile) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-        <Card className="max-w-md w-full">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-red-600">
-              <Smartphone className="h-6 w-6" />
-              Acceso Restringido
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-gray-600">
-              Este módulo está diseñado exclusivamente para dispositivos móviles.
-            </p>
-            <p className="text-sm text-gray-500">
-              Por favor, accede desde un teléfono o tablet para usar el módulo de Cobro Rápido.
-            </p>
-            <div className="pt-4">
-              <Button 
-                onClick={() => window.history.back()} 
-                className="w-full"
-              >
-                Volver
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  const form = useForm<PaymentFormData>({
-    resolver: zodResolver(paymentSchema),
-    defaultValues: {
-      payment_method: 'cash',
-    },
-  });
-
   // Cargar préstamos activos
   useEffect(() => {
-    if (user && companyId) {
+    if (user && companyId && isMobile) {
       fetchActiveLoans();
     }
-  }, [user, companyId]);
+  }, [user, companyId, isMobile]);
 
   // Filtrar préstamos cuando cambia el término de búsqueda
   useEffect(() => {
@@ -172,6 +140,38 @@ export const QuickCollectionModule = () => {
       form.setValue('loan_id', selectedLoan.id);
     }
   }, [selectedLoan, paymentStatus.currentPaymentRemaining, form]);
+
+  // Restringir acceso si no es móvil - DESPUÉS de todos los hooks
+  if (!isMobile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-red-600">
+              <Smartphone className="h-6 w-6" />
+              Acceso Restringido
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-gray-600">
+              Este módulo está diseñado exclusivamente para dispositivos móviles.
+            </p>
+            <p className="text-sm text-gray-500">
+              Por favor, accede desde un teléfono o tablet para usar el módulo de Cobro Rápido.
+            </p>
+            <div className="pt-4">
+              <Button 
+                onClick={() => window.history.back()} 
+                className="w-full"
+              >
+                Volver
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   const fetchActiveLoans = async () => {
     if (!user || !companyId) return;
