@@ -440,68 +440,90 @@ export const BackupExportModule = () => {
         fetchExpenses()
       ]);
 
+      // Log para debugging
+      console.log('📊 Backup completo - Datos obtenidos:', {
+        clients: clients?.length || 0,
+        loans: loans?.length || 0,
+        payments: payments?.length || 0,
+        inventory: inventory?.length || 0,
+        sales: sales?.length || 0,
+        pawnshop: pawnshop?.length || 0,
+        documents: documents?.length || 0,
+        requests: requests?.length || 0,
+        agreements: agreements?.length || 0,
+        expenses: expenses?.length || 0
+      });
+
       const allData = {
-        clients: formatDataForExport(clients),
-        loans: formatDataForExport(loans),
-        payments: formatDataForExport(payments),
-        inventory: formatDataForExport(inventory),
-        sales: formatDataForExport(sales),
-        pawnshop: formatDataForExport(pawnshop),
-        documents: formatDataForExport(documents),
-        requests: formatDataForExport(requests),
-        agreements: formatDataForExport(agreements),
-        expenses: formatDataForExport(expenses)
+        clients: formatDataForExport(clients || []),
+        loans: formatDataForExport(loans || []),
+        payments: formatDataForExport(payments || []),
+        inventory: formatDataForExport(inventory || []),
+        sales: formatDataForExport(sales || []),
+        pawnshop: formatDataForExport(pawnshop || []),
+        documents: formatDataForExport(documents || []),
+        requests: formatDataForExport(requests || []),
+        agreements: formatDataForExport(agreements || []),
+        expenses: formatDataForExport(expenses || [])
       };
+
+      // Filtrar solo las hojas que tienen datos
+      const sheetsWithData = [
+        { name: 'Clientes', data: allData.clients },
+        { name: 'Préstamos', data: allData.loans },
+        { name: 'Pagos', data: allData.payments },
+        { name: 'Inventario', data: allData.inventory },
+        { name: 'Ventas', data: allData.sales },
+        { name: 'Empeños', data: allData.pawnshop },
+        { name: 'Documentos', data: allData.documents },
+        { name: 'Solicitudes', data: allData.requests },
+        { name: 'Acuerdos', data: allData.agreements },
+        { name: 'Gastos', data: allData.expenses }
+      ].filter(sheet => sheet.data.length > 0);
+
+      if (sheetsWithData.length === 0) {
+        toast.warning('No hay datos para exportar en el backup completo');
+        setLoadingState(loadingKey, false);
+        return;
+      }
 
       const filename = `backup_completo_${new Date().toISOString().split('T')[0]}`;
 
+      // Crear resumen de exportación
+      const summary = sheetsWithData.map(sheet => `${sheet.name}: ${sheet.data.length} registros`).join(', ');
+
       switch (format) {
         case 'excel':
-          exportToExcelMultiSheet([
-            { name: 'Clientes', data: allData.clients },
-            { name: 'Préstamos', data: allData.loans },
-            { name: 'Pagos', data: allData.payments },
-            { name: 'Inventario', data: allData.inventory },
-            { name: 'Ventas', data: allData.sales },
-            { name: 'Empeños', data: allData.pawnshop },
-            { name: 'Documentos', data: allData.documents },
-            { name: 'Solicitudes', data: allData.requests },
-            { name: 'Acuerdos', data: allData.agreements },
-            { name: 'Gastos', data: allData.expenses }
-          ], filename);
+          exportToExcelMultiSheet(sheetsWithData, filename);
+          toast.success(`Backup completo exportado exitosamente. ${summary}`);
           break;
         case 'csv':
           // Para CSV, exportar cada módulo por separado
-          Object.entries(allData).forEach(([key, data]) => {
-            if (data.length > 0) {
-              exportToCSV(data, `${filename}_${key}`);
-            }
+          sheetsWithData.forEach((sheet) => {
+            const keyMap: { [key: string]: string } = {
+              'Clientes': 'clientes',
+              'Préstamos': 'prestamos',
+              'Pagos': 'pagos',
+              'Inventario': 'inventario',
+              'Ventas': 'ventas',
+              'Empeños': 'empenos',
+              'Documentos': 'documentos',
+              'Solicitudes': 'solicitudes',
+              'Acuerdos': 'acuerdos',
+              'Gastos': 'gastos'
+            };
+            exportToCSV(sheet.data, `${filename}_${keyMap[sheet.name] || sheet.name.toLowerCase()}`);
           });
+          toast.success(`Backup completo exportado exitosamente. ${summary}`);
           break;
         case 'pdf':
-          // Para PDF, crear un documento con todas las secciones
-          // Por ahora, exportar cada módulo por separado
-          Object.entries(allData).forEach(([key, data]) => {
-            if (data.length > 0) {
-              const titles: { [key: string]: string } = {
-                clients: 'Clientes',
-                loans: 'Préstamos',
-                payments: 'Pagos',
-                inventory: 'Inventario',
-                sales: 'Ventas',
-                pawnshop: 'Empeños',
-                documents: 'Documentos',
-                requests: 'Solicitudes',
-                agreements: 'Acuerdos',
-                expenses: 'Gastos'
-              };
-              exportToPDF(data, `${filename}_${key}`, titles[key]);
-            }
+          // Para PDF, exportar cada módulo por separado
+          sheetsWithData.forEach((sheet) => {
+            exportToPDF(sheet.data, `${filename}_${sheet.name.toLowerCase()}`, sheet.name);
           });
+          toast.success(`Backup completo exportado exitosamente. ${summary}`);
           break;
       }
-
-      toast.success('Backup completo exportado exitosamente');
     } catch (error: any) {
       console.error('Error in full backup:', error);
       toast.error(`Error al crear backup: ${error.message || 'Error desconocido'}`);

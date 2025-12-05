@@ -55,9 +55,11 @@ export const exportToExcel = (data: any[], filename: string, sheetName: string =
   const ws = XLSX.utils.json_to_sheet(data);
   
   // Ajustar ancho de columnas
-  const maxWidth = 50;
-  const wscols = Object.keys(data[0]).map(() => ({ wch: maxWidth }));
-  ws['!cols'] = wscols;
+  if (data.length > 0 && Object.keys(data[0]).length > 0) {
+    const maxWidth = 50;
+    const wscols = Object.keys(data[0]).map(() => ({ wch: maxWidth }));
+    ws['!cols'] = wscols;
+  }
   
   // Agregar worksheet al workbook
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -80,11 +82,24 @@ export const exportToExcelMultiSheet = (
   const wb = XLSX.utils.book_new();
 
   sheets.forEach(({ name, data }) => {
-    if (data.length > 0) {
-      const ws = XLSX.utils.json_to_sheet(data);
-      const maxWidth = 50;
-      const wscols = Object.keys(data[0]).map(() => ({ wch: maxWidth }));
-      ws['!cols'] = wscols;
+    if (data && data.length > 0 && Object.keys(data[0]).length > 0) {
+      try {
+        const ws = XLSX.utils.json_to_sheet(data);
+        const maxWidth = 50;
+        const wscols = Object.keys(data[0]).map(() => ({ wch: maxWidth }));
+        ws['!cols'] = wscols;
+        XLSX.utils.book_append_sheet(wb, ws, name);
+      } catch (error) {
+        console.error(`Error creando hoja ${name}:`, error);
+        // Crear una hoja vacía con mensaje de error
+        const errorData = [{ error: `Error al procesar datos de ${name}` }];
+        const ws = XLSX.utils.json_to_sheet(errorData);
+        XLSX.utils.book_append_sheet(wb, ws, name);
+      }
+    } else {
+      // Crear hoja vacía con mensaje informativo
+      const emptyData = [{ mensaje: `No hay datos para ${name}` }];
+      const ws = XLSX.utils.json_to_sheet(emptyData);
       XLSX.utils.book_append_sheet(wb, ws, name);
     }
   });
@@ -183,7 +198,15 @@ export const exportToPDF = (
  * Formatea datos para exportación (limpia y formatea valores)
  */
 export const formatDataForExport = (data: any[]): any[] => {
+  if (!data || data.length === 0) {
+    return [];
+  }
+
   return data.map(item => {
+    if (!item || typeof item !== 'object') {
+      return {};
+    }
+
     const formatted: any = {};
     Object.keys(item).forEach(key => {
       const value = item[key];
@@ -193,11 +216,29 @@ export const formatDataForExport = (data: any[]): any[] => {
         if (Array.isArray(value)) {
           formatted[key] = value.length > 0 ? JSON.stringify(value) : '';
         } else {
-          // Intentar extraer valores útiles de objetos
+          // Intentar extraer valores útiles de objetos anidados
+          // Para clients (objeto simple)
           if (value.full_name) formatted[`${key}_nombre`] = value.full_name;
           if (value.dni) formatted[`${key}_dni`] = value.dni;
           if (value.email) formatted[`${key}_email`] = value.email;
           if (value.phone) formatted[`${key}_telefono`] = value.phone;
+          if (value.id) formatted[`${key}_id`] = value.id;
+          if (value.amount !== undefined) formatted[`${key}_monto`] = value.amount;
+          
+          // Para objetos anidados dentro de otros (ej: loans.clients)
+          if (value.clients) {
+            if (value.clients.full_name) formatted[`${key}_cliente_nombre`] = value.clients.full_name;
+            if (value.clients.dni) formatted[`${key}_cliente_dni`] = value.clients.dni;
+          }
+          
+          // Si no se pudo extraer nada útil, convertir a string
+          if (Object.keys(formatted).filter(k => k.startsWith(`${key}_`)).length === 0) {
+            try {
+              formatted[key] = JSON.stringify(value);
+            } catch {
+              formatted[key] = String(value);
+            }
+          }
         }
       } else {
         formatted[key] = value;
