@@ -1533,12 +1533,12 @@ export const LoansModule = () => {
                  <CardTitle className="text-sm font-medium">Vencidos</CardTitle>
                  <AlertCircle className="h-4 w-4 text-red-600" />
                </CardHeader>
-               <CardContent>
-                 <div className="text-2xl font-bold text-red-600">{loans.filter(loan => 
-                   loan.status === 'overdue' && loan.status !== 'cancelled' && loan.status !== 'paid'
-                 ).length}</div>
-                 <p className="text-xs text-muted-foreground">Pagos atrasados</p>
-               </CardContent>
+                <CardContent>
+                  <div className="text-2xl font-bold text-red-600">{loans.filter(loan => 
+                    loan.status === 'overdue'
+                  ).length}</div>
+                  <p className="text-xs text-muted-foreground">Pagos atrasados</p>
+                </CardContent>
              </Card>
 
              <Card>
@@ -1547,11 +1547,11 @@ export const LoansModule = () => {
                  <Calendar className="h-4 w-4 text-yellow-600" />
                </CardHeader>
                <CardContent>
-                 <div className="text-2xl font-bold text-yellow-600">{loans.filter(loan => {
-                   // Excluir préstamos cancelados o pagados
-                   if (loan.status === 'cancelled' || loan.status === 'paid') {
-                     return false;
-                   }
+                  <div className="text-2xl font-bold text-yellow-600">{loans.filter(loan => {
+                    // Excluir préstamos eliminados o pagados
+                    if (loan.status === 'deleted' || loan.status === 'paid') {
+                      return false;
+                    }
                    const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
                    const today = getCurrentDateInSantoDomingo();
                    const diffDays = Math.ceil((nextPayment.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));

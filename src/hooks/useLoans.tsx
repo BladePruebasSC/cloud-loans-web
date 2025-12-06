@@ -27,6 +27,10 @@ export interface Loan {
   total_late_fee_paid?: number;
   paid_installments?: number[];
   
+  // Campos de eliminación
+  deleted_at?: string;
+  deleted_reason?: string;
+  
   client?: {
     full_name: string;
     dni: string;
