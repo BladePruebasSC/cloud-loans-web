@@ -72,6 +72,7 @@ interface LoanHistoryViewProps {
   loanId: string;
   isOpen: boolean;
   onClose: () => void;
+  onRefresh?: () => void;
 }
 
 
@@ -81,7 +82,8 @@ interface LoanHistoryViewProps {
 export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({ 
   loanId, 
   isOpen, 
-  onClose 
+  onClose,
+  onRefresh
 }) => {
   const [history, setHistory] = useState<LoanHistoryEntry[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -116,6 +118,24 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       fetchLoanDetails();
     }
   }, [isOpen, loanId]);
+
+  // Escuchar eventos de actualización del préstamo para recargar el historial
+  useEffect(() => {
+    const handleLoanHistoryRefresh = (event: CustomEvent) => {
+      if (event.detail && event.detail.loanId === loanId && isOpen) {
+        console.log('🔄 Recargando historial después de actualización del préstamo...');
+        fetchLoanHistory();
+        fetchPayments();
+        fetchLoanDetails();
+      }
+    };
+
+    window.addEventListener('loanHistoryRefresh', handleLoanHistoryRefresh as EventListener);
+    
+    return () => {
+      window.removeEventListener('loanHistoryRefresh', handleLoanHistoryRefresh as EventListener);
+    };
+  }, [loanId, isOpen]);
 
   const fetchLoanDetails = async () => {
     try {
@@ -155,6 +175,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
   const fetchLoanHistory = async () => {
     try {
+      console.log('🔍 Fetching loan history for loan:', loanId);
       // Intentar obtener historial si la tabla existe
       const { data, error } = await supabase
         .from('loan_history')
@@ -165,17 +186,19 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       if (error) {
         // Si la tabla no existe (42P01) o no hay permisos, simplemente no mostrar historial
         if (error.code === '42P01' || error.code === 'PGRST116') {
-          console.log('Loan history table not available');
+          console.log('⚠️ Loan history table not available:', error);
           setHistory([]);
         } else {
-          console.error('Error fetching loan history:', error);
+          console.error('❌ Error fetching loan history:', error);
           setHistory([]);
         }
       } else {
+        console.log('✅ Loan history fetched:', data?.length || 0, 'entries');
+        console.log('📋 History entries:', data);
         setHistory(data || []);
       }
     } catch (error) {
-      console.log('Loan history table not available');
+      console.error('❌ Exception fetching loan history:', error);
       setHistory([]);
     }
   };
@@ -244,6 +267,8 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       case 'interest_adjustment': return <TrendingUp className="h-4 w-4 text-orange-600" />;
       case 'term_extension': return <Calendar className="h-4 w-4 text-purple-600" />;
       case 'balance_adjustment': return <Edit className="h-4 w-4 text-gray-600" />;
+      case 'add_charge': return <TrendingUp className="h-4 w-4 text-blue-600" />;
+      case 'remove_late_fee': return <TrendingDown className="h-4 w-4 text-red-600" />;
       default: return <History className="h-4 w-4 text-gray-600" />;
     }
   };
@@ -255,7 +280,9 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       interest_adjustment: 'Ajuste de Tasa',
       term_extension: 'Extensión de Plazo',
       balance_adjustment: 'Ajuste de Balance',
-      rate_change: 'Cambio de Tasa'
+      rate_change: 'Cambio de Tasa',
+      add_charge: 'Agregar Cargo',
+      remove_late_fee: 'Eliminar Mora'
     };
     return labels[type as keyof typeof labels] || type;
   };
@@ -283,101 +310,263 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
           </DialogHeader>
 
           <div className="space-y-6">
-            {/* Historial de Pagos */}
+            {/* Movimientos (Pagos, Cargos, Eliminaciones de Mora) */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Receipt className="h-5 w-5" />
-                  Historial de Pagos ({payments.length})
+                  <History className="h-5 w-5" />
+                  Movimientos ({(() => {
+                    const movements = payments.length + 
+                      history.filter(h => h.change_type === 'add_charge' || h.change_type === 'remove_late_fee').length;
+                    return movements;
+                  })()})
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {loading ? (
-                  <div className="text-center py-8">Cargando historial...</div>
-                ) : payments.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <Receipt className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p>No hay pagos registrados</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                                         {payments.map((payment) => (
-                       <div 
-                         key={payment.id} 
-                         className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
-                       >
-                         <div className="flex items-center justify-between">
-                           <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <Receipt className={`h-4 w-4 ${payment.status === 'completed' ? 'text-green-600' : 'text-yellow-600'}`} />
-                              <span className="font-semibold">Pago de ${payment.amount.toLocaleString()}</span>
-                              <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
-                                {payment.status === 'completed' ? 'Completado' : 'Pendiente'}
-                              </Badge>
-                              {payment.late_fee > 0 && (
-                                <Badge variant="destructive">Con Mora</Badge>
+                  <div className="text-center py-8">Cargando movimientos...</div>
+                ) : (() => {
+                  // Combinar pagos y movimientos de historial
+                  const movements: Array<{
+                    id: string;
+                    type: 'payment' | 'add_charge' | 'remove_late_fee';
+                    date: Date;
+                    data: any;
+                  }> = [];
+
+                  // Agregar pagos
+                  payments.forEach(payment => {
+                    const dateStr = payment.payment_time_local || payment.created_at;
+                    movements.push({
+                      id: payment.id,
+                      type: 'payment',
+                      date: new Date(dateStr),
+                      data: payment
+                    });
+                  });
+
+                  // Agregar cargos y eliminaciones de mora del historial
+                  console.log('🔍 Processing history entries:', history.length);
+                  history.forEach(entry => {
+                    console.log('🔍 Processing entry:', entry.change_type, entry.id);
+                    if (entry.change_type === 'add_charge' || entry.change_type === 'remove_late_fee') {
+                      console.log('✅ Adding movement:', entry.change_type);
+                      movements.push({
+                        id: entry.id,
+                        type: entry.change_type as 'add_charge' | 'remove_late_fee',
+                        date: new Date(entry.created_at),
+                        data: entry
+                      });
+                    }
+                  });
+                  
+                  console.log('📊 Total movements:', movements.length);
+
+                  // Ordenar por fecha (más reciente primero)
+                  movements.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+                  if (movements.length === 0) {
+                    return (
+                      <div className="text-center py-8 text-gray-500">
+                        <History className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p>No hay movimientos registrados</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      {movements.map((movement) => {
+                        if (movement.type === 'payment') {
+                          const payment = movement.data as Payment;
+                          return (
+                            <div 
+                              key={movement.id} 
+                              className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-3 mb-2">
+                                    <Receipt className={`h-4 w-4 ${payment.status === 'completed' ? 'text-green-600' : 'text-yellow-600'}`} />
+                                    <span className="font-semibold">Pago de ${payment.amount.toLocaleString()}</span>
+                                    <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
+                                      {payment.status === 'completed' ? 'Completado' : 'Pendiente'}
+                                    </Badge>
+                                    {payment.late_fee > 0 && (
+                                      <Badge variant="destructive">Con Mora</Badge>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                                    <div>
+                                      <span className="font-medium">Fecha:</span> {formatPaymentDateTime(payment)}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Principal:</span> ${payment.principal_amount.toLocaleString()}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Interés:</span> ${payment.interest_amount.toLocaleString()}
+                                    </div>
+                                    <div>
+                                      <span className="font-medium">Método:</span> {getPaymentMethodLabel(payment.payment_method)}
+                                    </div>
+                                  </div>
+
+                                  {payment.late_fee > 0 && (
+                                    <div className="text-sm text-red-600 mt-2">
+                                      <span className="font-medium">Mora:</span> ${payment.late_fee.toLocaleString()}
+                                    </div>
+                                  )}
+
+                                  {payment.reference_number && (
+                                    <div className="text-sm text-gray-600 mt-2">
+                                      <span className="font-medium">Referencia:</span> {payment.reference_number}
+                                    </div>
+                                  )}
+
+                                  {payment.notes && (
+                                    <div className="text-sm text-gray-600 mt-2">
+                                      <span className="font-medium">Notas:</span> {payment.notes}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 ml-4">
+                                  <PaymentActions 
+                                    payment={payment} 
+                                    onPaymentUpdated={refreshAfterPaymentDeletion}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        } else if (movement.type === 'add_charge') {
+                          const entry = movement.data as LoanHistoryEntry;
+                          return (
+                            <div 
+                              key={movement.id} 
+                              className="border rounded-lg p-4 hover:bg-gray-50 transition-colors bg-blue-50/30"
+                            >
+                              <div className="flex items-center gap-3 mb-2">
+                                <TrendingUp className="h-4 w-4 text-blue-600" />
+                                <span className="font-semibold">Cargo Agregado: ${entry.amount?.toLocaleString()}</span>
+                                <Badge variant="outline" className="bg-blue-100 text-blue-800">Cargo</Badge>
+                              </div>
+                              
+                              <div className="text-sm text-gray-600 mb-2">
+                                <span className="font-medium">Fecha:</span>{' '}
+                                {formatInTimeZone(
+                                  addHours(new Date(entry.created_at), 2),
+                                  'America/Santo_Domingo',
+                                  'dd MMM yyyy, hh:mm a'
+                                )}
+                              </div>
+
+                              {(entry as any).charge_date && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Fecha del Cargo:</span>{' '}
+                                  {new Date((entry as any).charge_date).toLocaleDateString('es-DO', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                  })}
+                                </div>
+                              )}
+
+                              <div className="text-sm text-gray-600 mb-2">
+                                <span className="font-medium">Balance Anterior:</span> ${entry.old_values.balance?.toLocaleString()}
+                              </div>
+
+                              <div className="text-sm text-gray-600 mb-2">
+                                <span className="font-medium">Nuevo Balance:</span> ${entry.new_values.balance?.toLocaleString()}
+                              </div>
+
+                              {entry.reason && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Razón:</span> {entry.reason}
+                                </div>
+                              )}
+
+                              {(entry as any).reference_number && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Referencia:</span> {(entry as any).reference_number}
+                                </div>
+                              )}
+
+                              {(entry as any).notes && (
+                                <div className="text-sm text-gray-600 mt-2 pt-2 border-t">
+                                  <span className="font-medium">Notas:</span> {(entry as any).notes}
+                                </div>
                               )}
                             </div>
-                            
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                              <div>
-                                <span className="font-medium">Fecha:</span> {formatPaymentDateTime(payment)}
+                          );
+                        } else if (movement.type === 'remove_late_fee') {
+                          const entry = movement.data as LoanHistoryEntry;
+                          return (
+                            <div 
+                              key={movement.id} 
+                              className="border rounded-lg p-4 hover:bg-gray-50 transition-colors bg-red-50/30"
+                            >
+                              <div className="flex items-center gap-3 mb-2">
+                                <TrendingDown className="h-4 w-4 text-red-600" />
+                                <span className="font-semibold">Mora Eliminada: RD${entry.amount?.toLocaleString()}</span>
+                                <Badge variant="outline" className="bg-red-100 text-red-800">Eliminación de Mora</Badge>
                               </div>
-                              <div>
-                                <span className="font-medium">Principal:</span> ${payment.principal_amount.toLocaleString()}
+                              
+                              <div className="text-sm text-gray-600 mb-2">
+                                <span className="font-medium">Fecha:</span>{' '}
+                                {formatInTimeZone(
+                                  addHours(new Date(entry.created_at), 2),
+                                  'America/Santo_Domingo',
+                                  'dd MMM yyyy, hh:mm a'
+                                )}
                               </div>
-                              <div>
-                                <span className="font-medium">Interés:</span> ${payment.interest_amount.toLocaleString()}
-                              </div>
-                              <div>
-                                <span className="font-medium">Método:</span> {getPaymentMethodLabel(payment.payment_method)}
-                              </div>
+
+                              {entry.old_values.current_late_fee !== undefined && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Mora Anterior:</span> RD${entry.old_values.current_late_fee.toLocaleString()}
+                                </div>
+                              )}
+
+                              {entry.new_values.current_late_fee !== undefined && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Mora Nueva:</span> RD${entry.new_values.current_late_fee.toLocaleString()}
+                                </div>
+                              )}
+
+                              {entry.reason && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Razón:</span> {entry.reason}
+                                </div>
+                              )}
+
+                              {(entry as any).notes && (
+                                <div className="text-sm text-gray-600 mt-2 pt-2 border-t">
+                                  <span className="font-medium">Notas:</span> {(entry as any).notes}
+                                </div>
+                              )}
                             </div>
-
-                            {payment.late_fee > 0 && (
-                              <div className="text-sm text-red-600 mt-2">
-                                <span className="font-medium">Mora:</span> ${payment.late_fee.toLocaleString()}
-                              </div>
-                            )}
-
-                            {payment.reference_number && (
-                              <div className="text-sm text-gray-600 mt-2">
-                                <span className="font-medium">Referencia:</span> {payment.reference_number}
-                              </div>
-                            )}
-
-                                                         {payment.notes && (
-                               <div className="text-sm text-gray-600 mt-2">
-                                 <span className="font-medium">Notas:</span> {payment.notes}
-                               </div>
-                             )}
-                           </div>
-                           <div className="flex items-center gap-2 ml-4">
-                             <PaymentActions 
-                               payment={payment} 
-                               onPaymentUpdated={refreshAfterPaymentDeletion}
-                             />
-                           </div>
-                         </div>
-                       </div>
-                     ))}
-                  </div>
-                )}
+                          );
+                        }
+                        return null;
+                      })}
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
 
-            {/* Historial de Cambios */}
-            {history.length > 0 && (
+            {/* Historial de Cambios (excluyendo add_charge y remove_late_fee que ya están en movimientos) */}
+            {history.filter(h => h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee').length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Edit className="h-5 w-5" />
-                    Historial de Modificaciones ({history.length})
+                    Historial de Modificaciones ({history.filter(h => h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee').length})
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {history.map((entry) => (
+                    {history.filter(h => h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee').map((entry) => (
                       <div key={entry.id} className="border rounded-lg p-4">
                         <div className="flex items-center gap-3 mb-2">
                           {getChangeTypeIcon(entry.change_type)}
@@ -397,7 +586,42 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
                         {entry.amount && (
                           <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Monto:</span> ${entry.amount.toLocaleString()}
+                            <span className="font-medium">
+                              {entry.change_type === 'add_charge' ? 'Monto del Cargo:' :
+                               entry.change_type === 'remove_late_fee' ? 'Mora Eliminada:' :
+                               'Monto:'} 
+                            </span> ${entry.amount.toLocaleString()}
+                          </div>
+                        )}
+
+                        {/* Información específica para agregar cargo */}
+                        {entry.change_type === 'add_charge' && (entry as any).charge_date && (
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Fecha del Cargo:</span>{' '}
+                            {new Date((entry as any).charge_date).toLocaleDateString('es-DO', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          </div>
+                        )}
+
+                        {entry.change_type === 'add_charge' && (entry as any).reference_number && (
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Referencia:</span> {(entry as any).reference_number}
+                          </div>
+                        )}
+
+                        {/* Información específica para eliminar mora */}
+                        {entry.change_type === 'remove_late_fee' && entry.old_values.current_late_fee !== undefined && (
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Mora Anterior:</span> RD${entry.old_values.current_late_fee.toLocaleString()}
+                          </div>
+                        )}
+
+                        {entry.change_type === 'remove_late_fee' && entry.new_values.current_late_fee !== undefined && (
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Mora Nueva:</span> RD${entry.new_values.current_late_fee.toLocaleString()}
                           </div>
                         )}
 
@@ -414,6 +638,9 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                               {entry.old_values.rate && (
                                 <li>Tasa: {entry.old_values.rate}%</li>
                               )}
+                              {entry.old_values.current_late_fee !== undefined && entry.change_type !== 'remove_late_fee' && (
+                                <li>Mora: RD${entry.old_values.current_late_fee.toLocaleString()}</li>
+                              )}
                             </ul>
                           </div>
                           <div>
@@ -428,9 +655,19 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                               {entry.new_values.rate && (
                                 <li>Tasa: {entry.new_values.rate}%</li>
                               )}
+                              {entry.new_values.current_late_fee !== undefined && entry.change_type !== 'remove_late_fee' && (
+                                <li>Mora: RD${entry.new_values.current_late_fee.toLocaleString()}</li>
+                              )}
                             </ul>
                           </div>
                         </div>
+
+                        {/* Mostrar notas si existen */}
+                        {(entry as any).notes && (
+                          <div className="text-sm text-gray-600 mt-2 pt-2 border-t">
+                            <span className="font-medium">Notas:</span> {(entry as any).notes}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { 
   Edit, 
   DollarSign, 
@@ -25,18 +26,37 @@ import {
   CreditCard,
   Receipt,
   Trash2,
-  PlusCircle
+  PlusCircle,
+  MinusCircle
 } from 'lucide-react';
 import { LateFeeInfo } from './LateFeeInfo';
 
 const updateSchema = z.object({
-  update_type: z.enum(['add_charge', 'term_extension', 'balance_adjustment', 'delete_loan']),
+  update_type: z.enum(['add_charge', 'term_extension', 'balance_adjustment', 'delete_loan', 'remove_late_fee']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
+  late_fee_amount: z.number().min(0.01, 'El monto de mora debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
   adjustment_reason: z.string().min(1, 'Debe especificar la razón del ajuste'),
   payment_method: z.string().optional(),
   reference_number: z.string().optional(),
   notes: z.string().optional(),
+  charge_date: z.string().optional(), // Fecha de creación del cargo
+}).refine((data) => {
+  if (data.update_type === 'remove_late_fee') {
+    return data.late_fee_amount !== undefined && data.late_fee_amount > 0;
+  }
+  return true;
+}, {
+  message: 'Debe especificar el monto de mora a eliminar',
+  path: ['late_fee_amount'],
+}).refine((data) => {
+  if (data.update_type === 'add_charge') {
+    return data.charge_date !== undefined && data.charge_date !== '';
+  }
+  return true;
+}, {
+  message: 'Debe especificar la fecha del cargo',
+  path: ['charge_date'],
 });
 
 type UpdateFormData = z.infer<typeof updateSchema>;
@@ -54,6 +74,12 @@ interface Loan {
   paid_installments?: number[];
   payment_frequency?: string;
   first_payment_date?: string;
+  current_late_fee?: number;
+  late_fee_enabled?: boolean;
+  late_fee_rate?: number;
+  grace_period_days?: number;
+  max_late_fee?: number;
+  late_fee_calculation_type?: 'daily' | 'monthly' | 'compound';
   client: {
     full_name: string;
     dni: string;
@@ -74,6 +100,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   onUpdate 
 }) => {
   const [loading, setLoading] = useState(false);
+  const [currentLateFee, setCurrentLateFee] = useState(loan.current_late_fee || 0);
   const [calculatedValues, setCalculatedValues] = useState({
     newBalance: loan.remaining_balance,
     newPayment: loan.monthly_payment,
@@ -83,6 +110,108 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   });
   const { user, companyId } = useAuth();
 
+  // Obtener la mora actual del préstamo cuando se abre el formulario
+  // Calcular la mora basándose en las cuotas reales, no solo leer de la BD
+  useEffect(() => {
+    if (isOpen && loan.id) {
+      const fetchCurrentLateFee = async () => {
+        try {
+          // Primero intentar calcular la mora desde las cuotas reales
+          const lateFeeEnabled = (loan as any).late_fee_enabled;
+          const lateFeeRate = (loan as any).late_fee_rate;
+          
+          if (lateFeeEnabled && lateFeeRate) {
+            const loanData = {
+              id: loan.id,
+              remaining_balance: loan.remaining_balance,
+              next_payment_date: loan.next_payment_date,
+              late_fee_rate: lateFeeRate || 0,
+              grace_period_days: (loan as any).grace_period_days || 0,
+              max_late_fee: (loan as any).max_late_fee || 0,
+              late_fee_calculation_type: ((loan as any).late_fee_calculation_type || 'daily') as 'daily' | 'monthly' | 'compound',
+              late_fee_enabled: lateFeeEnabled || false,
+              amount: loan.amount,
+              term: loan.term_months || 0,
+              payment_frequency: loan.payment_frequency || 'monthly',
+              interest_rate: loan.interest_rate,
+              monthly_payment: loan.monthly_payment,
+              start_date: loan.start_date
+            };
+            
+            console.log('🔍 LoanUpdateForm: Calculando mora con datos:', loanData);
+            
+            const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanData);
+            if (breakdown && breakdown.totalLateFee !== undefined) {
+              const calculatedLateFee = Math.round(breakdown.totalLateFee * 100) / 100;
+              setCurrentLateFee(calculatedLateFee);
+              console.log('🔍 LoanUpdateForm: Mora calculada desde cuotas:', calculatedLateFee);
+              return;
+            }
+          }
+          
+          // Si no se pudo calcular, leer de la base de datos como fallback
+          const { data, error } = await supabase
+            .from('loans')
+            .select('current_late_fee, late_fee_enabled, late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type')
+            .eq('id', loan.id)
+            .single();
+          
+          if (!error && data) {
+            // Si la mora está habilitada pero el valor es 0, intentar calcular
+            if (data.late_fee_enabled && data.late_fee_rate && (!data.current_late_fee || data.current_late_fee === 0)) {
+              // Obtener datos completos del préstamo para calcular
+              const { data: fullLoan, error: fullLoanError } = await supabase
+                .from('loans')
+                .select('*')
+                .eq('id', loan.id)
+                .single();
+              
+              if (!fullLoanError && fullLoan) {
+                const loanDataForCalc = {
+                  id: fullLoan.id,
+                  remaining_balance: fullLoan.remaining_balance,
+                  next_payment_date: fullLoan.next_payment_date,
+                  late_fee_rate: fullLoan.late_fee_rate || 0,
+                  grace_period_days: fullLoan.grace_period_days || 0,
+                  max_late_fee: fullLoan.max_late_fee || 0,
+                  late_fee_calculation_type: (fullLoan.late_fee_calculation_type || 'daily') as 'daily' | 'monthly' | 'compound',
+                  late_fee_enabled: fullLoan.late_fee_enabled || false,
+                  amount: fullLoan.amount,
+                  term: fullLoan.term_months || 0,
+                  payment_frequency: fullLoan.payment_frequency || 'monthly',
+                  interest_rate: fullLoan.interest_rate,
+                  monthly_payment: fullLoan.monthly_payment,
+                  start_date: fullLoan.start_date
+                };
+                
+                const breakdown = await getLateFeeBreakdownFromInstallments(fullLoan.id, loanDataForCalc);
+                if (breakdown && breakdown.totalLateFee !== undefined) {
+                  const calculatedLateFee = Math.round(breakdown.totalLateFee * 100) / 100;
+                  setCurrentLateFee(calculatedLateFee);
+                  console.log('🔍 LoanUpdateForm: Mora calculada desde BD completa:', calculatedLateFee);
+                  return;
+                }
+              }
+            }
+            
+            setCurrentLateFee(data.current_late_fee || 0);
+            console.log('🔍 LoanUpdateForm: Mora leída de BD:', data.current_late_fee);
+          } else {
+            // Fallback al valor del préstamo
+            setCurrentLateFee(loan.current_late_fee || 0);
+            console.log('🔍 LoanUpdateForm: Usando mora del objeto loan:', loan.current_late_fee);
+          }
+        } catch (error) {
+          console.error('Error obteniendo mora actual:', error);
+          // Fallback al valor del préstamo
+          setCurrentLateFee(loan.current_late_fee || 0);
+        }
+      };
+      
+      fetchCurrentLateFee();
+    }
+  }, [isOpen, loan.id]);
+
   const form = useForm<UpdateFormData>({
     resolver: zodResolver(updateSchema),
     defaultValues: {
@@ -91,7 +220,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     },
   });
 
-  const watchedValues = form.watch(['update_type', 'amount', 'additional_months']);
+  const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount']);
 
   useEffect(() => {
     calculateUpdatedValues();
@@ -101,7 +230,57 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   useEffect(() => {
     const updateType = form.watch('update_type');
     form.setValue('adjustment_reason', '');
-  }, [form.watch('update_type')]);
+    form.setValue('late_fee_amount', undefined);
+    form.setValue('amount', undefined);
+    
+    // Si es "add_charge", establecer fecha por defecto (hoy)
+    if (updateType === 'add_charge') {
+      const defaultDate = new Date();
+      form.setValue('charge_date', defaultDate.toISOString().split('T')[0]);
+    } else {
+      form.setValue('charge_date', undefined);
+    }
+    
+    // Recalcular la mora cuando cambia el tipo de actualización
+    // Esto asegura que siempre se muestre el valor correcto
+    if (isOpen && loan.id) {
+      const recalculateLateFee = async () => {
+        try {
+          const lateFeeEnabled = (loan as any).late_fee_enabled;
+          const lateFeeRate = (loan as any).late_fee_rate;
+          
+          if (lateFeeEnabled && lateFeeRate) {
+            const loanData = {
+              id: loan.id,
+              remaining_balance: loan.remaining_balance,
+              next_payment_date: loan.next_payment_date,
+              late_fee_rate: lateFeeRate || 0,
+              grace_period_days: (loan as any).grace_period_days || 0,
+              max_late_fee: (loan as any).max_late_fee || 0,
+              late_fee_calculation_type: ((loan as any).late_fee_calculation_type || 'daily') as 'daily' | 'monthly' | 'compound',
+              late_fee_enabled: lateFeeEnabled || false,
+              amount: loan.amount,
+              term: loan.term_months || 0,
+              payment_frequency: loan.payment_frequency || 'monthly',
+              interest_rate: loan.interest_rate,
+              monthly_payment: loan.monthly_payment,
+              start_date: loan.start_date
+            };
+            
+            const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanData);
+            if (breakdown && breakdown.totalLateFee !== undefined) {
+              const calculatedLateFee = Math.round(breakdown.totalLateFee * 100) / 100;
+              setCurrentLateFee(calculatedLateFee);
+            }
+          }
+        } catch (error) {
+          console.error('Error recalculando mora:', error);
+        }
+      };
+      
+      recalculateLateFee();
+    }
+  }, [form.watch('update_type'), isOpen, loan.id]);
 
 
   const calculateUpdatedValues = () => {
@@ -157,6 +336,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         // Para eliminar préstamos, no necesitamos calcular nuevos valores
         // Solo marcamos como eliminado
         break;
+        
+      case 'remove_late_fee':
+        // No afecta el balance, solo la mora
+        break;
     }
 
     setCalculatedValues({
@@ -211,33 +394,23 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             ? existingInstallments[0].installment_number + 1
             : (loan.term_months || 0) + 1;
 
-          // Calcular la fecha de vencimiento de la nueva cuota
-          const frequency = loan.payment_frequency || 'monthly';
-          const lastPaymentDate = loan.next_payment_date ? new Date(loan.next_payment_date) : new Date();
-          const newDueDate = new Date(lastPaymentDate);
-
-          switch (frequency) {
-            case 'daily':
-              newDueDate.setDate(newDueDate.getDate() + 1);
-              break;
-            case 'weekly':
-              newDueDate.setDate(newDueDate.getDate() + 7);
-              break;
-            case 'biweekly':
-              newDueDate.setDate(newDueDate.getDate() + 14);
-              break;
-            case 'monthly':
-              newDueDate.setMonth(newDueDate.getMonth() + 1);
-              break;
-            case 'quarterly':
-              newDueDate.setMonth(newDueDate.getMonth() + 3);
-              break;
-            case 'yearly':
-              newDueDate.setFullYear(newDueDate.getFullYear() + 1);
-              break;
-            default:
-              newDueDate.setMonth(newDueDate.getMonth() + 1);
+          // Usar la fecha del cargo proporcionada por el usuario
+          if (!data.charge_date) {
+            toast.error('Debe especificar la fecha del cargo');
+            setLoading(false);
+            return;
           }
+
+          const chargeDate = new Date(data.charge_date);
+          if (isNaN(chargeDate.getTime())) {
+            toast.error('La fecha del cargo no es válida');
+            setLoading(false);
+            return;
+          }
+
+          // Calcular la fecha de vencimiento como un día después de la fecha del cargo
+          const newDueDate = new Date(chargeDate);
+          newDueDate.setDate(newDueDate.getDate() + 1);
 
           // Crear la nueva cuota con el cargo
           const newChargeInstallment = {
@@ -397,6 +570,124 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             deleted_reason: data.adjustment_reason,
           };
           break;
+          
+        case 'remove_late_fee':
+          {
+            const lateFeeToRemove = data.late_fee_amount || 0;
+            const currentLateFeeValue = currentLateFee || 0;
+            
+            if (lateFeeToRemove <= 0) {
+              toast.error('El monto de mora a eliminar debe ser mayor a 0');
+              setLoading(false);
+              return;
+            }
+            
+            if (lateFeeToRemove > currentLateFeeValue) {
+              toast.error(`No se puede eliminar más mora de la disponible. Mora actual: RD$${currentLateFeeValue.toLocaleString()}`);
+              setLoading(false);
+              return;
+            }
+            
+            // Obtener las cuotas pendientes para distribuir la mora eliminada
+            const { data: installments, error: installmentsError } = await supabase
+              .from('installments')
+              .select('*')
+              .eq('loan_id', loan.id)
+              .eq('is_paid', false)
+              .order('installment_number', { ascending: true });
+            
+            if (installmentsError) {
+              console.error('Error obteniendo cuotas:', installmentsError);
+              toast.error('Error al obtener información de cuotas');
+              setLoading(false);
+              return;
+            }
+            
+            if (!installments || installments.length === 0) {
+              // Si no hay cuotas pendientes, solo actualizar el campo
+              const newLateFee = Math.max(0, currentLateFeeValue - lateFeeToRemove);
+              loanUpdates = {
+                current_late_fee: newLateFee,
+              };
+              console.log(`✅ Eliminando mora: ${lateFeeToRemove} de ${currentLateFeeValue}, nueva mora: ${newLateFee}`);
+            } else {
+              // Calcular la mora total de todas las cuotas pendientes para distribuir proporcionalmente
+              const currentDate = new Date();
+              let totalCalculatedLateFee = 0;
+              const installmentLateFees: Array<{ id: string; lateFee: number }> = [];
+              
+              installments.forEach((installment: any) => {
+                const dueDate = new Date(installment.due_date);
+                const daysOverdue = Math.max(0, Math.floor((currentDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
+                
+                if (daysOverdue > 0) {
+                  const gracePeriod = (loan as any).grace_period_days || 0;
+                  const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
+                  
+                  if (effectiveDaysOverdue > 0) {
+                    const principalPerPayment = installment.principal_amount;
+                    const lateFeeRate = (loan as any).late_fee_rate || 2;
+                    
+                    let lateFee = 0;
+                    switch ((loan as any).late_fee_calculation_type) {
+                      case 'daily':
+                        lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
+                        break;
+                      case 'monthly':
+                        const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
+                        lateFee = (principalPerPayment * lateFeeRate / 100) * monthsOverdue;
+                        break;
+                      case 'compound':
+                        lateFee = principalPerPayment * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
+                        break;
+                      default:
+                        lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
+                    }
+                    
+                    if ((loan as any).max_late_fee && (loan as any).max_late_fee > 0) {
+                      lateFee = Math.min(lateFee, (loan as any).max_late_fee);
+                    }
+                    
+                    const remainingLateFee = Math.max(0, lateFee - (installment.late_fee_paid || 0));
+                    totalCalculatedLateFee += remainingLateFee;
+                    
+                    installmentLateFees.push({
+                      id: installment.id,
+                      lateFee: remainingLateFee
+                    });
+                  }
+                }
+              });
+              
+              // Distribuir proporcionalmente la mora eliminada entre las cuotas
+              if (totalCalculatedLateFee > 0) {
+                for (const installmentFee of installmentLateFees) {
+                  const proportion = installmentFee.lateFee / totalCalculatedLateFee;
+                  const lateFeeToRemoveFromThisInstallment = lateFeeToRemove * proportion;
+                  
+                  // Actualizar late_fee_paid en esta cuota
+                  const currentLateFeePaid = installments.find((i: any) => i.id === installmentFee.id)?.late_fee_paid || 0;
+                  const newLateFeePaid = currentLateFeePaid + lateFeeToRemoveFromThisInstallment;
+                  
+                  await supabase
+                    .from('installments')
+                    .update({ late_fee_paid: Math.round(newLateFeePaid * 100) / 100 })
+                    .eq('id', installmentFee.id);
+                  
+                  console.log(`✅ Cuota ${installments.find((i: any) => i.id === installmentFee.id)?.installment_number}: eliminando ${lateFeeToRemoveFromThisInstallment.toFixed(2)} de mora`);
+                }
+              }
+              
+              // Actualizar el campo current_late_fee en el préstamo
+              const newLateFee = Math.max(0, currentLateFeeValue - lateFeeToRemove);
+              loanUpdates = {
+                current_late_fee: newLateFee,
+              };
+              
+              console.log(`✅ Eliminando mora: ${lateFeeToRemove} de ${currentLateFeeValue}, nueva mora: ${newLateFee}`);
+            }
+          }
+          break;
       }
 
       // Agregar notas de auditoría
@@ -416,39 +707,98 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
       // Registrar en historial de cambios (si existe la tabla)
       try {
-        await supabase
+        const historyData: any = {
+          loan_id: loan.id,
+          change_type: updateType,
+          old_values: {
+            balance: loan.remaining_balance,
+            payment: loan.monthly_payment,
+            rate: loan.interest_rate
+          },
+          new_values: {
+            balance: calculatedValues.newBalance,
+            payment: calculatedValues.newPayment,
+            rate: loan.interest_rate
+          },
+          reason: data.adjustment_reason,
+          created_by: companyId,
+        };
+        
+        if (updateType === 'remove_late_fee') {
+          historyData.old_values.current_late_fee = currentLateFee;
+          historyData.new_values.current_late_fee = (currentLateFee || 0) - (data.late_fee_amount || 0);
+          historyData.amount = data.late_fee_amount;
+        } else if (updateType === 'add_charge') {
+          // Para agregar cargo, incluir información adicional
+          historyData.amount = data.amount;
+          historyData.old_values.balance = loan.remaining_balance;
+          historyData.new_values.balance = calculatedValues.newBalance;
+          // Agregar información adicional en notes si está disponible
+          if (data.notes) {
+            historyData.notes = data.notes;
+          }
+          if (data.reference_number) {
+            historyData.reference_number = data.reference_number;
+          }
+          if (data.charge_date) {
+            historyData.charge_date = data.charge_date;
+          }
+        } else {
+          historyData.amount = data.amount;
+        }
+        
+        const { data: insertedHistory, error: historyInsertError } = await supabase
           .from('loan_history')
-          .insert([{
-            loan_id: loan.id,
-            change_type: updateType,
-            old_values: {
-              balance: loan.remaining_balance,
-              payment: loan.monthly_payment,
-              rate: loan.interest_rate
-            },
-            new_values: {
-              balance: calculatedValues.newBalance,
-              payment: calculatedValues.newPayment,
-              rate: loan.interest_rate
-            },
-            reason: data.adjustment_reason,
-            amount: data.amount,
-            created_by: companyId,
-          }]);
+          .insert([historyData])
+          .select();
+        
+        if (historyInsertError) {
+          console.error('❌ Error insertando en historial:', historyInsertError);
+          console.error('📋 Datos que se intentaron insertar:', historyData);
+          // Mostrar error al usuario para que sepa que no se guardó
+          toast.error(`Error al guardar en historial: ${historyInsertError.message}`);
+        } else {
+          console.log('✅ Historial guardado exitosamente:', insertedHistory);
+          // Disparar evento inmediatamente después de guardar exitosamente
+          if (updateType === 'add_charge' || updateType === 'remove_late_fee') {
+            window.dispatchEvent(new CustomEvent('loanHistoryRefresh', { 
+              detail: { loanId: loan.id } 
+            }));
+          }
+        }
       } catch (historyError) {
         // Si la tabla no existe, continuar sin error
-        console.log('Loan history table not available:', historyError);
+        console.error('Error al guardar historial:', historyError);
       }
 
       const actionMessages = {
         add_charge: 'Cargo agregado exitosamente como nueva cuota',
         term_extension: 'Plazo extendido exitosamente',
         balance_adjustment: 'Balance ajustado exitosamente',
-        delete_loan: 'Préstamo eliminado exitosamente (recuperable por 2 meses)'
+        delete_loan: 'Préstamo eliminado exitosamente (recuperable por 2 meses)',
+        remove_late_fee: `Mora eliminada exitosamente`
       };
 
-      toast.success(actionMessages[updateType] || 'Préstamo actualizado exitosamente');
+      const message = updateType === 'remove_late_fee' 
+        ? `Mora eliminada exitosamente. Nueva mora: RD$${((currentLateFee || 0) - (data.late_fee_amount || 0)).toLocaleString()}`
+        : actionMessages[updateType] || 'Préstamo actualizado exitosamente';
+      
+      toast.success(message);
+      
+      // Si se eliminó mora, esperar un momento para que se actualicen las cuotas antes de cerrar
+      if (updateType === 'remove_late_fee') {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      // onUpdate() ya recarga los préstamos, pero también necesitamos recargar el historial
+      // El evento ya se disparó arriba si se guardó exitosamente
       onUpdate();
+      
+      // Esperar un momento antes de cerrar para que el historial se recargue
+      if (updateType === 'add_charge' || updateType === 'remove_late_fee') {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
       onClose();
     } catch (error) {
       console.error('Error updating loan:', error);
@@ -464,6 +814,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       case 'term_extension': return <Calendar className="h-4 w-4" />;
       case 'balance_adjustment': return <Calculator className="h-4 w-4" />;
       case 'delete_loan': return <Trash2 className="h-4 w-4" />;
+      case 'remove_late_fee': return <MinusCircle className="h-4 w-4" />;
       default: return <Edit className="h-4 w-4" />;
     }
   };
@@ -473,7 +824,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       add_charge: 'Agregar Cargo',
       term_extension: 'Extensión de Plazo',
       balance_adjustment: 'Ajuste de Balance',
-      delete_loan: 'Eliminar Préstamo'
+      delete_loan: 'Eliminar Préstamo',
+      remove_late_fee: 'Eliminar Mora'
     };
     return labels[type as keyof typeof labels] || type;
   };
@@ -524,6 +876,16 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           { value: 'cancelled_loan', label: 'Préstamo Cancelado' },
           { value: 'paid_outside_system', label: 'Pagado Fuera del Sistema' },
           { value: 'fraud', label: 'Fraude Detectado' },
+          { value: 'other', label: 'Otra Razón' }
+        ];
+      case 'remove_late_fee':
+        return [
+          { value: 'error_correction', label: 'Corrección de Error' },
+          { value: 'goodwill_adjustment', label: 'Ajuste de Buena Voluntad' },
+          { value: 'payment_agreement', label: 'Acuerdo de Pago' },
+          { value: 'administrative_decision', label: 'Decisión Administrativa' },
+          { value: 'client_complaint', label: 'Reclamo del Cliente' },
+          { value: 'system_error', label: 'Error del Sistema' },
           { value: 'other', label: 'Otra Razón' }
         ];
       default:
@@ -589,6 +951,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   Eliminar Préstamo
                                 </div>
                               </SelectItem>
+                              <SelectItem value="remove_late_fee">
+                                <div className="flex items-center gap-2">
+                                  <MinusCircle className="h-4 w-4" />
+                                  Eliminar Mora
+                                </div>
+                              </SelectItem>
                             </SelectContent>
                           </Select>
                           <FormMessage />
@@ -626,6 +994,52 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       />
                     )}
 
+                    {form.watch('update_type') === 'remove_late_fee' && (
+                      <div className="space-y-4">
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <div className="text-sm text-blue-800">
+                            <strong>Mora Actual:</strong> RD${currentLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                        <FormField
+                          control={form.control}
+                          name="late_fee_amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Monto de Mora a Eliminar</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder="0.00"
+                                  step="0.01"
+                                  min="0"
+                                  max={currentLateFee}
+                                  {...field}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    const numValue = value === '' ? 0 : parseFloat(value) || 0;
+                                    field.onChange(Math.min(numValue, currentLateFee));
+                                  }}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => {
+                            form.setValue('late_fee_amount', currentLateFee);
+                          }}
+                        >
+                          Eliminar Toda la Mora
+                        </Button>
+                      </div>
+                    )}
+
 
 
                     {form.watch('update_type') === 'term_extension' && (
@@ -658,19 +1072,59 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
 
                     {form.watch('update_type') === 'add_charge' && (
-                      <FormField
-                        control={form.control}
-                        name="reference_number"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Número de Referencia</FormLabel>
-                            <FormControl>
-                              <Input placeholder="Número de comprobante, factura, etc." {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
+                      <>
+                        <FormField
+                          control={form.control}
+                          name="charge_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Fecha del Cargo</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="date"
+                                  {...field}
+                                  value={field.value || ''}
+                                  max={new Date().toISOString().split('T')[0]}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                              <p className="text-xs text-gray-500">
+                                La fecha de vencimiento se calculará automáticamente como un día después. La mora se calculará desde la fecha de vencimiento, no desde el inicio del préstamo.
+                              </p>
+                            </FormItem>
+                          )}
+                        />
+                        {form.watch('charge_date') && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="text-sm text-blue-800">
+                              <strong>Fecha de Vencimiento Calculada:</strong>{' '}
+                              {(() => {
+                                const chargeDate = new Date(form.watch('charge_date') || '');
+                                const dueDate = new Date(chargeDate);
+                                dueDate.setDate(dueDate.getDate() + 1);
+                                return dueDate.toLocaleDateString('es-DO', {
+                                  year: 'numeric',
+                                  month: 'long',
+                                  day: 'numeric'
+                                });
+                              })()}
+                            </div>
+                          </div>
                         )}
-                      />
+                        <FormField
+                          control={form.control}
+                          name="reference_number"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Número de Referencia</FormLabel>
+                              <FormControl>
+                                <Input placeholder="Número de comprobante, factura, etc." {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </>
                     )}
 
                     <FormField
@@ -681,6 +1135,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           <FormLabel>
                             {form.watch('update_type') === 'add_charge' ? 'Razón del Cargo' :
                              form.watch('update_type') === 'delete_loan' ? 'Razón de Eliminación' :
+                             form.watch('update_type') === 'remove_late_fee' ? 'Razón de Eliminación de Mora' :
                              'Razón del Ajuste'}
                           </FormLabel>
                           <Select onValueChange={field.onChange} value={field.value}>
@@ -758,13 +1213,43 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           <span className="text-gray-600">Monto del Cargo:</span>
                           <span className="font-semibold text-blue-600">${form.watch('amount')?.toLocaleString()}</span>
                         </div>
+                        {form.watch('charge_date') && (
+                          <>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Fecha del Cargo:</span>
+                              <span className="font-semibold text-blue-600">
+                                {new Date(form.watch('charge_date') || '').toLocaleDateString('es-DO', {
+                                  year: 'numeric',
+                                  month: 'long',
+                                  day: 'numeric'
+                                })}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Fecha de Vencimiento:</span>
+                              <span className="font-semibold text-green-600">
+                                {(() => {
+                                  const chargeDate = new Date(form.watch('charge_date') || '');
+                                  const dueDate = new Date(chargeDate);
+                                  dueDate.setDate(dueDate.getDate() + 1);
+                                  return dueDate.toLocaleDateString('es-DO', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                  });
+                                })()}
+                              </span>
+                            </div>
+                          </>
+                        )}
                         
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2">
                           <div className="text-sm text-blue-800">
                             <strong>💡 Nueva Cuota</strong>
                             <p className="mt-1 text-xs">
                               Este cargo se agregará como una nueva cuota adicional al préstamo (ej: Cuota {loan.term_months + 1}). 
-                              Aparecerá en el desglose de cuotas y podrá generar mora si no se paga a tiempo.
+                              La fecha de vencimiento se calcula automáticamente como un día después de la fecha del cargo. 
+                              La mora se calculará desde la fecha de vencimiento, no desde el inicio del préstamo.
                             </p>
                           </div>
                         </div>
@@ -836,6 +1321,42 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       </div>
                     )}
 
+                    {form.watch('update_type') === 'remove_late_fee' && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Mora Actual:</span>
+                          <span className="font-semibold text-red-600">RD${currentLateFee.toLocaleString()}</span>
+                        </div>
+                        {form.watch('late_fee_amount') && form.watch('late_fee_amount')! > 0 && (
+                          <>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Mora a Eliminar:</span>
+                              <span className="font-semibold text-blue-600">-RD${form.watch('late_fee_amount')?.toLocaleString()}</span>
+                            </div>
+                            <hr className="my-2" />
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Nueva Mora:</span>
+                              <span className="font-bold text-lg text-green-600">
+                                RD${Math.max(0, currentLateFee - (form.watch('late_fee_amount') || 0)).toLocaleString()}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
+                          <div className="flex items-center gap-2 text-yellow-800">
+                            <AlertCircle className="h-4 w-4" />
+                            <div>
+                              <span className="font-semibold">⚠️ IMPORTANTE</span>
+                              <p className="text-sm mt-1">
+                                Esta acción elimina la mora del préstamo, pero NO registra un pago. 
+                                La mora simplemente se reduce del monto acumulado.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
                     {form.watch('update_type') === 'delete_loan' && (
                       <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-4">
                         <div className="flex items-center gap-2 text-red-800">
@@ -855,18 +1376,18 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               </CardContent>
             </Card>
 
-            {/* Desglose de Mora - mostrar en todas las actualizaciones excepto eliminar */}
-            {form.watch('update_type') !== 'delete_loan' && (
+            {/* Desglose de Mora - mostrar en todas las actualizaciones excepto eliminar y eliminar mora */}
+            {form.watch('update_type') !== 'delete_loan' && form.watch('update_type') !== 'remove_late_fee' && (
               <div className="mt-4">
                 <LateFeeInfo
                   loanId={loan.id}
                   nextPaymentDate={loan.next_payment_date}
-                  currentLateFee={0}
-                  lateFeeEnabled={true}
-                  lateFeeRate={2}
-                  gracePeriodDays={0}
-                  maxLateFee={0}
-                  lateFeeCalculationType="daily"
+                  currentLateFee={currentLateFee}
+                  lateFeeEnabled={(loan as any).late_fee_enabled || false}
+                  lateFeeRate={(loan as any).late_fee_rate || 0}
+                  gracePeriodDays={(loan as any).grace_period_days || 0}
+                  maxLateFee={(loan as any).max_late_fee || 0}
+                  lateFeeCalculationType={((loan as any).late_fee_calculation_type || 'daily') as 'daily' | 'monthly' | 'compound'}
                   remainingBalance={loan.remaining_balance}
                   clientName={loan.client.full_name}
                   amount={loan.amount}

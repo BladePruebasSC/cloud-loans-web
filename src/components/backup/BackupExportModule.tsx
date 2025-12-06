@@ -706,6 +706,164 @@ export const BackupExportModule = () => {
           }
           break;
 
+        case 'loans':
+          // Validar campos requeridos - hacer validación más flexible
+          // Primero verificar qué columnas están disponibles
+          if (data.length === 0) {
+            throw new Error('El archivo está vacío');
+          }
+          
+          const firstRow = data[0];
+          const availableColumns = Object.keys(firstRow).map(k => k.toLowerCase());
+          
+          // Detectar si el archivo es de clientes en lugar de préstamos
+          const hasClientColumns = availableColumns.some(col => 
+            ['full_name', 'user_id', 'phone'].includes(col)
+          );
+          const hasLoanColumns = availableColumns.some(col => 
+            ['amount', 'monto', 'interest_rate', 'tasa', 'term_months', 'plazo'].includes(col)
+          );
+          
+          if (hasClientColumns && !hasLoanColumns) {
+            throw new Error('El archivo parece ser de clientes, no de préstamos. Por favor, selecciona "Clientes" como módulo o exporta los préstamos correctamente.');
+          }
+          
+          // Buscar variantes de nombres de columnas
+          const findColumn = (variants: string[]) => {
+            for (const variant of variants) {
+              const found = availableColumns.find(col => col === variant.toLowerCase() || col.includes(variant.toLowerCase()));
+              if (found) {
+                return Object.keys(firstRow).find(k => k.toLowerCase() === found);
+              }
+            }
+            return null;
+          };
+          
+          const dniColumn = findColumn(['clients_dni', 'client_dni', 'dni', 'clients.dni', 'client.dni']);
+          const amountColumn = findColumn(['amount', 'monto']);
+          const interestColumn = findColumn(['interest_rate', 'interestrate', 'tasa', 'tasa_interes']);
+          const termColumn = findColumn(['term_months', 'termmonths', 'plazo', 'term']);
+          
+          console.log('🔍 Columnas encontradas en archivo de préstamos:', {
+            disponibles: availableColumns,
+            dni: dniColumn,
+            amount: amountColumn,
+            interest: interestColumn,
+            term: termColumn
+          });
+          
+          if (!dniColumn || !amountColumn || !interestColumn || !termColumn) {
+            const missing = [];
+            if (!dniColumn) missing.push('DNI del cliente (clients_dni, client_dni, dni)');
+            if (!amountColumn) missing.push('Monto (amount, monto)');
+            if (!interestColumn) missing.push('Tasa de interés (interest_rate, tasa)');
+            if (!termColumn) missing.push('Plazo (term_months, plazo)');
+            throw new Error(`Campos faltantes: ${missing.join(', ')}. Columnas disponibles: ${availableColumns.join(', ')}. Asegúrate de que el archivo sea una exportación de préstamos, no de clientes.`);
+          }
+          
+          for (const row of data) {
+            try {
+              // Buscar cliente por DNI usando la columna encontrada
+              const clientDni = row[dniColumn] || row.client_dni || row.clients_dni || row.dni;
+              if (!clientDni || clientDni === '') {
+                console.error('Error: No se encontró DNI del cliente en la fila');
+                errors++;
+                continue;
+              }
+
+              const { data: client, error: clientError } = await supabase
+                .from('clients')
+                .select('id')
+                .eq('dni', clientDni)
+                .eq('user_id', companyId)
+                .single();
+
+              if (clientError || !client) {
+                console.error(`Error: Cliente con DNI ${clientDni} no encontrado`);
+                errors++;
+                continue;
+              }
+
+              // Preparar datos del préstamo usando las columnas encontradas
+              const amount = parseFloat(row[amountColumn] || row.amount) || 0;
+              const interestRate = parseFloat(row[interestColumn] || row.interest_rate) || 0;
+              const termMonths = parseInt(row[termColumn] || row.term_months) || 1;
+              const monthlyPayment = parseFloat(row.monthly_payment) || 0;
+              const totalAmount = parseFloat(row.total_amount) || amount;
+              const remainingBalance = parseFloat(row.remaining_balance) || totalAmount;
+
+              // Fechas
+              const startDate = row.start_date || row.first_payment_date || new Date().toISOString().split('T')[0];
+              const firstPaymentDate = row.first_payment_date || startDate;
+              const nextPaymentDate = row.next_payment_date || firstPaymentDate;
+              const endDate = row.end_date || (() => {
+                const date = new Date(startDate);
+                date.setMonth(date.getMonth() + termMonths);
+                return date.toISOString().split('T')[0];
+              })();
+
+              const loanData: any = {
+                client_id: client.id,
+                amount: amount,
+                interest_rate: interestRate,
+                term_months: termMonths,
+                loan_type: row.loan_type || 'personal',
+                purpose: row.purpose || row.comments || null,
+                collateral: row.collateral || null,
+                loan_officer_id: companyId,
+                monthly_payment: Math.round(monthlyPayment),
+                total_amount: Math.round(totalAmount),
+                remaining_balance: Math.round(remainingBalance),
+                start_date: startDate,
+                end_date: endDate,
+                next_payment_date: nextPaymentDate,
+                first_payment_date: firstPaymentDate,
+                status: row.status || 'active',
+                guarantor_name: row.guarantor_name || null,
+                guarantor_phone: row.guarantor_phone || null,
+                guarantor_dni: row.guarantor_dni || null,
+                notes: row.notes || null,
+                closing_costs: Math.round(parseFloat(row.closing_costs) || 0),
+                portfolio_id: row.portfolio_id || null,
+                amortization_type: row.amortization_type || 'simple',
+                payment_frequency: row.payment_frequency || 'monthly',
+                minimum_payment_enabled: row.minimum_payment_enabled !== undefined ? row.minimum_payment_enabled : true,
+                minimum_payment_type: row.minimum_payment_type || 'interest',
+                minimum_payment_percentage: parseFloat(row.minimum_payment_percentage) || 100,
+                late_fee_enabled: row.late_fee_enabled !== undefined ? row.late_fee_enabled : false,
+                late_fee_rate: parseFloat(row.late_fee_rate) || 2.0,
+                grace_period_days: parseInt(row.grace_period_days) || 0,
+                max_late_fee: Math.round(parseFloat(row.max_late_fee) || 0),
+                late_fee_calculation_type: row.late_fee_calculation_type || 'daily',
+                add_expense_enabled: row.add_expense_enabled !== undefined ? row.add_expense_enabled : false,
+                fixed_payment_enabled: row.fixed_payment_enabled !== undefined ? row.fixed_payment_enabled : false,
+                fixed_payment_amount: Math.round(parseFloat(row.fixed_payment_amount) || 0),
+                current_late_fee: Math.round(parseFloat(row.current_late_fee) || 0),
+                total_late_fee_paid: Math.round(parseFloat(row.total_late_fee_paid) || 0),
+              };
+
+              const { data: insertedLoan, error: loanError } = await supabase
+                .from('loans')
+                .insert([loanData])
+                .select()
+                .single();
+
+              if (loanError) {
+                console.error('Error importing loan:', loanError);
+                errors++;
+                continue;
+              }
+
+              // Si el préstamo tiene cuotas en los datos importados, intentar importarlas
+              // Por ahora, solo creamos el préstamo sin cuotas (se pueden generar después)
+              inserted++;
+            } catch (err) {
+              console.error('Error importing loan:', err);
+              errors++;
+            }
+          }
+          break;
+
         default:
           throw new Error(`Importación para ${importModule} aún no implementada`);
       }
@@ -839,6 +997,150 @@ export const BackupExportModule = () => {
                   inserted++;
                 } catch (err) {
                   console.error(`Error importing product:`, err);
+                  errors++;
+                }
+              }
+              break;
+
+            case 'loans':
+              // Encontrar columnas disponibles
+              if (data.length === 0) {
+                continue;
+              }
+              
+              const firstLoanRow = data[0];
+              const availableLoanColumns = Object.keys(firstLoanRow).map(k => k.toLowerCase());
+              
+              // Detectar si el archivo es de clientes en lugar de préstamos
+              const hasClientCols = availableLoanColumns.some(col => 
+                ['full_name', 'user_id', 'phone'].includes(col)
+              );
+              const hasLoanCols = availableLoanColumns.some(col => 
+                ['amount', 'monto', 'interest_rate', 'tasa', 'term_months', 'plazo'].includes(col)
+              );
+              
+              if (hasClientCols && !hasLoanCols) {
+                console.warn(`⚠️ La hoja "${sheetName}" parece ser de clientes, no de préstamos. Saltando...`);
+                continue;
+              }
+              
+              const findLoanColumn = (variants: string[]) => {
+                for (const variant of variants) {
+                  const found = availableLoanColumns.find(col => col === variant.toLowerCase() || col.includes(variant.toLowerCase()));
+                  if (found) {
+                    return Object.keys(firstLoanRow).find(k => k.toLowerCase() === found);
+                  }
+                }
+                return null;
+              };
+              
+              const loanDniColumn = findLoanColumn(['clients_dni', 'client_dni', 'dni', 'clients.dni', 'client.dni']);
+              const loanAmountColumn = findLoanColumn(['amount', 'monto']);
+              const loanInterestColumn = findLoanColumn(['interest_rate', 'interestrate', 'tasa', 'tasa_interes']);
+              const loanTermColumn = findLoanColumn(['term_months', 'termmonths', 'plazo', 'term']);
+              
+              // Validar que se encontraron las columnas necesarias
+              if (!loanDniColumn || !loanAmountColumn || !loanInterestColumn || !loanTermColumn) {
+                console.warn(`⚠️ La hoja "${sheetName}" no tiene las columnas necesarias para préstamos. Saltando...`);
+                continue;
+              }
+              
+              for (const row of data) {
+                try {
+                  // Buscar cliente por DNI usando la columna encontrada
+                  const clientDni = loanDniColumn ? row[loanDniColumn] : (row.client_dni || row.clients_dni || row.dni);
+                  if (!clientDni || clientDni === '') {
+                    console.error('Error: No se encontró DNI del cliente en la fila');
+                    errors++;
+                    continue;
+                  }
+
+                  const { data: client, error: clientError } = await supabase
+                    .from('clients')
+                    .select('id')
+                    .eq('dni', clientDni)
+                    .eq('user_id', companyId)
+                    .single();
+
+                  if (clientError || !client) {
+                    console.error(`Error: Cliente con DNI ${clientDni} no encontrado`);
+                    errors++;
+                    continue;
+                  }
+
+                  // Preparar datos del préstamo usando las columnas encontradas
+                  const amount = loanAmountColumn ? parseFloat(row[loanAmountColumn] || row.amount) : (parseFloat(row.amount) || 0);
+                  const interestRate = loanInterestColumn ? parseFloat(row[loanInterestColumn] || row.interest_rate) : (parseFloat(row.interest_rate) || 0);
+                  const termMonths = loanTermColumn ? parseInt(row[loanTermColumn] || row.term_months) : (parseInt(row.term_months) || 1);
+                  const monthlyPayment = parseFloat(row.monthly_payment) || 0;
+                  const totalAmount = parseFloat(row.total_amount) || amount;
+                  const remainingBalance = parseFloat(row.remaining_balance) || totalAmount;
+
+                  // Fechas
+                  const startDate = row.start_date || row.first_payment_date || new Date().toISOString().split('T')[0];
+                  const firstPaymentDate = row.first_payment_date || startDate;
+                  const nextPaymentDate = row.next_payment_date || firstPaymentDate;
+                  const endDate = row.end_date || (() => {
+                    const date = new Date(startDate);
+                    date.setMonth(date.getMonth() + termMonths);
+                    return date.toISOString().split('T')[0];
+                  })();
+
+                  const loanData: any = {
+                    client_id: client.id,
+                    amount: amount,
+                    interest_rate: interestRate,
+                    term_months: termMonths,
+                    loan_type: row.loan_type || 'personal',
+                    purpose: row.purpose || row.comments || null,
+                    collateral: row.collateral || null,
+                    loan_officer_id: companyId,
+                    monthly_payment: Math.round(monthlyPayment),
+                    total_amount: Math.round(totalAmount),
+                    remaining_balance: Math.round(remainingBalance),
+                    start_date: startDate,
+                    end_date: endDate,
+                    next_payment_date: nextPaymentDate,
+                    first_payment_date: firstPaymentDate,
+                    status: row.status || 'active',
+                    guarantor_name: row.guarantor_name || null,
+                    guarantor_phone: row.guarantor_phone || null,
+                    guarantor_dni: row.guarantor_dni || null,
+                    notes: row.notes || null,
+                    closing_costs: Math.round(parseFloat(row.closing_costs) || 0),
+                    portfolio_id: row.portfolio_id || null,
+                    amortization_type: row.amortization_type || 'simple',
+                    payment_frequency: row.payment_frequency || 'monthly',
+                    minimum_payment_enabled: row.minimum_payment_enabled !== undefined ? row.minimum_payment_enabled : true,
+                    minimum_payment_type: row.minimum_payment_type || 'interest',
+                    minimum_payment_percentage: parseFloat(row.minimum_payment_percentage) || 100,
+                    late_fee_enabled: row.late_fee_enabled !== undefined ? row.late_fee_enabled : false,
+                    late_fee_rate: parseFloat(row.late_fee_rate) || 2.0,
+                    grace_period_days: parseInt(row.grace_period_days) || 0,
+                    max_late_fee: Math.round(parseFloat(row.max_late_fee) || 0),
+                    late_fee_calculation_type: row.late_fee_calculation_type || 'daily',
+                    add_expense_enabled: row.add_expense_enabled !== undefined ? row.add_expense_enabled : false,
+                    fixed_payment_enabled: row.fixed_payment_enabled !== undefined ? row.fixed_payment_enabled : false,
+                    fixed_payment_amount: Math.round(parseFloat(row.fixed_payment_amount) || 0),
+                    current_late_fee: Math.round(parseFloat(row.current_late_fee) || 0),
+                    total_late_fee_paid: Math.round(parseFloat(row.total_late_fee_paid) || 0),
+                  };
+
+                  const { data: insertedLoan, error: loanError } = await supabase
+                    .from('loans')
+                    .insert([loanData])
+                    .select()
+                    .single();
+
+                  if (loanError) {
+                    console.error('Error importing loan:', loanError);
+                    errors++;
+                    continue;
+                  }
+
+                  inserted++;
+                } catch (err) {
+                  console.error(`Error importing loan:`, err);
                   errors++;
                 }
               }

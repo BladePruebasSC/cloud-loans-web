@@ -267,17 +267,17 @@ export const LoansModule = () => {
       if (targetLoan) {
         // Pequeño delay para asegurar que el componente esté listo
         setTimeout(() => {
-          if (action === 'payment') {
-            // Abrir formulario de pago
-            setSelectedLoanForPayment(targetLoan);
-            setShowPaymentForm(true);
-            toast.success(`Abriendo formulario de pago para ${targetLoan.client?.full_name}`);
-          } else if (action === 'tracking') {
-            // Abrir formulario de seguimiento
-            setSelectedLoanForTracking(targetLoan);
-            setShowCollectionTracking(true);
-            toast.success(`Abriendo formulario de seguimiento para ${targetLoan.client?.full_name}`);
-          }
+        if (action === 'payment') {
+          // Abrir formulario de pago
+          setSelectedLoanForPayment(targetLoan);
+          setShowPaymentForm(true);
+          toast.success(`Abriendo formulario de pago para ${targetLoan.client?.full_name}`);
+        } else if (action === 'tracking') {
+          // Abrir formulario de seguimiento
+          setSelectedLoanForTracking(targetLoan);
+          setShowCollectionTracking(true);
+          toast.success(`Abriendo formulario de seguimiento para ${targetLoan.client?.full_name}`);
+        }
         }, 100);
         
         // Limpiar URL para evitar re-aplicación
@@ -2712,14 +2712,17 @@ export const LoansModule = () => {
 
            {/* Loan History View */}
      {selectedLoan && (
-       <LoanHistoryView
-         loanId={selectedLoan.id}
-         isOpen={showHistoryView}
-         onClose={() => {
-           setShowHistoryView(false);
-           setSelectedLoan(null);
-         }}
-       />
+      <LoanHistoryView
+        loanId={selectedLoan.id}
+        isOpen={showHistoryView}
+        onClose={() => {
+          setShowHistoryView(false);
+          setSelectedLoan(null);
+        }}
+        onRefresh={() => {
+          // Esta función se puede usar para recargar el historial
+        }}
+      />
      )}
 
      {/* Loan Statistics */}

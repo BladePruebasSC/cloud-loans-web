@@ -1112,7 +1112,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           navigate('/cobro-rapido');
         }, 1000);
       } else {
-        onBack();
+      onBack();
       }
     } catch (error) {
       console.error('Error registering payment:', error);
