@@ -149,7 +149,9 @@ const MapModule = () => {
 
       const entries = (data || [])
         .map((loan) => {
-          const client = loan.client as Client | null;
+          // Supabase may return client as an array or object depending on the join
+          const clientData = Array.isArray(loan.client) ? loan.client[0] : loan.client;
+          const client = clientData as Client | null;
           if (!client || (!client.address && !client.neighborhood && !client.city)) return null;
 
           return {

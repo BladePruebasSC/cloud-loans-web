@@ -457,6 +457,9 @@ export type Database = {
       company_settings: {
         Row: {
           address: string | null
+          auto_backup_enabled: boolean | null
+          auto_backup_format: string | null
+          auto_backup_interval_hours: number | null
           business_type: string | null
           city: string | null
           company_code: string | null
@@ -465,15 +468,22 @@ export type Database = {
           country: string | null
           created_at: string
           currency: string | null
+          default_grace_period_days: number | null
+          default_late_fee_rate: number | null
+          default_pawn_period_days: number | null
           description: string | null
           email: string | null
           grace_period_days: number | null
           id: string
           interest_rate_default: number | null
+          last_backup_date: string | null
           late_fee_percentage: number | null
           logo_url: string | null
           max_loan_amount: number | null
+          max_term_months: number | null
           min_loan_amount: number | null
+          min_term_months: number | null
+          next_backup_date: string | null
           phone: string | null
           postal_code: string | null
           state: string | null
@@ -484,6 +494,9 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          auto_backup_enabled?: boolean | null
+          auto_backup_format?: string | null
+          auto_backup_interval_hours?: number | null
           business_type?: string | null
           city?: string | null
           company_code?: string | null
@@ -492,15 +505,22 @@ export type Database = {
           country?: string | null
           created_at?: string
           currency?: string | null
+          default_grace_period_days?: number | null
+          default_late_fee_rate?: number | null
+          default_pawn_period_days?: number | null
           description?: string | null
           email?: string | null
           grace_period_days?: number | null
           id?: string
           interest_rate_default?: number | null
+          last_backup_date?: string | null
           late_fee_percentage?: number | null
           logo_url?: string | null
           max_loan_amount?: number | null
+          max_term_months?: number | null
           min_loan_amount?: number | null
+          min_term_months?: number | null
+          next_backup_date?: string | null
           phone?: string | null
           postal_code?: string | null
           state?: string | null
@@ -511,6 +531,9 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          auto_backup_enabled?: boolean | null
+          auto_backup_format?: string | null
+          auto_backup_interval_hours?: number | null
           business_type?: string | null
           city?: string | null
           company_code?: string | null
@@ -519,15 +542,22 @@ export type Database = {
           country?: string | null
           created_at?: string
           currency?: string | null
+          default_grace_period_days?: number | null
+          default_late_fee_rate?: number | null
+          default_pawn_period_days?: number | null
           description?: string | null
           email?: string | null
           grace_period_days?: number | null
           id?: string
           interest_rate_default?: number | null
+          last_backup_date?: string | null
           late_fee_percentage?: number | null
           logo_url?: string | null
           max_loan_amount?: number | null
+          max_term_months?: number | null
           min_loan_amount?: number | null
+          min_term_months?: number | null
+          next_backup_date?: string | null
           phone?: string | null
           postal_code?: string | null
           state?: string | null
@@ -844,34 +874,55 @@ export type Database = {
       }
       loan_history: {
         Row: {
+          amount: number | null
           change_type: string
+          charge_date: string | null
           created_at: string | null
           created_by: string | null
           description: string | null
           id: string
           loan_id: string
           new_value: string | null
+          new_values: Json | null
+          notes: string | null
           old_value: string | null
+          old_values: Json | null
+          reason: string | null
+          reference_number: string | null
         }
         Insert: {
+          amount?: number | null
           change_type: string
+          charge_date?: string | null
           created_at?: string | null
           created_by?: string | null
           description?: string | null
           id?: string
           loan_id: string
           new_value?: string | null
+          new_values?: Json | null
+          notes?: string | null
           old_value?: string | null
+          old_values?: Json | null
+          reason?: string | null
+          reference_number?: string | null
         }
         Update: {
+          amount?: number | null
           change_type?: string
+          charge_date?: string | null
           created_at?: string | null
           created_by?: string | null
           description?: string | null
           id?: string
           loan_id?: string
           new_value?: string | null
+          new_values?: Json | null
+          notes?: string | null
           old_value?: string | null
+          old_values?: Json | null
+          reason?: string | null
+          reference_number?: string | null
         }
         Relationships: [
           {
@@ -1199,28 +1250,40 @@ export type Database = {
           amount: number
           created_at: string
           id: string
+          interest_payment: number | null
           notes: string | null
           pawn_transaction_id: string | null
           payment_date: string
           payment_type: string
+          principal_payment: number | null
+          remaining_balance: number | null
+          remaining_interest: number | null
         }
         Insert: {
           amount: number
           created_at?: string
           id?: string
+          interest_payment?: number | null
           notes?: string | null
           pawn_transaction_id?: string | null
           payment_date?: string
           payment_type: string
+          principal_payment?: number | null
+          remaining_balance?: number | null
+          remaining_interest?: number | null
         }
         Update: {
           amount?: number
           created_at?: string
           id?: string
+          interest_payment?: number | null
           notes?: string | null
           pawn_transaction_id?: string | null
           payment_date?: string
           payment_type?: string
+          principal_payment?: number | null
+          remaining_balance?: number | null
+          remaining_interest?: number | null
         }
         Relationships: [
           {
@@ -1232,16 +1295,68 @@ export type Database = {
           },
         ]
       }
+      pawn_rate_changes: {
+        Row: {
+          changed_at: string | null
+          created_at: string | null
+          effective_date: string
+          id: string
+          new_rate: number
+          old_rate: number
+          pawn_transaction_id: string
+          reason: string | null
+          user_id: string | null
+        }
+        Insert: {
+          changed_at?: string | null
+          created_at?: string | null
+          effective_date: string
+          id?: string
+          new_rate: number
+          old_rate: number
+          pawn_transaction_id: string
+          reason?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          changed_at?: string | null
+          created_at?: string | null
+          effective_date?: string
+          id?: string
+          new_rate?: number
+          old_rate?: number
+          pawn_transaction_id?: string
+          reason?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pawn_rate_changes_pawn_transaction_id_fkey"
+            columns: ["pawn_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "pawn_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pawn_transactions: {
         Row: {
           client_id: string | null
           created_at: string
+          deleted_at: string | null
+          deleted_reason: string | null
           due_date: string
           estimated_value: number
           id: string
           interest_rate: number
+          interest_rate_type: string | null
+          item_brand: string | null
+          item_category: string | null
+          item_condition: string | null
+          item_model: string | null
           loan_amount: number
           notes: string | null
+          period_days: number | null
           product_description: string | null
           product_id: string | null
           product_name: string
@@ -1253,12 +1368,20 @@ export type Database = {
         Insert: {
           client_id?: string | null
           created_at?: string
+          deleted_at?: string | null
+          deleted_reason?: string | null
           due_date: string
           estimated_value: number
           id?: string
           interest_rate?: number
+          interest_rate_type?: string | null
+          item_brand?: string | null
+          item_category?: string | null
+          item_condition?: string | null
+          item_model?: string | null
           loan_amount: number
           notes?: string | null
+          period_days?: number | null
           product_description?: string | null
           product_id?: string | null
           product_name: string
@@ -1270,12 +1393,20 @@ export type Database = {
         Update: {
           client_id?: string | null
           created_at?: string
+          deleted_at?: string | null
+          deleted_reason?: string | null
           due_date?: string
           estimated_value?: number
           id?: string
           interest_rate?: number
+          interest_rate_type?: string | null
+          item_brand?: string | null
+          item_category?: string | null
+          item_condition?: string | null
+          item_model?: string | null
           loan_amount?: number
           notes?: string | null
+          period_days?: number | null
           product_description?: string | null
           product_id?: string | null
           product_name?: string
@@ -1540,11 +1671,14 @@ export type Database = {
           current_stock: number | null
           description: string | null
           id: string
+          itbis_rate: number | null
           min_stock: number | null
           name: string
+          original_transaction_id: string | null
           purchase_price: number | null
           selling_price: number | null
           sku: string | null
+          source: string | null
           status: string | null
           unit_type: string | null
           updated_at: string
@@ -1558,11 +1692,14 @@ export type Database = {
           current_stock?: number | null
           description?: string | null
           id?: string
+          itbis_rate?: number | null
           min_stock?: number | null
           name: string
+          original_transaction_id?: string | null
           purchase_price?: number | null
           selling_price?: number | null
           sku?: string | null
+          source?: string | null
           status?: string | null
           unit_type?: string | null
           updated_at?: string
@@ -1576,17 +1713,28 @@ export type Database = {
           current_stock?: number | null
           description?: string | null
           id?: string
+          itbis_rate?: number | null
           min_stock?: number | null
           name?: string
+          original_transaction_id?: string | null
           purchase_price?: number | null
           selling_price?: number | null
           sku?: string | null
+          source?: string | null
           status?: string | null
           unit_type?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "products_original_transaction_id_fkey"
+            columns: ["original_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "pawn_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -1992,61 +2140,72 @@ export type Database = {
             referencedRelation: "products"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "sale_details_sale_id_fkey"
-            columns: ["sale_id"]
-            isOneToOne: false
-            referencedRelation: "sales"
-            referencedColumns: ["id"]
-          },
         ]
       }
       sales: {
         Row: {
-          client_id: string | null
-          created_at: string
+          created_at: string | null
+          customer_address: string | null
+          customer_email: string | null
+          customer_name: string
+          customer_phone: string | null
+          customer_rnc: string | null
           id: string
           notes: string | null
-          payment_method: string | null
+          payment_method: string
+          product_id: string | null
+          quantity: number
           sale_date: string | null
-          sale_number: string
-          status: string | null
-          total_amount: number | null
-          updated_at: string
+          sale_type: string | null
+          total_price: number
+          unit_price: number
+          updated_at: string | null
           user_id: string
         }
         Insert: {
-          client_id?: string | null
-          created_at?: string
+          created_at?: string | null
+          customer_address?: string | null
+          customer_email?: string | null
+          customer_name: string
+          customer_phone?: string | null
+          customer_rnc?: string | null
           id?: string
           notes?: string | null
-          payment_method?: string | null
+          payment_method: string
+          product_id?: string | null
+          quantity: number
           sale_date?: string | null
-          sale_number: string
-          status?: string | null
-          total_amount?: number | null
-          updated_at?: string
+          sale_type?: string | null
+          total_price: number
+          unit_price: number
+          updated_at?: string | null
           user_id: string
         }
         Update: {
-          client_id?: string | null
-          created_at?: string
+          created_at?: string | null
+          customer_address?: string | null
+          customer_email?: string | null
+          customer_name?: string
+          customer_phone?: string | null
+          customer_rnc?: string | null
           id?: string
           notes?: string | null
-          payment_method?: string | null
+          payment_method?: string
+          product_id?: string | null
+          quantity?: number
           sale_date?: string | null
-          sale_number?: string
-          status?: string | null
-          total_amount?: number | null
-          updated_at?: string
+          sale_type?: string | null
+          total_price?: number
+          unit_price?: number
+          updated_at?: string | null
           user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "sales_client_id_fkey"
-            columns: ["client_id"]
+            foreignKeyName: "fk_sales_product_id"
+            columns: ["product_id"]
             isOneToOne: false
-            referencedRelation: "clients"
+            referencedRelation: "products"
             referencedColumns: ["id"]
           },
         ]
@@ -2154,6 +2313,7 @@ export type Database = {
           total_late_fee: number
         }[]
       }
+      reset_company_data: { Args: { p_owner_id: string }; Returns: Json }
       update_all_late_fees: {
         Args: { p_calculation_date?: string }
         Returns: number
