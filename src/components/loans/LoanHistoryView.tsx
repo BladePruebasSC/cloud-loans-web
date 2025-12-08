@@ -298,6 +298,54 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     return methods[method as keyof typeof methods] || method;
   };
 
+  const translateReason = (reason: string) => {
+    const translations: Record<string, string> = {
+      // Razones para cargos (add_charge)
+      'late_payment_fee': 'Multa por Pago Tardío',
+      'administrative_fee': 'Tarifa Administrativa',
+      'penalty_fee': 'Cargo por Penalización',
+      'insurance_fee': 'Seguro del Préstamo',
+      'processing_fee': 'Tarifa de Procesamiento',
+      'legal_fee': 'Gastos Legales',
+      'collection_fee': 'Gastos de Cobranza',
+      'other_charge': 'Otro Cargo',
+      // Razones para extensión de plazo (term_extension)
+      'financial_difficulty': 'Dificultades Financieras',
+      'job_loss': 'Pérdida de Empleo',
+      'medical_emergency': 'Emergencia Médica',
+      'family_emergency': 'Emergencia Familiar',
+      'income_reduction': 'Reducción de Ingresos',
+      'payment_plan': 'Plan de Pagos Especial',
+      'rate_negotiation': 'Renegociación de Condiciones',
+      'goodwill_extension': 'Extensión de Buena Voluntad',
+      // Razones para ajuste de balance (balance_adjustment)
+      'error_correction': 'Corrección de Error',
+      'administrative_adjustment': 'Ajuste Administrativo',
+      'rate_adjustment': 'Ajuste de Tasa de Interés',
+      'principal_reduction': 'Reducción de Capital',
+      'interest_adjustment': 'Ajuste de Intereses',
+      'forgiveness': 'Perdón de Deuda Parcial',
+      'goodwill_adjustment': 'Ajuste de Buena Voluntad',
+      'legal_settlement': 'Acuerdo Legal',
+      // Razones para eliminación de préstamo (delete_loan)
+      'duplicate_entry': 'Entrada Duplicada',
+      'data_entry_error': 'Error de Captura de Datos',
+      'wrong_client': 'Cliente Incorrecto',
+      'test_entry': 'Entrada de Prueba',
+      'cancelled_loan': 'Préstamo Cancelado',
+      'paid_outside_system': 'Pagado Fuera del Sistema',
+      'fraud': 'Fraude Detectado',
+      // Razones para eliminar mora (remove_late_fee)
+      'payment_agreement': 'Acuerdo de Pago',
+      'administrative_decision': 'Decisión Administrativa',
+      'client_complaint': 'Reclamo del Cliente',
+      'system_error': 'Error del Sistema',
+      // Razón genérica
+      'other': 'Otra Razón'
+    };
+    return translations[reason] || reason;
+  };
+
   return (
     <>
       <Dialog open={isOpen} onOpenChange={onClose}>
@@ -482,7 +530,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
                               {entry.reason && (
                                 <div className="text-sm text-gray-600 mb-2">
-                                  <span className="font-medium">Razón:</span> {entry.reason}
+                                  <span className="font-medium">Razón:</span> {translateReason(entry.reason)}
                                 </div>
                               )}
 
@@ -535,7 +583,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
                               {entry.reason && (
                                 <div className="text-sm text-gray-600 mb-2">
-                                  <span className="font-medium">Razón:</span> {entry.reason}
+                                  <span className="font-medium">Razón:</span> {translateReason(entry.reason)}
                                 </div>
                               )}
 
@@ -581,7 +629,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                         </div>
                         
                         <div className="text-sm text-gray-600 mb-2">
-                          <span className="font-medium">Razón:</span> {entry.reason}
+                          <span className="font-medium">Razón:</span> {translateReason(entry.reason)}
                         </div>
 
                         {entry.amount && (

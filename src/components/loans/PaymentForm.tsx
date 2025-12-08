@@ -1358,7 +1358,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               </Button>
                             </div>
                             <div className="text-xs text-orange-600 mt-1">
-                              💡 Mora pendiente: {formatCurrency(lateFeeAmount)}
+                              💡 Mora pendiente: RD${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                             <FormMessage />
                           </FormItem>
@@ -1505,7 +1505,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                             <div className="flex justify-between">
                               <span className="text-sm text-gray-600">Mora Pendiente:</span>
                               <span className="font-bold text-red-600">
-                                {formatCurrency(lateFeeAmount)}
+                                RD${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </span>
                             </div>
                             {lateFeeCalculation && (
@@ -1531,13 +1531,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                         {item.isPaid && ' ✅ PAGADA'}
                                       </span>
                                       <span className={`font-semibold ${item.isPaid ? 'text-green-700' : 'text-orange-800'}`}>
-                                        {formatCurrency(item.lateFee)}
+                                        RD${item.lateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                       </span>
                                     </div>
                                   ))}
                                   <div className="border-t pt-1 mt-2 flex justify-between items-center font-bold text-orange-900">
                                     <span>Total Mora Pendiente:</span>
-                                    <span>{formatCurrency(lateFeeBreakdown.totalLateFee)}</span>
+                                    <span>RD${lateFeeBreakdown.totalLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                   </div>
                                 </div>
                                  <div className="mt-2 text-xs text-gray-600">
@@ -1610,7 +1610,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                         <li>• Pago parcial: Menos de ${formatCurrencyNumber(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment)}</li>
                         <li>• Máximo permitido: ${formatCurrencyNumber(selectedLoan.remaining_balance)}</li>
                         {selectedLoan.late_fee_enabled && lateFeeAmount > 0 && (
-                          <li>• Mora pendiente: ${formatCurrencyNumber(lateFeeAmount)} (opcional pagar)</li>
+                          <li>• Mora pendiente: ${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (opcional pagar)</li>
                         )}
                       </ul>
                     </div>
