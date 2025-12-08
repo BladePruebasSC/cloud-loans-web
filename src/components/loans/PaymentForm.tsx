@@ -70,9 +70,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 }) => {
   const navigate = useNavigate();
   
-  // Función helper para redondear a 2 decimales
+  // Función helper para redondear a 2 decimales de forma precisa
   const roundToTwoDecimals = (value: number): number => {
-    return Math.round(value * 100) / 100;
+    // Usar toFixed para evitar problemas de precisión de punto flotante
+    return parseFloat(value.toFixed(2));
   };
   
   // Detectar si es dispositivo móvil
@@ -233,7 +234,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       // Configurar el estado con el desglose correcto
       setOriginalLateFeeBreakdown(breakdown);
-      setLateFeeAmount(breakdown.totalLateFee);
+      setLateFeeAmount(roundToTwoDecimals(breakdown.totalLateFee));
       
       // Encontrar la próxima cuota pendiente de pago para mostrar sus días de atraso
       console.log('🔍 PaymentForm: Desglose completo para encontrar próxima cuota:', breakdown.breakdown);
@@ -658,8 +659,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       }
       
       // Validación 1b: No permitir que la mora exceda la mora actual
-      if (data.late_fee_amount && data.late_fee_amount > lateFeeAmount) {
-        toast.error(`El pago de mora no puede exceder la mora actual de ${formatCurrency(lateFeeAmount)}`);
+      const roundedLateFeeAmount = roundToTwoDecimals(lateFeeAmount);
+      const roundedLateFeePayment = roundToTwoDecimals(data.late_fee_amount || 0);
+      if (data.late_fee_amount && roundedLateFeePayment > roundedLateFeeAmount) {
+        toast.error(`El pago de mora no puede exceder la mora actual de RD$${roundedLateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
         return;
       }
       
@@ -719,7 +722,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         toast.info(distributionMessage);
       } else {
         // Solo pago de mora, no hay distribución de cuota
-        toast.info(`Pago de mora registrado: ${formatCurrency(data.late_fee_amount || 0)}`);
+        const lateFeeAmount = roundToTwoDecimals(data.late_fee_amount || 0);
+        toast.info(`Pago de mora registrado: RD$${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
       }
 
       // CORREGIR: Crear fecha y hora correcta para Santo Domingo
@@ -769,7 +773,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         amount: Math.round(data.amount), // Solo el monto de la cuota, sin incluir la mora (redondeado)
         principal_amount: Math.round(principalPayment),
         interest_amount: Math.round(interestPayment),
-        late_fee: Math.round(data.late_fee_amount || 0), // Mora como concepto separado (redondeado)
+        late_fee: roundToTwoDecimals(data.late_fee_amount || 0), // Mora como concepto separado (redondeado a 2 decimales)
         due_date: selectedLoan.next_payment_date,
         payment_date: paymentDate, // Usar fecha actual en zona horaria de Santo Domingo
         payment_time_local: paymentTimeLocal, // Timestamp con zona horaria local
@@ -1037,7 +1041,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         : 'Pago parcial registrado exitosamente';
       
       if (data.late_fee_amount && data.late_fee_amount > 0) {
-        successMessage += ` + Mora de ${formatCurrency(data.late_fee_amount)}`;
+        const lateFeeAmount = roundToTwoDecimals(data.late_fee_amount);
+        successMessage += ` + Mora de RD$${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       }
       
       console.log('🔍 PaymentForm: Resumen del pago registrado:', {
@@ -1263,7 +1268,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               {form.watch('late_fee_amount') && form.watch('late_fee_amount') > 0 && (
                 <div className="flex justify-between items-center">
                   <span className="text-blue-700">Pago de mora:</span>
-                  <span className="font-semibold text-orange-600">{formatCurrency(form.watch('late_fee_amount'))}</span>
+                  <span className="font-semibold text-orange-600">RD${roundToTwoDecimals(form.watch('late_fee_amount') || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               )}
               <div className="border-t pt-2 flex justify-between items-center">
@@ -1335,7 +1340,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                   type="number"
                                   step="0.01"
                                   min="0"
-                                  max={lateFeeAmount}
+                                  max={roundToTwoDecimals(lateFeeAmount)}
                                   placeholder="0.00"
                                   {...field}
                                   value={field.value || ''}
