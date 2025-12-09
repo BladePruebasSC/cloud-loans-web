@@ -849,6 +849,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       case 'balance_adjustment': return <Calculator className="h-4 w-4" />;
       case 'delete_loan': return <Trash2 className="h-4 w-4" />;
       case 'remove_late_fee': return <MinusCircle className="h-4 w-4" />;
+      case 'payment_agreement': return <Handshake className="h-4 w-4" />;
       default: return <Edit className="h-4 w-4" />;
     }
   };
@@ -859,7 +860,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       term_extension: 'Extensión de Plazo',
       balance_adjustment: 'Ajuste de Balance',
       delete_loan: 'Eliminar Préstamo',
-      remove_late_fee: 'Eliminar Mora'
+      remove_late_fee: 'Eliminar Mora',
+      payment_agreement: 'Acuerdos de Pago'
     };
     return labels[type as keyof typeof labels] || type;
   };
@@ -1189,60 +1191,68 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       </>
                     )}
 
-                    <FormField
-                      control={form.control}
-                      name="adjustment_reason"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            {form.watch('update_type') === 'add_charge' ? 'Razón del Cargo' :
-                             form.watch('update_type') === 'delete_loan' ? 'Razón de Eliminación' :
-                             form.watch('update_type') === 'remove_late_fee' ? 'Razón de Eliminación de Mora' :
-                             'Razón del Ajuste'}
-                          </FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Seleccionar razón" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {getReasonsForUpdateType(form.watch('update_type')).map((reason) => (
-                                <SelectItem key={reason.value} value={reason.value}>
-                                  {reason.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    {/* Campos de razón y notas - ocultar para payment_agreement */}
+                    {form.watch('update_type') !== 'payment_agreement' && (
+                      <>
+                        <FormField
+                          control={form.control}
+                          name="adjustment_reason"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {form.watch('update_type') === 'add_charge' ? 'Razón del Cargo' :
+                                 form.watch('update_type') === 'delete_loan' ? 'Razón de Eliminación' :
+                                 form.watch('update_type') === 'remove_late_fee' ? 'Razón de Eliminación de Mora' :
+                                 'Razón del Ajuste'}
+                              </FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Seleccionar razón" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {getReasonsForUpdateType(form.watch('update_type')).map((reason) => (
+                                    <SelectItem key={reason.value} value={reason.value}>
+                                      {reason.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-                    <FormField
-                      control={form.control}
-                      name="notes"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Notas Adicionales</FormLabel>
-                          <FormControl>
-                            <Textarea placeholder="Detalles adicionales sobre la actualización..." {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                        <FormField
+                          control={form.control}
+                          name="notes"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Notas Adicionales</FormLabel>
+                              <FormControl>
+                                <Textarea placeholder="Detalles adicionales sobre la actualización..." {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </>
+                    )}
                   </CardContent>
                 </Card>
 
-                <div className="flex gap-4">
-                  <Button type="button" variant="outline" onClick={onClose}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit" disabled={loading}>
-                    {loading ? 'Procesando...' : 'Guardar Cambios'}
-                  </Button>
-                </div>
+                {/* Botones - ocultar para payment_agreement ya que solo redirige */}
+                {form.watch('update_type') !== 'payment_agreement' && (
+                  <div className="flex gap-4">
+                    <Button type="button" variant="outline" onClick={onClose}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit" disabled={loading}>
+                      {loading ? 'Procesando...' : 'Guardar Cambios'}
+                    </Button>
+                  </div>
+                )}
               </form>
             </Form>
           </div>
@@ -1530,6 +1540,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     setSelectedAgreement(agreement);
                     setShowAgreementsDialog(false);
                     setShowPaymentForm(true);
+                    onClose(); // Cerrar el diálogo de actualización
                   }}
                 >
                   <CardContent className="p-4">
