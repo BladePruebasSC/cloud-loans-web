@@ -46,15 +46,15 @@ const Notifications: React.FC = () => {
     
     if (notificationType === 'payment_overdue' || notificationType === 'payment_due') {
       // Para pagos vencidos o próximos, navegar al módulo de préstamos con acción de pago
-      navigate(`/prestamos?action=payment&loanId=${loanId}`);
+      navigate(`/prestamos?action=payment&loanId=${loanId}`, { replace: false });
       toast.success(`Navegando a registrar pago de ${clientName}...`);
     } else if (notificationType === 'follow_up_due') {
       // Para seguimientos, navegar al módulo de préstamos con acción de seguimiento
-      navigate(`/prestamos?action=tracking&loanId=${loanId}`);
+      navigate(`/prestamos?action=tracking&loanId=${loanId}`, { replace: false });
       toast.success(`Navegando a seguimiento de ${clientName}...`);
     } else if (notificationType === 'late_fee_critical' || notificationType === 'late_fee_high' || notificationType === 'late_fee_accumulated') {
       // Para notificaciones de mora, navegar al módulo de préstamos con acción de pago
-      navigate(`/prestamos?action=payment&loanId=${loanId}`);
+      navigate(`/prestamos?action=payment&loanId=${loanId}`, { replace: false });
       toast.success(`Navegando a gestionar mora de ${clientName}...`);
     } else {
       // Fallback: navegar al módulo de préstamos

@@ -1,5 +1,6 @@
 ﻿
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -54,6 +55,7 @@ import {
 } from 'lucide-react';
 
 export const LoansModule = () => {
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState('mis-prestamos');
   const [showLoanForm, setShowLoanForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
@@ -78,6 +80,7 @@ export const LoansModule = () => {
   const [statementStatusFilter, setStatementStatusFilter] = useState('all');
   const [statementAmountFilter, setStatementAmountFilter] = useState('all');
   const [dynamicLateFees, setDynamicLateFees] = useState<{[key: string]: number}>({});
+  const [loanAgreements, setLoanAgreements] = useState<{[key: string]: any[]}>({});
   
      // Estados para filtros y búsqueda
    const [searchTerm, setSearchTerm] = useState('');
@@ -174,10 +177,73 @@ export const LoansModule = () => {
     setDynamicLateFees(newLateFees);
   };
 
+  // Función para cargar acuerdos de pago activos
+  const fetchLoanAgreements = async () => {
+    try {
+      if (!loans || loans.length === 0) return;
+      
+      const loanIds = loans.map(loan => loan.id);
+      
+      const { data: agreements, error } = await supabase
+        .from('payment_agreements')
+        .select('*')
+        .in('loan_id', loanIds)
+        .in('status', ['approved', 'active']);
+      
+      if (error) {
+        console.error('Error fetching agreements:', error);
+        return;
+      }
+      
+      // Agrupar acuerdos por loan_id
+      const agreementsByLoan: {[key: string]: any[]} = {};
+      (agreements || []).forEach((agreement: any) => {
+        if (!agreementsByLoan[agreement.loan_id]) {
+          agreementsByLoan[agreement.loan_id] = [];
+        }
+        agreementsByLoan[agreement.loan_id].push(agreement);
+      });
+      
+      setLoanAgreements(agreementsByLoan);
+    } catch (error) {
+      console.error('Error fetching loan agreements:', error);
+    }
+  };
+
+  // Función para verificar si un préstamo tiene un acuerdo activo dentro de la fecha
+  const hasActiveAgreement = (loanId: string): boolean => {
+    const agreements = loanAgreements[loanId] || [];
+    if (agreements.length === 0) return false;
+    
+    const currentDate = new Date();
+    currentDate.setHours(0, 0, 0, 0);
+    
+    // Verificar si hay algún acuerdo activo dentro del período
+    return agreements.some((agreement: any) => {
+      const startDate = new Date(agreement.start_date);
+      startDate.setHours(0, 0, 0, 0);
+      
+      const endDate = agreement.end_date ? new Date(agreement.end_date) : null;
+      if (endDate) {
+        endDate.setHours(23, 59, 59, 999);
+      }
+      
+      // El acuerdo está activo si:
+      // 1. Está aprobado o activo
+      // 2. La fecha actual está después o igual a start_date
+      // 3. Si hay end_date, la fecha actual está antes o igual a end_date
+      const isAfterStart = currentDate >= startDate;
+      const isBeforeEnd = !endDate || currentDate <= endDate;
+      
+      return isAfterStart && isBeforeEnd;
+    });
+  };
+
   // Actualizar moras dinámicas cuando cambien los préstamos
   useEffect(() => {
     if (loans && loans.length > 0) {
       updateDynamicLateFees();
+      fetchLoanAgreements();
     }
   }, [loans]);
   
@@ -253,7 +319,7 @@ export const LoansModule = () => {
 
   // Detectar parámetros de URL para acciones específicas desde notificaciones
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
+    const urlParams = new URLSearchParams(location.search);
     const action = urlParams.get('action');
     const loanId = urlParams.get('loanId');
     
@@ -291,7 +357,7 @@ export const LoansModule = () => {
         window.history.replaceState({}, '', '/prestamos');
       }
     }
-  }, [loans, loading]); // Dependencia en loans y loading
+  }, [loans, loading, location.search]); // Dependencia en loans, loading y location.search para detectar cambios en query params
 
   // Función para actualizar mora de todos los préstamos
   const handleUpdateLateFees = async () => {
@@ -491,6 +557,9 @@ export const LoansModule = () => {
     } else if (statusFilter === 'active') {
       // Mostrar solo activos y vencidos (NO pendientes)
       matchesStatus = loan.status === 'active' || loan.status === 'overdue';
+    } else if (statusFilter === 'in_agreement') {
+      // Mostrar solo préstamos con acuerdo activo dentro de la fecha
+      matchesStatus = hasActiveAgreement(loan.id);
     } else if (statusFilter === 'pending') {
       // Mostrar solo pendientes
       matchesStatus = loan.status === 'pending';
@@ -570,9 +639,10 @@ export const LoansModule = () => {
   });
 
   // Calcular estadísticas basadas en préstamos filtrados (excluyendo eliminados)
-  const activeLoans = filteredLoans.filter(loan => loan.status === 'active');
+  const activeLoans = filteredLoans.filter(loan => loan.status === 'active' && !hasActiveAgreement(loan.id));
   const overdueLoans = filteredLoans.filter(loan => loan.status === 'overdue');
   const pendingLoans = filteredLoans.filter(loan => loan.status === 'pending');
+  const inAgreementLoans = filteredLoans.filter(loan => hasActiveAgreement(loan.id));
   const totalAmount = filteredLoans.filter(loan => loan.status !== 'deleted').reduce((sum, loan) => sum + loan.amount, 0);
   const totalBalance = filteredLoans.filter(loan => loan.status !== 'deleted').reduce((sum, loan) => sum + loan.remaining_balance, 0);
 
@@ -800,6 +870,7 @@ export const LoansModule = () => {
                   <SelectContent>
                     <SelectItem value="all">Todos (excepto completados)</SelectItem>
                     <SelectItem value="active">Activos y Vencidos</SelectItem>
+                    <SelectItem value="in_agreement">En Acuerdo</SelectItem>
                     <SelectItem value="pending">Pendientes</SelectItem>
                     <SelectItem value="overdue">Solo Vencidos</SelectItem>
                     <SelectItem value="cancelled">Cancelados</SelectItem>
@@ -883,7 +954,7 @@ export const LoansModule = () => {
                {(statusFilter !== 'all' || dateFilter !== 'all' || amountFilter !== 'all' || overdueFilter) && (
                  <div className="text-sm text-gray-600">
                    Mostrando {filteredLoans.length} de {loans.length} préstamos
-                   {statusFilter !== 'all' && ` • Estado: ${statusFilter}`}
+                   {statusFilter !== 'all' && ` • Estado: ${statusFilter === 'in_agreement' ? 'En Acuerdo' : statusFilter === 'active' ? 'Activos y Vencidos' : statusFilter === 'pending' ? 'Pendientes' : statusFilter === 'overdue' ? 'Vencidos' : statusFilter === 'paid' ? 'Completados' : statusFilter === 'deleted' ? 'Eliminados' : statusFilter === 'cancelled' ? 'Cancelados' : statusFilter}`}
                    {dateFilter !== 'all' && ` • Fecha: ${dateFilter}`}
                    {amountFilter !== 'all' && ` • Monto: ${amountFilter}`}
                    {overdueFilter && ` • Solo vencidos`}
@@ -940,6 +1011,7 @@ export const LoansModule = () => {
                             </div>
                           </div>
                           <span className={`px-4 py-2 rounded-full text-sm font-semibold ${
+                            hasActiveAgreement(loan.id) ? 'bg-purple-100 text-purple-800 border border-purple-200' :
                             loan.status === 'active' ? 'bg-green-100 text-green-800 border border-green-200' :
                             loan.status === 'overdue' ? 'bg-red-100 text-red-800 border border-red-200' :
                             loan.status === 'paid' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
@@ -947,7 +1019,8 @@ export const LoansModule = () => {
                             loan.status === 'deleted' ? 'bg-gray-100 text-gray-800 border border-gray-200' :
                             'bg-gray-100 text-gray-800 border border-gray-200'
                           }`}>
-                            {loan.status === 'active' ? 'Activo' :
+                            {hasActiveAgreement(loan.id) ? 'En Acuerdo' :
+                             loan.status === 'active' ? 'Activo' :
                              loan.status === 'overdue' ? 'Vencido' :
                              loan.status === 'paid' ? 'Pagado' :
                              loan.status === 'pending' ? 'Pendiente' :
@@ -1223,6 +1296,7 @@ export const LoansModule = () => {
                    <SelectContent>
                      <SelectItem value="all">Todos (excepto completados)</SelectItem>
                      <SelectItem value="active">Activos y Vencidos</SelectItem>
+                     <SelectItem value="in_agreement">En Acuerdo</SelectItem>
                      <SelectItem value="pending">Pendientes</SelectItem>
                      <SelectItem value="overdue">Solo Vencidos</SelectItem>
                      <SelectItem value="paid">Completados</SelectItem>
@@ -1305,7 +1379,7 @@ export const LoansModule = () => {
                  <div className="text-sm text-gray-600">
                    Mostrando {filteredLoans.length} de {loans.length} préstamos
                    {searchTerm && ` • Búsqueda: "${searchTerm}"`}
-                   {statusFilter !== 'all' && ` • Estado: ${statusFilter}`}
+                   {statusFilter !== 'all' && ` • Estado: ${statusFilter === 'in_agreement' ? 'En Acuerdo' : statusFilter === 'active' ? 'Activos y Vencidos' : statusFilter === 'pending' ? 'Pendientes' : statusFilter === 'overdue' ? 'Vencidos' : statusFilter === 'paid' ? 'Completados' : statusFilter === 'deleted' ? 'Eliminados' : statusFilter === 'cancelled' ? 'Cancelados' : statusFilter}`}
                    {dateFilter !== 'all' && ` • Fecha: ${dateFilter}`}
                    {amountFilter !== 'all' && ` • Monto: ${amountFilter}`}
                    {overdueFilter && ` • Solo vencidos`}
@@ -1350,6 +1424,7 @@ export const LoansModule = () => {
                                {loan.client?.full_name} - {loan.client?.dni}
                              </h3>
                              <span className={`px-2 py-1 rounded text-xs font-medium ${
+                               hasActiveAgreement(loan.id) ? 'bg-purple-100 text-purple-800' :
                                loan.status === 'active' ? 'bg-green-100 text-green-800' :
                                loan.status === 'overdue' ? 'bg-red-100 text-red-800' :
                                loan.status === 'paid' ? 'bg-blue-100 text-blue-800' :
@@ -1357,7 +1432,8 @@ export const LoansModule = () => {
                                loan.status === 'deleted' ? 'bg-gray-100 text-gray-800' :
                                'bg-gray-100 text-gray-800'
                              }`}>
-                               {loan.status === 'active' ? 'Activo' :
+                               {hasActiveAgreement(loan.id) ? 'En Acuerdo' :
+                                loan.status === 'active' ? 'Activo' :
                                 loan.status === 'overdue' ? 'Vencido' :
                                 loan.status === 'paid' ? 'Pagado' :
                                 loan.status === 'pending' ? 'Pendiente' :
@@ -2536,6 +2612,7 @@ export const LoansModule = () => {
                        <SelectContent>
                          <SelectItem value="all">Todos los Estados</SelectItem>
                          <SelectItem value="active">Activo</SelectItem>
+                         <SelectItem value="in_agreement">En Acuerdo</SelectItem>
                          <SelectItem value="overdue">Vencido</SelectItem>
                          <SelectItem value="paid">Pagado</SelectItem>
                          <SelectItem value="pending">Pendiente</SelectItem>
@@ -2581,7 +2658,12 @@ export const LoansModule = () => {
                          } else if (statementStatusFilter !== 'all') {
                            // Para otros filtros, excluir eliminados
                            if (loan.status === 'deleted') return false;
-                           if (loan.status !== statementStatusFilter) {
+                           if (statementStatusFilter === 'in_agreement') {
+                             // Filtrar por préstamos con acuerdo activo
+                             if (!hasActiveAgreement(loan.id)) {
+                               return false;
+                             }
+                           } else if (loan.status !== statementStatusFilter) {
                              return false;
                            }
                          } else {
@@ -2646,12 +2728,16 @@ export const LoansModule = () => {
                                  <CreditCard className="h-4 w-4 text-gray-500" />
                                  <h3 className="font-medium">{loan.client?.full_name}</h3>
                                  <Badge variant={
+                                   hasActiveAgreement(loan.id) ? 'secondary' :
                                    loan.status === 'active' ? 'default' :
                                    loan.status === 'overdue' ? 'destructive' :
                                    loan.status === 'paid' ? 'secondary' :
                                    loan.status === 'deleted' ? 'outline' : 'outline'
+                                 } className={
+                                   hasActiveAgreement(loan.id) ? 'bg-purple-100 text-purple-800 hover:bg-purple-200' : ''
                                  }>
-                                   {loan.status === 'active' ? 'Activo' :
+                                   {hasActiveAgreement(loan.id) ? 'En Acuerdo' :
+                                    loan.status === 'active' ? 'Activo' :
                                     loan.status === 'overdue' ? 'Vencido' :
                                     loan.status === 'paid' ? 'Pagado' :
                                     loan.status === 'deleted' ? 'Eliminado' : loan.status}

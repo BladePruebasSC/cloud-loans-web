@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
-import { formatDateTimeWithOffset, calculateDueDateInSantoDomingo } from '@/utils/dateUtils';
+import { formatDateTimeWithOffset, calculateDueDateInSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { 
   DollarSign, 
   Plus, 
@@ -331,7 +331,7 @@ export const PawnShopModule = () => {
   const [extendDays, setExtendDays] = useState<number>(30);
   const [chargeFormData, setChargeFormData] = useState({
     amount: 0,
-    charge_date: new Date().toISOString().split('T')[0],
+    charge_date: getCurrentDateStringForSantoDomingo(),
     reference_number: '',
     reason: '',
     notes: ''
@@ -1359,7 +1359,7 @@ export const PawnShopModule = () => {
       // Resetear formulario
       setChargeFormData({
         amount: 0,
-        charge_date: new Date().toISOString().split('T')[0],
+        charge_date: getCurrentDateStringForSantoDomingo(),
         reference_number: '',
         reason: '',
         notes: ''
@@ -3809,7 +3809,7 @@ export const PawnShopModule = () => {
                   setShowAddChargeForm(false);
                   setChargeFormData({
                     amount: 0,
-                    charge_date: new Date().toISOString().split('T')[0],
+                    charge_date: getCurrentDateStringForSantoDomingo(),
                     reference_number: '',
                     reason: '',
                     notes: ''
@@ -4546,7 +4546,7 @@ export const PawnShopModule = () => {
                   setShowQuickUpdate(false);
                   setChargeFormData({
                     amount: 0,
-                    charge_date: new Date().toISOString().split('T')[0],
+                    charge_date: getCurrentDateStringForSantoDomingo(),
                     reference_number: '',
                     reason: '',
                     notes: ''
