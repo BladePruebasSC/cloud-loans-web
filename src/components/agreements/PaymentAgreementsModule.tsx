@@ -65,10 +65,12 @@ interface PaymentAgreement {
 
 interface Loan {
   id: string;
+  client_id: string;
   amount: number;
   remaining_balance: number;
   monthly_payment: number;
   clients?: {
+    id: string;
     full_name: string;
     dni: string;
     phone: string;
@@ -107,68 +109,49 @@ export const PaymentAgreementsModule = () => {
     try {
       setLoading(true);
       
-      // Simulamos datos de acuerdos de pago más completos
-      const mockAgreements: PaymentAgreement[] = [
-        {
-          id: '1',
-          loan_id: 'loan-1',
-          client_name: 'Juan Pérez',
-          client_dni: '001-1234567-8',
-          client_phone: '(809) 123-4567',
-          loan_amount: 50000,
-          original_payment: 3500,
-          agreed_payment_amount: 2500,
-          payment_frequency: 'monthly',
-          start_date: '2024-01-15',
-          end_date: '2024-12-15',
-          status: 'active',
-          reason: 'Dificultades económicas temporales',
-          notes: 'Cliente perdió empleo, nuevo acuerdo por 6 meses',
-          created_at: '2024-01-10T10:00:00Z',
-          approved_by: 'admin',
-          approved_at: '2024-01-12T14:30:00Z'
-        },
-        {
-          id: '2',
-          loan_id: 'loan-2',
-          client_name: 'María González',
-          client_dni: '001-2345678-9',
-          client_phone: '(809) 234-5678',
-          loan_amount: 75000,
-          original_payment: 5200,
-          agreed_payment_amount: 4000,
-          payment_frequency: 'monthly',
-          start_date: '2024-02-01',
-          end_date: '2024-08-01',
-          status: 'pending',
-          reason: 'Reducción de ingresos por enfermedad',
-          notes: 'Solicita reducción temporal por 6 meses',
-          created_at: '2024-01-28T14:30:00Z',
-          approved_by: null,
-          approved_at: null
-        },
-        {
-          id: '3',
-          loan_id: 'loan-3',
-          client_name: 'Carlos Rodríguez',
-          client_dni: '001-3456789-0',
-          client_phone: '(809) 345-6789',
-          loan_amount: 30000,
-          original_payment: 2100,
-          agreed_payment_amount: 1500,
-          payment_frequency: 'biweekly',
-          start_date: '2024-01-01',
-          end_date: '2024-06-30',
-          status: 'completed',
-          reason: 'Emergencia familiar',
-          notes: 'Acuerdo completado exitosamente',
-          created_at: '2023-12-15T09:00:00Z',
-          approved_by: 'admin',
-          approved_at: '2023-12-16T10:00:00Z'
-        }
-      ];
+      const { data, error } = await supabase
+        .from('payment_agreements')
+        .select(`
+          *,
+          loans (
+            id,
+            amount,
+            remaining_balance,
+            monthly_payment,
+            clients (
+              full_name,
+              dni,
+              phone
+            )
+          )
+        `)
+        .order('created_at', { ascending: false });
 
-      setAgreements(mockAgreements);
+      if (error) throw error;
+
+      // Transformar los datos para que coincidan con la interfaz
+      const transformedAgreements: PaymentAgreement[] = (data || []).map((agreement: any) => ({
+        id: agreement.id,
+        loan_id: agreement.loan_id,
+        client_name: agreement.loans?.clients?.full_name || 'N/A',
+        client_dni: agreement.loans?.clients?.dni || 'N/A',
+        client_phone: agreement.loans?.clients?.phone || 'N/A',
+        loan_amount: agreement.loans?.amount || 0,
+        original_payment: agreement.original_amount || agreement.loans?.monthly_payment || 0,
+        agreed_payment_amount: agreement.agreed_amount || 0,
+        payment_frequency: agreement.payment_frequency || 'monthly',
+        start_date: agreement.start_date,
+        end_date: agreement.end_date || '',
+        status: agreement.status || 'pending',
+        reason: agreement.reason || '',
+        notes: agreement.notes || null,
+        created_at: agreement.created_at,
+        approved_by: agreement.approved_by,
+        approved_at: agreement.approved_at,
+        loans: agreement.loans
+      }));
+
+      setAgreements(transformedAgreements);
     } catch (error) {
       console.error('Error fetching agreements:', error);
       toast.error('Error al cargar acuerdos');
@@ -183,10 +166,12 @@ export const PaymentAgreementsModule = () => {
         .from('loans')
         .select(`
           id,
+          client_id,
           amount,
           remaining_balance,
           monthly_payment,
           clients (
+            id,
             full_name,
             dni,
             phone
@@ -212,44 +197,64 @@ export const PaymentAgreementsModule = () => {
         return;
       }
 
-      const newAgreement: PaymentAgreement = {
-        id: Date.now().toString(),
+      if (!user) {
+        toast.error('Usuario no autenticado');
+        return;
+      }
+
+      const agreementData = {
         loan_id: formData.loan_id,
-        client_name: selectedLoan.clients?.full_name || 'N/A',
-        client_dni: selectedLoan.clients?.dni || 'N/A',
-        client_phone: selectedLoan.clients?.phone || 'N/A',
-        loan_amount: selectedLoan.amount,
-        original_payment: selectedLoan.monthly_payment,
-        agreed_payment_amount: formData.agreed_payment_amount,
+        client_id: selectedLoan.client_id,
+        agreed_amount: formData.agreed_payment_amount,
+        original_amount: selectedLoan.monthly_payment,
         payment_frequency: formData.payment_frequency,
         start_date: formData.start_date,
-        end_date: formData.end_date,
+        end_date: formData.end_date || null,
         status: 'pending',
-        reason: formData.reason,
+        reason: formData.reason || null,
         notes: formData.notes || null,
-        created_at: new Date().toISOString(),
-        approved_by: null,
-        approved_at: null
+        user_id: user.id
       };
 
       if (editingAgreement) {
-        setAgreements(prev => prev.map(agreement => 
-          agreement.id === editingAgreement.id 
-            ? { ...agreement, ...newAgreement, id: editingAgreement.id }
-            : agreement
-        ));
+        // Actualizar acuerdo existente
+        const { data, error } = await supabase
+          .from('payment_agreements')
+          .update({
+            agreed_amount: formData.agreed_payment_amount,
+            original_amount: selectedLoan.monthly_payment,
+            payment_frequency: formData.payment_frequency,
+            start_date: formData.start_date,
+            end_date: formData.end_date || null,
+            reason: formData.reason || null,
+            notes: formData.notes || null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', editingAgreement.id)
+          .select()
+          .single();
+
+        if (error) throw error;
         toast.success('Acuerdo actualizado exitosamente');
       } else {
-        setAgreements(prev => [newAgreement, ...prev]);
+        // Crear nuevo acuerdo
+        const { data, error } = await supabase
+          .from('payment_agreements')
+          .insert([agreementData])
+          .select()
+          .single();
+
+        if (error) throw error;
         toast.success('Acuerdo creado exitosamente');
       }
 
       setShowForm(false);
       setEditingAgreement(null);
       resetForm();
-    } catch (error) {
+      fetchAgreements(); // Recargar acuerdos desde la base de datos
+    } catch (error: any) {
       console.error('Error saving agreement:', error);
-      toast.error('Error al guardar acuerdo');
+      toast.error(`Error al guardar acuerdo: ${error.message || 'Error desconocido'}`);
     }
   };
 
@@ -270,22 +275,55 @@ export const PaymentAgreementsModule = () => {
   const handleDelete = async (id: string) => {
     if (!confirm('¿Está seguro de eliminar este acuerdo?')) return;
     
-    setAgreements(prev => prev.filter(agreement => agreement.id !== id));
-    toast.success('Acuerdo eliminado exitosamente');
+    try {
+      const { error } = await supabase
+        .from('payment_agreements')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast.success('Acuerdo eliminado exitosamente');
+      fetchAgreements(); // Recargar acuerdos desde la base de datos
+    } catch (error: any) {
+      console.error('Error deleting agreement:', error);
+      toast.error(`Error al eliminar acuerdo: ${error.message || 'Error desconocido'}`);
+    }
   };
 
-  const updateStatus = (id: string, status: string) => {
-    setAgreements(prev => prev.map(agreement => 
-      agreement.id === id 
-        ? { 
-            ...agreement, 
-            status,
-            approved_by: status === 'approved' ? 'admin' : null,
-            approved_at: status === 'approved' ? new Date().toISOString() : null
-          } 
-        : agreement
-    ));
-    toast.success(`Acuerdo ${status === 'approved' ? 'aprobado' : status === 'rejected' ? 'rechazado' : 'actualizado'} exitosamente`);
+  const updateStatus = async (id: string, newStatus: string) => {
+    try {
+      if (!user) {
+        toast.error('Usuario no autenticado');
+        return;
+      }
+
+      const updateData: any = {
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      };
+
+      if (newStatus === 'approved' || newStatus === 'active') {
+        updateData.approved_by = user.id;
+        updateData.approved_at = new Date().toISOString();
+      } else if (newStatus === 'rejected' || newStatus === 'cancelled') {
+        updateData.approved_by = null;
+        updateData.approved_at = null;
+      }
+
+      const { error } = await supabase
+        .from('payment_agreements')
+        .update(updateData)
+        .eq('id', id);
+
+      if (error) throw error;
+
+      toast.success(`Acuerdo ${newStatus === 'approved' ? 'aprobado' : newStatus === 'active' ? 'activado' : newStatus === 'rejected' ? 'rechazado' : 'actualizado'} exitosamente`);
+      fetchAgreements(); // Recargar acuerdos desde la base de datos
+    } catch (error: any) {
+      console.error('Error updating status:', error);
+      toast.error(`Error al actualizar estado: ${error.message || 'Error desconocido'}`);
+    }
   };
 
   const resetForm = () => {

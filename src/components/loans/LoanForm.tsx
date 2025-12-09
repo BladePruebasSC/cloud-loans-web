@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer, Plus } from 'lucide-react';
 import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
+import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 
 // Función para generar las cuotas originales del préstamo
 const generateOriginalInstallments = async (loan: any, formData: LoanFormData) => {
@@ -263,6 +264,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   });
   const [excludedDays, setExcludedDays] = useState<string[]>([]);
   const [isFixingQuota, setIsFixingQuota] = useState(false);
+  const [guaranteeData, setGuaranteeData] = useState<Partial<GuaranteeFormData>>({});
   const { user, companyId, companySettings } = useAuth();
 
   // Cargar configuración global de mora
@@ -1414,6 +1416,67 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       console.log('Generando cuotas originales para el préstamo:', insertedLoan.id);
       await generateOriginalInstallments(insertedLoan, data);
 
+      // Si hay garantía, guardarla
+      if (data.guarantor_required && guaranteeData.guarantee_type) {
+        try {
+          const guaranteeInsert = {
+            loan_id: insertedLoan.id,
+            guarantee_type: guaranteeData.guarantee_type,
+            status: guaranteeData.status || 'available',
+            process: guaranteeData.process || 'in_warehouse',
+            holder: guaranteeData.holder || null,
+            notes: guaranteeData.notes || null,
+            created_by: user?.id || null,
+            // Campos de vehículo
+            vehicle_type: guaranteeData.vehicle_type || null,
+            brand: guaranteeData.brand || null,
+            model: guaranteeData.model || null,
+            year: guaranteeData.year || null,
+            automotive_power: guaranteeData.automotive_power || null,
+            chassis: guaranteeData.chassis || null,
+            engine_series: guaranteeData.engine_series || null,
+            doors: guaranteeData.doors || null,
+            cylinders: guaranteeData.cylinders || null,
+            color: guaranteeData.color || null,
+            license_plate: guaranteeData.license_plate || null,
+            // Campos de edificaciones
+            building_type: guaranteeData.building_type || null,
+            address: guaranteeData.address || null,
+            square_meters: guaranteeData.square_meters || null,
+            construction_year: guaranteeData.construction_year || null,
+            property_type: guaranteeData.property_type || null,
+            property_number: guaranteeData.property_number || null,
+            // Campos de otros
+            other_type: guaranteeData.other_type || null,
+            other_description: guaranteeData.other_description || null,
+            // Precio de venta
+            sale_price: guaranteeData.sale_price || null,
+            sale_date: guaranteeData.sale_date || null,
+            sale_down_payment: guaranteeData.sale_down_payment || null,
+            sale_minimum_down_payment: guaranteeData.sale_minimum_down_payment || null,
+            // Precio de compra
+            purchase_date: guaranteeData.purchase_date || null,
+            purchase_cost: guaranteeData.purchase_cost || null,
+            purchase_invoice_url: guaranteeData.purchase_invoice_url || null,
+            supplier_id: guaranteeData.supplier_id || null,
+          };
+
+          const { error: guaranteeError } = await supabase
+            .from('guarantees')
+            .insert([guaranteeInsert]);
+
+          if (guaranteeError) {
+            console.error('Error guardando garantía:', guaranteeError);
+            toast.warning('Préstamo creado pero hubo un error al guardar la garantía');
+          } else {
+            console.log('Garantía guardada exitosamente');
+          }
+        } catch (guaranteeErr) {
+          console.error('Error al guardar garantía:', guaranteeErr);
+          toast.warning('Préstamo creado pero hubo un error al guardar la garantía');
+        }
+      }
+
       toast.success('Préstamo creado exitosamente');
       onLoanCreated?.();
     } catch (error) {
@@ -2277,6 +2340,14 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Formulario de Garantía - Mostrar solo si guarantor_required está activo */}
+              {form.watch('guarantor_required') && (
+                <GuaranteeForm
+                  formData={guaranteeData}
+                  onChange={(data) => setGuaranteeData(data)}
+                />
+              )}
 
               {/* Configuración de Mora */}
               <Card>

@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,6 +57,8 @@ interface Client {
 }
 
 const ShiftsModule = () => {
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -81,6 +84,37 @@ const ShiftsModule = () => {
       fetchClients();
     }
   }, [user]);
+
+  // Leer parámetros de URL y prellenar formulario si vienen de un préstamo
+  useEffect(() => {
+    const dateParam = searchParams.get('date');
+    const loanIdParam = searchParams.get('loan_id');
+    const clientIdParam = searchParams.get('client_id');
+
+    if ((dateParam || loanIdParam || clientIdParam) && clients.length > 0) {
+      // Buscar cliente por DNI si viene client_id
+      if (clientIdParam) {
+        const client = clients.find(c => c.dni === clientIdParam);
+        if (client) {
+          setAppointmentForm(prev => ({
+            ...prev,
+            client_id: client.id,
+            appointment_date: dateParam || prev.appointment_date,
+            type: 'collection',
+            title: `Cobro de préstamo${loanIdParam ? ` #${loanIdParam}` : ''}`,
+            description: loanIdParam ? `Cita para cobro del préstamo ${loanIdParam}` : 'Cita para cobro de préstamo'
+          }));
+          setActiveTab('agenda');
+          setShowAppointmentForm(true);
+        }
+      } else if (dateParam) {
+        setAppointmentForm(prev => ({
+          ...prev,
+          appointment_date: dateParam
+        }));
+      }
+    }
+  }, [searchParams, clients]);
 
   const fetchAppointments = async () => {
     try {

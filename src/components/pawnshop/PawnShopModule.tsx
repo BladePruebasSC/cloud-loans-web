@@ -15,6 +15,8 @@ import { formatDateTimeWithOffset, calculateDueDateInSantoDomingo } from '@/util
 import { 
   DollarSign, 
   Plus, 
+  PlusCircle,
+  TrendingUp,
   Search, 
   Clock,
   CheckCircle2,
@@ -323,8 +325,16 @@ export const PawnShopModule = () => {
   const [showInterestPreview, setShowInterestPreview] = useState(false);
   const [showExtendForm, setShowExtendForm] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showAddChargeForm, setShowAddChargeForm] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [extendDays, setExtendDays] = useState<number>(30);
+  const [chargeFormData, setChargeFormData] = useState({
+    amount: 0,
+    charge_date: new Date().toISOString().split('T')[0],
+    reference_number: '',
+    reason: '',
+    notes: ''
+  });
   const [selectedTransaction, setSelectedTransaction] = useState<PawnTransaction | null>(null);
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
@@ -412,6 +422,21 @@ export const PawnShopModule = () => {
       fetchData();
     }
   }, [user]);
+
+  // Escuchar evento para recargar historial cuando se agrega un cargo
+  useEffect(() => {
+    const handleHistoryRefresh = async (event: CustomEvent) => {
+      const { transactionId } = event.detail;
+      if (transactionId && selectedTransaction?.id === transactionId) {
+        await fetchPaymentHistory(transactionId);
+      }
+    };
+
+    window.addEventListener('pawnHistoryRefresh', handleHistoryRefresh as EventListener);
+    return () => {
+      window.removeEventListener('pawnHistoryRefresh', handleHistoryRefresh as EventListener);
+    };
+  }, [selectedTransaction]);
 
   // Inicializar fecha de vencimiento cuando se abre el formulario
   useEffect(() => {
@@ -1204,6 +1229,97 @@ export const PawnShopModule = () => {
     }
   };
 
+  const handleAddCharge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTransaction) return;
+
+    try {
+      if (!chargeFormData.amount || chargeFormData.amount <= 0) {
+        toast.error('El monto del cargo debe ser mayor a 0');
+        return;
+      }
+
+      // Obtener companyId usando get_user_company_id() o user.id
+      const companyId = user?.id || '';
+
+      // Calcular fecha de vencimiento (un día después de la fecha del cargo)
+      const chargeDate = new Date(chargeFormData.charge_date);
+      const dueDate = new Date(chargeDate);
+      dueDate.setDate(dueDate.getDate() + 1);
+
+      // Registrar en historial
+      const historyData = {
+        pawn_transaction_id: selectedTransaction.id,
+        change_type: 'add_charge',
+        old_values: {
+          loan_amount: selectedTransaction.loan_amount
+        },
+        new_values: {
+          loan_amount: selectedTransaction.loan_amount + chargeFormData.amount
+        },
+        reason: chargeFormData.reason || '',
+        amount: chargeFormData.amount,
+        charge_date: chargeFormData.charge_date,
+        reference_number: chargeFormData.reference_number || null,
+        notes: chargeFormData.notes || null,
+        created_by: companyId
+      };
+
+      const { data: insertedHistory, error: historyInsertError } = await supabase
+        .from('pawn_history')
+        .insert([historyData])
+        .select();
+
+      if (historyInsertError) {
+        console.error('❌ Error insertando en historial:', historyInsertError);
+        console.error('📋 Datos que se intentaron insertar:', historyData);
+        toast.error(`Error al guardar en historial: ${historyInsertError.message}`);
+        return;
+      }
+
+      console.log('✅ Historial guardado exitosamente:', insertedHistory);
+
+      // Actualizar el monto del préstamo en la transacción
+      const { error: updateError } = await supabase
+        .from('pawn_transactions')
+        .update({
+          loan_amount: selectedTransaction.loan_amount + chargeFormData.amount,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', selectedTransaction.id);
+
+      if (updateError) throw updateError;
+
+      toast.success(`Cargo de $${chargeFormData.amount.toLocaleString()} agregado exitosamente`);
+      
+      // Disparar evento para recargar el historial si está abierto
+      window.dispatchEvent(new CustomEvent('pawnHistoryRefresh', { 
+        detail: { transactionId: selectedTransaction.id } 
+      }));
+
+      // Resetear formulario
+      setChargeFormData({
+        amount: 0,
+        charge_date: new Date().toISOString().split('T')[0],
+        reference_number: '',
+        reason: '',
+        notes: ''
+      });
+      
+      setShowAddChargeForm(false);
+      setSelectedTransaction(null);
+      fetchData();
+      
+      // Recargar historial de pagos si está abierto
+      if (showPaymentHistory && selectedTransaction) {
+        await fetchPaymentHistory(selectedTransaction.id);
+      }
+    } catch (error: any) {
+      console.error('Error adding charge:', error);
+      toast.error(`Error al agregar cargo: ${error.message || 'Error desconocido'}`);
+    }
+  };
+
   const getDefaultPawnPeriod = () => companySettings?.default_pawn_period_days ?? 90;
 
   const resetForm = () => {
@@ -1955,17 +2071,34 @@ export const PawnShopModule = () => {
   };
 
 
+  const [pawnHistory, setPawnHistory] = useState<any[]>([]);
+
   const fetchPaymentHistory = async (transactionId: string) => {
     try {
       setPaymentHistory([]);
-      const { data, error } = await supabase
-        .from('pawn_payments')
-        .select('*')
-        .eq('pawn_transaction_id', transactionId)
-        .order('payment_date', { ascending: false });
+      setPawnHistory([]);
+      
+      const [paymentsRes, historyRes] = await Promise.all([
+        supabase
+          .from('pawn_payments')
+          .select('*')
+          .eq('pawn_transaction_id', transactionId)
+          .order('payment_date', { ascending: false }),
+        supabase
+          .from('pawn_history')
+          .select('*')
+          .eq('pawn_transaction_id', transactionId)
+          .in('change_type', ['add_charge'])
+          .order('created_at', { ascending: false })
+      ]);
 
-      if (error) throw error;
-      setPaymentHistory(data || []);
+      if (paymentsRes.error) throw paymentsRes.error;
+      if (historyRes.error) {
+        console.warn('Error fetching pawn history (puede que la tabla no exista aún):', historyRes.error);
+      }
+      
+      setPaymentHistory(paymentsRes.data || []);
+      setPawnHistory(historyRes.data || []);
     } catch (error) {
       console.error('Error fetching payment history:', error);
       toast.error('Error al cargar historial de pagos');
@@ -3500,6 +3633,109 @@ export const PawnShopModule = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Add Charge Dialog */}
+      <Dialog open={showAddChargeForm} onOpenChange={setShowAddChargeForm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <PlusCircle className="h-5 w-5" />
+              Agregar Cargo
+            </DialogTitle>
+            <DialogDescription>
+              Agrega un cargo adicional a esta transacción de compra venta
+            </DialogDescription>
+          </DialogHeader>
+          {selectedTransaction && (
+            <form onSubmit={handleAddCharge} className="space-y-4">
+              <div className="p-3 bg-gray-50 rounded">
+                <div className="text-sm">Artículo: <strong>{selectedTransaction.product_name}</strong></div>
+                <div className="text-sm">Cliente: <strong>{selectedTransaction.clients?.full_name || 'N/A'}</strong></div>
+                <div className="text-sm">Monto Actual: <strong>${Number(selectedTransaction.loan_amount).toLocaleString()}</strong></div>
+              </div>
+              
+              <div>
+                <Label htmlFor="charge_amount">Monto del Cargo *</Label>
+                <Input
+                  id="charge_amount"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={chargeFormData.amount || ''}
+                  onChange={(e) => setChargeFormData({...chargeFormData, amount: parseFloat(e.target.value) || 0})}
+                  required
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="charge_date">Fecha del Cargo *</Label>
+                <Input
+                  id="charge_date"
+                  type="date"
+                  value={chargeFormData.charge_date}
+                  onChange={(e) => setChargeFormData({...chargeFormData, charge_date: e.target.value})}
+                  max={new Date().toISOString().split('T')[0]}
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  La fecha de vencimiento será un día después de esta fecha
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="charge_reference">Número de Referencia</Label>
+                <Input
+                  id="charge_reference"
+                  value={chargeFormData.reference_number}
+                  onChange={(e) => setChargeFormData({...chargeFormData, reference_number: e.target.value})}
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="charge_reason">Razón del Cargo</Label>
+                <Textarea
+                  id="charge_reason"
+                  value={chargeFormData.reason}
+                  onChange={(e) => setChargeFormData({...chargeFormData, reason: e.target.value})}
+                  placeholder="Explique la razón del cargo..."
+                  rows={3}
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="charge_notes">Notas Adicionales</Label>
+                <Textarea
+                  id="charge_notes"
+                  value={chargeFormData.notes}
+                  onChange={(e) => setChargeFormData({...chargeFormData, notes: e.target.value})}
+                  placeholder="Notas adicionales sobre el cargo..."
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end">
+                <Button type="button" variant="outline" onClick={() => {
+                  setShowAddChargeForm(false);
+                  setChargeFormData({
+                    amount: 0,
+                    charge_date: new Date().toISOString().split('T')[0],
+                    reference_number: '',
+                    reason: '',
+                    notes: ''
+                  });
+                }}>
+                  Cancelar
+                </Button>
+                <Button type="submit">
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  Agregar Cargo
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Payment Form Dialog */}
       <Dialog open={showPaymentForm} onOpenChange={setShowPaymentForm}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -3559,213 +3795,297 @@ export const PawnShopModule = () => {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Receipt className="h-5 w-5" />
-                    Historial de Pagos ({paymentHistory.length})
+                    <History className="h-5 w-5" />
+                    Movimientos ({paymentHistory.length + pawnHistory.length})
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {paymentHistory.length === 0 ? (
+                  {paymentHistory.length === 0 && pawnHistory.length === 0 ? (
                     <div className="text-center py-8 text-gray-500">
                       <Receipt className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>No hay pagos registrados</p>
+                      <p>No hay movimientos registrados</p>
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {paymentHistory.map((payment) => (
-                        <div key={payment.id} className="border rounded-lg p-4">
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                {payment.payment_type === 'extension' ? (
-                                  <h3 className="font-semibold text-lg">
-                                    Extensión de Plazo
-                                  </h3>
-                                ) : (
-                                  <h3 className="font-semibold text-lg">
-                                    ${Number(payment.amount).toLocaleString()}
-                                  </h3>
-                                )}
-                                <Badge className={
-                                  payment.payment_type === 'full' ? 'bg-green-500' :
-                                  payment.payment_type === 'partial' ? 'bg-blue-500' :
-                                  payment.payment_type === 'extension' ? 'bg-purple-500' :
-                                  'bg-yellow-500'
-                                }>
-                                  {payment.payment_type === 'full' ? 'Completo' :
-                                   payment.payment_type === 'partial' ? 'Parcial' :
-                                   payment.payment_type === 'extension' ? 'Extensión' : 'Interés'}
-                                </Badge>
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
-                                <div><strong>Fecha:</strong> {new Date(payment.payment_date).toLocaleString('es-DO', {
-                                  timeZone: 'America/Santo_Domingo',
-                                  year: 'numeric',
-                                  month: '2-digit',
-                                  day: '2-digit',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  hour12: true
-                                })}</div>
-                                <div><strong>Tipo:</strong> {
-                                  payment.payment_type === 'extension' ? 'Extensión de Plazo' :
-                                  payment.payment_type === 'full' ? 'Pago Completo (Redención)' :
-                                  payment.payment_type === 'partial' ? 'Pago Parcial' : 'Solo Interés'
-                                }</div>
-                                {payment.notes && (
-                                  <div className="md:col-span-2">
-                                    <strong>Notas:</strong> {payment.notes}
-                                  </div>
-                                )}
-                              </div>
-                              {payment.payment_type !== 'extension' && (
-                                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                                  <div className="p-3 bg-white rounded-lg border">
-                                    <div className="text-gray-600 text-xs uppercase">Abono a Interés</div>
-                                    <div className="text-base font-semibold text-orange-600">
-                                      ${Number(payment.interest_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {/* Combinar pagos y cargos, ordenados por fecha */}
+                      {(() => {
+                        const movements: Array<{
+                          id: string;
+                          type: 'payment' | 'charge';
+                          date: Date;
+                          data: any;
+                        }> = [];
+
+                        // Agregar pagos
+                        paymentHistory.forEach(payment => {
+                          movements.push({
+                            id: payment.id,
+                            type: 'payment',
+                            date: new Date(payment.payment_date),
+                            data: payment
+                          });
+                        });
+
+                        // Agregar cargos del historial
+                        pawnHistory.forEach(entry => {
+                          if (entry.change_type === 'add_charge') {
+                            movements.push({
+                              id: entry.id,
+                              type: 'charge',
+                              date: new Date(entry.created_at),
+                              data: entry
+                            });
+                          }
+                        });
+
+                        // Ordenar por fecha (más reciente primero)
+                        movements.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+                        return movements.map((movement) => {
+                          if (movement.type === 'charge') {
+                            const charge = movement.data;
+                            return (
+                              <div key={charge.id} className="border rounded-lg p-4 bg-blue-50">
+                                <div className="flex items-start justify-between mb-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-3 mb-2">
+                                      <TrendingUp className="h-5 w-5 text-blue-600" />
+                                      <h3 className="font-semibold text-lg">
+                                        ${Number(charge.amount || 0).toLocaleString()}
+                                      </h3>
+                                      <Badge className="bg-blue-500">Cargo</Badge>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
+                                      <div><strong>Fecha:</strong> {new Date(charge.created_at).toLocaleString('es-DO', {
+                                        timeZone: 'America/Santo_Domingo',
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        hour12: true
+                                      })}</div>
+                                      {charge.charge_date && (
+                                        <div><strong>Fecha del Cargo:</strong> {new Date(charge.charge_date).toLocaleDateString('es-DO')}</div>
+                                      )}
+                                      {charge.reference_number && (
+                                        <div><strong>Referencia:</strong> {charge.reference_number}</div>
+                                      )}
+                                      {charge.reason && (
+                                        <div className="md:col-span-2">
+                                          <strong>Razón:</strong> {charge.reason}
+                                        </div>
+                                      )}
+                                      {charge.notes && (
+                                        <div className="md:col-span-2">
+                                          <strong>Notas:</strong> {charge.notes}
+                                        </div>
+                                      )}
                                     </div>
                                   </div>
-                                  <div className="p-3 bg-white rounded-lg border">
-                                    <div className="text-gray-600 text-xs uppercase">Abono a Capital</div>
-                                    <div className="text-base font-semibold text-blue-600">
-                                      ${Number(payment.principal_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              </div>
+                            );
+                          } else {
+                            const payment = movement.data;
+                            return (
+                              <div key={payment.id} className="border rounded-lg p-4">
+                                <div className="flex items-start justify-between mb-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-3 mb-2">
+                                      {payment.payment_type === 'extension' ? (
+                                        <h3 className="font-semibold text-lg">
+                                          Extensión de Plazo
+                                        </h3>
+                                      ) : (
+                                        <h3 className="font-semibold text-lg">
+                                          ${Number(payment.amount).toLocaleString()}
+                                        </h3>
+                                      )}
+                                      <Badge className={
+                                        payment.payment_type === 'full' ? 'bg-green-500' :
+                                        payment.payment_type === 'partial' ? 'bg-blue-500' :
+                                        payment.payment_type === 'extension' ? 'bg-purple-500' :
+                                        'bg-yellow-500'
+                                      }>
+                                        {payment.payment_type === 'full' ? 'Completo' :
+                                         payment.payment_type === 'partial' ? 'Parcial' :
+                                         payment.payment_type === 'extension' ? 'Extensión' : 'Interés'}
+                                      </Badge>
                                     </div>
-                                  </div>
-                                  {typeof payment.remaining_balance === 'number' && !Number.isNaN(Number(payment.remaining_balance)) && (
-                                    <div className="p-3 bg-white rounded-lg border">
-                                      <div className="text-gray-600 text-xs uppercase">Capital Pendiente</div>
-                                      <div className="text-base font-semibold text-blue-700">
-                                        ${Number(payment.remaining_balance || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
+                                      <div><strong>Fecha:</strong> {new Date(payment.payment_date).toLocaleString('es-DO', {
+                                        timeZone: 'America/Santo_Domingo',
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        hour12: true
+                                      })}</div>
+                                      <div><strong>Tipo:</strong> {
+                                        payment.payment_type === 'extension' ? 'Extensión de Plazo' :
+                                        payment.payment_type === 'full' ? 'Pago Completo (Redención)' :
+                                        payment.payment_type === 'partial' ? 'Pago Parcial' : 'Solo Interés'
+                                      }</div>
+                                      {payment.notes && (
+                                        <div className="md:col-span-2">
+                                          <strong>Notas:</strong> {payment.notes}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {payment.payment_type !== 'extension' && (
+                                      <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                                        <div className="p-3 bg-white rounded-lg border">
+                                          <div className="text-gray-600 text-xs uppercase">Abono a Interés</div>
+                                          <div className="text-base font-semibold text-orange-600">
+                                            ${Number(payment.interest_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                          </div>
+                                        </div>
+                                        <div className="p-3 bg-white rounded-lg border">
+                                          <div className="text-gray-600 text-xs uppercase">Abono a Capital</div>
+                                          <div className="text-base font-semibold text-blue-600">
+                                            ${Number(payment.principal_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                          </div>
+                                        </div>
+                                        {typeof payment.remaining_balance === 'number' && !Number.isNaN(Number(payment.remaining_balance)) && (
+                                          <div className="p-3 bg-white rounded-lg border">
+                                            <div className="text-gray-600 text-xs uppercase">Capital Pendiente</div>
+                                            <div className="text-base font-semibold text-blue-700">
+                                              ${Number(payment.remaining_balance || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
-                                    </div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex gap-2 flex-wrap">
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline"
+                                    onClick={() => handleViewReceipt(payment)}
+                                  >
+                                    <Eye className="h-4 w-4 mr-1" />
+                                    Ver Recibo
+                                  </Button>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline"
+                                    onClick={() => printReceipt(payment, selectedTransaction)}
+                                  >
+                                    <Printer className="h-4 w-4 mr-1" />
+                                    Imprimir
+                                  </Button>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline"
+                                    onClick={() => downloadReceipt(payment, selectedTransaction)}
+                                  >
+                                    <Download className="h-4 w-4 mr-1" />
+                                    Descargar
+                                  </Button>
+                                  {paymentHistory.length > 0 && paymentHistory[0].id === payment.id && (
+                                    <Button 
+                                      size="sm" 
+                                      variant="outline"
+                                      className="text-red-600 hover:text-red-700"
+                                      onClick={async () => {
+                                        if (confirm('¿Estás seguro de que quieres eliminar este pago? Esta acción no se puede deshacer.')) {
+                                          try {
+                                            if (!selectedTransaction) {
+                                              toast.error('No hay transacción seleccionada');
+                                              return;
+                                            }
+
+                                            console.log('🗑️ Iniciando eliminación de pago:', payment.id);
+
+                                            // PASO 1: Obtener el estado actual de la transacción
+                                            const { data: currentTransaction, error: transError } = await supabase
+                                              .from('pawn_transactions')
+                                              .select('status')
+                                              .eq('id', selectedTransaction.id)
+                                              .single();
+
+                                            if (transError || !currentTransaction) {
+                                              console.error('Error obteniendo transacción:', transError);
+                                              throw new Error('No se pudo obtener la transacción');
+                                            }
+
+                                            // PASO 2: Eliminar el pago
+                                            // NO necesitamos restaurar start_date porque nunca lo modificamos
+                                            console.log('🗑️ Eliminando pago de la base de datos...');
+                                            const { error: deleteError } = await supabase
+                                              .from('pawn_payments')
+                                              .delete()
+                                              .eq('id', payment.id);
+                                            
+                                            if (deleteError) {
+                                              console.error('Error eliminando pago:', deleteError);
+                                              throw deleteError;
+                                            }
+
+                                            // Verificar que realmente se eliminó consultando de nuevo
+                                            const { data: verifyPayment, error: verifyError } = await supabase
+                                              .from('pawn_payments')
+                                              .select('id')
+                                              .eq('id', payment.id)
+                                              .maybeSingle();
+
+                                            if (verifyError) {
+                                              console.error('Error verificando eliminación:', verifyError);
+                                              // No lanzar error aquí, puede ser que simplemente no existe
+                                            }
+
+                                            if (verifyPayment) {
+                                              throw new Error('El pago aún existe después de intentar eliminarlo. Puede ser un problema de permisos.');
+                                            }
+
+                                            console.log('🗑️ Pago eliminado exitosamente');
+
+                                            // PASO 3: Actualizar la transacción si es necesario
+                                            // Si el status era 'redeemed' (porque el balance llegó a 0), cambiarlo a 'active'
+                                            // El remaining_balance se calcula dinámicamente, no se guarda en la tabla
+                                            if (currentTransaction.status === 'redeemed') {
+                                              const { error: updateError } = await supabase
+                                                .from('pawn_transactions')
+                                                .update({ status: 'active' })
+                                                .eq('id', selectedTransaction.id);
+
+                                              if (updateError) {
+                                                console.error('Error actualizando transacción:', updateError);
+                                                throw updateError;
+                                              }
+                                              console.log('🗑️ Cambiando status de redeemed a active');
+                                            }
+                                            
+                                            toast.success('Pago eliminado exitosamente');
+                                            
+                                            // Refrescar datos DESPUÉS de que todo se complete
+                                            // Esperar un momento para asegurar que la base de datos se actualice
+                                            await new Promise(resolve => setTimeout(resolve, 100));
+                                            
+                                            if (selectedTransaction) {
+                                              await fetchPaymentHistory(selectedTransaction.id);
+                                              await fetchData(); // Refrescar lista de transacciones
+                                            }
+                                          } catch (error: any) {
+                                            console.error('Error eliminando pago:', error);
+                                            toast.error(`Error al eliminar pago: ${error.message || 'Error desconocido'}`);
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      <X className="h-4 w-4 mr-1" />
+                                      Eliminar
+                                    </Button>
                                   )}
                                 </div>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex gap-2 flex-wrap">
-                            <Button 
-                              size="sm" 
-                              variant="outline"
-                              onClick={() => handleViewReceipt(payment)}
-                            >
-                              <Eye className="h-4 w-4 mr-1" />
-                              Ver Recibo
-                            </Button>
-                            <Button 
-                              size="sm" 
-                              variant="outline"
-                              onClick={() => printReceipt(payment, selectedTransaction)}
-                            >
-                              <Printer className="h-4 w-4 mr-1" />
-                              Imprimir
-                            </Button>
-                            <Button 
-                              size="sm" 
-                              variant="outline"
-                              onClick={() => downloadReceipt(payment, selectedTransaction)}
-                            >
-                              <Download className="h-4 w-4 mr-1" />
-                              Descargar
-                            </Button>
-                            {paymentHistory.length > 0 && paymentHistory[0].id === payment.id && (
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                className="text-red-600 hover:text-red-700"
-                                onClick={async () => {
-                                  if (confirm('¿Estás seguro de que quieres eliminar este pago? Esta acción no se puede deshacer.')) {
-                                    try {
-                                      if (!selectedTransaction) {
-                                        toast.error('No hay transacción seleccionada');
-                                        return;
-                                      }
-
-                                      console.log('🗑️ Iniciando eliminación de pago:', payment.id);
-
-                                      // PASO 1: Obtener el estado actual de la transacción
-                                      const { data: currentTransaction, error: transError } = await supabase
-                                        .from('pawn_transactions')
-                                        .select('status')
-                                        .eq('id', selectedTransaction.id)
-                                        .single();
-
-                                      if (transError || !currentTransaction) {
-                                        console.error('Error obteniendo transacción:', transError);
-                                        throw new Error('No se pudo obtener la transacción');
-                                      }
-
-                                      // PASO 2: Eliminar el pago
-                                      // NO necesitamos restaurar start_date porque nunca lo modificamos
-                                      console.log('🗑️ Eliminando pago de la base de datos...');
-                                      const { error: deleteError } = await supabase
-                                        .from('pawn_payments')
-                                        .delete()
-                                        .eq('id', payment.id);
-                                      
-                                      if (deleteError) {
-                                        console.error('Error eliminando pago:', deleteError);
-                                        throw deleteError;
-                                      }
-
-                                      // Verificar que realmente se eliminó consultando de nuevo
-                                      const { data: verifyPayment, error: verifyError } = await supabase
-                                        .from('pawn_payments')
-                                        .select('id')
-                                        .eq('id', payment.id)
-                                        .maybeSingle();
-
-                                      if (verifyError) {
-                                        console.error('Error verificando eliminación:', verifyError);
-                                        // No lanzar error aquí, puede ser que simplemente no existe
-                                      }
-
-                                      if (verifyPayment) {
-                                        throw new Error('El pago aún existe después de intentar eliminarlo. Puede ser un problema de permisos.');
-                                      }
-
-                                      console.log('🗑️ Pago eliminado exitosamente');
-
-                                      // PASO 3: Actualizar la transacción si es necesario
-                                      // Si el status era 'redeemed' (porque el balance llegó a 0), cambiarlo a 'active'
-                                      // El remaining_balance se calcula dinámicamente, no se guarda en la tabla
-                                      if (currentTransaction.status === 'redeemed') {
-                                        const { error: updateError } = await supabase
-                                          .from('pawn_transactions')
-                                          .update({ status: 'active' })
-                                          .eq('id', selectedTransaction.id);
-
-                                        if (updateError) {
-                                          console.error('Error actualizando transacción:', updateError);
-                                          throw updateError;
-                                        }
-                                        console.log('🗑️ Cambiando status de redeemed a active');
-                                      }
-                                      
-                                      toast.success('Pago eliminado exitosamente');
-                                      
-                                      // Refrescar datos DESPUÉS de que todo se complete
-                                      // Esperar un momento para asegurar que la base de datos se actualice
-                                      await new Promise(resolve => setTimeout(resolve, 100));
-                                      
-                                      if (selectedTransaction) {
-                                        await fetchPaymentHistory(selectedTransaction.id);
-                                        await fetchData(); // Refrescar lista de transacciones
-                                      }
-                                    } catch (error: any) {
-                                      console.error('Error eliminando pago:', error);
-                                      toast.error(`Error al eliminar pago: ${error.message || 'Error desconocido'}`);
-                                    }
-                                  }
-                                }}
-                              >
-                                <X className="h-4 w-4 mr-1" />
-                                Eliminar
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                              </div>
+                            );
+                          }
+                        });
+                      })()}
                     </div>
                   )}
                 </CardContent>
@@ -4127,6 +4447,24 @@ export const PawnShopModule = () => {
                 }}
               >
                 Extender Plazo
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setShowQuickUpdate(false);
+                  setChargeFormData({
+                    amount: 0,
+                    charge_date: new Date().toISOString().split('T')[0],
+                    reference_number: '',
+                    reason: '',
+                    notes: ''
+                  });
+                  setShowAddChargeForm(true);
+                }}
+              >
+                <PlusCircle className="h-4 w-4 mr-2" />
+                Agregar Cargo
               </Button>
               <Button
                 variant="outline"

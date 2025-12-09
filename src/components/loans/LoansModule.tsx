@@ -12,6 +12,7 @@ import { PaymentForm } from './PaymentForm';
 import { LoanUpdateForm } from './LoanUpdateForm';
 import { LoanHistoryView } from './LoanHistoryView';
 import { LoanStatistics } from './LoanStatistics';
+import { LoanDetailsView } from './LoanDetailsView';
 import { PaymentStatusBadge } from './PaymentStatusBadge';
 import { CollectionTracking } from './CollectionTracking';
 import { LateFeeInfo } from './LateFeeInfo';
@@ -59,6 +60,7 @@ export const LoansModule = () => {
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [showHistoryView, setShowHistoryView] = useState(false);
   const [showStatistics, setShowStatistics] = useState(false);
+  const [showDetailsView, setShowDetailsView] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
   const [initialLoanData, setInitialLoanData] = useState(null);
@@ -1129,6 +1131,18 @@ export const LoansModule = () => {
                               >
                                 <Edit className="h-5 w-5 mr-2" />
                                 <span>{EDIT_BUTTON_TEXT}</span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="lg"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowDetailsView(true);
+                                }}
+                                className="h-12 text-base font-semibold border-2 border-blue-200 text-blue-700 hover:bg-blue-50 hover:border-blue-300 transition-all duration-200"
+                              >
+                                <Eye className="h-5 w-5 mr-2" />
+                                Detalles
                               </Button>
                               <Button
                                 variant="outline"
@@ -2710,20 +2724,33 @@ export const LoansModule = () => {
          </TabsContent>
        </Tabs>
 
-           {/* Loan History View */}
-     {selectedLoan && (
-      <LoanHistoryView
-        loanId={selectedLoan.id}
-        isOpen={showHistoryView}
-        onClose={() => {
-          setShowHistoryView(false);
-          setSelectedLoan(null);
-        }}
-        onRefresh={() => {
-          // Esta función se puede usar para recargar el historial
-        }}
-      />
-     )}
+      {/* Loan Details View */}
+      {selectedLoan && (
+        <LoanDetailsView
+          loanId={selectedLoan.id}
+          isOpen={showDetailsView}
+          onClose={() => {
+            setShowDetailsView(false);
+            setSelectedLoan(null);
+          }}
+          onRefresh={refetch}
+        />
+      )}
+
+      {/* Loan History View */}
+      {selectedLoan && (
+        <LoanHistoryView
+          loanId={selectedLoan.id}
+          isOpen={showHistoryView}
+          onClose={() => {
+            setShowHistoryView(false);
+            setSelectedLoan(null);
+          }}
+          onRefresh={() => {
+            // Esta función se puede usar para recargar el historial
+          }}
+        />
+      )}
 
      {/* Loan Statistics */}
      {selectedLoan && (

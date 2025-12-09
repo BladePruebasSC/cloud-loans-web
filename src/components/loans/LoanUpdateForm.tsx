@@ -30,9 +30,11 @@ import {
   MinusCircle
 } from 'lucide-react';
 import { LateFeeInfo } from './LateFeeInfo';
+import { PaymentForm } from './PaymentForm';
+import { Handshake } from 'lucide-react';
 
 const updateSchema = z.object({
-  update_type: z.enum(['add_charge', 'term_extension', 'balance_adjustment', 'delete_loan', 'remove_late_fee']),
+  update_type: z.enum(['add_charge', 'term_extension', 'balance_adjustment', 'delete_loan', 'remove_late_fee', 'payment_agreement']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   late_fee_amount: z.number().min(0.01, 'El monto de mora debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
@@ -101,6 +103,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 }) => {
   const [loading, setLoading] = useState(false);
   const [currentLateFee, setCurrentLateFee] = useState(loan.current_late_fee || 0);
+  const [showAgreementsDialog, setShowAgreementsDialog] = useState(false);
+  const [agreements, setAgreements] = useState<any[]>([]);
+  const [selectedAgreement, setSelectedAgreement] = useState<any | null>(null);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [calculatedValues, setCalculatedValues] = useState({
     newBalance: loan.remaining_balance,
     newPayment: loan.monthly_payment,
@@ -223,7 +229,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount']);
 
   useEffect(() => {
-    calculateUpdatedValues();
+    const updateType = form.watch('update_type');
+    if (updateType !== 'payment_agreement') {
+      calculateUpdatedValues();
+    }
   }, [watchedValues]);
 
   // Resetear el campo de razón cuando cambia el tipo de actualización
@@ -281,6 +290,31 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       recalculateLateFee();
     }
   }, [form.watch('update_type'), isOpen, loan.id]);
+
+  // Cargar acuerdos de pago
+  const fetchAgreements = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('payment_agreements')
+        .select('*')
+        .eq('loan_id', loan.id)
+        .in('status', ['approved', 'active'])
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setAgreements(data || []);
+      console.log('Acuerdos encontrados:', data);
+    } catch (error) {
+      console.error('Error fetching agreements:', error);
+      toast.error('Error al cargar acuerdos de pago');
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && loan) {
+      fetchAgreements();
+    }
+  }, [isOpen, loan.id]);
 
 
   const calculateUpdatedValues = () => {
@@ -896,6 +930,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   };
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -957,12 +992,39 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   Eliminar Mora
                                 </div>
                               </SelectItem>
+                              <SelectItem value="payment_agreement">
+                                <div className="flex items-center gap-2">
+                                  <Handshake className="h-4 w-4" />
+                                  Acuerdos de Pago
+                                </div>
+                              </SelectItem>
                             </SelectContent>
                           </Select>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
+
+                    {/* Mostrar diálogo de acuerdos cuando se selecciona payment_agreement */}
+                    {form.watch('update_type') === 'payment_agreement' && (
+                      <div className="pt-4 border-t">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => {
+                            if (agreements.length === 0) {
+                              toast.info('No hay acuerdos de pago aprobados o activos para este préstamo');
+                              return;
+                            }
+                            setShowAgreementsDialog(true);
+                          }}
+                        >
+                          <Handshake className="h-4 w-4 mr-2" />
+                          Seleccionar Acuerdo de Pago
+                        </Button>
+                      </div>
+                    )}
 
                     {/* Campos condicionales según el tipo de actualización */}
                     {['add_charge', 'balance_adjustment'].includes(form.watch('update_type')) && (
@@ -1376,8 +1438,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               </CardContent>
             </Card>
 
-            {/* Desglose de Mora - mostrar en todas las actualizaciones excepto eliminar y eliminar mora */}
-            {form.watch('update_type') !== 'delete_loan' && form.watch('update_type') !== 'remove_late_fee' && (
+            {/* Desglose de Mora - mostrar en todas las actualizaciones excepto eliminar, eliminar mora y acuerdos de pago */}
+            {form.watch('update_type') !== 'delete_loan' && form.watch('update_type') !== 'remove_late_fee' && form.watch('update_type') !== 'payment_agreement' && (
               <div className="mt-4">
                 <LateFeeInfo
                   loanId={loan.id}
@@ -1445,5 +1507,100 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Diálogo de Selección de Acuerdos de Pago */}
+    <Dialog open={showAgreementsDialog} onOpenChange={setShowAgreementsDialog}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Seleccionar Acuerdo de Pago</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          {agreements.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Handshake className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No hay acuerdos de pago aprobados para este préstamo</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {agreements.map((agreement) => (
+                <Card
+                  key={agreement.id}
+                  className="cursor-pointer hover:bg-gray-50 transition-colors"
+                  onClick={() => {
+                    setSelectedAgreement(agreement);
+                    setShowAgreementsDialog(false);
+                    setShowPaymentForm(true);
+                  }}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start">
+                      <div className="space-y-1">
+                        <div className="font-semibold">
+                          Monto acordado: ${(agreement.agreed_amount || agreement.agreed_payment_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          Monto original: ${(agreement.original_amount || agreement.original_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          Frecuencia: {agreement.payment_frequency === 'monthly' ? 'Mensual' :
+                                       agreement.payment_frequency === 'biweekly' ? 'Quincenal' :
+                                       agreement.payment_frequency === 'weekly' ? 'Semanal' :
+                                       agreement.payment_frequency === 'daily' ? 'Diario' : agreement.payment_frequency}
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          Período: {new Date(agreement.start_date).toLocaleDateString('es-DO')} - {agreement.end_date ? new Date(agreement.end_date).toLocaleDateString('es-DO') : 'Sin fecha de fin'}
+                        </div>
+                        {agreement.reason && (
+                          <div className="text-sm text-gray-600">
+                            Razón: {agreement.reason}
+                          </div>
+                        )}
+                      </div>
+                      <Badge variant={agreement.status === 'approved' || agreement.status === 'active' ? 'default' : 'secondary'}>
+                        {agreement.status === 'approved' ? 'Aprobado' : 
+                         agreement.status === 'active' ? 'Activo' : 
+                         agreement.status}
+                      </Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* PaymentForm con datos del acuerdo */}
+    {showPaymentForm && selectedAgreement && (
+      <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+          <PaymentForm
+            onBack={() => {
+              setShowPaymentForm(false);
+              setSelectedAgreement(null);
+            }}
+            preselectedLoan={{
+              id: loan.id,
+              amount: loan.amount,
+              remaining_balance: loan.remaining_balance,
+              monthly_payment: selectedAgreement.agreed_amount || selectedAgreement.agreed_payment_amount || loan.monthly_payment,
+              interest_rate: loan.interest_rate,
+              term_months: loan.term_months,
+              next_payment_date: loan.next_payment_date,
+              status: loan.status,
+              client: loan.client
+            }}
+            onPaymentSuccess={() => {
+              setShowPaymentForm(false);
+              setSelectedAgreement(null);
+              onUpdate();
+              onClose();
+            }}
+          />
+        </div>
+      </div>
+    )}
+    </>
   );
 };
