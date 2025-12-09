@@ -314,6 +314,7 @@ export const PawnShopModule = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [soldProductsCache, setSoldProductsCache] = useState<Map<string, boolean>>(new Map());
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showTransactionForm, setShowTransactionForm] = useState(false);
@@ -478,6 +479,53 @@ export const PawnShopModule = () => {
     setShowClientDropdown(false);
   };
 
+  // Función para verificar si un producto de transacción perdida fue vendido
+  const checkIfProductWasSold = async (transactionId: string): Promise<boolean> => {
+    try {
+      // Buscar el producto del inventario relacionado con esta transacción
+      const { data: inventoryProducts } = await supabase
+        .from('products')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('original_transaction_id', transactionId)
+        .eq('source', 'pawn_forfeited');
+
+      if (!inventoryProducts || inventoryProducts.length === 0) {
+        return false; // No hay producto en inventario, no se puede vender
+      }
+
+      // Verificar si alguno de estos productos fue vendido
+      for (const product of inventoryProducts) {
+        // Verificar en sale_details (esquema nuevo)
+        const { data: saleDetails } = await supabase
+          .from('sale_details')
+          .select('id')
+          .eq('product_id', product.id)
+          .limit(1);
+        
+        if (saleDetails && saleDetails.length > 0) {
+          return true; // Producto fue vendido
+        }
+        
+        // Verificar en sales (esquema simple)
+        const { data: sales } = await supabase
+          .from('sales')
+          .select('id')
+          .eq('product_id', product.id)
+          .limit(1);
+        
+        if (sales && sales.length > 0) {
+          return true; // Producto fue vendido
+        }
+      }
+
+      return false; // No fue vendido
+    } catch (error) {
+      console.error('Error checking if product was sold:', error);
+      return false; // En caso de error, permitir intentar recuperar
+    }
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -522,6 +570,17 @@ export const PawnShopModule = () => {
       setProducts(productsRes.data || []);
       setAllProducts(allProductsRes.data || []);
       setAllTransactions(allTransactionsRes.data || []);
+      
+      // Verificar qué productos de transacciones perdidas fueron vendidos
+      const forfeitedTransactions = (transactionsRes.data || []).filter(t => t.status === 'forfeited');
+      const soldStatusMap = new Map<string, boolean>();
+      
+      for (const transaction of forfeitedTransactions) {
+        const wasSold = await checkIfProductWasSold(transaction.id);
+        soldStatusMap.set(transaction.id, wasSold);
+      }
+      
+      setSoldProductsCache(soldStatusMap);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Error al cargar datos');
@@ -1937,7 +1996,7 @@ export const PawnShopModule = () => {
       // Save current selected transaction state before recovery
       const wasDetailsOpen = showTransactionDetails && selectedTransaction?.id === transactionId;
       
-      // Buscar y eliminar el producto del inventario si existe (creado cuando se marcó como perdido)
+      // Buscar el producto del inventario si existe (creado cuando se marcó como perdido)
       const { data: inventoryProducts } = await supabase
         .from('products')
         .select('id')
@@ -1946,7 +2005,34 @@ export const PawnShopModule = () => {
         .eq('source', 'pawn_forfeited');
 
       if (inventoryProducts && inventoryProducts.length > 0) {
-        // Eliminar productos del inventario relacionados con esta transacción
+        // Verificar si alguno de estos productos fue vendido
+        for (const product of inventoryProducts) {
+          // Verificar en sale_details (esquema nuevo)
+          const { data: saleDetails } = await supabase
+            .from('sale_details')
+            .select('id, sale_id')
+            .eq('product_id', product.id)
+            .limit(1);
+          
+          // Si no se encuentra en sale_details, verificar en sales (esquema simple)
+          if (!saleDetails || saleDetails.length === 0) {
+            const { data: sales } = await supabase
+              .from('sales')
+              .select('id')
+              .eq('product_id', product.id)
+              .limit(1);
+            
+            if (sales && sales.length > 0) {
+              toast.error('No se puede recuperar la transacción porque el producto ya fue vendido');
+              return;
+            }
+          } else {
+            toast.error('No se puede recuperar la transacción porque el producto ya fue vendido');
+            return;
+          }
+        }
+        
+        // Si no fue vendido, eliminar productos del inventario relacionados con esta transacción
         for (const product of inventoryProducts) {
           const { error: deleteError } = await supabase
             .from('products')
@@ -2663,7 +2749,9 @@ export const PawnShopModule = () => {
                           <Button
                             size="sm"
                             variant="default"
-                            className="w-full sm:w-auto text-xs sm:text-sm"
+                            className="w-full sm:w-auto text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={soldProductsCache.get(transaction.id) === true}
+                            title={soldProductsCache.get(transaction.id) === true ? 'No se puede recuperar porque el producto ya fue vendido' : 'Recuperar transacción'}
                             onClick={async () => {
                               await handleRecoverForfeitedTransaction(transaction.id);
                             }}
@@ -2867,6 +2955,9 @@ export const PawnShopModule = () => {
                             <Button
                               size="sm"
                               variant="default"
+                              className="disabled:opacity-50 disabled:cursor-not-allowed"
+                              disabled={soldProductsCache.get(transaction.id) === true}
+                              title={soldProductsCache.get(transaction.id) === true ? 'No se puede recuperar porque el producto ya fue vendido' : 'Recuperar transacción'}
                               onClick={async () => {
                                 await handleRecoverForfeitedTransaction(transaction.id);
                               }}
@@ -4519,7 +4610,9 @@ export const PawnShopModule = () => {
               {selectedTransaction.status === 'forfeited' && (
                 <Button
                   variant="default"
-                  className="w-full"
+                  className="w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={soldProductsCache.get(selectedTransaction.id) === true}
+                  title={soldProductsCache.get(selectedTransaction.id) === true ? 'No se puede recuperar porque el producto ya fue vendido' : 'Recuperar transacción'}
                   onClick={async () => {
                     setShowQuickUpdate(false);
                     await handleRecoverForfeitedTransaction(selectedTransaction.id);

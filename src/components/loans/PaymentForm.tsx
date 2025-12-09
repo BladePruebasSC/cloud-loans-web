@@ -1323,8 +1323,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                       )}
                     />
 
-                    {/* Campo para pago de mora */}
-                    {selectedLoan?.late_fee_enabled && lateFeeAmount > 0 && (
+                    {/* Campo para pago de mora - siempre mostrar si hay mora habilitada */}
+                    {selectedLoan?.late_fee_enabled && (
                       <FormField
                         control={form.control}
                         name="late_fee_amount"
@@ -1352,19 +1352,27 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                   }}
                                 />
                               </FormControl>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => field.onChange(roundToTwoDecimals(lateFeeAmount))}
-                                className="whitespace-nowrap"
-                              >
-                                Pagar Toda
-                              </Button>
+                              {lateFeeAmount > 0 && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => field.onChange(roundToTwoDecimals(lateFeeAmount))}
+                                  className="whitespace-nowrap"
+                                >
+                                  Pagar Toda
+                                </Button>
+                              )}
                             </div>
-                            <div className="text-xs text-orange-600 mt-1">
-                              💡 Mora pendiente: RD${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </div>
+                            {lateFeeAmount > 0 ? (
+                              <div className="text-xs text-orange-600 mt-1">
+                                💡 Mora pendiente: RD${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            ) : (
+                              <div className="text-xs text-green-600 mt-1">
+                                ✅ No hay mora pendiente
+                              </div>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}

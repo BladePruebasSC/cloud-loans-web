@@ -571,13 +571,18 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     // Obtener todos los pagos del préstamo para calcular saldos pendientes
     const { data: payments, error } = await supabase
       .from('payments')
-      .select('principal_amount, interest_amount, payment_date')
+      .select('id, principal_amount, interest_amount, payment_date, amount')
       .eq('loan_id', loanData.id)
       .order('payment_date', { ascending: true });
 
     if (error) {
       console.error('Error obteniendo pagos:', error);
     }
+
+    // Crear un Set global para rastrear qué pagos (por ID) ya han sido asignados a cuotas
+    const assignedPaymentIds = new Set<string>();
+    // Mapa para rastrear qué pago está asignado a qué cuota
+    const paymentToInstallmentMap = new Map<string, number>();
 
     // Calcular el capital total pagado para determinar el balance general
     const totalPrincipalPaid = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
@@ -589,6 +594,29 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     console.log('🔍 AccountStatement: Pagos encontrados:', payments);
     console.log('🔍 AccountStatement: Capital total pagado:', totalPrincipalPaid);
     console.log('🔍 AccountStatement: Capital promedio por cuota:', averagePrincipalPerInstallment);
+
+    // ESTRATEGIA SIMPLIFICADA: Asignar pagos en orden cronológico a cuotas pagadas en orden secuencial
+    // Ordenar pagos por fecha (más antiguo primero)
+    const sortedPayments = payments ? [...payments].sort((a, b) => {
+      return new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime();
+    }) : [];
+    
+    // Asignar pagos en orden cronológico a cuotas pagadas en orden secuencial
+    let paymentIndex = 0;
+    for (let i = 1; i <= numberOfPayments && paymentIndex < sortedPayments.length; i++) {
+      const realInstallment = installmentsMap.get(i);
+      const isPaid = realInstallment ? realInstallment.is_paid : false;
+      
+      if (isPaid) {
+        const payment = sortedPayments[paymentIndex];
+        if (payment && !assignedPaymentIds.has(payment.id)) {
+          assignedPaymentIds.add(payment.id);
+          paymentToInstallmentMap.set(payment.id, i);
+          paymentIndex++;
+          console.log(`🔍 Asignación inicial - Cuota ${i} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
+        }
+      }
+    }
 
     for (let i = 1; i <= numberOfPayments; i++) {
       // Usar datos calculados según el tipo de amortización
@@ -606,55 +634,87 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const isPaid = realInstallment ? realInstallment.is_paid : false;
       const paidDate = realInstallment ? realInstallment.paid_date : null;
 
-      // Calcular cuánto se ha pagado de esta cuota específica
-      // Aplicar pagos en orden secuencial, una cuota a la vez
+      // CORRECCIÓN: Usar la tabla installments directamente para determinar qué cuotas están pagadas
+      // y buscar el pago real asociado a cada cuota para mostrar el monto correcto
+      // Si la cuota no está marcada como pagada pero hay un pago que debería pagarla, asignarlo
       let principalPaidForThisInstallment = 0;
       let interestPaidForThisInstallment = 0;
+      let actualPaymentAmount = 0; // Monto real pagado (puede ser diferente con acuerdos)
+      let foundPayment = null;
       
-      if (payments) {
-        // CORREGIR: Solo asignar pagos a cuotas que realmente se han pagado
-        // Calcular pagos totales
-        let totalPrincipalPaid = 0;
-        let totalInterestPaid = 0;
-        
-        payments.forEach(payment => {
-          totalPrincipalPaid += payment.principal_amount || 0;
-          totalInterestPaid += payment.interest_amount || 0;
-        });
-        
-        // Calcular cuántas cuotas completas se han pagado
-        const completeInstallmentsPaid = Math.floor(totalPrincipalPaid / averagePrincipalPerInstallment);
-        
-        console.log(`🔍 Cuota ${i} - Análisis de pagos:`, {
-          totalPrincipalPaid,
-          totalInterestPaid,
-          originalPrincipal,
-          originalInterest,
-          completeInstallmentsPaid,
-          currentInstallment: i
-        });
-        
-        // Solo asignar pagos a cuotas que realmente se han pagado
-        if (i <= completeInstallmentsPaid) {
-          // Esta cuota está completamente pagada
-          principalPaidForThisInstallment = originalPrincipal;
-          interestPaidForThisInstallment = originalInterest;
-        } else if (i === completeInstallmentsPaid + 1) {
-          // Esta es la siguiente cuota que podría tener un pago parcial
-          const remainingPrincipal = totalPrincipalPaid - (completeInstallmentsPaid * averagePrincipalPerInstallment);
-          const remainingInterest = totalInterestPaid - (completeInstallmentsPaid * (loanData.monthly_payment - averagePrincipalPerInstallment));
-          
-          principalPaidForThisInstallment = Math.min(remainingPrincipal, originalPrincipal);
-          interestPaidForThisInstallment = Math.min(remainingInterest, originalInterest);
+      // Buscar el pago asignado a esta cuota (ya asignado en la pasada inicial)
+      let paymentForThisInstallment = null;
+      
+      // Buscar el pago que está asignado a esta cuota
+      for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
+        if (installmentNum === i) {
+          paymentForThisInstallment = payments?.find(p => p.id === paymentId);
+          break;
         }
-        // Si i > completeInstallmentsPaid + 1, entonces no se ha pagado nada de esta cuota
+      }
+      
+      if (paymentForThisInstallment) {
+        // Usar el monto real del pago (puede ser diferente con acuerdos de pago)
+        principalPaidForThisInstallment = paymentForThisInstallment.principal_amount || 0;
+        interestPaidForThisInstallment = paymentForThisInstallment.interest_amount || 0;
+        actualPaymentAmount = paymentForThisInstallment.amount || 0;
+        foundPayment = paymentForThisInstallment;
         
-        console.log(`🔍 Cuota ${i} - Distribución CORREGIDA:`, {
-          principalPaidForThisInstallment,
-          interestPaidForThisInstallment,
-          originalPrincipal,
-          originalInterest
+        console.log(`🔍 Cuota ${i} - Pago asignado:`, {
+          paymentDate: paymentForThisInstallment.payment_date,
+          paidDate,
+          principalPaid: principalPaidForThisInstallment,
+          interestPaid: interestPaidForThisInstallment,
+          actualAmount: actualPaymentAmount,
+          originalMonthlyPayment: monthlyPayment
         });
+      } else if (isPaid) {
+        // Si está marcada como pagada pero no encontramos pago, usar valores originales
+        principalPaidForThisInstallment = originalPrincipal;
+        interestPaidForThisInstallment = originalInterest;
+        actualPaymentAmount = monthlyPayment;
+        console.log(`⚠️ Cuota ${i} - Marcada como pagada pero no se encontró pago, usando valores originales`);
+      } else if (!isPaid && payments && payments.length > 0) {
+        // Cuota no marcada como pagada, pero puede haber un pago que la pagó
+        // Buscar pagos que no hayan sido asignados a cuotas anteriores
+        const sortedPayments = [...payments].sort((a, b) => {
+          return new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime();
+        });
+        
+        // Buscar el siguiente pago disponible que no haya sido asignado
+        for (const payment of sortedPayments) {
+          // Si este pago no está asignado a ninguna cuota, asignarlo a esta cuota
+          if (!assignedPaymentIds.has(payment.id)) {
+            foundPayment = payment;
+            principalPaidForThisInstallment = payment.principal_amount || 0;
+            interestPaidForThisInstallment = payment.interest_amount || 0;
+            actualPaymentAmount = payment.amount || 0;
+            
+            // Marcar este pago como asignado para evitar duplicados en cuotas siguientes
+            assignedPaymentIds.add(payment.id);
+            paymentToInstallmentMap.set(payment.id, i);
+            
+            console.log(`🔍 Cuota ${i} - Pago encontrado (no marcada como pagada pero tiene pago):`, {
+              paymentDate: payment.payment_date,
+              actualAmount: actualPaymentAmount,
+              paymentId: payment.id,
+              totalPayments: sortedPayments.length
+            });
+            break;
+          }
+        }
+        
+        // Si no encontramos un pago, la cuota está realmente sin pagar
+        if (!foundPayment) {
+          principalPaidForThisInstallment = 0;
+          interestPaidForThisInstallment = 0;
+          actualPaymentAmount = 0;
+        }
+      } else if (!isPaid) {
+        // Cuota no pagada y no hay pagos disponibles
+        principalPaidForThisInstallment = 0;
+        interestPaidForThisInstallment = 0;
+        actualPaymentAmount = 0;
       }
 
       // Calcular saldos pendientes
@@ -662,35 +722,63 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
       const remainingPayment = remainingPrincipal + remainingInterest;
 
-      // Determinar estado de la cuota
-      let paymentStatus = 'pending';
-      const totalPaidForThisInstallment = principalPaidForThisInstallment + interestPaidForThisInstallment;
+      // Determinar estado de la cuota y fecha de pago
+      // Si encontramos un pago para esta cuota (aunque no esté marcada como pagada), considerarla pagada
+      let paymentStatus = isPaid ? 'paid' : 'pending';
+      let displayPaidDate = paidDate; // Fecha de pago a mostrar
       
-      // Redondear ambos valores para comparación precisa
-      const roundedTotalPaid = Math.round(totalPaidForThisInstallment);
-      const roundedMonthlyPayment = Math.round(monthlyPayment);
-      
-      console.log(`🔍 DETERMINACIÓN DE ESTADO - Cuota ${i}:`, {
-        totalPaidForThisInstallment,
-        roundedTotalPaid,
-        monthlyPayment,
-        roundedMonthlyPayment,
-        comparison: `${roundedTotalPaid} >= ${roundedMonthlyPayment} = ${roundedTotalPaid >= roundedMonthlyPayment}`,
-        principalPaidForThisInstallment,
-        interestPaidForThisInstallment
-      });
-      
-      // Una cuota está pagada si se ha pagado al menos el monto total de la cuota (comparación con valores redondeados)
-      if (roundedTotalPaid >= roundedMonthlyPayment) {
+      // Si encontramos un pago para esta cuota aunque no esté marcada como pagada, marcarla como pagada
+      if (!isPaid && foundPayment && actualPaymentAmount > 0) {
         paymentStatus = 'paid';
-      } else if (totalPaidForThisInstallment > 0) {
+        // Usar la fecha del pago encontrado
+        displayPaidDate = foundPayment.payment_date?.split('T')[0] || foundPayment.payment_date;
+        console.log(`🔍 Cuota ${i} - Marcada como pagada basándose en pago encontrado:`, {
+          actualAmount: actualPaymentAmount,
+          paymentDate: foundPayment.payment_date,
+          displayPaidDate
+        });
+      } else if (!isPaid && (principalPaidForThisInstallment > 0 || interestPaidForThisInstallment > 0)) {
         paymentStatus = 'partial';
       }
+      
+      // Si encontramos un pago pero no hay paidDate, usar la fecha del pago
+      if (foundPayment && !displayPaidDate) {
+        displayPaidDate = foundPayment.payment_date?.split('T')[0] || foundPayment.payment_date;
+      }
+      
+      console.log(`🔍 DETERMINACIÓN DE ESTADO - Cuota ${i}:`, {
+        isPaid,
+        principalPaidForThisInstallment,
+        interestPaidForThisInstallment,
+        actualPaymentAmount,
+        originalMonthlyPayment: monthlyPayment,
+        paymentStatus
+      });
 
       // Calcular el balance pendiente del préstamo después de esta cuota
-      // El balance pendiente es el capital total menos el capital pagado hasta esta cuota
-      const capitalPaidUpToThisInstallment = Math.min(totalPrincipalPaid, i * averagePrincipalPerInstallment);
-      const remainingBalanceAfterThisInstallment = Math.max(0, principal - capitalPaidUpToThisInstallment);
+      // Usar el capital realmente pagado de las cuotas anteriores
+      let totalCapitalPaidUpToThisInstallment = 0;
+      for (let j = 1; j <= i; j++) {
+        const prevInstallment = installmentsMap.get(j);
+        if (prevInstallment && prevInstallment.is_paid) {
+          // Buscar el pago real de esta cuota anterior
+          if (prevInstallment.paid_date && payments) {
+            const prevPayment = payments.find(p => {
+              const paymentDateStr = p.payment_date.split('T')[0];
+              const paidDateStr = prevInstallment.paid_date?.split('T')[0];
+              return paymentDateStr === paidDateStr;
+            });
+            if (prevPayment) {
+              totalCapitalPaidUpToThisInstallment += prevPayment.principal_amount || 0;
+            } else {
+              totalCapitalPaidUpToThisInstallment += prevInstallment.principal_amount || 0;
+            }
+          } else {
+            totalCapitalPaidUpToThisInstallment += prevInstallment.principal_amount || 0;
+          }
+        }
+      }
+      const remainingBalanceAfterThisInstallment = Math.max(0, principal - totalCapitalPaidUpToThisInstallment);
 
       console.log(`🔍 RESUMEN FINAL - Cuota ${i}:`, {
         exists: !!realInstallment,
@@ -701,21 +789,33 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         originalInterest,
         principalPaidForThisInstallment,
         interestPaidForThisInstallment,
-        totalPaidForThisInstallment,
+        actualPaymentAmount,
         monthlyPayment,
         remainingPrincipal,
         remainingInterest,
         remainingPayment,
         paymentStatus,
-        capitalPaidUpToThisInstallment,
+        totalCapitalPaidUpToThisInstallment,
         remainingBalanceAfterThisInstallment,
         ESTADO_FINAL: paymentStatus === 'paid' ? '✅ PAGADO' : paymentStatus === 'partial' ? '⚠️ PARCIAL' : '❌ PENDIENTE'
       });
 
+      // Determinar el monto a mostrar: si hay un pago encontrado (pagada o no), usar el monto real, sino usar el monto de la cuota
+      const displayAmount = (paymentStatus === 'paid' && actualPaymentAmount > 0) ? actualPaymentAmount : monthlyPayment;
+      
+      console.log(`🔍 Cuota ${i} - Monto a mostrar:`, {
+        isPaid,
+        paymentStatus,
+        actualPaymentAmount,
+        monthlyPayment,
+        displayAmount,
+        foundPayment: !!foundPayment
+      });
+      
       schedule.push({
         installment: i,
         dueDate: dueDate.toISOString().split('T')[0],
-        monthlyPayment: monthlyPayment,
+        monthlyPayment: displayAmount, // Mostrar monto real pagado si existe, sino el monto de la cuota
         principalPayment: originalPrincipal,
         interestPayment: originalInterest,
         principalPaid: principalPaidForThisInstallment,
@@ -726,9 +826,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         remainingBalance: remainingBalanceAfterThisInstallment,
         isPaid: paymentStatus === 'paid',
         isPartial: paymentStatus === 'partial',
-        paidDate: paidDate,
+        paidDate: displayPaidDate, // Usar la fecha de pago correcta (del pago encontrado o de la cuota)
         hasRealData: !!realInstallment,
-        paymentStatus
+        paymentStatus,
+        actualPaymentAmount // Guardar el monto real pagado para referencia
       });
     }
 

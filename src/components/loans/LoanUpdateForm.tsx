@@ -933,7 +933,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
   return (
     <>
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen && !showPaymentForm} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -1540,7 +1540,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     setSelectedAgreement(agreement);
                     setShowAgreementsDialog(false);
                     setShowPaymentForm(true);
-                    onClose(); // Cerrar el diálogo de actualización
+                    // NO cerrar el diálogo de actualización aquí, el PaymentForm se mostrará encima
                   }}
                 >
                   <CardContent className="p-4">
@@ -1599,14 +1599,21 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               interest_rate: loan.interest_rate,
               term_months: loan.term_months,
               next_payment_date: loan.next_payment_date,
-              status: loan.status,
+              start_date: loan.start_date,
+              late_fee_enabled: (loan as any).late_fee_enabled || false,
+              late_fee_rate: (loan as any).late_fee_rate || 0,
+              grace_period_days: (loan as any).grace_period_days || 0,
+              max_late_fee: (loan as any).max_late_fee || 0,
+              late_fee_calculation_type: ((loan as any).late_fee_calculation_type || 'daily') as 'daily' | 'monthly' | 'compound',
+              current_late_fee: (loan as any).current_late_fee || 0,
+              payment_frequency: loan.payment_frequency || 'monthly',
               client: loan.client
             }}
             onPaymentSuccess={() => {
               setShowPaymentForm(false);
               setSelectedAgreement(null);
               onUpdate();
-              onClose();
+              onClose(); // Cerrar el diálogo de actualización solo después del pago exitoso
             }}
           />
         </div>

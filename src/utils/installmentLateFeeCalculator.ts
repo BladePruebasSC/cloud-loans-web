@@ -67,12 +67,75 @@ export const getLateFeeBreakdownFromInstallments = async (
       isPaid: boolean;
     }> = [];
     
+    // Obtener todos los pagos del préstamo para verificar si hay pagos que cubren cuotas
+    const { data: payments, error: paymentsError } = await supabase
+      .from('payments')
+      .select('id, principal_amount, interest_amount, payment_date, amount')
+      .eq('loan_id', loanId)
+      .order('payment_date', { ascending: true });
+    
+    if (paymentsError) {
+      console.error('Error obteniendo pagos:', paymentsError);
+    }
+    
+    // Asignar pagos a cuotas en orden cronológico
+    const paymentToInstallmentMap = new Map<string, number>();
+    const assignedPaymentIds = new Set<string>();
+    
+    if (payments && payments.length > 0) {
+      // Ordenar pagos por fecha
+      const sortedPayments = [...payments].sort((a, b) => {
+        return new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime();
+      });
+      
+      // ESTRATEGIA SIMPLIFICADA: Asignar TODOS los pagos en orden cronológico a TODAS las cuotas en orden secuencial
+      // Sin importar si están marcadas como pagadas o no
+      // Esto asegura que cada pago se asigne a la cuota correcta
+      let paymentIndex = 0;
+      
+      for (let i = 0; i < installments.length && paymentIndex < sortedPayments.length; i++) {
+        const installment = installments[i];
+        const payment = sortedPayments[paymentIndex];
+        
+        if (payment && !assignedPaymentIds.has(payment.id)) {
+          assignedPaymentIds.add(payment.id);
+          paymentToInstallmentMap.set(payment.id, installment.installment_number);
+          paymentIndex++;
+          console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
+        }
+      }
+    }
+    
     // Procesar cada cuota de la base de datos
     for (const installment of installments) {
       let daysOverdue = 0;
       let lateFee = 0;
+      let isActuallyPaid = installment.is_paid;
       
-      if (installment.is_paid) {
+      // Verificar si hay un pago asignado a esta cuota aunque no esté marcada como pagada
+      if (!isActuallyPaid && paymentToInstallmentMap.size > 0) {
+        for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
+          if (installmentNum === installment.installment_number) {
+            isActuallyPaid = true;
+            const assignedPayment = payments?.find(p => p.id === paymentId);
+            console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} marcada como pagada por pago asignado:`, {
+              paymentId,
+              paymentDate: assignedPayment?.payment_date,
+              paymentAmount: assignedPayment?.amount,
+              installmentNumber: installmentNum
+            });
+            break;
+          }
+        }
+      }
+      
+      console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} - Estado final:`, {
+        is_paid_in_db: installment.is_paid,
+        isActuallyPaid,
+        hasAssignedPayment: Array.from(paymentToInstallmentMap.values()).includes(installment.installment_number)
+      });
+      
+      if (isActuallyPaid) {
         // Si está pagada, mostrar 0 días y 0 mora
         daysOverdue = 0;
         lateFee = 0;
@@ -120,7 +183,7 @@ export const getLateFeeBreakdownFromInstallments = async (
       }
       
       // Solo agregar al total si la cuota NO está pagada
-      if (!installment.is_paid) {
+      if (!isActuallyPaid) {
         totalLateFee += lateFee;
       }
       
@@ -130,8 +193,8 @@ export const getLateFeeBreakdownFromInstallments = async (
         dueDate: installment.due_date,
         daysOverdue,
         principal: installment.principal_amount,
-        lateFee: installment.is_paid ? 0 : lateFee,
-        isPaid: installment.is_paid
+        lateFee: isActuallyPaid ? 0 : lateFee,
+        isPaid: isActuallyPaid
       });
     }
     

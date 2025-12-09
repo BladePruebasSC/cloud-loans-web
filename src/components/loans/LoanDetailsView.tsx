@@ -5,7 +5,6 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { formatCurrencyNumber } from '@/lib/utils';
 import { 
   X,
   FileText,
@@ -13,24 +12,14 @@ import {
   History,
   StickyNote,
   Handshake,
-  Paperclip,
-  FileCheck,
-  Shield,
-  Calendar,
-  DollarSign,
-  TrendingUp,
-  TrendingDown,
-  Clock,
-  CheckCircle,
-  AlertCircle,
-  Eye,
-  BarChart3,
-  PieChart
+  Calendar
 } from 'lucide-react';
 import { LoanHistoryView } from './LoanHistoryView';
 import { AccountStatement } from './AccountStatement';
 import { InstallmentsTable } from './InstallmentsTable';
+import { PaymentForm } from './PaymentForm';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
 
 interface LoanDetailsViewProps {
   loanId: string;
@@ -81,16 +70,21 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [showStatement, setShowStatement] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [showAgreements, setShowAgreements] = useState(false);
-  const [showDocuments, setShowDocuments] = useState(false);
-  const [showGuarantees, setShowGuarantees] = useState(false);
   const [showInstallments, setShowInstallments] = useState(false);
+  const [agreements, setAgreements] = useState<any[]>([]);
+  const [selectedAgreement, setSelectedAgreement] = useState<any>(null);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [loanHistoryNotes, setLoanHistoryNotes] = useState<any[]>([]);
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   useEffect(() => {
     if (isOpen && loanId) {
       fetchLoanDetails();
       fetchPayments();
       fetchInstallments();
+      fetchAgreements();
+      fetchLoanHistoryNotes();
     }
   }, [isOpen, loanId]);
 
@@ -157,6 +151,48 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       setInstallments(data || []);
     } catch (error) {
       console.error('Error fetching installments:', error);
+    }
+  };
+
+  const fetchAgreements = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('payment_agreements')
+        .select('*')
+        .eq('loan_id', loanId)
+        .in('status', ['approved', 'active'])
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setAgreements(data || []);
+    } catch (error) {
+      console.error('Error fetching agreements:', error);
+    }
+  };
+
+  const fetchLoanHistoryNotes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('loan_history')
+        .select('*')
+        .eq('loan_id', loanId)
+        .not('description', 'is', null)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        // Si la tabla no existe, simplemente no mostrar notas
+        if (error.code === '42P01' || error.code === 'PGRST116') {
+          setLoanHistoryNotes([]);
+        } else {
+          console.error('Error fetching loan history notes:', error);
+          setLoanHistoryNotes([]);
+        }
+      } else {
+        setLoanHistoryNotes(data || []);
+      }
+    } catch (error) {
+      console.error('Error fetching loan history notes:', error);
+      setLoanHistoryNotes([]);
     }
   };
 
@@ -532,18 +568,6 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                   <Handshake className="h-4 w-4 mr-2" />
                   Ver acuerdos
                 </Button>
-                <Button variant="outline" onClick={() => setShowDocuments(true)}>
-                  <Paperclip className="h-4 w-4 mr-2" />
-                  Ver adjuntos
-                </Button>
-                <Button variant="outline" onClick={() => setShowDocuments(true)}>
-                  <FileCheck className="h-4 w-4 mr-2" />
-                  Ver documentos
-                </Button>
-                <Button variant="outline" onClick={() => setShowGuarantees(true)}>
-                  <Shield className="h-4 w-4 mr-2" />
-                  Garantías
-                </Button>
                 <Button variant="outline" onClick={() => {
                   // Navegar a turnos con el día de pago como parámetro
                   navigate(`/turnos?date=${loan.next_payment_date}&loan_id=${loan.id}&client_id=${loan.client.dni}`);
@@ -583,57 +607,186 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         />
       )}
 
-      {/* Modales simples para notas, acuerdos, documentos, garantías */}
+      {/* Modal de Notas de Seguimiento */}
       {showNotes && (
         <Dialog open={showNotes} onOpenChange={setShowNotes}>
-          <DialogContent>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Notas de Seguimiento</DialogTitle>
             </DialogHeader>
-            <div className="p-4">
-              <p className="text-gray-600">Funcionalidad de notas próximamente...</p>
+            <div className="space-y-4">
+              {loanHistoryNotes.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <StickyNote className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay notas de seguimiento para este préstamo</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {loanHistoryNotes.map((note) => (
+                    <Card key={note.id}>
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">
+                              {note.change_type === 'payment' ? 'Pago' :
+                               note.change_type === 'partial_payment' ? 'Pago Parcial' :
+                               note.change_type === 'interest_adjustment' ? 'Ajuste de Interés' :
+                               note.change_type === 'term_extension' ? 'Extensión de Plazo' :
+                               note.change_type === 'balance_adjustment' ? 'Ajuste de Balance' :
+                               note.change_type === 'rate_change' ? 'Cambio de Tasa' :
+                               note.change_type === 'status_change' ? 'Cambio de Estado' :
+                               note.change_type}
+                            </Badge>
+                          </div>
+                          <span className="text-sm text-gray-500">
+                            {new Date(note.created_at).toLocaleDateString('es-DO', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                        {note.description && (
+                          <div className="mt-2">
+                            <p className="text-sm text-gray-700 whitespace-pre-wrap">{note.description}</p>
+                          </div>
+                        )}
+                        {(note.old_value || note.new_value) && (
+                          <div className="mt-2 text-xs text-gray-500">
+                            {note.old_value && (
+                              <div>Valor anterior: {note.old_value}</div>
+                            )}
+                            {note.new_value && (
+                              <div>Valor nuevo: {note.new_value}</div>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>
       )}
 
+      {/* Modal de Acuerdos de Pago */}
       {showAgreements && (
         <Dialog open={showAgreements} onOpenChange={setShowAgreements}>
-          <DialogContent>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Acuerdos de Pago</DialogTitle>
             </DialogHeader>
-            <div className="p-4">
-              <p className="text-gray-600">Funcionalidad de acuerdos próximamente...</p>
+            <div className="space-y-4">
+              {agreements.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Handshake className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay acuerdos de pago aprobados o activos para este préstamo</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {agreements.map((agreement) => (
+                    <Card
+                      key={agreement.id}
+                      className="cursor-pointer hover:bg-gray-50 transition-colors"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSelectedAgreement(agreement);
+                        setShowAgreements(false);
+                        setTimeout(() => {
+                          setShowPaymentForm(true);
+                        }, 100);
+                      }}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start">
+                          <div className="space-y-1">
+                            <div className="font-semibold">
+                              Monto acordado: RD {(agreement.agreed_amount || agreement.agreed_payment_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Monto original: RD {(agreement.original_amount || agreement.original_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Frecuencia: {agreement.payment_frequency === 'monthly' ? 'Mensual' :
+                                           agreement.payment_frequency === 'biweekly' ? 'Quincenal' :
+                                           agreement.payment_frequency === 'weekly' ? 'Semanal' :
+                                           agreement.payment_frequency === 'daily' ? 'Diario' : agreement.payment_frequency}
+                            </div>
+                            <div className="text-sm text-gray-600">
+                              Período: {new Date(agreement.start_date).toLocaleDateString('es-DO')} - {agreement.end_date ? new Date(agreement.end_date).toLocaleDateString('es-DO') : 'Sin fecha de fin'}
+                            </div>
+                            {agreement.reason && (
+                              <div className="text-sm text-gray-600">
+                                Razón: {agreement.reason}
+                              </div>
+                            )}
+                            {agreement.notes && (
+                              <div className="text-sm text-gray-600 mt-2">
+                                <strong>Notas:</strong> {agreement.notes}
+                              </div>
+                            )}
+                          </div>
+                          <Badge variant={agreement.status === 'approved' || agreement.status === 'active' ? 'default' : 'secondary'}>
+                            {agreement.status === 'approved' ? 'Aprobado' : 
+                             agreement.status === 'active' ? 'Activo' : 
+                             agreement.status}
+                          </Badge>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
             </div>
           </DialogContent>
         </Dialog>
       )}
 
-      {showDocuments && (
-        <Dialog open={showDocuments} onOpenChange={setShowDocuments}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Documentos y Adjuntos</DialogTitle>
-            </DialogHeader>
-            <div className="p-4">
-              <p className="text-gray-600">Funcionalidad de documentos próximamente...</p>
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {showGuarantees && (
-        <Dialog open={showGuarantees} onOpenChange={setShowGuarantees}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Garantías</DialogTitle>
-            </DialogHeader>
-            <div className="p-4">
-              <p className="text-gray-600">Funcionalidad de garantías próximamente...</p>
-            </div>
-          </DialogContent>
-        </Dialog>
+      {/* PaymentForm con datos del acuerdo */}
+      {showPaymentForm && selectedAgreement && loan && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <PaymentForm
+              onBack={() => {
+                setShowPaymentForm(false);
+                setSelectedAgreement(null);
+              }}
+              preselectedLoan={{
+                id: loan.id,
+                amount: loan.amount,
+                remaining_balance: loan.remaining_balance,
+                monthly_payment: selectedAgreement.agreed_amount || selectedAgreement.agreed_payment_amount || loan.monthly_payment,
+                interest_rate: loan.interest_rate,
+                term_months: loan.term_months,
+                next_payment_date: loan.next_payment_date,
+                start_date: loan.start_date,
+                late_fee_enabled: loan.late_fee_enabled || false,
+                late_fee_rate: loan.late_fee_rate || 0,
+                grace_period_days: loan.grace_period_days || 0,
+                max_late_fee: (loan as any).max_late_fee || 0,
+                late_fee_calculation_type: ((loan as any).late_fee_calculation_type || 'daily') as 'daily' | 'monthly' | 'compound',
+                current_late_fee: loan.current_late_fee || 0,
+                payment_frequency: loan.payment_frequency || 'monthly',
+                client: loan.client
+              }}
+              onPaymentSuccess={() => {
+                setShowPaymentForm(false);
+                setSelectedAgreement(null);
+                if (onRefresh) {
+                  onRefresh();
+                }
+                fetchLoanDetails();
+                fetchPayments();
+                fetchInstallments();
+              }}
+            />
+          </div>
+        </div>
       )}
     </>
   );

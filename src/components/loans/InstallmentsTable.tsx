@@ -49,39 +49,64 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
   useEffect(() => {
     if (isOpen && loanId) {
-      fetchInstallments();
-      fetchLoanInfo();
+      fetchData();
     }
   }, [isOpen, loanId]);
 
   // Función para refrescar los datos
   const refreshData = () => {
-    fetchInstallments();
-    fetchLoanInfo();
+    fetchData();
   };
 
-  const fetchInstallments = async () => {
+  const fetchData = async () => {
     setLoading(true);
     try {
-      // Primero obtener la información del préstamo
-      const { data: loanData, error: loanError } = await supabase
-        .from('loans')
-        .select('monthly_payment, amount, interest_rate')
-        .eq('id', loanId)
-        .single();
+      // Hacer ambas consultas en paralelo para mayor velocidad
+      const [loanInfoResult, installmentsResult] = await Promise.all([
+        supabase
+          .from('loans')
+          .select(`
+            id,
+            amount,
+            remaining_balance,
+            monthly_payment,
+            interest_rate,
+            term_months,
+            status,
+            start_date,
+            first_payment_date,
+            payment_frequency,
+            clients:client_id (
+              full_name,
+              dni
+            )
+          `)
+          .eq('id', loanId)
+          .single(),
+        supabase
+          .from('installments')
+          .select('*')
+          .eq('loan_id', loanId)
+          .order('installment_number', { ascending: true })
+      ]);
 
-      if (loanError) throw loanError;
+      if (loanInfoResult.error) throw loanInfoResult.error;
+      if (installmentsResult.error) throw installmentsResult.error;
 
-      // Luego obtener las cuotas
-      const { data, error } = await supabase
-        .from('installments')
-        .select('*')
-        .eq('loan_id', loanId)
-        .order('installment_number', { ascending: true });
+      const loanInfo = loanInfoResult.data;
+      const data = installmentsResult.data;
 
-      if (error) throw error;
+      // Establecer loanInfo inmediatamente para mostrar datos básicos
+      setLoanInfo(loanInfo);
 
-      // Corregir los datos de las cuotas
+      // Usar loanInfo para los cálculos (ya tiene todos los campos necesarios)
+      const loanData = {
+        monthly_payment: loanInfo.monthly_payment,
+        amount: loanInfo.amount,
+        interest_rate: loanInfo.interest_rate
+      };
+
+      // Corregir los datos de las cuotas (solo en memoria, sin actualizar BD inmediatamente)
       const correctedInstallments = (data || []).map(installment => {
         // Si el amount es 0 o undefined, calcularlo
         let correctedAmount = installment.amount;
@@ -103,17 +128,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           correctedPrincipal = correctedAmount - correctedInterest;
         }
 
-        // Validar que los cálculos sean coherentes
-        if (correctedAmount !== correctedPrincipal + correctedInterest) {
-          console.warn('⚠️ Inconsistencia en cuota:', {
-            installment: installment.installment_number,
-            amount: correctedAmount,
-            principal: correctedPrincipal,
-            interest: correctedInterest,
-            sum: correctedPrincipal + correctedInterest
-          });
-        }
-
         return {
           ...installment,
           amount: Math.round(correctedAmount * 100) / 100,
@@ -122,13 +136,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         };
       });
 
-      console.log('🔍 InstallmentsTable - Cuotas corregidas:', {
-        original: data,
-        corrected: correctedInstallments,
-        loanData
-      });
+      // Establecer las cuotas inmediatamente para mostrar los datos
+      setInstallments(correctedInstallments);
 
-      // Si hay cuotas con datos incorrectos en la base de datos original, actualizarlas
+      // Actualizar BD en segundo plano (no bloquea la UI)
       const needsUpdate = (data || []).some(inst => 
         !inst.amount || inst.amount === 0 || 
         !inst.principal_amount || inst.principal_amount === 0 || 
@@ -136,33 +147,33 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       );
 
       if (needsUpdate) {
-        console.log('🔧 Actualizando cuotas con datos incorrectos en la base de datos...');
-        
-        for (let i = 0; i < (data || []).length; i++) {
-          const originalInstallment = data[i];
-          const correctedInstallment = correctedInstallments[i];
-          
-          if ((!originalInstallment.amount || originalInstallment.amount === 0) && 
-              correctedInstallment.amount > 0) {
-            try {
-              await supabase
-                .from('installments')
-                .update({
-                  amount: correctedInstallment.amount,
-                  principal_amount: correctedInstallment.principal_amount,
-                  interest_amount: correctedInstallment.interest_amount
-                })
-                .eq('id', originalInstallment.id);
-              
-              console.log(`✅ Cuota ${correctedInstallment.installment_number} actualizada en BD`);
-            } catch (updateError) {
-              console.error(`❌ Error actualizando cuota ${correctedInstallment.installment_number}:`, updateError);
+        // Hacer las actualizaciones en segundo plano sin bloquear
+        setTimeout(async () => {
+          const updates = [];
+          for (let i = 0; i < (data || []).length; i++) {
+            const originalInstallment = data[i];
+            const correctedInstallment = correctedInstallments[i];
+            
+            if ((!originalInstallment.amount || originalInstallment.amount === 0) && 
+                correctedInstallment.amount > 0) {
+              updates.push(
+                supabase
+                  .from('installments')
+                  .update({
+                    amount: correctedInstallment.amount,
+                    principal_amount: correctedInstallment.principal_amount,
+                    interest_amount: correctedInstallment.interest_amount
+                  })
+                  .eq('id', originalInstallment.id)
+              );
             }
           }
-        }
+          // Ejecutar todas las actualizaciones en paralelo
+          if (updates.length > 0) {
+            await Promise.all(updates);
+          }
+        }, 0);
       }
-
-      setInstallments(correctedInstallments);
     } catch (error) {
       console.error('Error fetching installments:', error);
       toast.error('Error al cargar las cuotas');
@@ -171,35 +182,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     }
   };
 
-  const fetchLoanInfo = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('loans')
-        .select(`
-          id,
-          amount,
-          remaining_balance,
-          monthly_payment,
-          interest_rate,
-          term_months,
-          status,
-          start_date,
-          first_payment_date,
-          payment_frequency,
-          clients:client_id (
-            full_name,
-            dni
-          )
-        `)
-        .eq('id', loanId)
-        .single();
-
-      if (error) throw error;
-      setLoanInfo(data);
-    } catch (error) {
-      console.error('Error fetching loan info:', error);
-    }
-  };
 
   const getStatusBadge = (installment: Installment) => {
     if (installment.is_paid) {
