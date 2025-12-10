@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
-import { formatDateTimeWithOffset, calculateDueDateInSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { formatDateTimeWithOffset, calculateDueDateInSantoDomingo, getCurrentDateStringForSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { 
   DollarSign, 
   Plus, 
@@ -1301,10 +1301,18 @@ export const PawnShopModule = () => {
       // Obtener companyId usando get_user_company_id() o user.id
       const companyId = user?.id || '';
 
+      // Asegurar que la fecha del cargo se guarde correctamente en zona horaria de Santo Domingo
+      // Usar directamente la fecha seleccionada sin conversiones que puedan causar problemas de zona horaria
+      // El input type="date" ya devuelve la fecha en formato YYYY-MM-DD según la zona horaria local del navegador
+      const chargeDateString = chargeFormData.charge_date;
+      
       // Calcular fecha de vencimiento (un día después de la fecha del cargo)
-      const chargeDate = new Date(chargeFormData.charge_date);
-      const dueDate = new Date(chargeDate);
+      // Parsear la fecha como fecha local para evitar problemas de zona horaria
+      const [year, month, day] = chargeDateString.split('-').map(Number);
+      const chargeDateLocal = new Date(year, month - 1, day); // month es 0-indexado, crear como fecha local
+      const dueDate = new Date(chargeDateLocal);
       dueDate.setDate(dueDate.getDate() + 1);
+      const dueDateString = `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`;
 
       // Registrar en historial
       const historyData = {
@@ -1318,7 +1326,7 @@ export const PawnShopModule = () => {
         },
         reason: chargeFormData.reason || '',
         amount: chargeFormData.amount,
-        charge_date: chargeFormData.charge_date,
+        charge_date: chargeDateString,
         reference_number: chargeFormData.reference_number || null,
         notes: chargeFormData.notes || null,
         created_by: companyId
@@ -3764,7 +3772,7 @@ export const PawnShopModule = () => {
                   type="date"
                   value={chargeFormData.charge_date}
                   onChange={(e) => setChargeFormData({...chargeFormData, charge_date: e.target.value})}
-                  max={new Date().toISOString().split('T')[0]}
+                  max={getCurrentDateStringForSantoDomingo()}
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1">
@@ -3957,7 +3965,7 @@ export const PawnShopModule = () => {
                                         hour12: true
                                       })}</div>
                                       {charge.charge_date && (
-                                        <div><strong>Fecha del Cargo:</strong> {new Date(charge.charge_date).toLocaleDateString('es-DO')}</div>
+                                        <div><strong>Fecha del Cargo:</strong> {formatDateStringForSantoDomingo(charge.charge_date)}</div>
                                       )}
                                       {charge.reference_number && (
                                         <div><strong>Referencia:</strong> {charge.reference_number}</div>

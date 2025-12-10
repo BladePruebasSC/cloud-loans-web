@@ -63,7 +63,9 @@ export const ReportsModule = () => {
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const { user } = useAuth();
+  const [selectedSale, setSelectedSale] = useState<any>(null);
+  const [showSaleModal, setShowSaleModal] = useState(false);
+  const { user, companyId } = useAuth();
 
   useEffect(() => {
     if (user) {
@@ -75,15 +77,33 @@ export const ReportsModule = () => {
     try {
       setLoading(true);
       
-      // Fetch clients
+      // Fetch clients - Solo clientes de esta empresa (que tienen préstamos con este loan_officer_id)
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
-        .select('*')
+        .select(`
+          *,
+          loans!inner(
+            id,
+            loan_officer_id
+          )
+        `)
+        .eq('loans.loan_officer_id', companyId || user?.id)
         .order('created_at', { ascending: false });
 
-      if (clientsError) throw clientsError;
+      if (clientsError) {
+        console.error('Error fetching clients:', clientsError);
+        // Si falla, intentar sin el join
+        const { data: clientsDataAlt, error: clientsErrorAlt } = await supabase
+          .from('clients')
+          .select('*')
+          .eq('user_id', companyId || user?.id)
+          .order('created_at', { ascending: false });
+        
+        if (clientsErrorAlt) throw clientsErrorAlt;
+        setReportData(prev => ({ ...prev, clients: clientsDataAlt || [] }));
+      }
 
-      // Fetch loans
+      // Fetch loans - Solo préstamos de esta empresa
       const { data: loansData, error: loansError } = await supabase
         .from('loans')
         .select(`
@@ -94,30 +114,61 @@ export const ReportsModule = () => {
             phone
           )
         `)
+        .eq('loan_officer_id', companyId || user?.id)
         .gte('created_at', dateRange.startDate)
         .lte('created_at', dateRange.endDate + 'T23:59:59')
         .order('created_at', { ascending: false });
 
       if (loansError) throw loansError;
 
-      // Fetch payments
+      // Fetch payments - Solo pagos de préstamos de esta empresa
       const { data: paymentsData, error: paymentsError } = await supabase
         .from('payments')
         .select(`
           *,
           loans (
+            id,
             amount,
+            loan_officer_id,
             clients (
               full_name,
               dni
             )
           )
         `)
+        .eq('loans.loan_officer_id', companyId || user?.id)
         .gte('payment_date', dateRange.startDate)
         .lte('payment_date', dateRange.endDate)
         .order('payment_date', { ascending: false });
 
-      if (paymentsError) throw paymentsError;
+      if (paymentsError) {
+        console.error('Error fetching payments:', paymentsError);
+        // Si falla con el join, intentar de otra forma
+        const { data: allPayments, error: allPaymentsError } = await supabase
+          .from('payments')
+          .select(`
+            *,
+            loans (
+              id,
+              amount,
+              loan_officer_id,
+              clients (
+                full_name,
+                dni
+              )
+            )
+          `)
+          .gte('payment_date', dateRange.startDate)
+          .lte('payment_date', dateRange.endDate)
+          .order('payment_date', { ascending: false });
+        
+        if (allPaymentsError) throw allPaymentsError;
+        // Filtrar por loan_officer_id en el cliente
+        const filteredPayments = (allPayments || []).filter((p: any) => 
+          p.loans?.loan_officer_id === (companyId || user?.id)
+        );
+        setReportData(prev => ({ ...prev, payments: filteredPayments }));
+      }
 
       // Fetch expenses
       const { data: expensesData, error: expensesError } = await supabase
@@ -186,6 +237,11 @@ export const ReportsModule = () => {
         products: productsData || [],
         sales: salesData || []
       });
+      
+      // Si clientsData no se estableció antes (por el error handling), establecerlo ahora
+      if (clientsData && !clientsError) {
+        // Ya está establecido en el setReportData
+      }
 
     } catch (error) {
       console.error('Error fetching report data:', error);
@@ -193,6 +249,32 @@ export const ReportsModule = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Función auxiliar para traducir métodos de pago
+  const translatePaymentMethod = (method: string | null | undefined): string => {
+    const translations: { [key: string]: string } = {
+      'cash': 'Efectivo',
+      'card': 'Tarjeta',
+      'transfer': 'Transferencia',
+      'check': 'Cheque',
+      'financing': 'Financiamiento'
+    };
+    return translations[method || 'cash'] || method || 'Efectivo';
+  };
+
+  // Función auxiliar para calcular el total con ITBIS de una venta
+  const calculateSaleTotalWithTax = (sale: any): number => {
+    if (sale.sale_details && sale.sale_details.length > 0) {
+      return sale.sale_details.reduce((sum: number, detail: any) => {
+        const itbisRate = detail.products?.itbis_rate ?? detail.product?.itbis_rate ?? 18;
+        const itemSubtotal = detail.total_price; // Sin ITBIS
+        const itemTax = itemSubtotal * (itbisRate / 100);
+        return sum + itemSubtotal + itemTax;
+      }, 0);
+    }
+    // Si no hay detalles, usar total_amount (que debería tener ITBIS)
+    return sale.total_amount || 0;
   };
 
   const exportToCSV = (data: any[], filename: string) => {
@@ -220,6 +302,285 @@ export const ReportsModule = () => {
     document.body.removeChild(link);
     
     toast.success('Reporte exportado exitosamente');
+  };
+
+  // Función para generar recibo de venta de POS
+  const generateReceiptFromSale = async (sale: any, format: 'A4' | 'POS80' | 'POS58' = 'POS80') => {
+    // Obtener información de la empresa
+    let companyName = 'SH Computers';
+    let companyAddress = '';
+    let companyPhone = '';
+    
+    try {
+      const { data: companySettings } = await supabase
+        .from('company_settings')
+        .select('company_name, address, phone')
+        .eq('user_id', companyId || user?.id)
+        .maybeSingle();
+      
+      if (companySettings) {
+        companyName = companySettings.company_name || companyName;
+        companyAddress = companySettings.address || '';
+        companyPhone = companySettings.phone || '';
+      }
+    } catch (error) {
+      console.error('Error fetching company settings:', error);
+    }
+    
+    const invoiceNumber = `${sale.id.substring(0, 8)}`;
+    const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+    
+    const isThermal = format === 'POS80' || format === 'POS58';
+    const isPOS58 = format === 'POS58';
+    
+    // Obtener detalles de la venta si no están incluidos
+    let saleDetails = sale.sale_details || [];
+    if (!saleDetails || saleDetails.length === 0) {
+      const { data: details, error: detailsError } = await supabase
+        .from('sale_details')
+        .select(`
+          *,
+          products (
+            id,
+            name,
+            sku,
+            itbis_rate
+          )
+        `)
+        .eq('sale_id', sale.id);
+      
+      if (!detailsError && details) {
+        saleDetails = details;
+      }
+    }
+    
+    // Calcular subtotal e ITBIS desde los detalles
+    let subtotal = 0;
+    let totalTax = 0;
+    
+    const itemsRows = saleDetails.map((detail: any) => {
+      const itbisRate = detail.products?.itbis_rate ?? detail.product?.itbis_rate ?? 18;
+      
+      // unit_price se guarda CON ITBIS, total_price se guarda SIN ITBIS (subtotal)
+      const itemSubtotal = detail.total_price; // Ya es sin ITBIS
+      const itemTax = itemSubtotal * (itbisRate / 100);
+      const itemTotalWithTax = itemSubtotal + itemTax;
+      
+      subtotal += itemSubtotal;
+      totalTax += itemTax;
+      
+      const unitPriceWithTax = detail.unit_price; // Ya tiene ITBIS
+      
+      const maxNameLength = isPOS58 ? 18 : 28;
+      const productName = (detail.products?.name || detail.product?.name || 'Producto desconocido').length > maxNameLength 
+        ? (detail.products?.name || detail.product?.name || 'Producto desconocido').substring(0, maxNameLength - 3) + '...' 
+        : (detail.products?.name || detail.product?.name || 'Producto desconocido');
+      
+      const discountCol = isPOS58 ? '' : '<td class="right">0%</td>';
+      const unitPrice = `<td class="right">${money(unitPriceWithTax)}</td>`;
+      
+      return `
+        <tr>
+          <td>${productName}</td>
+          <td class="right">${detail.quantity}</td>
+          ${unitPrice}
+          ${discountCol}
+          <td class="right">${money(itemTotalWithTax)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    // CSS específico para cada formato
+    const pageCss = format === 'A4'
+      ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
+      : format === 'POS80'
+        ? '@page { size: 80mm auto; margin: 2mm 1mm; } .invoice{width:76mm;margin:0 auto;font-size:9px;}'
+        : '@page { size: 58mm auto; margin: 2mm 1mm; } .invoice{width:54mm;margin:0 auto;font-size:8px;}';
+    
+    // CSS compacto para térmicas
+    const thermalCss = isThermal ? `
+      body { font-size: ${isPOS58 ? '8px' : '9px'}; font-family: 'Courier New', monospace; }
+      .invoice { width: ${isPOS58 ? '54mm' : '76mm'}; margin: 0 auto; }
+      .header { padding: 4px 0; border-bottom: 1px solid #000; text-align: center; }
+      .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+      .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+      .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; }
+      .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .section { padding: 4px 0; margin: 4px 0; border: none; }
+      .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 2px; }
+      .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
+      .label { font-weight: bold; }
+      table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      th, td { padding: 2px 1px; border-bottom: 1px dashed #ccc; }
+      thead th { background: transparent; border-bottom: 1px solid #000; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      tbody td { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .summary { padding: 4px 0; border-top: 1px solid #000; margin-top: 4px; }
+      .sum-row { padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
+      .footer { margin-top: 8px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+      .divider { border-top: 1px dashed #000; margin: 2px 0; }
+    ` : '';
+
+    // Generar HTML según el formato
+    const receiptHTML = isThermal ? `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Factura</title>
+        <style>
+          ${pageCss}
+          ${thermalCss}
+          body { font-family: 'Courier New', monospace; color: #000; margin: 0; padding: 0; }
+          .invoice { }
+          .header { text-align: center; padding: 4px 0; border-bottom: 1px solid #000; }
+          .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+          .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+          .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+          .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .section { padding: 2px 0; margin: 2px 0; }
+          .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 1px; }
+          .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
+          .label { font-weight: bold; }
+          table { width: 100%; border-collapse: collapse; margin: 2px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          th, td { padding: 1px 0; text-align: left; }
+          th.right, td.right { text-align: right; }
+          thead th { border-bottom: 1px solid #000; font-weight: bold; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .summary { padding: 2px 0; border-top: 1px solid #000; margin-top: 2px; }
+          .sum-row { display: flex; justify-content: space-between; padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
+          .footer { margin-top: 4px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+          .divider { border-top: 1px dashed #000; margin: 2px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="invoice">
+          <div class="header">
+            <div class="brand-name">${companyName}</div>
+            ${companyAddress ? `<div class="brand-meta">${companyAddress}</div>` : ''}
+            ${companyPhone ? `<div class="brand-meta">${companyPhone}</div>` : ''}
+            <div class="doc-type">FACTURA</div>
+            <div class="doc-number">Venta #${invoiceNumber}</div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Cliente</div>
+            <div class="field"><span class="label">Nombre:</span><span>${sale.clients?.full_name || sale.customer_name || 'Cliente General'}</span></div>
+            ${sale.clients?.phone ? `<div class="field"><span class="label">Teléfono:</span><span>${sale.clients.phone}</span></div>` : ''}
+            <div class="section-title" style="margin-top:4px;">Venta</div>
+            <div class="field"><span class="label">Fecha:</span><span>${sale.sale_date ? new Date(sale.sale_date).toLocaleDateString('es-DO') + ' ' + new Date(sale.sale_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' }) : (sale.created_at ? new Date(sale.created_at).toLocaleDateString('es-DO') : 'N/A')}</span></div>
+            <div class="field"><span class="label">Método de Pago:</span><span>${sale.payment_method || 'Efectivo'}</span></div>
+          </div>
+
+          <div class="divider"></div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Descripción</th>
+                <th class="right">Cant</th>
+                <th class="right">Precio</th>
+                ${isPOS58 ? '' : '<th class="right">Desc%</th>'}
+                <th class="right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsRows || '<tr><td colspan="5" class="text-center">No hay productos</td></tr>'}
+            </tbody>
+          </table>
+
+          <div class="divider"></div>
+
+          <div class="summary">
+            <div class="sum-row"><span>Subtotal:</span><span>${money(subtotal)}</span></div>
+            <div class="sum-row"><span>ITBIS:</span><span>${money(totalTax)}</span></div>
+            <div class="sum-row total"><span>TOTAL:</span><span>${money(sale.total_amount || 0)}</span></div>
+          </div>
+
+          <div class="footer">
+            <div>Gracias por su preferencia</div>
+            <div>${sale.sale_date ? `${new Date(sale.sale_date).toLocaleDateString('es-DO')} ${new Date(sale.sale_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}` : (sale.created_at ? `${new Date(sale.created_at).toLocaleDateString('es-DO')} ${new Date(sale.created_at).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}` : new Date().toLocaleDateString('es-DO'))}</div>
+          </div>
+        </div>
+      </body>
+      </html>
+    ` : `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Factura</title>
+        <style>
+          ${pageCss}
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #1f2937; }
+          .invoice { }
+          .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 2px solid #111827; }
+          .brand-name { font-size: 18px; font-weight: 700; }
+          .doc-type { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
+          .doc-number { font-size: 12px; color: #374151; margin-top: 4px; }
+          .section { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
+          thead th { background: #f9fafb; font-size: 12px; text-align: left; }
+          .right { text-align: right; }
+          .summary { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; }
+          .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
+          .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <div class="invoice">
+          <div class="header">
+            <div class="brand-name">${companyName}</div>
+            <div>
+              <div class="doc-type">FACTURA</div>
+              <div class="doc-number">Venta #${invoiceNumber}</div>
+            </div>
+          </div>
+          <div class="section">
+            <div><strong>Cliente:</strong> ${sale.clients?.full_name || sale.customer_name || 'Cliente General'}</div>
+            <div><strong>Fecha:</strong> ${sale.sale_date ? `${new Date(sale.sale_date).toLocaleDateString('es-DO')} ${new Date(sale.sale_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}` : (sale.created_at ? `${new Date(sale.created_at).toLocaleDateString('es-DO')} ${new Date(sale.created_at).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}` : 'N/A')}</div>
+            <div><strong>Método de pago:</strong> ${sale.payment_method || 'N/A'}</div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Descripción</th>
+                <th class="right">Cant.</th>
+                <th class="right">Precio</th>
+                <th class="right">Importe</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsRows || '<tr><td colspan="4" class="text-center">No hay productos</td></tr>'}
+            </tbody>
+          </table>
+          <div class="summary">
+            <div class="sum-row"><span>Subtotal:</span><span>${money(subtotal)}</span></div>
+            <div class="sum-row"><span>ITBIS:</span><span>${money(totalTax)}</span></div>
+            <div class="sum-row total">
+              <span>Total</span>
+              <span>${money(sale.total_amount || 0)}</span>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(receiptHTML);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
+  // Función para descargar recibo de venta
+  const downloadReceiptFromSale = async (sale: any) => {
+    await generateReceiptFromSale(sale, 'POS80');
   };
 
   // Cálculos para estadísticas
@@ -262,50 +623,70 @@ export const ReportsModule = () => {
   };
 
   // Función para imprimir factura
+  // Función para generar HTML del recibo de pago
+  const generatePaymentReceiptHTML = (payment: any): string => {
+    const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+    
+    return `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Recibo de Pago</title>
+        <style>
+          @page { size: A4; margin: 18mm; }
+          body { font-family: Arial, sans-serif; font-size: 12px; color: #1f2937; }
+          .receipt { max-width: 800px; margin: 0 auto; }
+          .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 2px solid #111827; }
+          .brand-name { font-size: 18px; font-weight: 700; }
+          .doc-type { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
+          .doc-number { font-size: 12px; color: #374151; margin-top: 4px; }
+          .section { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
+          thead th { background: #f9fafb; font-size: 12px; text-align: left; }
+          .summary { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; }
+          .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
+          .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <div class="receipt">
+          <div class="header">
+            <div class="brand-name">SH Computers</div>
+            <div>
+              <div class="doc-type">RECIBO DE PAGO</div>
+              <div class="doc-number">Recibo #${payment.id.substring(0, 8)}</div>
+            </div>
+          </div>
+          <div class="section">
+            <div><strong>Cliente:</strong> ${payment.loans?.clients?.full_name || 'N/A'}</div>
+            <div><strong>Préstamo #:</strong> ${payment.loans?.id?.substring(0, 8) || 'N/A'}</div>
+            <div><strong>Monto del Préstamo:</strong> ${money(payment.loans?.amount || 0)}</div>
+            <div><strong>Fecha:</strong> ${new Date(payment.payment_date).toLocaleDateString('es-DO')} ${new Date(payment.payment_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</div>
+            <div><strong>Método de pago:</strong> ${translatePaymentMethod(payment.payment_method)}</div>
+          </div>
+          <div class="summary">
+            <div class="sum-row"><span>Pago Principal:</span><span>${money(payment.principal_amount || 0)}</span></div>
+            <div class="sum-row"><span>Intereses:</span><span>${money(payment.interest_amount || 0)}</span></div>
+            ${payment.late_fee > 0 ? `<div class="sum-row"><span>Mora:</span><span>${money(payment.late_fee)}</span></div>` : ''}
+            <div class="sum-row total">
+              <span>Total</span>
+              <span>${money(payment.amount || 0)}</span>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  };
+
   const printInvoice = (payment: any) => {
+    const receiptHTML = generatePaymentReceiptHTML(payment);
     const printWindow = window.open('', '_blank');
     if (printWindow) {
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Factura de Pago</title>
-            <style>
-              body { font-family: Arial, sans-serif; margin: 20px; }
-              .header { text-align: center; margin-bottom: 30px; }
-              .info { display: flex; justify-content: space-between; margin-bottom: 20px; }
-              .details { width: 100%; border-collapse: collapse; }
-              .details th, .details td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-              .details th { background-color: #f2f2f2; }
-              .total { font-weight: bold; font-size: 18px; margin-top: 20px; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>Factura de Pago</h1>
-              <p>Fecha: ${new Date(payment.payment_date).toLocaleDateString()}</p>
-            </div>
-            <div class="info">
-              <div>
-                <strong>Cliente:</strong> ${payment.loans?.clients?.full_name || 'N/A'}<br>
-                <strong>Cédula:</strong> ${payment.loans?.clients?.dni || 'N/A'}
-              </div>
-              <div>
-                <strong>Recibo #:</strong> ${payment.id}<br>
-                <strong>Método:</strong> ${payment.payment_method || 'Efectivo'}
-              </div>
-            </div>
-            <table class="details">
-              <tr><th>Concepto</th><th>Monto</th></tr>
-              <tr><td>Pago Principal</td><td>$${payment.principal_amount.toLocaleString()}</td></tr>
-              <tr><td>Intereses</td><td>$${payment.interest_amount.toLocaleString()}</td></tr>
-              ${payment.late_fee > 0 ? `<tr><td>Mora</td><td>$${payment.late_fee.toLocaleString()}</td></tr>` : ''}
-            </table>
-            <div class="total">
-              Total Pagado: $${payment.amount.toLocaleString()}
-            </div>
-          </body>
-        </html>
-      `);
+      printWindow.document.write(receiptHTML);
       printWindow.document.close();
       printWindow.print();
     }
@@ -585,7 +966,7 @@ export const ReportsModule = () => {
                   <div key={l.id} className="border rounded p-3 flex items-start justify-between text-sm">
                     <div>
                       <div className="font-medium">{l.clients?.full_name || 'Cliente'}</div>
-                      <div className="text-gray-600">Próximo pago: {l.next_payment_date ? new Date(l.next_payment_date).toLocaleDateString() : '—'}</div>
+                      <div className="text-gray-600">Próximo pago: {l.next_payment_date ? `${new Date(l.next_payment_date).toLocaleDateString('es-DO')} ${new Date(l.next_payment_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}` : '—'}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-red-600">Mora: ${Number(l.current_late_fee||0).toLocaleString()}</div>
@@ -690,7 +1071,7 @@ export const ReportsModule = () => {
                       (s.sale_number||'').toLowerCase().includes(q)
                     );
                   });
-                const posTotal = posRows.reduce((sum: number, r: any) => sum + (r.total_amount ?? r.total_price ?? 0), 0);
+                const posTotal = posRows.reduce((sum: number, r: any) => sum + calculateSaleTotalWithTax(r), 0);
                 return (
                   <>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -711,12 +1092,42 @@ export const ReportsModule = () => {
                       <div className="space-y-2 mb-6">
                         {posRows.map((s:any) => (
                           <div key={s.id} className="border rounded p-3 flex items-start justify-between">
-                            <div className="text-sm">
-                              <div className="font-medium">{s.customer_name || 'Cliente'}</div>
-                              <div className="text-gray-600">{new Date(s.sale_date || s.created_at).toLocaleDateString()} · {s.payment_method || 'Efectivo'}</div>
+                            <div className="text-sm flex-1">
+                              <div className="font-medium">{s.clients?.full_name || s.customer_name || 'Cliente General'}</div>
+                              <div className="text-gray-600">{new Date(s.sale_date || s.created_at).toLocaleDateString('es-DO')} {new Date(s.sale_date || s.created_at).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })} · {translatePaymentMethod(s.payment_method)}</div>
+                              <div className="text-gray-500 text-xs mt-1">Venta #{s.id.substring(0, 8)}</div>
                             </div>
-                            <div className="text-right text-sm">
-                              <div><strong>Total:</strong> ${(s.total_amount ?? s.total_price ?? 0).toLocaleString()}</div>
+                            <div className="text-right text-sm mr-4">
+                              <div><strong>Total:</strong> ${calculateSaleTotalWithTax(s).toFixed(2)}</div>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedSale(s);
+                                  setShowSaleModal(true);
+                                }}
+                              >
+                                <Eye className="h-4 w-4 mr-1" />
+                                Detalle
+                              </Button>
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                onClick={() => generateReceiptFromSale(s, 'POS80')}
+                              >
+                                <Printer className="h-4 w-4 mr-1" />
+                                Imprimir
+                              </Button>
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                onClick={() => downloadReceiptFromSale(s)}
+                              >
+                                <Download className="h-4 w-4 mr-1" />
+                                Descargar
+                              </Button>
                             </div>
                           </div>
                         ))}
@@ -754,21 +1165,63 @@ export const ReportsModule = () => {
                   {reportData.payments.map((payment) => (
                     <div key={payment.id} className="border rounded-lg p-4">
                       <div className="flex items-start justify-between">
-                        <div className="space-y-1">
+                        <div className="space-y-1 flex-1">
                           <div className="flex items-center gap-2">
                             <Receipt className="h-4 w-4" />
                             <span className="font-medium">{payment.loans?.clients?.full_name || 'Cliente'}</span>
                           </div>
                           <div className="text-sm text-gray-600">
-                            {new Date(payment.payment_date).toLocaleDateString()} · Recibo #{payment.id}
+                            {new Date(payment.payment_date).toLocaleDateString('es-DO')} {new Date(payment.payment_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })} · Recibo #{payment.id.substring(0, 8)}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            Préstamo #{payment.loans?.id?.substring(0, 8) || 'N/A'} · Monto: ${payment.loans?.amount?.toLocaleString() || 'N/A'}
                           </div>
                         </div>
-                        <div className="text-right text-sm">
+                        <div className="text-right text-sm mr-4">
                           <div><strong>Total:</strong> ${payment.amount.toLocaleString()}</div>
                           <div className="text-gray-600">Interés: ${Number(payment.interest_amount||0).toLocaleString()}</div>
                           {payment.late_fee > 0 && (
                             <div className="text-red-600">Mora: ${Number(payment.late_fee).toLocaleString()}</div>
                           )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => {
+                              setSelectedPayment(payment);
+                              setShowInvoiceModal(true);
+                            }}
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            Detalle
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => printInvoice(payment)}
+                          >
+                            <Printer className="h-4 w-4 mr-1" />
+                            Imprimir
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => {
+                              // Descargar recibo de pago
+                              const receiptHTML = generatePaymentReceiptHTML(payment);
+                              const blob = new Blob([receiptHTML], { type: 'text/html' });
+                              const url = URL.createObjectURL(blob);
+                              const link = document.createElement('a');
+                              link.href = url;
+                              link.download = `recibo_pago_${payment.id.substring(0, 8)}.html`;
+                              link.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                          >
+                            <Download className="h-4 w-4 mr-1" />
+                            Descargar
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -864,7 +1317,7 @@ export const ReportsModule = () => {
                         <div key={tx.id} className="border rounded p-3 flex items-start justify-between">
                           <div className="text-sm">
                             <div className="font-medium">{tx.product_name}</div>
-                            <div className="text-gray-600">{tx.clients?.full_name || 'Cliente'} · {new Date(tx.created_at).toLocaleDateString()}</div>
+                            <div className="text-gray-600">{tx.clients?.full_name || 'Cliente'} · {new Date(tx.created_at).toLocaleDateString('es-DO')} {new Date(tx.created_at).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</div>
                           </div>
                           <div className="text-right text-sm">
                             <div>Préstamo: ${Number(tx.loan_amount||0).toLocaleString()}</div>
@@ -886,7 +1339,7 @@ export const ReportsModule = () => {
                         <div key={pp.id} className="border rounded p-3 flex items-start justify-between">
                           <div className="text-sm">
                             <div className="font-medium">{pp.pawn_transactions?.product_name || 'Artículo'}</div>
-                            <div className="text-gray-600">{pp.pawn_transactions?.clients?.full_name || 'Cliente'} · {new Date(pp.payment_date).toLocaleDateString()}</div>
+                            <div className="text-gray-600">{pp.pawn_transactions?.clients?.full_name || 'Cliente'} · {new Date(pp.payment_date).toLocaleDateString('es-DO')} {new Date(pp.payment_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</div>
                           </div>
                           <div className="text-right text-sm">
                             <div>Monto: ${Number(pp.amount||0).toLocaleString()}</div>
@@ -957,7 +1410,7 @@ export const ReportsModule = () => {
                       <div className="flex justify-between items-start">
                         <div className="space-y-2 flex-1">
                           <div className="flex items-center gap-3">
-                            <h3 className="font-medium">{payment.loans?.clients?.full_name}</h3>
+                            <h3 className="font-medium">{payment.loans?.clients?.full_name || 'Cliente desconocido'}</h3>
                             <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
                               {payment.status === 'completed' ? 'Completado' : 'Pendiente'}
                             </Badge>
@@ -965,11 +1418,31 @@ export const ReportsModule = () => {
                               <Badge variant="destructive">Con Mora</Badge>
                             )}
                           </div>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                            <div>Monto: ${payment.amount.toLocaleString()}</div>
-                            <div>Principal: ${payment.principal_amount.toLocaleString()}</div>
-                            <div>Interés: ${payment.interest_amount.toLocaleString()}</div>
-                            <div>Fecha: {new Date(payment.payment_date).toLocaleDateString()}</div>
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm text-gray-600">
+                            <div>
+                              <span className="font-medium">Préstamo:</span> 
+                              <span className="ml-1">#{payment.loans?.id?.substring(0, 8) || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Monto Préstamo:</span> 
+                              <span className="ml-1">${payment.loans?.amount?.toLocaleString() || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Monto Pago:</span> 
+                              <span className="ml-1">${payment.amount.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Principal:</span> 
+                              <span className="ml-1">${payment.principal_amount.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Interés:</span> 
+                              <span className="ml-1">${payment.interest_amount.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="font-medium">Fecha:</span> 
+                              <span className="ml-1">{new Date(payment.payment_date).toLocaleDateString('es-DO')} {new Date(payment.payment_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
                           </div>
                           {payment.late_fee > 0 && (
                             <div className="text-sm text-red-600">
@@ -1197,7 +1670,7 @@ export const ReportsModule = () => {
         </TabsContent>
       </Tabs>
 
-      {/* Modal de detalle de factura */}
+      {/* Modal de detalle de factura de préstamo */}
       <Dialog open={showInvoiceModal} onOpenChange={setShowInvoiceModal}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -1215,13 +1688,15 @@ export const ReportsModule = () => {
                   <div className="space-y-1 text-sm">
                     <p><strong>Nombre:</strong> {selectedPayment.loans?.clients?.full_name}</p>
                     <p><strong>Cédula:</strong> {selectedPayment.loans?.clients?.dni}</p>
-                    <p><strong>Fecha:</strong> {new Date(selectedPayment.payment_date).toLocaleDateString()}</p>
+                    <p><strong>Fecha:</strong> {new Date(selectedPayment.payment_date).toLocaleDateString('es-DO')} {new Date(selectedPayment.payment_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</p>
                   </div>
                 </div>
                 <div>
                   <h4 className="font-semibold mb-2">Información del Pago</h4>
                   <div className="space-y-1 text-sm">
                     <p><strong>Recibo #:</strong> {selectedPayment.id}</p>
+                    <p><strong>Préstamo #:</strong> {selectedPayment.loans?.id?.substring(0, 8) || 'N/A'}</p>
+                    <p><strong>Monto Préstamo:</strong> ${selectedPayment.loans?.amount?.toLocaleString() || 'N/A'}</p>
                     <p><strong>Método:</strong> {selectedPayment.payment_method || 'Efectivo'}</p>
                     <p><strong>Estado:</strong> <Badge variant="default">Pagado</Badge></p>
                   </div>
@@ -1261,6 +1736,99 @@ export const ReportsModule = () => {
                 <Button onClick={() => printInvoice(selectedPayment)}>
                   <Printer className="h-4 w-4 mr-2" />
                   Imprimir Factura
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de detalle de venta de POS */}
+      <Dialog open={showSaleModal} onOpenChange={setShowSaleModal}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5" />
+              Detalle de Venta
+            </DialogTitle>
+          </DialogHeader>
+          {selectedSale && (
+            <div className="space-y-6">
+              {/* Información del cliente */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-semibold mb-2">Información del Cliente</h4>
+                  <div className="space-y-1 text-sm">
+                    <p><strong>Nombre:</strong> {selectedSale.clients?.full_name || selectedSale.customer_name || 'Cliente General'}</p>
+                    {selectedSale.clients?.phone && <p><strong>Teléfono:</strong> {selectedSale.clients.phone}</p>}
+                    <p><strong>Fecha:</strong> {selectedSale.sale_date ? `${new Date(selectedSale.sale_date).toLocaleDateString('es-DO')} ${new Date(selectedSale.sale_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}` : (selectedSale.created_at ? `${new Date(selectedSale.created_at).toLocaleDateString('es-DO')} ${new Date(selectedSale.created_at).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}` : 'N/A')}</p>
+                  </div>
+                </div>
+                <div>
+                  <h4 className="font-semibold mb-2">Información de la Venta</h4>
+                  <div className="space-y-1 text-sm">
+                    <p><strong>Venta #:</strong> {selectedSale.id.substring(0, 8)}</p>
+                    <p><strong>Método:</strong> {selectedSale.payment_method || 'Efectivo'}</p>
+                    <p><strong>Estado:</strong> <Badge variant="default">{selectedSale.status || 'Completada'}</Badge></p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Productos */}
+              <div>
+                <h4 className="font-semibold mb-3">Productos</h4>
+                <div className="border rounded-lg">
+                  <div className="divide-y">
+                    {selectedSale.sale_details && selectedSale.sale_details.length > 0 ? (
+                      selectedSale.sale_details.map((detail: any) => {
+                        const itbisRate = detail.products?.itbis_rate ?? detail.product?.itbis_rate ?? 18;
+                        const itemSubtotal = detail.total_price; // Sin ITBIS
+                        const itemTax = itemSubtotal * (itbisRate / 100);
+                        const itemTotalWithTax = itemSubtotal + itemTax;
+                        
+                        return (
+                          <div key={detail.id} className="grid grid-cols-4 gap-4 p-3">
+                            <span className="col-span-2">{detail.products?.name || detail.product?.name || 'Producto desconocido'}</span>
+                            <span className="text-right">Cant: {detail.quantity}</span>
+                            <span className="text-right font-medium">${itemTotalWithTax.toFixed(2)}</span>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="p-3 text-sm text-gray-500">No hay productos disponibles</div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 p-3 bg-gray-50 font-bold border-t">
+                    <span>Total:</span>
+                    <span className="text-right">
+                      ${(() => {
+                        if (selectedSale.sale_details && selectedSale.sale_details.length > 0) {
+                          return selectedSale.sale_details.reduce((sum: number, detail: any) => {
+                            const itbisRate = detail.products?.itbis_rate ?? detail.product?.itbis_rate ?? 18;
+                            const itemSubtotal = detail.total_price;
+                            const itemTax = itemSubtotal * (itbisRate / 100);
+                            return sum + itemSubtotal + itemTax;
+                          }, 0).toFixed(2);
+                        }
+                        return (selectedSale.total_amount || 0).toFixed(2);
+                      })()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Acciones */}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowSaleModal(false)}>
+                  Cerrar
+                </Button>
+                <Button onClick={() => generateReceiptFromSale(selectedSale, 'POS80')}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Imprimir
+                </Button>
+                <Button variant="outline" onClick={() => downloadReceiptFromSale(selectedSale)}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Descargar
                 </Button>
               </div>
             </div>

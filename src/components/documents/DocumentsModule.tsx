@@ -71,6 +71,8 @@ export const DocumentsModule = () => {
   const [filteredLoans, setFilteredLoans] = useState<Loan[]>([]);
   const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
   const [showLoanDropdown, setShowLoanDropdown] = useState(false);
+  const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (companyId) {
@@ -79,7 +81,7 @@ export const DocumentsModule = () => {
   }, [companyId]);
 
   useEffect(() => {
-    if (selectedLoan && companyId) {
+    if (companyId) {
       fetchDocuments();
     } else {
       setDocuments([]);
@@ -147,11 +149,11 @@ export const DocumentsModule = () => {
     setLoanSearch('');
     setFilteredLoans(loans);
     setShowLoanDropdown(false);
-    setDocuments([]);
+    // No limpiar documentos, se recargarán automáticamente con todos los documentos
   };
 
   const fetchDocuments = async () => {
-    if (!companyId || !selectedLoan) return;
+    if (!companyId) return;
     
     try {
       setLoading(true);
@@ -159,8 +161,12 @@ export const DocumentsModule = () => {
         .from('documents')
         .select('*')
         .eq('user_id', companyId)
-        .eq('loan_id', selectedLoan.id)
         .order('created_at', { ascending: false });
+
+      // Si hay un préstamo seleccionado, filtrar por ese préstamo
+      if (selectedLoan) {
+        query = query.eq('loan_id', selectedLoan.id);
+      }
 
       // Filtrar por tipo según el tab activo
       if (activeTab === 'contratos') {
@@ -264,6 +270,32 @@ export const DocumentsModule = () => {
       console.error('Error al subir documento:', error);
       toast.error(error.message || 'Error al subir documento', { id: 'upload-doc' });
     }
+  };
+
+  const handlePreviewDocument = async (doc: Document) => {
+    try {
+      if (!doc.file_url) {
+        toast.error('No hay URL de archivo disponible');
+        return;
+      }
+
+      const { data, error } = await supabase.storage
+        .from('documents')
+        .createSignedUrl(doc.file_url, 3600); // URL válida por 1 hora
+
+      if (error) throw error;
+
+      setPreviewUrl(data.signedUrl);
+      setPreviewDocument(doc);
+    } catch (error: any) {
+      console.error('Error al previsualizar documento:', error);
+      toast.error('Error al previsualizar documento');
+    }
+  };
+
+  const closePreview = () => {
+    setPreviewDocument(null);
+    setPreviewUrl(null);
   };
 
   const handleDownloadDocument = async (doc: Document) => {
@@ -426,9 +458,10 @@ export const DocumentsModule = () => {
             </div>
           )}
           {!selectedLoan && (
-            <div className="mt-4 p-4 text-center text-gray-500 bg-gray-50 rounded-md">
-              <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p>Selecciona un préstamo para ver sus documentos</p>
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+              <p className="text-sm text-blue-700">
+                <strong>Mostrando todos los documentos.</strong> Selecciona un préstamo para filtrar por préstamo específico.
+              </p>
             </div>
           )}
         </CardContent>
@@ -508,12 +541,7 @@ export const DocumentsModule = () => {
               </div>
             </CardHeader>
             <CardContent>
-              {!selectedLoan ? (
-                <div className="text-center py-8 text-gray-500">
-                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Selecciona un préstamo para ver sus documentos</p>
-                </div>
-              ) : loading ? (
+              {loading ? (
                 <div className="text-center py-8">Cargando documentos...</div>
               ) : filteredDocuments.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -541,7 +569,16 @@ export const DocumentsModule = () => {
                         <Button 
                           variant="outline" 
                           size="sm"
+                          onClick={() => handlePreviewDocument(doc)}
+                          title="Previsualizar"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
                           onClick={() => handleDownloadDocument(doc)}
+                          title="Descargar"
                         >
                           <Download className="h-4 w-4" />
                         </Button>
@@ -549,6 +586,7 @@ export const DocumentsModule = () => {
                           variant="outline" 
                           size="sm"
                           onClick={() => handleDeleteDocument(doc.id, doc.file_url)}
+                          title="Eliminar"
                         >
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
@@ -567,12 +605,7 @@ export const DocumentsModule = () => {
               <CardTitle>Contratos de Préstamo</CardTitle>
             </CardHeader>
             <CardContent>
-              {!selectedLoan ? (
-                <div className="text-center py-8 text-gray-500">
-                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Selecciona un préstamo para ver sus documentos</p>
-                </div>
-              ) : loading ? (
+              {loading ? (
                 <div className="text-center py-8">Cargando...</div>
               ) : filteredDocuments.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -600,7 +633,16 @@ export const DocumentsModule = () => {
                         <Button 
                           variant="outline" 
                           size="sm"
+                          onClick={() => handlePreviewDocument(doc)}
+                          title="Previsualizar"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
                           onClick={() => handleDownloadDocument(doc)}
+                          title="Descargar"
                         >
                           <Download className="h-4 w-4" />
                         </Button>
@@ -608,6 +650,7 @@ export const DocumentsModule = () => {
                           variant="outline" 
                           size="sm"
                           onClick={() => handleDeleteDocument(doc.id, doc.file_url)}
+                          title="Eliminar"
                         >
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
@@ -626,12 +669,7 @@ export const DocumentsModule = () => {
               <CardTitle>Comprobantes de Pago</CardTitle>
             </CardHeader>
             <CardContent>
-              {!selectedLoan ? (
-                <div className="text-center py-8 text-gray-500">
-                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Selecciona un préstamo para ver sus documentos</p>
-                </div>
-              ) : loading ? (
+              {loading ? (
                 <div className="text-center py-8">Cargando...</div>
               ) : filteredDocuments.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -659,7 +697,16 @@ export const DocumentsModule = () => {
                         <Button 
                           variant="outline" 
                           size="sm"
+                          onClick={() => handlePreviewDocument(doc)}
+                          title="Previsualizar"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
                           onClick={() => handleDownloadDocument(doc)}
+                          title="Descargar"
                         >
                           <Download className="h-4 w-4" />
                         </Button>
@@ -667,6 +714,7 @@ export const DocumentsModule = () => {
                           variant="outline" 
                           size="sm"
                           onClick={() => handleDeleteDocument(doc.id, doc.file_url)}
+                          title="Eliminar"
                         >
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
@@ -685,12 +733,7 @@ export const DocumentsModule = () => {
               <CardTitle>Documentos de Identificación</CardTitle>
             </CardHeader>
             <CardContent>
-              {!selectedLoan ? (
-                <div className="text-center py-8 text-gray-500">
-                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Selecciona un préstamo para ver sus documentos</p>
-                </div>
-              ) : loading ? (
+              {loading ? (
                 <div className="text-center py-8">Cargando...</div>
               ) : filteredDocuments.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
@@ -718,7 +761,16 @@ export const DocumentsModule = () => {
                         <Button 
                           variant="outline" 
                           size="sm"
+                          onClick={() => handlePreviewDocument(doc)}
+                          title="Previsualizar"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
                           onClick={() => handleDownloadDocument(doc)}
+                          title="Descargar"
                         >
                           <Download className="h-4 w-4" />
                         </Button>
@@ -726,6 +778,7 @@ export const DocumentsModule = () => {
                           variant="outline" 
                           size="sm"
                           onClick={() => handleDeleteDocument(doc.id, doc.file_url)}
+                          title="Eliminar"
                         >
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
@@ -833,6 +886,105 @@ export const DocumentsModule = () => {
               </Button>
             </div>
           </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Previsualización de Documento */}
+      <Dialog open={!!previewDocument} onOpenChange={(open) => !open && closePreview()}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span>{previewDocument?.title || 'Previsualizar Documento'}</span>
+              <Button variant="ghost" size="sm" onClick={closePreview}>
+                <X className="h-4 w-4" />
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+          {previewUrl && previewDocument && (
+            <div className="flex-1 overflow-auto">
+              {(() => {
+                const fileExtension = previewDocument.file_name?.split('.').pop()?.toLowerCase() || '';
+                const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(fileExtension);
+                const isPdf = fileExtension === 'pdf';
+                
+                if (isImage) {
+                  return (
+                    <div className="flex justify-center items-center min-h-[400px]">
+                      <img 
+                        src={previewUrl} 
+                        alt={previewDocument.title}
+                        className="max-w-full max-h-[70vh] object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = '';
+                          toast.error('No se pudo cargar la imagen');
+                        }}
+                      />
+                    </div>
+                  );
+                } else if (isPdf) {
+                  return (
+                    <div className="w-full h-[70vh]">
+                      <iframe
+                        src={previewUrl}
+                        className="w-full h-full border-0"
+                        title={previewDocument.title}
+                      />
+                    </div>
+                  );
+                } else {
+                  return (
+                    <div className="text-center py-12">
+                      <FileText className="h-16 w-16 mx-auto mb-4 text-gray-400" />
+                      <p className="text-gray-600 mb-4">
+                        No se puede previsualizar este tipo de archivo ({fileExtension || 'desconocido'})
+                      </p>
+                      <Button onClick={() => handleDownloadDocument(previewDocument)}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Descargar para ver
+                      </Button>
+                    </div>
+                  );
+                }
+              })()}
+            </div>
+          )}
+          {previewDocument && (
+            <div className="border-t pt-4 mt-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="font-medium">Tipo:</span> {previewDocument.document_type}
+                </div>
+                <div>
+                  <span className="font-medium">Tamaño:</span> {previewDocument.file_size ? `${(previewDocument.file_size / 1024).toFixed(2)} KB` : 'N/A'}
+                </div>
+                <div>
+                  <span className="font-medium">Fecha:</span> {new Date(previewDocument.created_at).toLocaleDateString('es-DO')}
+                </div>
+                <div>
+                  <span className="font-medium">Archivo:</span> {previewDocument.file_name || 'N/A'}
+                </div>
+              </div>
+              {previewDocument.description && (
+                <div className="mt-2">
+                  <span className="font-medium">Descripción:</span>
+                  <p className="text-gray-600 mt-1">{previewDocument.description}</p>
+                </div>
+              )}
+              <div className="flex justify-end gap-2 mt-4">
+                <Button variant="outline" onClick={closePreview}>
+                  Cerrar
+                </Button>
+                <Button onClick={() => {
+                  if (previewDocument) {
+                    handleDownloadDocument(previewDocument);
+                  }
+                }}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Descargar
+                </Button>
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>

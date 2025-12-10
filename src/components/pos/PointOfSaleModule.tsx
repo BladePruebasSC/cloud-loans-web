@@ -35,7 +35,8 @@ import {
   Zap,
   TrendingUp,
   Clock,
-  AlertCircle
+  AlertCircle,
+  X
 } from 'lucide-react';
 
 interface Product {
@@ -152,17 +153,22 @@ export const PointOfSaleModule = () => {
     return [];
   });
   
-  // Guardar carrito en localStorage cada vez que cambie
+  // Guardar carrito en localStorage cada vez que cambie (solo si no está vacío o si se está limpiando explícitamente)
   useEffect(() => {
     try {
-      localStorage.setItem('pos_cart', JSON.stringify(cart));
+      if (cart.length === 0) {
+        // Si el carrito está vacío, asegurarse de que localStorage también esté vacío
+        localStorage.removeItem('pos_cart');
+      } else {
+        localStorage.setItem('pos_cart', JSON.stringify(cart));
+      }
     } catch (error) {
       console.error('Error saving cart to localStorage:', error);
     }
   }, [cart]);
-  const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [receiptData, setReceiptData] = useState<SaleData | null>(null); // Datos de la venta para el recibo
   const [showNewClientModal, setShowNewClientModal] = useState(false);
   const [newClientData, setNewClientData] = useState({
     full_name: '',
@@ -197,6 +203,14 @@ export const PointOfSaleModule = () => {
       console.error('Error saving selected customer to localStorage:', error);
     }
   }, [selectedCustomer]);
+
+  // Sincronizar selectedCustomer con saleData.customer cuando se abre el modal de pago
+  useEffect(() => {
+    if (showPaymentModal && selectedCustomer && (!saleData.customer || saleData.customer.id !== selectedCustomer.id)) {
+      setSaleData(prev => ({ ...prev, customer: selectedCustomer }));
+    }
+  }, [showPaymentModal, selectedCustomer]);
+
   const [customerSearch, setCustomerSearch] = useState('');
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
   const { user, companyId } = useAuth();
@@ -465,12 +479,7 @@ export const PointOfSaleModule = () => {
       setProducts(productsRes.data || []);
       setCustomers(customersRes.data || []);
       
-      // Obtener o crear cliente genérico y establecerlo por defecto
-      const genericClient = await getOrCreateGenericClient();
-      if (genericClient) {
-        setSelectedCustomer(genericClient);
-        setSaleData(prev => ({ ...prev, customer: genericClient }));
-      }
+      // No establecer cliente genérico por defecto - el usuario debe seleccionar uno
       
       if (!companyRes.error && companyRes.data) {
         setCompanyInfo({
@@ -588,10 +597,17 @@ export const PointOfSaleModule = () => {
   };
 
   const clearCart = (showToast = true) => {
+    // Limpiar localStorage primero para evitar que se restaure
+    try {
+      localStorage.removeItem('pos_cart');
+      localStorage.removeItem('pos_selected_customer');
+    } catch (error) {
+      console.error('Error clearing cart from localStorage:', error);
+    }
+    // Luego limpiar el estado
     setCart([]);
     setSelectedCustomer(null);
-    setSaleData(prev => ({
-      ...prev,
+    setSaleData({
       customer: null,
       items: [],
       subtotal: 0,
@@ -601,15 +617,17 @@ export const PointOfSaleModule = () => {
       paymentMethod: null,
       paymentAmount: 0,
       change: 0,
+      paymentSplits: [],
+      ncfType: '01',
+      ncfNumber: '',
+      notes: '',
+      saleType: 'cash',
+      financingMonths: 12,
+      financingRate: 20,
+      discountMode: 'item',
+      discountPercentTotal: 0,
       paymentDetails: {}
-    }));
-    // Limpiar también de localStorage
-    try {
-      localStorage.removeItem('pos_cart');
-      localStorage.removeItem('pos_selected_customer');
-    } catch (error) {
-      console.error('Error clearing cart from localStorage:', error);
-    }
+    });
     if (showToast) {
       toast.success('Carrito vaciado');
     }
@@ -618,7 +636,6 @@ export const PointOfSaleModule = () => {
   const selectCustomer = (customer: Customer) => {
     setSelectedCustomer(customer);
     setSaleData(prev => ({ ...prev, customer }));
-    setShowCustomerModal(false);
     toast.success(`Cliente seleccionado: ${customer.full_name}`);
   };
 
@@ -658,6 +675,23 @@ export const PointOfSaleModule = () => {
       }
     }
 
+    // Validar datos de tarjeta si se selecciona método de pago con tarjeta
+    const cardSplits = saleData.paymentSplits.filter(split => split.method.type === 'card');
+    for (const cardSplit of cardSplits) {
+      if (!cardSplit.details?.cardType) {
+        toast.error('Debe especificar el tipo de tarjeta para el pago con tarjeta');
+        return;
+      }
+      if (!cardSplit.details?.cardLast4 || cardSplit.details.cardLast4.length !== 4) {
+        toast.error('Debe especificar los últimos 4 dígitos de la tarjeta');
+        return;
+      }
+      if (!cardSplit.details?.cardHolderName) {
+        toast.error('Debe especificar el nombre del titular de la tarjeta');
+        return;
+      }
+    }
+
     // Validar que el total de los pagos sea suficiente (excluyendo financiamiento)
     const totalPaid = saleData.paymentSplits
       .filter(split => split.method.type !== 'financing')
@@ -665,6 +699,12 @@ export const PointOfSaleModule = () => {
     const financingAmount = financingSplit?.amount || 0;
     const totalPaidIncludingFinancing = totalPaid + financingAmount;
     const epsilon = 0.005; // tolerancia por redondeo a 2 decimales
+    
+    // Calcular pagos en efectivo y otros métodos
+    const cashPayments = saleData.paymentSplits.filter(split => split.method.type === 'cash');
+    const nonCashPayments = saleData.paymentSplits.filter(split => split.method.type !== 'cash' && split.method.type !== 'financing');
+    const totalCashPaid = cashPayments.reduce((sum, split) => sum + split.amount, 0);
+    const totalNonCashPaid = nonCashPayments.reduce((sum, split) => sum + split.amount, 0);
     
     // Si hay financiamiento, solo validar que los otros pagos + enganche (si hay) no excedan el total
     // Si no hay financiamiento, validar que el total pagado sea suficiente
@@ -675,12 +715,26 @@ export const PointOfSaleModule = () => {
         return;
       }
     } else {
-      // Sin financiamiento, debe pagar el total completo
+      // Sin financiamiento
+      // Para métodos no efectivo, no pueden exceder el total
+      if (totalNonCashPaid > saleData.total + epsilon) {
+        toast.error('El monto pagado con métodos no efectivo excede el total');
+        return;
+      }
+      // Para efectivo, puede ser mayor (para calcular cambio), pero los otros métodos deben cubrir su parte
+      // El total pagado (efectivo + otros) debe ser al menos el total
       if (totalPaid + epsilon < saleData.total) {
         toast.error('El monto pagado es menor al total');
         return;
       }
     }
+    
+    // Calcular el cambio (solo para pagos en efectivo)
+    // El cambio es la diferencia entre el efectivo pagado y el total (si el efectivo es mayor)
+    const change = totalCashPaid > saleData.total ? totalCashPaid - saleData.total : 0;
+    
+    // Actualizar el cambio en saleData
+    setSaleData(prev => ({ ...prev, change }));
 
     // Persistir venta en base de datos (sales + sale_details)
     const persistSale = async () => {
@@ -956,11 +1010,12 @@ export const PointOfSaleModule = () => {
           }
           
     setShowPaymentModal(false);
+    // Guardar los datos de la venta antes de limpiar el carrito (incluyendo el cambio calculado)
+    setReceiptData({ ...saleData, change });
     setShowReceiptModal(true);
           // Refrescar inventario
         await fetchData();
-          // Limpiar el carrito después de guardar la venta (sin mostrar toast)
-          clearCart(false);
+          // NO limpiar el carrito aquí - se limpiará cuando se cierre el modal del recibo
         }
       } catch (e: any) {
         console.error('Error saving sale:', e);
@@ -973,7 +1028,9 @@ export const PointOfSaleModule = () => {
   };
 
   const generateReceipt = (format: 'A4' | 'POS80' | 'POS58' = receiptFormat) => {
-    const invoiceNumber = `${saleData.ncfType || '01'}-${saleData.ncfNumber || '0000000000'}`;
+    // Usar receiptData si está disponible (datos guardados antes de limpiar), sino usar saleData
+    const dataToUse = receiptData || saleData;
+    const invoiceNumber = `${dataToUse.ncfType || '01'}-${dataToUse.ncfNumber || '0000000000'}`;
     const companyName = companyInfo.company_name;
     const companyAddress = companyInfo.address;
     const companyPhone = companyInfo.phone;
@@ -984,40 +1041,60 @@ export const PointOfSaleModule = () => {
     const isThermal = format === 'POS80' || format === 'POS58';
     const isPOS58 = format === 'POS58';
     
+    // Usar receiptData.items si está disponible, sino usar saleData.items o cart
+    const itemsToShow = (receiptData?.items && receiptData.items.length > 0) 
+      ? receiptData.items 
+      : (saleData.items && saleData.items.length > 0 ? saleData.items : cart);
+    
     // Para impresoras térmicas, formato más compacto
     const itemsRows = isThermal
-      ? cart.map(item => {
+      ? itemsToShow.map(item => {
           const maxNameLength = isPOS58 ? 18 : 28;
           const productName = item.product.name.length > maxNameLength 
             ? item.product.name.substring(0, maxNameLength - 3) + '...' 
             : item.product.name;
           const discountCol = isPOS58 ? '' : `<td class="right">${(item.discountPercent || 0).toFixed(0)}%</td>`;
-          const unitPrice = isPOS58 ? '' : `<td class="right">${money(item.unitPrice)}</td>`;
+          const unitPrice = `<td class="right">${money(item.unitPrice)}</td>`;
+          // Calcular el total del item con ITBIS y descuento
+          const itbisRate = item.product.itbis_rate ?? 18;
+          const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
+          const baseAmount = priceWithoutTax * item.quantity;
+          const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
+          const itemTax = discounted * (itbisRate / 100);
+          const itemTotal = discounted + itemTax;
           return `
             <tr>
               <td>${productName}</td>
               <td class="right">${item.quantity}</td>
               ${unitPrice}
               ${discountCol}
-              <td class="right">${money(item.subtotal)}</td>
+              <td class="right">${money(itemTotal)}</td>
             </tr>
           `;
         }).join('')
-      : cart.map(item => `
+      : itemsToShow.map(item => {
+          // Calcular el total del item con ITBIS y descuento
+          const itbisRate = item.product.itbis_rate ?? 18;
+          const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
+          const baseAmount = priceWithoutTax * item.quantity;
+          const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
+          const itemTax = discounted * (itbisRate / 100);
+          const itemTotal = discounted + itemTax;
+          return `
               <tr>
                 <td>${item.product.name}</td>
                 <td class="right">${item.quantity}</td>
                 <td class="right">${money(item.unitPrice)}</td>
                 <td class="right">${(item.discountPercent || 0).toFixed(2)}%</td>
-                <td class="right">${money(item.subtotal)}</td>
+                <td class="right">${money(itemTotal)}</td>
               </tr>
-            `).join('');
+            `;
+        }).join('');
 
-    const customerExtra = saleData.ncfNumber && !isThermal
+    const customerExtra = dataToUse.customer && !isThermal
       ? `
-        <div class="field"><span class="label">Teléfono</span><span class="value">${saleData.customer?.phone || '—'}</span></div>
-        <div class="field"><span class="label">Correo</span><span class="value">${saleData.customer?.email || '—'}</span></div>
-        <div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${saleData.customer?.address || '—'}</span></div>
+        <div class="field"><span class="label">Teléfono</span><span class="value">${dataToUse.customer.phone || '—'}</span></div>
+        ${dataToUse.customer.address ? `<div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${dataToUse.customer.address}</span></div>` : ''}
       `
       : '';
 
@@ -1095,16 +1172,31 @@ export const PointOfSaleModule = () => {
           <div class="header">
             <div class="brand-name">${companyName}</div>
             <div class="brand-meta">${companyAddress}</div>
-            <div class="brand-meta">${companyPhone}${companyEmail ? ' | ' + companyEmail : ''}</div>
+            <div class="brand-meta">${companyPhone}</div>
             <div class="doc-type">FACTURA</div>
             <div class="doc-number">NCF: ${invoiceNumber}</div>
           </div>
 
           <div class="section">
-            <div class="field"><span class="label">Cliente:</span><span>${saleData.customer?.full_name || 'Cliente General'}</span></div>
+            <div class="section-title">Cliente</div>
+            <div class="field"><span class="label">Nombre:</span><span>${saleData.customer?.full_name || 'Cliente General'}</span></div>
+            ${saleData.customer?.phone ? `<div class="field"><span class="label">Teléfono:</span><span>${saleData.customer.phone}</span></div>` : ''}
+            <div class="section-title" style="margin-top:4px;">Venta</div>
             <div class="field"><span class="label">Fecha:</span><span>${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span></div>
-            <div class="field"><span class="label">Pago:</span><span>${saleData.paymentMethod?.name || 'Efectivo'}</span></div>
-            ${saleData.paymentMethod?.type === 'cash' && saleData.change > 0 ? `<div class="field"><span class="label">Cambio:</span><span>${money(saleData.change)}</span></div>` : ''}
+            <div class="field"><span class="label">Método de Pago:</span><span>${saleData.paymentSplits.map(s => s.method.name).join(', ') || saleData.paymentMethod?.name || 'Efectivo'}</span></div>
+            ${(() => {
+              const dataToUseForChange = receiptData || saleData;
+              const cashPayments = dataToUseForChange.paymentSplits?.filter((split: any) => split.method.type === 'cash') || [];
+              const totalCashPaid = cashPayments.reduce((sum: number, split: any) => sum + split.amount, 0);
+              const calculatedChange = totalCashPaid > dataToUseForChange.total ? totalCashPaid - dataToUseForChange.total : (dataToUseForChange.change || 0);
+              if (calculatedChange > 0 && totalCashPaid > 0) {
+                return `
+                  <div class="field"><span class="label">Recibido (Efectivo):</span><span>${money(totalCashPaid)}</span></div>
+                  <div class="field"><span class="label">Cambio a Devolver:</span><span>${money(calculatedChange)}</span></div>
+                `;
+              }
+              return '';
+            })()}
           </div>
 
           <div class="divider"></div>
@@ -1114,6 +1206,7 @@ export const PointOfSaleModule = () => {
               <tr>
                 <th>Descripción</th>
                 <th class="right">Cant</th>
+                <th class="right">Precio</th>
                 ${isPOS58 ? '' : '<th class="right">Desc%</th>'}
                 <th class="right">Total</th>
               </tr>
@@ -1126,13 +1219,13 @@ export const PointOfSaleModule = () => {
           <div class="divider"></div>
 
           <div class="summary">
-            <div class="sum-row"><span>Subtotal:</span><span>${money(saleData.subtotal)}</span></div>
-            ${saleData.discount > 0 ? `<div class="sum-row"><span>Descuento:</span><span>-${money(saleData.discount)}</span></div>` : ''}
-            ${saleData.tax > 0 ? `<div class="sum-row"><span>ITBIS:</span><span>${money(saleData.tax)}</span></div>` : ''}
-            <div class="sum-row total"><span>TOTAL:</span><span>${money(saleData.total)}</span></div>
+            <div class="sum-row"><span>Subtotal:</span><span>${money(dataToUse.subtotal || 0)}</span></div>
+            ${(dataToUse.discount || 0) > 0 ? `<div class="sum-row"><span>Descuento:</span><span>-${money(dataToUse.discount)}</span></div>` : ''}
+            <div class="sum-row"><span>ITBIS:</span><span>${money(dataToUse.tax || 0)}</span></div>
+            <div class="sum-row total"><span>TOTAL:</span><span>${money(dataToUse.total || 0)}</span></div>
           </div>
 
-          ${saleData.notes ? `<div class="notes"><strong>Notas:</strong> ${saleData.notes}</div>` : ''}
+          ${dataToUse.notes ? `<div class="notes"><strong>Notas:</strong> ${dataToUse.notes}</div>` : ''}
 
           <div class="footer">
             <div>Gracias por su preferencia</div>
@@ -1189,7 +1282,7 @@ export const PointOfSaleModule = () => {
               <div class="brand-logo">CL</div>
               <div class="brand-text">
                 <div class="brand-name">${companyName}</div>
-                <div class="brand-meta">${companyAddress} · ${companyPhone} · ${companyEmail}</div>
+                <div class="brand-meta">${companyAddress} · ${companyPhone}</div>
               </div>
             </div>
             <div class="doc-title">
@@ -1213,7 +1306,19 @@ export const PointOfSaleModule = () => {
                 <div class="field"><span class="label">Vendedor</span><span class="value">${cashier}</span></div>
                 <div class="field"><span class="label">Condición</span><span class="value">${saleData.saleType === 'cash' ? 'Contado' : saleData.saleType === 'credit' ? 'Crédito' : 'Financiamiento'}</span></div>
                 <div class="field"><span class="label">Método de pago</span><span class="value">${saleData.paymentMethod?.name || '—'}</span></div>
-                <div class="field"><span class="label">Cambio</span><span class="value">${saleData.paymentMethod?.type === 'cash' ? '$' + saleData.change.toFixed(2) : '—'}</span></div>
+                ${(() => {
+                  const dataToUseForChange = receiptData || saleData;
+                  const cashPayments = dataToUseForChange.paymentSplits?.filter((split: any) => split.method.type === 'cash') || [];
+                  const totalCashPaid = cashPayments.reduce((sum: number, split: any) => sum + split.amount, 0);
+                  const calculatedChange = totalCashPaid > dataToUseForChange.total ? totalCashPaid - dataToUseForChange.total : (dataToUseForChange.change || 0);
+                  if (calculatedChange > 0 && totalCashPaid > 0) {
+                    return `
+                      <div class="field"><span class="label">Recibido (Efectivo)</span><span class="value">${money(totalCashPaid)}</span></div>
+                      <div class="field"><span class="label">Cambio a Devolver</span><span class="value">${money(calculatedChange)}</span></div>
+                    `;
+                  }
+                  return '<div class="field"><span class="label">Cambio</span><span class="value">—</span></div>';
+                })()}
           </div>
           </div>
         </div>
@@ -1239,10 +1344,10 @@ export const PointOfSaleModule = () => {
               ${saleData.notes || '—'}
           </div>
             <div class="summary">
-              <div class="sum-row"><span>Subtotal</span><span>${money(saleData.subtotal)}</span></div>
-              <div class="sum-row"><span>Descuento</span><span>- ${money(saleData.discount)}</span></div>
-              <div class="sum-row"><span>ITBIS</span><span>${money(saleData.tax)}</span></div>
-              <div class="sum-row total"><span>Total a Pagar</span><span>${money(saleData.total)}</span></div>
+              <div class="sum-row"><span>Subtotal</span><span>${money(dataToUse.subtotal || 0)}</span></div>
+              ${(dataToUse.discount || 0) > 0 ? `<div class="sum-row"><span>Descuento</span><span>- ${money(dataToUse.discount)}</span></div>` : ''}
+              <div class="sum-row"><span>ITBIS</span><span>${money(dataToUse.tax || 0)}</span></div>
+              <div class="sum-row total"><span>Total a Pagar</span><span>${money(dataToUse.total || 0)}</span></div>
           </div>
         </div>
 
@@ -1264,7 +1369,9 @@ export const PointOfSaleModule = () => {
   };
 
   const downloadReceipt = () => {
-    const invoiceNumber = `${saleData.ncfType || '01'}-${saleData.ncfNumber || '0000000000'}`;
+    // Usar receiptData si está disponible (datos guardados antes de limpiar), sino usar saleData
+    const dataToUse = receiptData || saleData;
+    const invoiceNumber = `${dataToUse.ncfType || '01'}-${dataToUse.ncfNumber || '0000000000'}`;
     const companyName = companyInfo.company_name;
     const companyAddress = companyInfo.address;
     const companyPhone = companyInfo.phone;
@@ -1275,37 +1382,60 @@ export const PointOfSaleModule = () => {
     const isThermal = receiptFormat === 'POS80' || receiptFormat === 'POS58';
     const isPOS58 = receiptFormat === 'POS58';
     
+    // Usar receiptData.items si está disponible, sino usar saleData.items o cart
+    const itemsToShow = (receiptData?.items && receiptData.items.length > 0) 
+      ? receiptData.items 
+      : (saleData.items && saleData.items.length > 0 ? saleData.items : cart);
+    
     // Para impresoras térmicas, formato más compacto
     const itemsRows = isThermal
-      ? cart.map(item => {
-          const productName = isPOS58 
-            ? (item.product.name.length > 20 ? item.product.name.substring(0, 20) + '...' : item.product.name)
+      ? itemsToShow.map(item => {
+          const maxNameLength = isPOS58 ? 18 : 28;
+          const productName = item.product.name.length > maxNameLength 
+            ? item.product.name.substring(0, maxNameLength - 3) + '...' 
             : item.product.name;
           const discountCol = isPOS58 ? '' : `<td class="right">${(item.discountPercent || 0).toFixed(0)}%</td>`;
+          const unitPrice = `<td class="right">${money(item.unitPrice)}</td>`;
+          // Calcular el total del item con ITBIS y descuento
+          const itbisRate = item.product.itbis_rate ?? 18;
+          const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
+          const baseAmount = priceWithoutTax * item.quantity;
+          const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
+          const itemTax = discounted * (itbisRate / 100);
+          const itemTotal = discounted + itemTax;
           return `
             <tr>
               <td>${productName}</td>
               <td class="right">${item.quantity}</td>
+              ${unitPrice}
               ${discountCol}
-              <td class="right">${money(item.subtotal)}</td>
+              <td class="right">${money(itemTotal)}</td>
             </tr>
           `;
         }).join('')
-      : cart.map(item => `
+      : itemsToShow.map(item => {
+          // Calcular el total del item con ITBIS y descuento
+          const itbisRate = item.product.itbis_rate ?? 18;
+          const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
+          const baseAmount = priceWithoutTax * item.quantity;
+          const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
+          const itemTax = discounted * (itbisRate / 100);
+          const itemTotal = discounted + itemTax;
+          return `
           <tr>
             <td>${item.product.name}</td>
             <td class="right">${item.quantity}</td>
             <td class="right">${money(item.unitPrice)}</td>
             <td class="right">${(item.discountPercent || 0).toFixed(2)}%</td>
-            <td class="right">${money(item.subtotal)}</td>
+            <td class="right">${money(itemTotal)}</td>
           </tr>
-        `).join('');
+        `;
+        }).join('');
 
-    const customerExtra = saleData.ncfNumber && !isThermal
+    const customerExtra = dataToUse.ncfNumber && !isThermal
       ? `
-        <div class="field"><span class="label">Teléfono</span><span class="value">${saleData.customer?.phone || '—'}</span></div>
-        <div class="field"><span class="label">Correo</span><span class="value">${saleData.customer?.email || '—'}</span></div>
-        <div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${saleData.customer?.address || '—'}</span></div>
+        <div class="field"><span class="label">Teléfono</span><span class="value">${dataToUse.customer?.phone || '—'}</span></div>
+        ${dataToUse.customer?.address ? `<div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${dataToUse.customer.address}</span></div>` : ''}
       `
       : '';
 
@@ -1382,16 +1512,31 @@ export const PointOfSaleModule = () => {
           <div class="header">
             <div class="brand-name">${companyName}</div>
             <div class="brand-meta">${companyAddress}</div>
-            <div class="brand-meta">${companyPhone}${companyEmail ? ' | ' + companyEmail : ''}</div>
+            <div class="brand-meta">${companyPhone}</div>
             <div class="doc-type">FACTURA</div>
             <div class="doc-number">NCF: ${invoiceNumber}</div>
           </div>
 
           <div class="section">
-            <div class="field"><span class="label">Cliente:</span><span>${saleData.customer?.full_name || 'Cliente General'}</span></div>
+            <div class="section-title">Cliente</div>
+            <div class="field"><span class="label">Nombre:</span><span>${saleData.customer?.full_name || 'Cliente General'}</span></div>
+            ${saleData.customer?.phone ? `<div class="field"><span class="label">Teléfono:</span><span>${saleData.customer.phone}</span></div>` : ''}
+            <div class="section-title" style="margin-top:4px;">Venta</div>
             <div class="field"><span class="label">Fecha:</span><span>${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span></div>
-            <div class="field"><span class="label">Pago:</span><span>${saleData.paymentMethod?.name || 'Efectivo'}</span></div>
-            ${saleData.paymentMethod?.type === 'cash' && saleData.change > 0 ? `<div class="field"><span class="label">Cambio:</span><span>${money(saleData.change)}</span></div>` : ''}
+            <div class="field"><span class="label">Método de Pago:</span><span>${saleData.paymentSplits.map(s => s.method.name).join(', ') || saleData.paymentMethod?.name || 'Efectivo'}</span></div>
+            ${(() => {
+              const dataToUseForChange = receiptData || saleData;
+              const cashPayments = dataToUseForChange.paymentSplits?.filter((split: any) => split.method.type === 'cash') || [];
+              const totalCashPaid = cashPayments.reduce((sum: number, split: any) => sum + split.amount, 0);
+              const calculatedChange = totalCashPaid > dataToUseForChange.total ? totalCashPaid - dataToUseForChange.total : (dataToUseForChange.change || 0);
+              if (calculatedChange > 0 && totalCashPaid > 0) {
+                return `
+                  <div class="field"><span class="label">Recibido (Efectivo):</span><span>${money(totalCashPaid)}</span></div>
+                  <div class="field"><span class="label">Cambio a Devolver:</span><span>${money(calculatedChange)}</span></div>
+                `;
+              }
+              return '';
+            })()}
           </div>
 
           <div class="divider"></div>
@@ -1401,6 +1546,7 @@ export const PointOfSaleModule = () => {
               <tr>
                 <th>Descripción</th>
                 <th class="right">Cant</th>
+                <th class="right">Precio</th>
                 ${isPOS58 ? '' : '<th class="right">Desc%</th>'}
                 <th class="right">Total</th>
               </tr>
@@ -1413,13 +1559,13 @@ export const PointOfSaleModule = () => {
           <div class="divider"></div>
 
           <div class="summary">
-            <div class="sum-row"><span>Subtotal:</span><span>${money(saleData.subtotal)}</span></div>
-            ${saleData.discount > 0 ? `<div class="sum-row"><span>Descuento:</span><span>-${money(saleData.discount)}</span></div>` : ''}
-            ${saleData.tax > 0 ? `<div class="sum-row"><span>ITBIS:</span><span>${money(saleData.tax)}</span></div>` : ''}
-            <div class="sum-row total"><span>TOTAL:</span><span>${money(saleData.total)}</span></div>
+            <div class="sum-row"><span>Subtotal:</span><span>${money(dataToUse.subtotal || 0)}</span></div>
+            ${(dataToUse.discount || 0) > 0 ? `<div class="sum-row"><span>Descuento:</span><span>-${money(dataToUse.discount)}</span></div>` : ''}
+            <div class="sum-row"><span>ITBIS:</span><span>${money(dataToUse.tax || 0)}</span></div>
+            <div class="sum-row total"><span>TOTAL:</span><span>${money(dataToUse.total || 0)}</span></div>
           </div>
 
-          ${saleData.notes ? `<div class="notes"><strong>Notas:</strong> ${saleData.notes}</div>` : ''}
+          ${dataToUse.notes ? `<div class="notes"><strong>Notas:</strong> ${dataToUse.notes}</div>` : ''}
 
           <div class="footer">
             <div>Gracias por su preferencia</div>
@@ -1476,7 +1622,7 @@ export const PointOfSaleModule = () => {
               <div class="brand-logo">CL</div>
               <div class="brand-text">
                 <div class="brand-name">${companyName}</div>
-                <div class="brand-meta">${companyAddress} · ${companyPhone} · ${companyEmail}</div>
+                <div class="brand-meta">${companyAddress} · ${companyPhone}</div>
               </div>
             </div>
             <div class="doc-title">
@@ -1500,7 +1646,19 @@ export const PointOfSaleModule = () => {
                 <div class="field"><span class="label">Vendedor</span><span class="value">${cashier}</span></div>
                 <div class="field"><span class="label">Condición</span><span class="value">${saleData.saleType === 'cash' ? 'Contado' : saleData.saleType === 'credit' ? 'Crédito' : 'Financiamiento'}</span></div>
                 <div class="field"><span class="label">Método de pago</span><span class="value">${saleData.paymentMethod?.name || '—'}</span></div>
-                <div class="field"><span class="label">Cambio</span><span class="value">${saleData.paymentMethod?.type === 'cash' ? '$' + saleData.change.toFixed(2) : '—'}</span></div>
+                ${(() => {
+                  const dataToUseForChange = receiptData || saleData;
+                  const cashPayments = dataToUseForChange.paymentSplits?.filter((split: any) => split.method.type === 'cash') || [];
+                  const totalCashPaid = cashPayments.reduce((sum: number, split: any) => sum + split.amount, 0);
+                  const calculatedChange = totalCashPaid > dataToUseForChange.total ? totalCashPaid - dataToUseForChange.total : (dataToUseForChange.change || 0);
+                  if (calculatedChange > 0 && totalCashPaid > 0) {
+                    return `
+                      <div class="field"><span class="label">Recibido (Efectivo)</span><span class="value">${money(totalCashPaid)}</span></div>
+                      <div class="field"><span class="label">Cambio a Devolver</span><span class="value">${money(calculatedChange)}</span></div>
+                    `;
+                  }
+                  return '<div class="field"><span class="label">Cambio</span><span class="value">—</span></div>';
+                })()}
           </div>
           </div>
         </div>
@@ -1523,13 +1681,13 @@ export const PointOfSaleModule = () => {
           <div class="totals">
             <div class="notes">
               <div style="font-weight:700; margin-bottom:6px;">Notas</div>
-              ${saleData.notes || '—'}
+              ${dataToUse.notes || '—'}
           </div>
             <div class="summary">
-              <div class="sum-row"><span>Subtotal</span><span>${money(saleData.subtotal)}</span></div>
-              <div class="sum-row"><span>Descuento</span><span>- ${money(saleData.discount)}</span></div>
-              <div class="sum-row"><span>ITBIS</span><span>${money(saleData.tax)}</span></div>
-              <div class="sum-row total"><span>Total a Pagar</span><span>${money(saleData.total)}</span></div>
+              <div class="sum-row"><span>Subtotal</span><span>${money(dataToUse.subtotal || 0)}</span></div>
+              ${(dataToUse.discount || 0) > 0 ? `<div class="sum-row"><span>Descuento</span><span>- ${money(dataToUse.discount)}</span></div>` : ''}
+              <div class="sum-row"><span>ITBIS</span><span>${money(dataToUse.tax || 0)}</span></div>
+              <div class="sum-row total"><span>Total a Pagar</span><span>${money(dataToUse.total || 0)}</span></div>
           </div>
         </div>
 
@@ -1686,20 +1844,80 @@ export const PointOfSaleModule = () => {
         {/* Right Panel - Cart & Checkout */}
         <div className="w-full lg:w-1/2 flex flex-col order-2 lg:order-2 h-[50vh] lg:h-[calc(100vh-140px)] min-h-[400px] border-t lg:border-t-0 border-gray-200">
           {/* Cart Header */}
-          <div className="p-3 sm:p-4 border-b border-gray-200 bg-gray-50 flex-shrink-0">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
+          <div className="p-3 sm:p-4 border-b border-gray-200 bg-gray-50 flex-shrink-0 space-y-3">
+            <div className="flex items-center justify-between">
               <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2">
                 <ShoppingCart className="h-4 w-4 sm:h-5 sm:w-5" />
                 Carrito ({cart.length})
               </h2>
+            </div>
+            
+            {/* Cliente Selector - Inline */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Cliente *</Label>
+              <div className="flex gap-2">
+                <div className="flex-1 relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                  <Input
+                    placeholder="Buscar cliente..."
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    className="pl-10 pr-10 h-9"
+                  />
+                  {customerSearch && filteredCustomers.length > 0 && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                      {filteredCustomers.map((customer) => (
+                        <div
+                          key={customer.id}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b"
+                          onClick={() => {
+                            selectCustomer(customer);
+                            setCustomerSearch('');
+                          }}
+                        >
+                          <div className="font-medium">{customer.full_name}</div>
+                          <div className="text-sm text-gray-600">
+                            {customer.phone} {customer.email && `| ${customer.email}`}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {selectedCustomer && (
+                    <button
+                      onClick={() => {
+                        setSelectedCustomer(null);
+                        setSaleData(prev => ({ ...prev, customer: null }));
+                        setCustomerSearch('');
+                      }}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
               <Button 
-                onClick={() => setShowCustomerModal(true)} 
+                  type="button"
                 variant="outline" 
-                className="h-9 px-3 text-xs sm:text-sm w-full sm:w-auto"
+                  onClick={() => setShowNewClientModal(true)}
+                  className="whitespace-nowrap h-9"
               >
-                <User className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-2" />
-                <span className="truncate">{selectedCustomer ? selectedCustomer.full_name : 'Cliente'}</span>
+                  <User className="h-4 w-4 mr-1" />
+                  Nuevo
               </Button>
+              </div>
+              {selectedCustomer && (
+                <div className="p-2 bg-green-50 border border-green-200 rounded text-sm">
+                  <span className="font-medium text-green-800">Cliente seleccionado: </span>
+                  <span className="text-green-700">{selectedCustomer.full_name}</span>
+                </div>
+              )}
+              {!selectedCustomer && (
+                <div className="p-2 bg-orange-50 border border-orange-200 rounded text-sm text-orange-800">
+                  <AlertCircle className="h-4 w-4 inline mr-1" />
+                  Debes seleccionar un cliente antes de procesar la venta
+                </div>
+              )}
             </div>
           </div>
 
@@ -1856,7 +2074,7 @@ export const PointOfSaleModule = () => {
             <Button 
               onClick={() => setShowPaymentModal(true)} 
               className="w-full h-11 sm:h-12 text-sm sm:text-base font-semibold" 
-              disabled={cart.length === 0}
+              disabled={cart.length === 0 || !selectedCustomer}
               aria-label="Procesar Venta"
             >
               <DollarSign className="h-4 w-4 sm:h-5 sm:w-5 sm:mr-2" />
@@ -1865,56 +2083,6 @@ export const PointOfSaleModule = () => {
           </div>
         </div>
       </div>
-
-      {/* Customer Selection Modal */}
-      <Dialog open={showCustomerModal} onOpenChange={setShowCustomerModal}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Seleccionar Cliente</DialogTitle>
-            <DialogDescription>Busca y selecciona un cliente para la factura</DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-              <Input
-                placeholder="Buscar cliente..."
-                value={customerSearch}
-                onChange={(e) => setCustomerSearch(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            
-            <div className="max-h-60 overflow-y-auto space-y-2">
-              <div 
-                className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
-                onClick={() => {
-                  setSelectedCustomer(null);
-                  setSaleData(prev => ({ ...prev, customer: null }));
-                  setShowCustomerModal(false);
-                }}
-              >
-                <div className="font-medium">Cliente General</div>
-                <div className="text-sm text-gray-600">Venta sin cliente específico</div>
-              </div>
-              
-              {filteredCustomers.map((customer) => (
-                <div 
-                  key={customer.id}
-                  className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
-                  onClick={() => selectCustomer(customer)}
-                >
-                  <div className="font-medium">{customer.full_name}</div>
-                  <div className="text-sm text-gray-600">{customer.phone}</div>
-                  {customer.email && (
-                    <div className="text-sm text-gray-600">{customer.email}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Payment Modal */}
       <Dialog open={showPaymentModal} onOpenChange={setShowPaymentModal}>
@@ -1946,8 +2114,27 @@ export const PointOfSaleModule = () => {
                   ${(saleData.total - saleData.paymentSplits.reduce((sum, split) => sum + split.amount, 0)).toFixed(2)}
                 </span>
               </div>
+              {/* Mostrar cambio solo si hay pago en efectivo mayor al total */}
+              {(() => {
+                const totalPaid = saleData.paymentSplits.reduce((sum, split) => sum + split.amount, 0);
+                const cashPayments = saleData.paymentSplits.filter(split => split.method.type === 'cash');
+                const totalCashPaid = cashPayments.reduce((sum, split) => sum + split.amount, 0);
+                const change = totalCashPaid > saleData.total ? totalCashPaid - saleData.total : 0;
+                
+                if (change > 0) {
+                  return (
+                    <div className="flex justify-between items-center mt-2 pt-2 border-t">
+                      <Label className="text-sm font-semibold text-blue-600">Cambio a Devolver</Label>
+                      <span className="text-lg font-bold text-blue-600">
+                        ${change.toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
-
+            
             {/* Lista de Pagos */}
             <div>
               <div className="flex justify-between items-center mb-2">
@@ -1955,7 +2142,7 @@ export const PointOfSaleModule = () => {
                   <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => {
+                onClick={() => {
                     const defaultMethod = paymentMethods.find(m => m.type === 'cash') || paymentMethods[0];
                     setSaleData(prev => ({
                       ...prev,
@@ -1965,7 +2152,8 @@ export const PointOfSaleModule = () => {
                         details: {}
                       }]
                     }));
-                  }}
+                }}
+                  disabled={!selectedCustomer}
                 >
                   <Plus className="h-4 w-4 mr-1" />
                   Agregar Pago
@@ -1988,7 +2176,7 @@ export const PointOfSaleModule = () => {
                           <div className="flex items-center gap-2">
                             <span className="font-semibold">Pago {index + 1}</span>
                             <Badge variant="outline">{split.method.name}</Badge>
-                          </div>
+            </div>
                           <Button
                             size="sm"
                             variant="ghost"
@@ -2001,8 +2189,8 @@ export const PointOfSaleModule = () => {
                           >
                             <Trash2 className="h-4 w-4 text-red-500" />
                           </Button>
-            </div>
-
+          </div>
+          
                         <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
                             <Label className="text-sm">Método</Label>
@@ -2024,7 +2212,7 @@ export const PointOfSaleModule = () => {
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {paymentMethods.map((method) => (
+                {paymentMethods.map((method) => (
                                   <SelectItem key={method.id} value={method.id}>
                                     <div className="flex items-center gap-2">
                                       {method.icon}
@@ -2043,7 +2231,11 @@ export const PointOfSaleModule = () => {
                               value={split.amount}
                 onChange={(e) => {
                   const round2 = (n: number) => Math.round((n || 0) * 100) / 100;
-                                const amount = Math.min(round2(parseFloat(e.target.value) || 0), remaining);
+                  const inputAmount = round2(parseFloat(e.target.value) || 0);
+                  // Solo limitar el monto si NO es efectivo. Para efectivo, permitir cualquier monto
+                  const amount = split.method.type === 'cash' 
+                    ? inputAmount 
+                    : Math.min(inputAmount, remaining);
                   setSaleData(prev => ({ 
                     ...prev, 
                                   paymentSplits: prev.paymentSplits.map((s, i) => 
@@ -2054,7 +2246,7 @@ export const PointOfSaleModule = () => {
                 placeholder="0.00"
               />
                             <div className="flex gap-1 mt-1">
-                              <Button 
+                  <Button
                                 size="sm" 
                                 variant="ghost" 
                                 className="h-6 text-xs"
@@ -2070,89 +2262,17 @@ export const PointOfSaleModule = () => {
                                 }}
                               >
                                 Restante
-                              </Button>
+                  </Button>
                             </div>
               </div>
             </div>
-
-                        {/* Selector de Cliente - Mostrar para todos los métodos */}
-                        <div className="mt-3 p-3 bg-gray-50 rounded-lg space-y-2">
-                          <Label className="text-sm font-semibold">Cliente *</Label>
-                          <div className="flex gap-2">
-                            <div className="flex-1 relative">
-                              <Input
-                                placeholder="Buscar cliente..."
-                                value={customerSearch}
-                                onChange={(e) => setCustomerSearch(e.target.value)}
-                                className="pr-10"
-                              />
-                              {customerSearch && filteredCustomers.length > 0 && (
-                                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                                  {filteredCustomers.map((customer) => (
-                                    <div
-                                      key={customer.id}
-                                      className="p-3 hover:bg-gray-100 cursor-pointer border-b"
-                                      onClick={() => {
-                                        selectCustomer(customer);
-                                        setCustomerSearch('');
-                                      }}
-                                    >
-                                      <div className="font-medium">{customer.full_name}</div>
-                                      <div className="text-sm text-gray-600">
-                                        {customer.phone} {customer.email && `| ${customer.email}`}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => setShowNewClientModal(true)}
-                              className="whitespace-nowrap"
-                            >
-                              <User className="h-4 w-4 mr-1" />
-                              Nuevo
-                            </Button>
-                          </div>
-                          {saleData.customer && (
-                            <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded">
-                              <div className="text-sm">
-                                <span className="font-medium text-green-800">Cliente seleccionado: </span>
-                                <span className="text-green-700">{saleData.customer.full_name}</span>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setSelectedCustomer(null);
-                                    setSaleData(prev => ({ ...prev, customer: null }));
-                                    setCustomerSearch('');
-                                  }}
-                                  className="ml-2 h-6 text-xs"
-                                >
-                                  Cambiar
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                          {!saleData.customer && (
-                            <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded">
-                              <div className="text-sm text-orange-800">
-                                <AlertCircle className="h-4 w-4 inline mr-1" />
-                                Selecciona o crea un cliente para continuar
-                              </div>
-                            </div>
-                          )}
-                        </div>
 
                         {/* Detalles específicos por método */}
                         {split.method.type === 'card' && (
                           <div className="mt-3 p-3 bg-blue-50 rounded-lg space-y-2">
                             <Label className="text-sm font-semibold">Detalles de Tarjeta</Label>
                             <div className="grid grid-cols-2 gap-2">
-                              <div>
+            <div>
                                 <Label className="text-xs">Tipo</Label>
                                 <Select
                                   value={split.details?.cardType || ''}
@@ -2331,16 +2451,16 @@ export const PointOfSaleModule = () => {
                               </div>
                               <div>
                                 <Label className="text-xs">Tasa de Interés (%)</Label>
-                                <Input
-                                  type="number"
-                                  step="0.01"
+              <Input
+                type="number"
+                step="0.01"
                                   min="0"
                                   max="100"
                                   value={split.details?.financingRate || saleData.financingRate || 20}
-                                  onChange={(e) => {
+                onChange={(e) => {
                                     const rate = parseFloat(e.target.value) || 20;
-                                    setSaleData(prev => ({
-                                      ...prev,
+                  setSaleData(prev => ({ 
+                    ...prev, 
                                       paymentSplits: prev.paymentSplits.map((s, i) => 
                                         i === index ? { 
                                           ...s, 
@@ -2349,13 +2469,13 @@ export const PointOfSaleModule = () => {
                                       ),
                                       financingRate: rate,
                                       paymentDetails: { ...prev.paymentDetails, financingRate: rate }
-                                    }));
-                                  }}
+                  }));
+                }}
                                   className="h-8"
-                                />
-                              </div>
-                            </div>
-                            
+              />
+              </div>
+            </div>
+
                             <div className="grid grid-cols-2 gap-2">
                               <div>
                                 <Label className="text-xs">Tipo de Amortización</Label>
@@ -2667,78 +2787,6 @@ export const PointOfSaleModule = () => {
               <div className="space-y-3 p-4 border rounded-lg bg-purple-50">
                 <Label className="text-base font-semibold">Detalles de Financiamiento</Label>
                 
-                {/* Cliente Selector */}
-                <div>
-                  <Label className="text-sm">Cliente *</Label>
-                  <div className="flex gap-2">
-                    <div className="flex-1 relative">
-                      <Input
-                        placeholder="Buscar cliente..."
-                        value={customerSearch}
-                        onChange={(e) => setCustomerSearch(e.target.value)}
-                        className="pr-10"
-                      />
-                      {customerSearch && filteredCustomers.length > 0 && (
-                        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                          {filteredCustomers.map((customer) => (
-                            <div
-                              key={customer.id}
-                              className="p-3 hover:bg-gray-100 cursor-pointer border-b"
-                              onClick={() => {
-                                selectCustomer(customer);
-                                setCustomerSearch('');
-                              }}
-                            >
-                              <div className="font-medium">{customer.full_name}</div>
-                              <div className="text-sm text-gray-600">
-                                {customer.phone} {customer.email && `| ${customer.email}`}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setShowNewClientModal(true)}
-                      className="whitespace-nowrap"
-                    >
-                      <User className="h-4 w-4 mr-1" />
-                      Nuevo
-                    </Button>
-                  </div>
-                  {saleData.customer && (
-                    <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded">
-                      <div className="text-sm">
-                        <span className="font-medium text-green-800">Cliente seleccionado: </span>
-                        <span className="text-green-700">{saleData.customer.full_name}</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedCustomer(null);
-                            setSaleData(prev => ({ ...prev, customer: null }));
-                            setCustomerSearch('');
-                          }}
-                          className="ml-2 h-6 text-xs"
-                        >
-                          Cambiar
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                  {!saleData.customer && (
-                    <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded">
-                      <div className="text-sm text-orange-800">
-                        <AlertCircle className="h-4 w-4 inline mr-1" />
-                        Selecciona o crea un cliente para continuar
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-sm">Plazo (meses)</Label>
@@ -2963,7 +3011,11 @@ export const PointOfSaleModule = () => {
             <Button variant="outline" onClick={() => setShowPaymentModal(false)}>
               Cancelar
             </Button>
-            <Button onClick={processPayment} aria-label="Procesar pago">
+            <Button 
+              onClick={processPayment} 
+              aria-label="Procesar pago"
+              disabled={!selectedCustomer}
+            >
               <CheckCircle className="h-4 w-4 mr-2" />
               Procesar Pago
             </Button>
@@ -2972,7 +3024,45 @@ export const PointOfSaleModule = () => {
       </Dialog>
 
       {/* Receipt Modal */}
-      <Dialog open={showReceiptModal} onOpenChange={setShowReceiptModal}>
+      <Dialog open={showReceiptModal} onOpenChange={(open) => {
+        if (!open) {
+          // Reiniciar completamente el POS cuando se cierra el modal
+          setReceiptData(null);
+          setShowPaymentModal(false); // Cerrar modal de pago si está abierto
+          // Limpiar localStorage primero de forma síncrona
+          try {
+            localStorage.removeItem('pos_cart');
+            localStorage.removeItem('pos_selected_customer');
+          } catch (error) {
+            console.error('Error clearing localStorage:', error);
+          }
+          // Luego limpiar el estado inmediatamente
+          setCart([]);
+          setSelectedCustomer(null);
+          setSaleData({
+            customer: null,
+            items: [],
+            subtotal: 0,
+            discount: 0,
+            tax: 0,
+            total: 0,
+            paymentMethod: null,
+            paymentAmount: 0,
+            change: 0,
+            paymentSplits: [],
+            ncfType: '01',
+            ncfNumber: '',
+            notes: '',
+            saleType: 'cash',
+            financingMonths: 12,
+            financingRate: 20,
+            discountMode: 'item',
+            discountPercentTotal: 0,
+            paymentDetails: {}
+          });
+        }
+        setShowReceiptModal(open);
+      }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2986,7 +3076,7 @@ export const PointOfSaleModule = () => {
             <div className="text-center p-4 bg-green-50 rounded-lg">
               <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-2" />
               <h3 className="text-lg font-semibold text-green-800">¡Venta Completada!</h3>
-              <p className="text-green-600">Total: ${saleData.total.toFixed(2)}</p>
+              <p className="text-green-600">Total: ${(receiptData?.total || saleData.total || 0).toFixed(2)}</p>
             </div>
             
             <div className="grid grid-cols-2 gap-4">
@@ -3003,12 +3093,79 @@ export const PointOfSaleModule = () => {
 
           <div className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => {
+              // Limpiar localStorage primero
+              try {
+                localStorage.removeItem('pos_cart');
+                localStorage.removeItem('pos_selected_customer');
+              } catch (error) {
+                console.error('Error clearing localStorage:', error);
+              }
+              // Limpiar el estado
+              setCart([]);
+              setSelectedCustomer(null);
+              setSaleData({
+                customer: null,
+                items: [],
+                subtotal: 0,
+                discount: 0,
+                tax: 0,
+                total: 0,
+                paymentMethod: null,
+                paymentAmount: 0,
+                change: 0,
+                paymentSplits: [],
+                ncfType: '01',
+                ncfNumber: '',
+                notes: '',
+                saleType: 'cash',
+                financingMonths: 12,
+                financingRate: 20,
+                discountMode: 'item',
+                discountPercentTotal: 0,
+                paymentDetails: {}
+              });
+              setReceiptData(null);
+              setShowPaymentModal(false);
               setShowReceiptModal(false);
-              clearCart(false);
             }}>
               Nueva Venta
             </Button>
-            <Button onClick={() => setShowReceiptModal(false)}>
+            <Button onClick={() => {
+              // Limpiar localStorage primero
+              try {
+                localStorage.removeItem('pos_cart');
+                localStorage.removeItem('pos_selected_customer');
+              } catch (error) {
+                console.error('Error clearing localStorage:', error);
+              }
+              // Limpiar el estado
+              setCart([]);
+              setSelectedCustomer(null);
+              setSaleData({
+                customer: null,
+                items: [],
+                subtotal: 0,
+                discount: 0,
+                tax: 0,
+                total: 0,
+                paymentMethod: null,
+                paymentAmount: 0,
+                change: 0,
+                paymentSplits: [],
+                ncfType: '01',
+                ncfNumber: '',
+                notes: '',
+                saleType: 'cash',
+                financingMonths: 12,
+                financingRate: 20,
+                discountMode: 'item',
+                discountPercentTotal: 0,
+                paymentDetails: {}
+              });
+              setReceiptData(null);
+              setShowPaymentModal(false);
+              setShowReceiptModal(false);
+            }}>
               Cerrar
             </Button>
           </div>

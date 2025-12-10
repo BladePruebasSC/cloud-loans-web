@@ -602,6 +602,20 @@ const InventoryModule = () => {
     }
   };
 
+  // Función auxiliar para calcular el total con ITBIS de una venta
+  const calculateSaleTotalWithTax = (sale: SaleWithDetails): number => {
+    if (sale.details && sale.details.length > 0) {
+      return sale.details.reduce((sum: number, detail: any) => {
+        const itbisRate = detail.product?.itbis_rate ?? 18;
+        const itemSubtotal = detail.total_price; // Sin ITBIS
+        const itemTax = itemSubtotal * (itbisRate / 100);
+        return sum + itemSubtotal + itemTax;
+      }, 0);
+    }
+    // Si no hay detalles, usar total_amount (que debería tener ITBIS)
+    return sale.total_amount || 0;
+  };
+
   const fetchSales = async () => {
     try {
       setLoadingSales(true);
@@ -1116,28 +1130,188 @@ const InventoryModule = () => {
 
 
 
-  const generateReceiptFromSale = (sale: SaleWithDetails, format: 'A4' | 'POS80' | 'POS58' = 'A4') => {
+  const generateReceiptFromSale = async (sale: SaleWithDetails, format: 'A4' | 'POS80' | 'POS58' = 'POS80') => {
+    // Obtener información de la empresa
+    let companyName = 'SH Computers';
+    let companyAddress = '';
+    let companyPhone = '';
+    
+    try {
+      const { data: companySettings } = await supabase
+        .from('company_settings')
+        .select('company_name, address, phone')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      
+      if (companySettings) {
+        companyName = companySettings.company_name || companyName;
+        companyAddress = companySettings.address || '';
+        companyPhone = companySettings.phone || '';
+      }
+    } catch (error) {
+      console.error('Error fetching company settings:', error);
+    }
+    
     const invoiceNumber = `${sale.id.substring(0, 8)}`;
-    const companyName = 'SH Computers'; // Puedes obtener esto de company_settings
     const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
     
-    const itemsRows = sale.details.map(detail => `
-      <tr>
-        <td>${detail.product?.name || 'Producto desconocido'}</td>
-        <td class="right">${detail.quantity}</td>
-        <td class="right">${money(detail.unit_price)}</td>
-        <td class="right">${money(detail.total_price)}</td>
-      </tr>
-    `).join('');
+    const isThermal = format === 'POS80' || format === 'POS58';
+    const isPOS58 = format === 'POS58';
+    
+    // Calcular subtotal e ITBIS desde los detalles
+    let subtotal = 0;
+    let totalTax = 0;
+    
+    const itemsRows = sale.details.map(detail => {
+      const itbisRate = detail.product?.itbis_rate ?? 18;
+      
+      // unit_price se guarda CON ITBIS, total_price se guarda SIN ITBIS (subtotal)
+      // Calcular el total con ITBIS: total_price (sin ITBIS) + ITBIS
+      const itemSubtotal = detail.total_price; // Ya es sin ITBIS
+      const itemTax = itemSubtotal * (itbisRate / 100);
+      const itemTotalWithTax = itemSubtotal + itemTax;
+      
+      subtotal += itemSubtotal;
+      totalTax += itemTax;
+      
+      // El precio unitario con ITBIS es unit_price (que ya tiene ITBIS)
+      // O calcularlo: (total_price / cantidad) * (1 + itbisRate / 100)
+      const unitPriceWithTax = detail.unit_price; // Ya tiene ITBIS
+      
+      const maxNameLength = isPOS58 ? 18 : 28;
+      const productName = (detail.product?.name || 'Producto desconocido').length > maxNameLength 
+        ? (detail.product?.name || 'Producto desconocido').substring(0, maxNameLength - 3) + '...' 
+        : (detail.product?.name || 'Producto desconocido');
+      
+      const discountCol = isPOS58 ? '' : '<td class="right">0%</td>';
+      const unitPrice = `<td class="right">${money(unitPriceWithTax)}</td>`;
+      
+      return `
+        <tr>
+          <td>${productName}</td>
+          <td class="right">${detail.quantity}</td>
+          ${unitPrice}
+          ${discountCol}
+          <td class="right">${money(itemTotalWithTax)}</td>
+        </tr>
+      `;
+    }).join('');
 
+    // CSS específico para cada formato
     const pageCss = format === 'A4'
       ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
       : format === 'POS80'
-        ? '@page { size: 80mm auto; margin: 4mm; } .invoice{width:72mm;margin:0 auto;}'
-        : '@page { size: 58mm auto; margin: 3mm; } .invoice{width:54mm;margin:0 auto;}';
-    const smallCss = format === 'A4' ? '' : '.brand-logo{display:none}.grid-2{grid-template-columns:1fr}.section{padding:8px}.brand-name{font-size:14px}.doc-type{font-size:16px}.summary{padding:6px}.sum-row{padding:4px 0} table th,table td{padding:6px} body{font-size:11px}';
+        ? '@page { size: 80mm auto; margin: 2mm 1mm; } .invoice{width:76mm;margin:0 auto;font-size:9px;}'
+        : '@page { size: 58mm auto; margin: 2mm 1mm; } .invoice{width:54mm;margin:0 auto;font-size:8px;}';
+    
+    // CSS compacto para térmicas
+    const thermalCss = isThermal ? `
+      body { font-size: ${isPOS58 ? '8px' : '9px'}; font-family: 'Courier New', monospace; }
+      .invoice { width: ${isPOS58 ? '54mm' : '76mm'}; margin: 0 auto; }
+      .header { padding: 4px 0; border-bottom: 1px solid #000; text-align: center; }
+      .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+      .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+      .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; }
+      .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .section { padding: 4px 0; margin: 4px 0; border: none; }
+      .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 2px; }
+      .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
+      .label { font-weight: bold; }
+      table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      th, td { padding: 2px 1px; border-bottom: 1px dashed #ccc; }
+      thead th { background: transparent; border-bottom: 1px solid #000; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      tbody td { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .summary { padding: 4px 0; border-top: 1px solid #000; margin-top: 4px; }
+      .sum-row { padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
+      .footer { margin-top: 8px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+      .divider { border-top: 1px dashed #000; margin: 2px 0; }
+    ` : '';
 
-    const receiptHTML = `
+    // Generar HTML según el formato
+    const receiptHTML = isThermal ? `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Factura</title>
+        <style>
+          ${pageCss}
+          ${thermalCss}
+          body { font-family: 'Courier New', monospace; color: #000; margin: 0; padding: 0; }
+          .invoice { }
+          .header { text-align: center; padding: 4px 0; border-bottom: 1px solid #000; }
+          .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+          .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+          .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+          .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .section { padding: 2px 0; margin: 2px 0; }
+          .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 1px; }
+          .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
+          .label { font-weight: bold; }
+          table { width: 100%; border-collapse: collapse; margin: 2px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          th, td { padding: 1px 0; text-align: left; }
+          th.right, td.right { text-align: right; }
+          thead th { border-bottom: 1px solid #000; font-weight: bold; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .summary { padding: 2px 0; border-top: 1px solid #000; margin-top: 2px; }
+          .sum-row { display: flex; justify-content: space-between; padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+          .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
+          .footer { margin-top: 4px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+          .divider { border-top: 1px dashed #000; margin: 2px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="invoice">
+          <div class="header">
+            <div class="brand-name">${companyName}</div>
+            ${companyAddress ? `<div class="brand-meta">${companyAddress}</div>` : ''}
+            ${companyPhone ? `<div class="brand-meta">${companyPhone}</div>` : ''}
+            <div class="doc-type">FACTURA</div>
+            <div class="doc-number">Venta #${invoiceNumber}</div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Cliente</div>
+            <div class="field"><span class="label">Nombre:</span><span>${sale.client_name || 'Cliente General'}</span></div>
+            <div class="section-title" style="margin-top:4px;">Venta</div>
+            <div class="field"><span class="label">Fecha:</span><span>${sale.sale_date ? new Date(sale.sale_date).toLocaleDateString('es-DO') + ' ' + new Date(sale.sale_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' }) : 'N/A'}</span></div>
+            <div class="field"><span class="label">Método de Pago:</span><span>${sale.payment_method || 'Efectivo'}</span></div>
+          </div>
+
+          <div class="divider"></div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Descripción</th>
+                <th class="right">Cant</th>
+                <th class="right">Precio</th>
+                ${isPOS58 ? '' : '<th class="right">Desc%</th>'}
+                <th class="right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsRows}
+            </tbody>
+          </table>
+
+          <div class="divider"></div>
+
+          <div class="summary">
+            <div class="sum-row"><span>Subtotal:</span><span>${money(subtotal)}</span></div>
+            <div class="sum-row"><span>ITBIS:</span><span>${money(totalTax)}</span></div>
+            <div class="sum-row total"><span>TOTAL:</span><span>${money(sale.total_amount || 0)}</span></div>
+          </div>
+
+          <div class="footer">
+            <div>Gracias por su preferencia</div>
+            <div>${sale.sale_date ? new Date(sale.sale_date).toLocaleDateString('es-DO') + ' ' + new Date(sale.sale_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleDateString('es-DO')}</div>
+          </div>
+        </div>
+      </body>
+      </html>
+    ` : `
       <!DOCTYPE html>
       <html lang="es">
       <head>
@@ -1160,7 +1334,6 @@ const InventoryModule = () => {
           .summary { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; }
           .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
           .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
-          ${smallCss}
         </style>
       </head>
       <body>
@@ -1191,6 +1364,8 @@ const InventoryModule = () => {
             </tbody>
           </table>
           <div class="summary">
+            <div class="sum-row"><span>Subtotal:</span><span>${money(subtotal)}</span></div>
+            <div class="sum-row"><span>ITBIS:</span><span>${money(totalTax)}</span></div>
             <div class="sum-row total">
               <span>Total</span>
               <span>${money(sale.total_amount || 0)}</span>
@@ -1860,7 +2035,7 @@ const InventoryModule = () => {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-600">
-                  ${sales.reduce((sum, s) => sum + (s.total_amount || 0), 0).toLocaleString()}
+                  ${sales.reduce((sum, s) => sum + calculateSaleTotalWithTax(s), 0).toLocaleString()}
                 </div>
                 <p className="text-xs text-muted-foreground">Total vendido</p>
               </CardContent>
@@ -1873,7 +2048,7 @@ const InventoryModule = () => {
               <CardContent>
                 <div className="text-2xl font-bold text-blue-600">
                   ${sales.length > 0 
-                    ? (sales.reduce((sum, s) => sum + (s.total_amount || 0), 0) / sales.length).toFixed(2)
+                    ? (sales.reduce((sum, s) => sum + calculateSaleTotalWithTax(s), 0) / sales.length).toFixed(2)
                     : '0.00'}
                 </div>
                 <p className="text-xs text-muted-foreground">Por venta</p>
@@ -1927,24 +2102,32 @@ const InventoryModule = () => {
                         </div>
                         <div className="text-right">
                           <div className="text-2xl font-bold text-green-600">
-                            ${(sale.total_amount || 0).toFixed(2)}
+                            ${calculateSaleTotalWithTax(sale).toFixed(2)}
                           </div>
                         </div>
                       </div>
                       <div className="border-t pt-3 mt-3">
                         <h4 className="font-medium mb-2">Productos:</h4>
                         <div className="space-y-2">
-                          {sale.details.map((detail) => (
-                            <div key={detail.id} className="flex justify-between text-sm bg-gray-50 p-2 rounded">
-                              <span>
-                                {detail.product?.name || 'Producto desconocido'} 
-                                {detail.product?.sku && ` (Código: ${detail.product.sku})`}
-                              </span>
-                              <span className="font-medium">
-                                {detail.quantity} x ${detail.unit_price.toFixed(2)} = ${detail.total_price.toFixed(2)}
-                              </span>
-                            </div>
-                          ))}
+                          {sale.details.map((detail) => {
+                            // Calcular el total con ITBIS para mostrar
+                            const itbisRate = detail.product?.itbis_rate ?? 18;
+                            const itemSubtotal = detail.total_price; // Ya es sin ITBIS
+                            const itemTax = itemSubtotal * (itbisRate / 100);
+                            const itemTotalWithTax = itemSubtotal + itemTax;
+                            
+                            return (
+                              <div key={detail.id} className="flex justify-between text-sm bg-gray-50 p-2 rounded">
+                                <span>
+                                  {detail.product?.name || 'Producto desconocido'} 
+                                  {detail.product?.sku && ` (Código: ${detail.product.sku})`}
+                                </span>
+                                <span className="font-medium">
+                                  {detail.quantity} x ${detail.unit_price.toFixed(2)} = ${itemTotalWithTax.toFixed(2)}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                         <div className="flex gap-2 mt-3 pt-3 border-t">
                           <Button
@@ -2362,14 +2545,14 @@ const InventoryModule = () => {
                   <div className="flex justify-between">
                     <span>Monto total vendido:</span>
                     <span className="font-semibold text-green-600">
-                      ${sales.reduce((sum, s) => sum + (s.total_amount || 0), 0).toLocaleString()}
+                      ${sales.reduce((sum, s) => sum + calculateSaleTotalWithTax(s), 0).toLocaleString()}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Promedio por venta:</span>
                     <span className="font-semibold">
                       ${sales.length > 0 
-                        ? (sales.reduce((sum, s) => sum + (s.total_amount || 0), 0) / sales.length).toFixed(2)
+                        ? (sales.reduce((sum, s) => sum + calculateSaleTotalWithTax(s), 0) / sales.length).toFixed(2)
                         : '0.00'}
                     </span>
                   </div>
@@ -2513,7 +2696,7 @@ const InventoryModule = () => {
               <div className="border-t pt-4 flex justify-end">
                 <div className="text-right">
                   <p className="text-2xl font-bold text-green-600">
-                    Total: ${(selectedSale.total_amount || 0).toFixed(2)}
+                    Total: ${selectedSale ? calculateSaleTotalWithTax(selectedSale).toFixed(2) : '0.00'}
                   </p>
                 </div>
               </div>

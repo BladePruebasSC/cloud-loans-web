@@ -19,7 +19,8 @@ import {
   Upload,
   FolderOpen,
   Download,
-  Trash2
+  Trash2,
+  Eye
 } from 'lucide-react';
 import { LoanHistoryView } from './LoanHistoryView';
 import { AccountStatement } from './AccountStatement';
@@ -84,6 +85,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [loanHistoryNotes, setLoanHistoryNotes] = useState<any[]>([]);
   const [showDocuments, setShowDocuments] = useState(false);
   const [documents, setDocuments] = useState<any[]>([]);
+  const [previewDocument, setPreviewDocument] = useState<any | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [showUploadDocument, setShowUploadDocument] = useState(false);
   const [documentForm, setDocumentForm] = useState({
     title: '',
@@ -1023,7 +1026,16 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                             <Button
                               variant="outline"
                               size="sm"
+                              onClick={() => handlePreviewDocument(doc)}
+                              title="Previsualizar"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
                               onClick={() => handleDownloadDocument(doc)}
+                              title="Descargar"
                             >
                               <Download className="h-4 w-4" />
                             </Button>
@@ -1031,6 +1043,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                               variant="outline"
                               size="sm"
                               onClick={() => handleDeleteDocument(doc.id, doc.file_url || '')}
+                              title="Eliminar"
                             >
                               <Trash2 className="h-4 w-4 text-red-500" />
                             </Button>
@@ -1141,6 +1154,105 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Modal de Previsualización de Documento */}
+      <Dialog open={!!previewDocument} onOpenChange={(open) => !open && closePreview()}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span>{previewDocument?.title || 'Previsualizar Documento'}</span>
+              <Button variant="ghost" size="sm" onClick={closePreview}>
+                <X className="h-4 w-4" />
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+          {previewUrl && previewDocument && (
+            <div className="flex-1 overflow-auto">
+              {(() => {
+                const fileExtension = previewDocument.file_name?.split('.').pop()?.toLowerCase() || '';
+                const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(fileExtension);
+                const isPdf = fileExtension === 'pdf';
+                
+                if (isImage) {
+                  return (
+                    <div className="flex justify-center items-center min-h-[400px]">
+                      <img 
+                        src={previewUrl} 
+                        alt={previewDocument.title}
+                        className="max-w-full max-h-[70vh] object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = '';
+                          toast.error('No se pudo cargar la imagen');
+                        }}
+                      />
+                    </div>
+                  );
+                } else if (isPdf) {
+                  return (
+                    <div className="w-full h-[70vh]">
+                      <iframe
+                        src={previewUrl}
+                        className="w-full h-full border-0"
+                        title={previewDocument.title}
+                      />
+                    </div>
+                  );
+                } else {
+                  return (
+                    <div className="text-center py-12">
+                      <FileText className="h-16 w-16 mx-auto mb-4 text-gray-400" />
+                      <p className="text-gray-600 mb-4">
+                        No se puede previsualizar este tipo de archivo ({fileExtension || 'desconocido'})
+                      </p>
+                      <Button onClick={() => handleDownloadDocument(previewDocument)}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Descargar para ver
+                      </Button>
+                    </div>
+                  );
+                }
+              })()}
+            </div>
+          )}
+          {previewDocument && (
+            <div className="border-t pt-4 mt-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="font-medium">Tipo:</span> {previewDocument.document_type}
+                </div>
+                <div>
+                  <span className="font-medium">Tamaño:</span> {previewDocument.file_size ? `${(previewDocument.file_size / 1024).toFixed(2)} KB` : 'N/A'}
+                </div>
+                <div>
+                  <span className="font-medium">Fecha:</span> {new Date(previewDocument.created_at).toLocaleDateString('es-DO')}
+                </div>
+                <div>
+                  <span className="font-medium">Archivo:</span> {previewDocument.file_name || 'N/A'}
+                </div>
+              </div>
+              {previewDocument.description && (
+                <div className="mt-2">
+                  <span className="font-medium">Descripción:</span>
+                  <p className="text-gray-600 mt-1">{previewDocument.description}</p>
+                </div>
+              )}
+              <div className="flex justify-end gap-2 mt-4">
+                <Button variant="outline" onClick={closePreview}>
+                  Cerrar
+                </Button>
+                <Button onClick={() => {
+                  if (previewDocument) {
+                    handleDownloadDocument(previewDocument);
+                  }
+                }}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Descargar
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 };
