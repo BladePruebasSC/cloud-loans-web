@@ -160,7 +160,7 @@ export const PointOfSaleModule = () => {
         // Si el carrito está vacío, asegurarse de que localStorage también esté vacío
         localStorage.removeItem('pos_cart');
       } else {
-        localStorage.setItem('pos_cart', JSON.stringify(cart));
+      localStorage.setItem('pos_cart', JSON.stringify(cart));
       }
     } catch (error) {
       console.error('Error saving cart to localStorage:', error);
@@ -213,7 +213,7 @@ export const PointOfSaleModule = () => {
 
   const [customerSearch, setCustomerSearch] = useState('');
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
-  const { user, companyId } = useAuth();
+  const { user, companyId, companySettings } = useAuth();
   const [companyInfo, setCompanyInfo] = useState({
     company_name: 'Cloud Loans',
     address: 'Dirección de la empresa',
@@ -236,8 +236,8 @@ export const PointOfSaleModule = () => {
     ncfNumber: '',
     notes: '',
     saleType: 'cash',
-    financingMonths: 12,
-    financingRate: 20,
+    financingMonths: 0, // Se inicializará con companySettings
+    financingRate: 0, // Se inicializará con companySettings
     discountMode: 'item',
     discountPercentTotal: 0,
     paymentDetails: {}
@@ -622,8 +622,8 @@ export const PointOfSaleModule = () => {
       ncfNumber: '',
       notes: '',
       saleType: 'cash',
-      financingMonths: 12,
-      financingRate: 20,
+      financingMonths: 0, // Se inicializará con companySettings
+      financingRate: 0, // Se inicializará con companySettings
       discountMode: 'item',
       discountPercentTotal: 0,
       paymentDetails: {}
@@ -724,8 +724,8 @@ export const PointOfSaleModule = () => {
       // Para efectivo, puede ser mayor (para calcular cambio), pero los otros métodos deben cubrir su parte
       // El total pagado (efectivo + otros) debe ser al menos el total
       if (totalPaid + epsilon < saleData.total) {
-        toast.error('El monto pagado es menor al total');
-        return;
+      toast.error('El monto pagado es menor al total');
+      return;
       }
     }
     
@@ -887,13 +887,13 @@ export const PointOfSaleModule = () => {
               // El monto del préstamo es exactamente el monto indicado en el campo de financiamiento
               loanAmount = financingSplit?.amount || 0;
               
-              const interestRate = financingSplit?.details?.financingRate || saleData.paymentDetails?.financingRate || saleData.financingRate || 20;
-              termMonths = financingSplit?.details?.financingMonths || saleData.paymentDetails?.financingMonths || saleData.financingMonths || 12;
+              const interestRate = financingSplit?.details?.financingRate || saleData.paymentDetails?.financingRate || saleData.financingRate || companySettings?.interest_rate_default || 20;
+              termMonths = financingSplit?.details?.financingMonths || saleData.paymentDetails?.financingMonths || saleData.financingMonths || companySettings?.min_term_months || 12;
               const amortizationType = financingSplit?.details?.amortizationType || saleData.paymentDetails?.amortizationType || 'simple';
               const paymentFrequency = financingSplit?.details?.paymentFrequency || saleData.paymentDetails?.paymentFrequency || 'monthly';
-              const lateFeeEnabled = financingSplit?.details?.lateFeeEnabled !== undefined ? financingSplit.details.lateFeeEnabled : (saleData.paymentDetails?.lateFeeEnabled || false);
-              const lateFeeRate = financingSplit?.details?.lateFeeRate || saleData.paymentDetails?.lateFeeRate || 3;
-              const gracePeriodDays = financingSplit?.details?.gracePeriodDays || saleData.paymentDetails?.gracePeriodDays || 3;
+              const lateFeeEnabled = financingSplit?.details?.lateFeeEnabled !== undefined ? financingSplit.details.lateFeeEnabled : (saleData.paymentDetails?.lateFeeEnabled !== undefined ? saleData.paymentDetails.lateFeeEnabled : (companySettings?.default_late_fee_rate ? true : false));
+              const lateFeeRate = financingSplit?.details?.lateFeeRate || saleData.paymentDetails?.lateFeeRate || companySettings?.default_late_fee_rate || 3;
+              const gracePeriodDays = financingSplit?.details?.gracePeriodDays || saleData.paymentDetails?.gracePeriodDays || companySettings?.grace_period_days || 3;
               
               // Calcular cuota mensual según el tipo de amortización
               let monthlyInterest = 0;
@@ -2097,7 +2097,7 @@ export const PointOfSaleModule = () => {
               <div className="flex justify-between items-center mb-2">
                 <Label className="text-base font-semibold">Total a Pagar</Label>
                 <span className="text-xl font-bold text-green-600">${saleData.total.toFixed(2)}</span>
-              </div>
+            </div>
               <div className="flex justify-between items-center">
                 <Label className="text-sm text-gray-600">Total Pagado</Label>
                 <span className="text-lg font-semibold">
@@ -2201,7 +2201,19 @@ export const PointOfSaleModule = () => {
                                   setSaleData(prev => ({
                                     ...prev,
                                     paymentSplits: prev.paymentSplits.map((s, i) => 
-                                      i === index ? { ...s, method, details: method.type === 'financing' ? s.details : {} } : s
+                                      i === index ? { 
+                                        ...s, 
+                                        method, 
+                                        details: method.type === 'financing' ? {
+                                          financingMonths: companySettings?.min_term_months || 12,
+                                          financingRate: companySettings?.interest_rate_default || 20,
+                                          amortizationType: 'simple' as const,
+                                          paymentFrequency: 'monthly' as const,
+                                          lateFeeEnabled: companySettings?.default_late_fee_rate ? true : false,
+                                          lateFeeRate: companySettings?.default_late_fee_rate || 3,
+                                          gracePeriodDays: companySettings?.grace_period_days || 3
+                                        } : {} 
+                                      } : s
                                     )
                                   }));
                                 }
@@ -2430,7 +2442,7 @@ export const PointOfSaleModule = () => {
                                   type="number"
                                   min="1"
                                   max="60"
-                                  value={split.details?.financingMonths || saleData.financingMonths || 12}
+                                  value={split.details?.financingMonths || saleData.financingMonths || companySettings?.min_term_months || 12}
                                   onChange={(e) => {
                                     const months = parseInt(e.target.value) || 12;
                                     setSaleData(prev => ({
@@ -2455,7 +2467,7 @@ export const PointOfSaleModule = () => {
                 step="0.01"
                                   min="0"
                                   max="100"
-                                  value={split.details?.financingRate || saleData.financingRate || 20}
+                                  value={split.details?.financingRate || saleData.financingRate || companySettings?.interest_rate_default || 20}
                 onChange={(e) => {
                                     const rate = parseFloat(e.target.value) || 20;
                   setSaleData(prev => ({ 
@@ -2567,7 +2579,7 @@ export const PointOfSaleModule = () => {
                                       type="number"
                                       step="0.01"
                                       min="0"
-                                      value={split.details?.lateFeeRate || saleData.paymentDetails?.lateFeeRate || 3}
+                                      value={split.details?.lateFeeRate || saleData.paymentDetails?.lateFeeRate || companySettings?.default_late_fee_rate || 3}
                                       onChange={(e) => {
                                         const rate = parseFloat(e.target.value) || 3;
                                         setSaleData(prev => ({
@@ -2589,7 +2601,7 @@ export const PointOfSaleModule = () => {
                                     <Input
                                       type="number"
                                       min="0"
-                                      value={split.details?.gracePeriodDays || saleData.paymentDetails?.gracePeriodDays || 3}
+                                      value={split.details?.gracePeriodDays || saleData.paymentDetails?.gracePeriodDays || companySettings?.grace_period_days || 3}
                                       onChange={(e) => {
                                         const days = parseInt(e.target.value) || 3;
                                         setSaleData(prev => ({
@@ -2793,9 +2805,9 @@ export const PointOfSaleModule = () => {
                       type="number"
                       min="1"
                       max="60"
-                      value={saleData.paymentDetails?.financingMonths || saleData.financingMonths || 12}
+                      value={saleData.paymentDetails?.financingMonths || saleData.financingMonths || companySettings?.min_term_months || 12}
                       onChange={(e) => {
-                        const months = parseInt(e.target.value) || 12;
+                        const months = parseInt(e.target.value) || companySettings?.min_term_months || 12;
                         setSaleData(prev => ({
                           ...prev,
                           financingMonths: months,
@@ -2811,7 +2823,7 @@ export const PointOfSaleModule = () => {
                       step="0.01"
                       min="0"
                       max="100"
-                      value={saleData.paymentDetails?.financingRate || saleData.financingRate || 20}
+                      value={saleData.paymentDetails?.financingRate || saleData.financingRate || companySettings?.interest_rate_default || 20}
                       onChange={(e) => {
                         const rate = parseFloat(e.target.value) || 20;
                         setSaleData(prev => ({
@@ -2886,7 +2898,7 @@ export const PointOfSaleModule = () => {
                             type="number"
                             step="0.01"
                             min="0"
-                            value={saleData.paymentDetails?.lateFeeRate || 3}
+                            value={saleData.paymentDetails?.lateFeeRate || companySettings?.default_late_fee_rate || 3}
                             onChange={(e) => setSaleData(prev => ({
                               ...prev,
                               paymentDetails: { ...prev.paymentDetails, lateFeeRate: parseFloat(e.target.value) || 3 }
@@ -2898,7 +2910,7 @@ export const PointOfSaleModule = () => {
                           <Input
                             type="number"
                             min="0"
-                            value={saleData.paymentDetails?.gracePeriodDays || 3}
+                            value={saleData.paymentDetails?.gracePeriodDays || companySettings?.grace_period_days || 3}
                             onChange={(e) => setSaleData(prev => ({
                               ...prev,
                               paymentDetails: { ...prev.paymentDetails, gracePeriodDays: parseInt(e.target.value) || 3 }
@@ -3053,8 +3065,8 @@ export const PointOfSaleModule = () => {
             ncfNumber: '',
             notes: '',
             saleType: 'cash',
-            financingMonths: 12,
-            financingRate: 20,
+            financingMonths: 0, // Se inicializará con companySettings
+            financingRate: 0, // Se inicializará con companySettings
             discountMode: 'item',
             discountPercentTotal: 0,
             paymentDetails: {}
