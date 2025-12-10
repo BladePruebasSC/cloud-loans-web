@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { LoanDetailsView } from '@/components/loans/LoanDetailsView';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
@@ -65,6 +66,10 @@ export const ReportsModule = () => {
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [selectedSale, setSelectedSale] = useState<any>(null);
   const [showSaleModal, setShowSaleModal] = useState(false);
+  const [selectedLoanId, setSelectedLoanId] = useState<string | null>(null);
+  const [showLoanDetails, setShowLoanDetails] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<any>(null);
+  const [showClientDetails, setShowClientDetails] = useState(false);
   const { user, companyId } = useAuth();
 
   useEffect(() => {
@@ -219,13 +224,134 @@ export const ReportsModule = () => {
       if (pawnPaymentsError) throw pawnPaymentsError;
 
       // Fetch Punto de Venta (POS) sales
+      // Usar select('*') para obtener todos los campos disponibles (maneja ambos esquemas)
       const { data: salesData, error: salesError } = await supabase
         .from('sales')
         .select('*')
         .eq('user_id', user?.id as any)
         .order('created_at', { ascending: false });
 
-      if (salesError) throw salesError;
+      if (salesError) {
+        console.error('Error fetching sales:', salesError);
+        throw salesError;
+      }
+
+      // Optimización: Obtener todos los datos en batch en lugar de consultas individuales
+      let enrichedSalesData = salesData;
+      if (salesData && salesData.length > 0) {
+        const saleIds = salesData.map(s => s.id);
+        const clientIds = salesData
+          .map(s => (s as any).client_id)
+          .filter((id): id is string => !!id);
+        const productIdsFromSales = salesData
+          .map(s => (s as any).product_id)
+          .filter((id): id is string => !!id);
+
+        // Obtener todos los sale_details en una sola consulta
+        const { data: allSaleDetails, error: detailsError } = await supabase
+          .from('sale_details')
+          .select(`
+            *,
+            products (
+              id,
+              name,
+              itbis_rate
+            )
+          `)
+          .in('sale_id', saleIds);
+
+        // Obtener todos los productos necesarios (para ventas antiguas sin sale_details)
+        const { data: allProducts } = productIdsFromSales.length > 0
+          ? await supabase
+              .from('products')
+              .select('id, name, itbis_rate')
+              .in('id', productIdsFromSales)
+          : { data: null, error: null };
+
+        // Obtener todos los clientes necesarios en una sola consulta
+        const { data: allClients } = clientIds.length > 0
+          ? await supabase
+              .from('clients')
+              .select('id, full_name, phone')
+              .in('id', clientIds)
+          : { data: null, error: null };
+
+        // Crear mapas para acceso rápido
+        const saleDetailsMap = new Map<string, any[]>();
+        if (!detailsError && allSaleDetails) {
+          allSaleDetails.forEach((detail: any) => {
+            const saleId = detail.sale_id;
+            if (!saleDetailsMap.has(saleId)) {
+              saleDetailsMap.set(saleId, []);
+            }
+            saleDetailsMap.get(saleId)!.push(detail);
+          });
+        }
+
+        const productsMap = new Map<string, any>();
+        if (allProducts) {
+          allProducts.forEach((product: any) => {
+            productsMap.set(product.id, product);
+          });
+        }
+
+        const clientsMap = new Map<string, any>();
+        if (allClients) {
+          allClients.forEach((client: any) => {
+            clientsMap.set(client.id, client);
+          });
+        }
+
+        // Enriquecer las ventas usando los mapas
+        enrichedSalesData = salesData.map((sale) => {
+          const saleAny = { ...sale } as any;
+          
+          // Obtener sale_details del mapa
+          const saleDetails = saleDetailsMap.get(sale.id);
+          if (saleDetails && saleDetails.length > 0) {
+            saleAny.sale_details = saleDetails;
+          } else if (saleAny.product_id) {
+            // Esquema simple: datos directos en sales (ventas antiguas)
+            const product = productsMap.get(saleAny.product_id);
+            if (product) {
+              saleAny.sale_details = [{
+                id: sale.id,
+                sale_id: sale.id,
+                product_id: product.id,
+                quantity: saleAny.quantity || 0,
+                unit_price: saleAny.unit_price || 0,
+                total_price: saleAny.total_price || 0,
+                products: product
+              }];
+            }
+          }
+
+          // Obtener información del cliente del mapa
+          if (saleAny.client_id) {
+            const clientData = clientsMap.get(saleAny.client_id);
+            if (clientData) {
+              saleAny.clients = clientData;
+            }
+          }
+          // Si no hay client_id pero hay customer_name, ya está disponible en saleAny.customer_name
+
+          return saleAny;
+        });
+      }
+
+      // Verificar que los datos enriquecidos tengan la estructura correcta
+      const finalSalesData = (enrichedSalesData || []).map((sale: any) => {
+        // Asegurar que sale_details esté presente si existe
+        if (!sale.sale_details && sale.id) {
+          // Si no hay sale_details, intentar obtenerlos de nuevo (fallback)
+          console.warn(`Venta ${sale.id.substring(0, 8)} no tiene sale_details`);
+        }
+        // Asegurar que total_amount esté presente
+        if (sale.total_amount === undefined || sale.total_amount === null) {
+          console.warn(`Venta ${sale.id?.substring(0, 8)} no tiene total_amount`);
+        }
+        return sale;
+      });
 
       setReportData({
         clients: clientsData || [],
@@ -235,8 +361,19 @@ export const ReportsModule = () => {
         pawnTransactions: pawnTxData || [],
         pawnPayments: pawnPaymentsData || [],
         products: productsData || [],
-        sales: salesData || []
+        sales: finalSalesData
       });
+      
+      // Log para verificar que los datos se guardaron correctamente
+      if (finalSalesData.length > 0) {
+        console.log(`Total ventas cargadas: ${finalSalesData.length}`);
+        console.log(`Primera venta:`, {
+          id: finalSalesData[0].id?.substring(0, 8),
+          total_amount: finalSalesData[0].total_amount,
+          sale_details_count: finalSalesData[0].sale_details?.length || 0,
+          calculated: calculateSaleTotalWithTax(finalSalesData[0])
+        });
+      }
       
       // Si clientsData no se estableció antes (por el error handling), establecerlo ahora
       if (clientsData && !clientsError) {
@@ -265,16 +402,59 @@ export const ReportsModule = () => {
 
   // Función auxiliar para calcular el total con ITBIS de una venta
   const calculateSaleTotalWithTax = (sale: any): number => {
+    // PRIORIDAD 1: Calcular desde sale_details (más preciso, siempre incluye ITBIS)
     if (sale.sale_details && sale.sale_details.length > 0) {
-      return sale.sale_details.reduce((sum: number, detail: any) => {
+      // Calcular desde unit_price * quantity (unit_price ya incluye ITBIS según el POS)
+      const calculatedFromUnitPrice = sale.sale_details.reduce((sum: number, detail: any) => {
+        const itemTotal = (Number(detail.unit_price) || 0) * (Number(detail.quantity) || 0);
+        return sum + itemTotal;
+      }, 0);
+      
+      if (calculatedFromUnitPrice > 0) {
+        return calculatedFromUnitPrice;
+      }
+      
+      // Si unit_price * quantity da 0, calcular desde total_price + ITBIS
+      // total_price en sale_details es SIN ITBIS, así que debemos agregarlo
+      const calculatedFromTotalPrice = sale.sale_details.reduce((sum: number, detail: any) => {
         const itbisRate = detail.products?.itbis_rate ?? detail.product?.itbis_rate ?? 18;
-        const itemSubtotal = detail.total_price; // Sin ITBIS
+        const itemSubtotal = Number(detail.total_price) || 0; // Sin ITBIS
         const itemTax = itemSubtotal * (itbisRate / 100);
         return sum + itemSubtotal + itemTax;
       }, 0);
+      
+      if (calculatedFromTotalPrice > 0) {
+        return calculatedFromTotalPrice;
+      }
     }
-    // Si no hay detalles, usar total_amount (que debería tener ITBIS)
-    return sale.total_amount || 0;
+    
+    // PRIORIDAD 2: Si no hay sale_details, calcular desde total_price + ITBIS (esquema simple)
+    // En el esquema simple, total_price NO incluye ITBIS, así que debemos agregarlo
+    // Esto es más seguro que usar total_amount directamente porque total_amount puede no incluir ITBIS
+    if (sale.total_price !== undefined && sale.total_price !== null && sale.total_price > 0) {
+      // Si hay product_id y sale_details, obtener el itbis_rate del producto
+      if (sale.product_id && sale.sale_details && sale.sale_details.length > 0) {
+        const itbisRate = sale.sale_details[0]?.products?.itbis_rate ?? 
+                          sale.sale_details[0]?.product?.itbis_rate ?? 18;
+        const subtotal = Number(sale.total_price);
+        const tax = subtotal * (itbisRate / 100);
+        return subtotal + tax;
+      }
+      // Si no hay product_id o sale_details, usar 18% por defecto
+      // Por seguridad, asumir que total_price NO incluye ITBIS y agregarlo
+      const subtotal = Number(sale.total_price);
+      const tax = subtotal * (18 / 100);
+      return subtotal + tax;
+    }
+    
+    // PRIORIDAD 3: Si no hay sale_details ni total_price, usar total_amount como último recurso
+    // total_amount debería incluir ITBIS si fue guardado correctamente desde el POS
+    if (sale.total_amount !== undefined && sale.total_amount !== null && sale.total_amount > 0) {
+      return Number(sale.total_amount);
+    }
+    
+    // Si todo falla, retornar 0
+    return 0;
   };
 
   const exportToCSV = (data: any[], filename: string) => {
@@ -867,7 +1047,10 @@ export const ReportsModule = () => {
                             }>
                               {loan.status === 'active' ? 'Activo' :
                                loan.status === 'overdue' ? 'Vencido' :
-                               loan.status === 'paid' ? 'Pagado' : loan.status}
+                               loan.status === 'paid' ? 'Pagado' :
+                               loan.status === 'deleted' ? 'Eliminado' :
+                               loan.status === 'pending' ? 'Pendiente' :
+                               loan.status}
                             </Badge>
                           </div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
@@ -877,7 +1060,14 @@ export const ReportsModule = () => {
                             <div>Tasa: {loan.interest_rate}%</div>
                           </div>
                         </div>
-                        <Button variant="outline" size="sm">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => {
+                            setSelectedLoanId(loan.id);
+                            setShowLoanDetails(true);
+                          }}
+                        >
                           <Eye className="h-4 w-4" />
                         </Button>
                       </div>
@@ -1545,7 +1735,14 @@ export const ReportsModule = () => {
                           <div>Ingresos: ${(client.monthly_income || 0).toLocaleString()}</div>
                         </div>
                       </div>
-                      <Button variant="outline" size="sm">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => {
+                          setSelectedClient(client);
+                          setShowClientDetails(true);
+                        }}
+                      >
                         <Eye className="h-4 w-4" />
                       </Button>
                     </div>
@@ -1829,6 +2026,100 @@ export const ReportsModule = () => {
                 <Button variant="outline" onClick={() => downloadReceiptFromSale(selectedSale)}>
                   <Download className="h-4 w-4 mr-2" />
                   Descargar
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Detalles de Préstamo */}
+      {selectedLoanId && (
+        <LoanDetailsView
+          loanId={selectedLoanId}
+          isOpen={showLoanDetails}
+          onClose={() => {
+            setShowLoanDetails(false);
+            setSelectedLoanId(null);
+          }}
+          onRefresh={() => {
+            fetchReportData();
+          }}
+        />
+      )}
+
+      {/* Modal de Detalles de Cliente */}
+      <Dialog open={showClientDetails} onOpenChange={setShowClientDetails}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Detalles del Cliente</DialogTitle>
+          </DialogHeader>
+          {selectedClient && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm font-medium text-gray-500">Nombre Completo</Label>
+                  <p className="text-lg font-semibold">{selectedClient.full_name}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-500">Cédula</Label>
+                  <p className="text-lg">{selectedClient.dni}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-500">Teléfono</Label>
+                  <p className="text-lg">{selectedClient.phone || 'N/A'}</p>
+                </div>
+                {selectedClient.email && (
+                  <div>
+                    <Label className="text-sm font-medium text-gray-500">Email</Label>
+                    <p className="text-lg">{selectedClient.email}</p>
+                  </div>
+                )}
+                {selectedClient.address && (
+                  <div>
+                    <Label className="text-sm font-medium text-gray-500">Dirección</Label>
+                    <p className="text-lg">{selectedClient.address}</p>
+                  </div>
+                )}
+                {selectedClient.city && (
+                  <div>
+                    <Label className="text-sm font-medium text-gray-500">Ciudad</Label>
+                    <p className="text-lg">{selectedClient.city}</p>
+                  </div>
+                )}
+                {selectedClient.monthly_income && (
+                  <div>
+                    <Label className="text-sm font-medium text-gray-500">Ingresos Mensuales</Label>
+                    <p className="text-lg">${selectedClient.monthly_income.toLocaleString()}</p>
+                  </div>
+                )}
+                {selectedClient.credit_score && (
+                  <div>
+                    <Label className="text-sm font-medium text-gray-500">Score Crediticio</Label>
+                    <p className="text-lg">{selectedClient.credit_score}</p>
+                  </div>
+                )}
+                <div>
+                  <Label className="text-sm font-medium text-gray-500">Estado</Label>
+                  <div className="mt-1">
+                    <Badge variant={selectedClient.status === 'active' ? 'default' : 'secondary'}>
+                      {selectedClient.status === 'active' ? 'Activo' : 'Inactivo'}
+                    </Badge>
+                  </div>
+                </div>
+                {selectedClient.created_at && (
+                  <div>
+                    <Label className="text-sm font-medium text-gray-500">Fecha de Registro</Label>
+                    <p className="text-lg">
+                      {new Date(selectedClient.created_at).toLocaleDateString('es-DO') + ' ' + 
+                       new Date(selectedClient.created_at).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowClientDetails(false)}>
+                  Cerrar
                 </Button>
               </div>
             </div>

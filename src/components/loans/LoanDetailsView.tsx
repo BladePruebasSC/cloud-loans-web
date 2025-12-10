@@ -343,6 +343,32 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     }
   };
 
+  const handlePreviewDocument = async (doc: any) => {
+    try {
+      if (!doc.file_url) {
+        toast.error('No hay URL de archivo disponible');
+        return;
+      }
+
+      const { data, error } = await supabase.storage
+        .from('documents')
+        .createSignedUrl(doc.file_url, 3600); // URL válida por 1 hora
+
+      if (error) throw error;
+
+      setPreviewUrl(data.signedUrl);
+      setPreviewDocument(doc);
+    } catch (error: any) {
+      console.error('Error al previsualizar documento:', error);
+      toast.error('Error al previsualizar documento');
+    }
+  };
+
+  const closePreview = () => {
+    setPreviewDocument(null);
+    setPreviewUrl(null);
+  };
+
   const handleDeleteDocument = async (documentId: string, fileUrl: string) => {
     if (!confirm('¿Estás seguro de que deseas eliminar este documento?')) {
       return;

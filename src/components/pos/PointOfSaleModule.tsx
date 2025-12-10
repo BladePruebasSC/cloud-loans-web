@@ -2239,7 +2239,7 @@ export const PointOfSaleModule = () => {
               <Input
                 type="number"
                 step="0.01"
-                              value={split.amount}
+                              value={split.amount === 0 ? '' : split.amount}
                 onChange={(e) => {
                   const round2 = (n: number) => Math.round((n || 0) * 100) / 100;
                   const inputAmount = round2(parseFloat(e.target.value) || 0);

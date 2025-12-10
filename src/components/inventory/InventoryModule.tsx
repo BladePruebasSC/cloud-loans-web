@@ -664,15 +664,20 @@ const InventoryModule = () => {
         });
       }
 
-      // Procesar datos completos
+      // Optimización: Obtener todos los datos en batch en lugar de consultas secuenciales
       const salesWithDetails: SaleWithDetails[] = [];
       
-      for (const sale of filteredSales) {
-        const saleAny = sale as any;
-        let saleDetails: SaleDetail[] = [];
-        
-        // Intentar obtener sale_details primero (esquema nuevo)
-        const { data: details, error: detailsError } = await supabase
+      if (filteredSales.length > 0) {
+        const saleIds = filteredSales.map(s => s.id);
+        const clientIds = filteredSales
+          .map(s => (s as any).client_id)
+          .filter((id): id is string => !!id);
+        const productIdsFromSales = filteredSales
+          .map(s => (s as any).product_id)
+          .filter((id): id is string => !!id);
+
+        // Obtener todos los sale_details en una sola consulta
+        const { data: allSaleDetails, error: detailsError } = await supabase
           .from('sale_details')
           .select(`
             id,
@@ -685,85 +690,126 @@ const InventoryModule = () => {
               id,
               name,
               sku,
-              category
+              category,
+              brand
             )
           `)
-          .eq('sale_id', sale.id);
+          .in('sale_id', saleIds);
 
-        if (!detailsError && details && details.length > 0) {
-          // Esquema nuevo con sale_details
-          saleDetails = details.map(d => ({
-            id: d.id,
-            sale_id: d.sale_id,
-            product_id: d.product_id,
-            quantity: d.quantity,
-            unit_price: d.unit_price,
-            total_price: d.total_price,
-            product: d.products as any
-          }));
-        } else if (saleAny.product_id) {
-          // Esquema simple: datos directos en sales
-          const { data: product } = await supabase
-            .from('products')
-            .select('*')
-            .eq('id', saleAny.product_id)
-            .single();
-          
-          if (product) {
-            saleDetails = [{
-              id: sale.id,
-              sale_id: sale.id,
-              product_id: product.id,
-              quantity: saleAny.quantity || 0,
-              unit_price: saleAny.unit_price || 0,
-              total_price: saleAny.total_price || 0,
-              product
-            }];
-          }
-        }
+        // Obtener todos los productos necesarios (para ventas antiguas sin sale_details)
+        const { data: allProducts } = productIdsFromSales.length > 0
+          ? await supabase
+              .from('products')
+              .select('*')
+              .in('id', productIdsFromSales)
+          : { data: null, error: null };
 
-        // Obtener nombre del cliente
-        let clientName = 'Cliente General';
-        if (saleAny.client_id) {
-          const { data: client } = await supabase
-            .from('clients')
-            .select('full_name')
-            .eq('id', saleAny.client_id)
-            .single();
-          if (client) {
-            clientName = client.full_name;
-          }
-        } else if (saleAny.customer_name) {
-          // Esquema simple usa customer_name
-          clientName = saleAny.customer_name;
-        }
+        // Obtener todos los clientes necesarios en una sola consulta
+        const { data: allClients } = clientIds.length > 0
+          ? await supabase
+              .from('clients')
+              .select('id, full_name')
+              .in('id', clientIds)
+          : { data: null, error: null };
 
-        // Aplicar filtros de producto, categoría y marca
-        const matchesProduct = !salesProductFilter || 
-            saleDetails.length === 0 || // Si no hay detalles, mostrar igual
-            saleDetails.some(d => d.product_id === salesProductFilter || d.product?.name === salesProductFilter);
-        
-        const matchesCategory = !salesCategoryFilter || 
-            saleDetails.length === 0 ||
-            saleDetails.some(d => d.product?.category === salesCategoryFilter);
-        
-        const matchesBrand = !salesBrandFilter || 
-            saleDetails.length === 0 ||
-            saleDetails.some(d => d.product?.brand === salesBrandFilter);
-        
-        if (matchesProduct && matchesCategory && matchesBrand) {
-          salesWithDetails.push({
-            id: sale.id,
-            sale_date: saleAny.sale_date || saleAny.created_at,
-            total_amount: saleAny.total_amount || saleAny.total_price || 0,
-            payment_method: saleAny.payment_method || null,
-            notes: saleAny.notes || null,
-            sale_number: saleAny.sale_number || sale.id.substring(0, 8),
-            client_id: saleAny.client_id || null,
-            status: saleAny.status || 'completed',
-            details: saleDetails,
-            client_name: clientName
+        // Crear mapas para acceso rápido
+        const saleDetailsMap = new Map<string, SaleDetail[]>();
+        if (!detailsError && allSaleDetails) {
+          allSaleDetails.forEach((detail: any) => {
+            const saleId = detail.sale_id;
+            if (!saleDetailsMap.has(saleId)) {
+              saleDetailsMap.set(saleId, []);
+            }
+            saleDetailsMap.get(saleId)!.push({
+              id: detail.id,
+              sale_id: detail.sale_id,
+              product_id: detail.product_id,
+              quantity: detail.quantity,
+              unit_price: detail.unit_price,
+              total_price: detail.total_price,
+              product: detail.products as any
+            });
           });
+        }
+
+        const productsMap = new Map<string, Product>();
+        if (allProducts) {
+          allProducts.forEach((product: Product) => {
+            productsMap.set(product.id, product);
+          });
+        }
+
+        const clientsMap = new Map<string, { full_name: string }>();
+        if (allClients) {
+          allClients.forEach((client: any) => {
+            clientsMap.set(client.id, client);
+          });
+        }
+
+        // Procesar cada venta usando los mapas
+        for (const sale of filteredSales) {
+          const saleAny = sale as any;
+          let saleDetails: SaleDetail[] = [];
+          
+          // Obtener sale_details del mapa
+          const details = saleDetailsMap.get(sale.id);
+          if (details && details.length > 0) {
+            saleDetails = details;
+          } else if (saleAny.product_id) {
+            // Esquema simple: datos directos en sales
+            const product = productsMap.get(saleAny.product_id);
+            if (product) {
+              saleDetails = [{
+                id: sale.id,
+                sale_id: sale.id,
+                product_id: product.id,
+                quantity: saleAny.quantity || 0,
+                unit_price: saleAny.unit_price || 0,
+                total_price: saleAny.total_price || 0,
+                product
+              }];
+            }
+          }
+
+          // Obtener nombre del cliente del mapa
+          let clientName = 'Cliente General';
+          if (saleAny.client_id) {
+            const client = clientsMap.get(saleAny.client_id);
+            if (client) {
+              clientName = client.full_name;
+            }
+          } else if (saleAny.customer_name) {
+            // Esquema simple usa customer_name
+            clientName = saleAny.customer_name;
+          }
+
+          // Aplicar filtros de producto, categoría y marca
+          const matchesProduct = !salesProductFilter || 
+              saleDetails.length === 0 || // Si no hay detalles, mostrar igual
+              saleDetails.some(d => d.product_id === salesProductFilter || d.product?.name === salesProductFilter);
+          
+          const matchesCategory = !salesCategoryFilter || 
+              saleDetails.length === 0 ||
+              saleDetails.some(d => d.product?.category === salesCategoryFilter);
+          
+          const matchesBrand = !salesBrandFilter || 
+              saleDetails.length === 0 ||
+              saleDetails.some(d => d.product?.brand === salesBrandFilter);
+          
+          if (matchesProduct && matchesCategory && matchesBrand) {
+            salesWithDetails.push({
+              id: sale.id,
+              sale_date: saleAny.sale_date || saleAny.created_at,
+              total_amount: saleAny.total_amount || saleAny.total_price || 0,
+              payment_method: saleAny.payment_method || null,
+              notes: saleAny.notes || null,
+              sale_number: saleAny.sale_number || sale.id.substring(0, 8),
+              client_id: saleAny.client_id || null,
+              status: saleAny.status || 'completed',
+              details: saleDetails,
+              client_name: clientName
+            });
+          }
         }
       }
 
