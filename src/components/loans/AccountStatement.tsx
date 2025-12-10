@@ -670,8 +670,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         });
       } else if (isPaid) {
         // Si está marcada como pagada pero no encontramos pago, usar valores originales
-        principalPaidForThisInstallment = originalPrincipal;
-        interestPaidForThisInstallment = originalInterest;
+          principalPaidForThisInstallment = originalPrincipal;
+          interestPaidForThisInstallment = originalInterest;
         actualPaymentAmount = monthlyPayment;
         console.log(`⚠️ Cuota ${i} - Marcada como pagada pero no se encontró pago, usando valores originales`);
       } else if (!isPaid && payments && payments.length > 0) {
@@ -754,7 +754,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         originalMonthlyPayment: monthlyPayment,
         paymentStatus
       });
-
+      
       // Calcular el balance pendiente del préstamo después de esta cuota
       // Usar el capital realmente pagado de las cuotas anteriores
       let totalCapitalPaidUpToThisInstallment = 0;
@@ -811,7 +811,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         displayAmount,
         foundPayment: !!foundPayment
       });
-      
+
       schedule.push({
         installment: i,
         dueDate: dueDate.toISOString().split('T')[0],

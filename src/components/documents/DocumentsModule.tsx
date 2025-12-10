@@ -1,8 +1,12 @@
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { 
   FileText, 
   Upload, 
@@ -12,81 +16,423 @@ import {
   FolderOpen,
   Plus,
   Eye,
-  Trash2
+  Trash2,
+  X,
+  User
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 
+interface Document {
+  id: string;
+  title: string;
+  file_name: string | null;
+  file_url: string | null;
+  description: string | null;
+  document_type: string;
+  file_size: number | null;
+  mime_type: string | null;
+  created_at: string;
+  loan_id: string | null;
+  client_id: string | null;
+}
+
+interface Loan {
+  id: string;
+  amount: number;
+  status: string;
+  clients: {
+    full_name: string;
+    dni: string;
+    phone: string | null;
+  } | null;
+}
+
 export const DocumentsModule = () => {
   const [activeTab, setActiveTab] = useState('todos');
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [documentForm, setDocumentForm] = useState({
+    title: '',
+    file_name: '',
+    description: '',
+    document_type: 'general',
+    file: null as File | null
+  });
+  
+  // Estados para búsqueda de préstamo
+  const [loanSearch, setLoanSearch] = useState('');
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [filteredLoans, setFilteredLoans] = useState<Loan[]>([]);
+  const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
+  const [showLoanDropdown, setShowLoanDropdown] = useState(false);
 
-  const handleUploadClick = () => fileInputRef.current?.click();
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    if (!user) {
-      toast.error('Debes iniciar sesión para subir documentos');
-      return;
+  useEffect(() => {
+    if (companyId) {
+      fetchLoans();
     }
-    toast.loading('Subiendo documentos...', { id: 'upload-docs' });
-    try {
-      for (const file of Array.from(files)) {
-        const filePath = `user-${user.id}/${Date.now()}-${file.name}`;
-        const { error: uploadError } = await supabase.storage.from('documents').upload(filePath, file, {
-          upsert: false,
-        });
-        if (uploadError) throw uploadError;
+  }, [companyId]);
 
-        // Save metadata in documents table
-        const { error: insertError } = await (supabase as any)
-          .from('documents')
-          .insert({
-            user_id: user.id,
-            title: file.name,
-            document_type: 'general',
-            file_url: filePath,
-            file_name: file.name,
-            mime_type: file.type || null,
-            file_size: file.size || null,
-            status: 'active',
-          });
-        if (insertError) throw insertError;
-      }
-      toast.success('Documentos subidos correctamente', { id: 'upload-docs' });
-    } catch (err: any) {
-      console.error('Error al subir documentos:', err);
-      toast.error(err.message || 'Error al subir documentos', { id: 'upload-docs' });
-    } finally {
-      e.target.value = '';
+  useEffect(() => {
+    if (selectedLoan && companyId) {
+      fetchDocuments();
+    } else {
+      setDocuments([]);
+    }
+  }, [companyId, activeTab, selectedLoan]);
+
+  const fetchLoans = async () => {
+    if (!companyId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('loans')
+        .select(`
+          id,
+          amount,
+          status,
+          clients (
+            full_name,
+            dni,
+            phone
+          )
+        `)
+        .eq('loan_officer_id', companyId)
+        .neq('status', 'deleted')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setLoans(data || []);
+      setFilteredLoans(data || []);
+    } catch (error: any) {
+      console.error('Error fetching loans:', error);
+      toast.error('Error al cargar préstamos');
     }
   };
 
-  const mockDocuments = [
-    { id: 1, name: 'Contrato Préstamo #001', type: 'Contrato', date: '2024-01-15', size: '2.4 MB' },
-    { id: 2, name: 'Comprobante Pago Cliente A', type: 'Comprobante', date: '2024-01-14', size: '1.2 MB' },
-    { id: 3, name: 'Identificación Cliente B', type: 'Identificación', date: '2024-01-13', size: '0.8 MB' },
-  ];
+  const handleLoanSearch = (searchTerm: string) => {
+    setLoanSearch(searchTerm);
+    if (searchTerm.length === 0) {
+      setFilteredLoans(loans);
+      setShowLoanDropdown(false);
+      return;
+    }
+
+    const filtered = loans.filter(loan =>
+      loan.clients?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      loan.clients?.dni?.includes(searchTerm) ||
+      (loan.clients?.phone && loan.clients.phone.includes(searchTerm)) ||
+      loan.id.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    
+    setFilteredLoans(filtered);
+    setShowLoanDropdown(filtered.length > 0);
+  };
+
+  const selectLoan = (loan: Loan) => {
+    setSelectedLoan(loan);
+    const clientName = loan.clients?.full_name || 'Sin cliente';
+    const loanInfo = `${clientName} - RD$${loan.amount.toLocaleString()}`;
+    setLoanSearch(loanInfo);
+    setShowLoanDropdown(false);
+  };
+
+  const clearLoanSelection = () => {
+    setSelectedLoan(null);
+    setLoanSearch('');
+    setFilteredLoans(loans);
+    setShowLoanDropdown(false);
+    setDocuments([]);
+  };
+
+  const fetchDocuments = async () => {
+    if (!companyId || !selectedLoan) return;
+    
+    try {
+      setLoading(true);
+      let query = supabase
+        .from('documents')
+        .select('*')
+        .eq('user_id', companyId)
+        .eq('loan_id', selectedLoan.id)
+        .order('created_at', { ascending: false });
+
+      // Filtrar por tipo según el tab activo
+      if (activeTab === 'contratos') {
+        query = query.eq('document_type', 'contract');
+      } else if (activeTab === 'comprobantes') {
+        query = query.eq('document_type', 'receipt');
+      } else if (activeTab === 'identificaciones') {
+        query = query.eq('document_type', 'identification');
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+      setDocuments(data || []);
+    } catch (error: any) {
+      console.error('Error fetching documents:', error);
+      toast.error('Error al cargar documentos');
+      setDocuments([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setDocumentForm(prev => ({
+        ...prev,
+        file,
+        file_name: prev.file_name || file.name
+      }));
+    }
+  };
+
+  const handleUploadDocument = async () => {
+    if (!documentForm.file || !documentForm.title || !documentForm.file_name) {
+      toast.error('Completa todos los campos requeridos');
+      return;
+    }
+
+    if (!selectedLoan) {
+      toast.error('Debes seleccionar un préstamo primero');
+      return;
+    }
+
+    if (!user || !companyId) {
+      toast.error('Debes iniciar sesión para subir documentos');
+      return;
+    }
+
+    try {
+      toast.loading('Subiendo documento...', { id: 'upload-doc' });
+
+      // Subir archivo a storage
+      const filePath = `user-${companyId}/loans/${selectedLoan.id}/${Date.now()}-${documentForm.file_name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, documentForm.file, {
+          upsert: false,
+        });
+
+      if (uploadError) throw uploadError;
+
+      // Guardar metadata en la tabla documents
+      const { error: insertError } = await supabase
+        .from('documents')
+        .insert({
+          user_id: companyId,
+          loan_id: selectedLoan.id,
+          client_id: null,
+          title: documentForm.title,
+          file_name: documentForm.file_name,
+          file_url: filePath,
+          description: documentForm.description || null,
+          document_type: documentForm.document_type,
+          mime_type: documentForm.file.type || null,
+          file_size: documentForm.file.size || null,
+          status: 'active',
+        });
+
+      if (insertError) throw insertError;
+
+      toast.success('Documento subido correctamente', { id: 'upload-doc' });
+      
+      // Limpiar formulario
+      setDocumentForm({
+        title: '',
+        file_name: '',
+        description: '',
+        document_type: 'general',
+        file: null
+      });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      setShowUploadDialog(false);
+      
+      // Recargar documentos
+      fetchDocuments();
+    } catch (error: any) {
+      console.error('Error al subir documento:', error);
+      toast.error(error.message || 'Error al subir documento', { id: 'upload-doc' });
+    }
+  };
+
+  const handleDownloadDocument = async (doc: Document) => {
+    try {
+      if (!doc.file_url) {
+        toast.error('No hay URL de archivo disponible');
+        return;
+      }
+
+      const { data, error } = await supabase.storage
+        .from('documents')
+        .download(doc.file_url);
+
+      if (error) throw error;
+
+      // Crear URL temporal y descargar
+      const url = window.URL.createObjectURL(data);
+      const a = window.document.createElement('a');
+      a.href = url;
+      a.download = doc.file_name || doc.title;
+      window.document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      window.document.body.removeChild(a);
+    } catch (error: any) {
+      console.error('Error al descargar documento:', error);
+      toast.error('Error al descargar documento');
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: string, fileUrl: string | null) => {
+    if (!confirm('¿Estás seguro de que deseas eliminar este documento?')) {
+      return;
+    }
+
+    try {
+      // Eliminar de storage
+      if (fileUrl) {
+        const { error: storageError } = await supabase.storage
+          .from('documents')
+          .remove([fileUrl]);
+        
+        if (storageError) {
+          console.error('Error eliminando archivo de storage:', storageError);
+        }
+      }
+
+      // Eliminar de la base de datos
+      const { error: deleteError } = await supabase
+        .from('documents')
+        .delete()
+        .eq('id', documentId);
+
+      if (deleteError) throw deleteError;
+
+      toast.success('Documento eliminado correctamente');
+      fetchDocuments();
+    } catch (error: any) {
+      console.error('Error al eliminar documento:', error);
+      toast.error('Error al eliminar documento');
+    }
+  };
+
+  const filteredDocuments = documents.filter(doc =>
+    doc.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (doc.description && doc.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (doc.file_name && doc.file_name.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  const documentStats = {
+    total: documents.length,
+    contracts: documents.filter(d => d.document_type === 'contract').length,
+    receipts: documents.filter(d => d.document_type === 'receipt').length,
+    identifications: documents.filter(d => d.document_type === 'identification').length,
+  };
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Documentos</h1>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          <Button variant="outline" className="w-full sm:w-auto">
-            <Download className="h-4 w-4 mr-2" />
-            Descargar Todos
-          </Button>
-          <Button onClick={handleUploadClick} className="w-full sm:w-auto">
+          <Button 
+            onClick={() => setShowUploadDialog(true)} 
+            className="w-full sm:w-auto"
+            disabled={!selectedLoan}
+          >
             <Upload className="h-4 w-4 mr-2" />
             Subir Documento
           </Button>
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple className="hidden" />
         </div>
       </div>
+
+      {/* Préstamo Selector */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Buscar Préstamo</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+            <Input
+              placeholder="Buscar préstamo por cliente, DNI, teléfono o ID..."
+              value={loanSearch}
+              onChange={(e) => handleLoanSearch(e.target.value)}
+              onFocus={() => {
+                if (loanSearch && filteredLoans.length > 0) {
+                  setShowLoanDropdown(true);
+                }
+              }}
+              className="pl-10 pr-10"
+            />
+            {selectedLoan && (
+              <button
+                onClick={clearLoanSelection}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+            {showLoanDropdown && filteredLoans.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
+                {filteredLoans.map((loan) => (
+                  <div
+                    key={loan.id}
+                    onClick={() => selectLoan(loan)}
+                    className="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center justify-between"
+                  >
+                    <div>
+                      <div className="font-medium">
+                        {loan.clients?.full_name || 'Sin cliente'} - RD${loan.amount.toLocaleString()}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {loan.clients?.dni && `DNI: ${loan.clients.dni}`} 
+                        {loan.clients?.phone && ` • Tel: ${loan.clients.phone}`}
+                        <span className="ml-2">• Estado: {loan.status}</span>
+                      </div>
+                    </div>
+                    <FileText className="h-4 w-4 text-gray-400" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {selectedLoan && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between">
+              <div>
+                <div className="font-medium text-blue-900">
+                  {selectedLoan.clients?.full_name || 'Sin cliente'} - RD${selectedLoan.amount.toLocaleString()}
+                </div>
+                <div className="text-sm text-blue-700">
+                  {selectedLoan.clients?.dni && `DNI: ${selectedLoan.clients.dni}`}
+                  {selectedLoan.clients?.phone && ` • Tel: ${selectedLoan.clients.phone}`}
+                  <span className="ml-2">• Estado: {selectedLoan.status}</span>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={clearLoanSelection}>
+                <X className="h-4 w-4 mr-2" />
+                Cambiar
+              </Button>
+            </div>
+          )}
+          {!selectedLoan && (
+            <div className="mt-4 p-4 text-center text-gray-500 bg-gray-50 rounded-md">
+              <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>Selecciona un préstamo para ver sus documentos</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
@@ -96,8 +442,8 @@ export const DocumentsModule = () => {
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">156</div>
-            <p className="text-xs text-muted-foreground">+12 este mes</p>
+            <div className="text-2xl font-bold">{documentStats.total}</div>
+            <p className="text-xs text-muted-foreground">Documentos en total</p>
           </CardContent>
         </Card>
 
@@ -107,7 +453,7 @@ export const DocumentsModule = () => {
             <FolderOpen className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">45</div>
+            <div className="text-2xl font-bold">{documentStats.contracts}</div>
             <p className="text-xs text-muted-foreground">Contratos activos</p>
           </CardContent>
         </Card>
@@ -118,19 +464,19 @@ export const DocumentsModule = () => {
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">89</div>
+            <div className="text-2xl font-bold">{documentStats.receipts}</div>
             <p className="text-xs text-muted-foreground">Pagos documentados</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Espacio Usado</CardTitle>
-            <Upload className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Identificaciones</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">2.4GB</div>
-            <p className="text-xs text-muted-foreground">de 10GB disponibles</p>
+            <div className="text-2xl font-bold">{documentStats.identifications}</div>
+            <p className="text-xs text-muted-foreground">Documentos de identidad</p>
           </CardContent>
         </Card>
       </div>
@@ -149,76 +495,347 @@ export const DocumentsModule = () => {
               <div className="flex items-center justify-between">
                 <CardTitle>Lista de Documentos</CardTitle>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm">
-                    <Search className="h-4 w-4 mr-2" />
-                    Buscar
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    <Filter className="h-4 w-4 mr-2" />
-                    Filtrar
-                  </Button>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+                    <Input
+                      placeholder="Buscar documentos..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-8 w-64"
+                    />
+                  </div>
                 </div>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {mockDocuments.map((doc) => (
-                  <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex items-center space-x-4">
-                      <FileText className="h-8 w-8 text-blue-500" />
-                      <div>
-                        <h3 className="font-medium">{doc.name}</h3>
-                        <p className="text-sm text-gray-500">{doc.type} • {doc.date} • {doc.size}</p>
+              {!selectedLoan ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Selecciona un préstamo para ver sus documentos</p>
+                </div>
+              ) : loading ? (
+                <div className="text-center py-8">Cargando documentos...</div>
+              ) : filteredDocuments.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay documentos {searchTerm ? 'que coincidan con la búsqueda' : 'disponibles para este préstamo'}</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredDocuments.map((doc) => (
+                    <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center space-x-4">
+                        <FileText className="h-8 w-8 text-blue-500" />
+                        <div>
+                          <h3 className="font-medium">{doc.title}</h3>
+                          <p className="text-sm text-gray-500">
+                            {doc.document_type} • {new Date(doc.created_at).toLocaleDateString('es-DO')} • 
+                            {doc.file_size ? ` ${(doc.file_size / 1024).toFixed(2)} KB` : ''}
+                          </p>
+                          {doc.description && (
+                            <p className="text-sm text-gray-600 mt-1">{doc.description}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleDownloadDocument(doc)}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleDeleteDocument(doc.id, doc.file_url)}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <Button variant="outline" size="sm">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button variant="outline" size="sm">
-                        <Download className="h-4 w-4" />
-                      </Button>
-                      <Button variant="outline" size="sm">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="contratos" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Contratos de Préstamo</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!selectedLoan ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Selecciona un préstamo para ver sus documentos</p>
+                </div>
+              ) : loading ? (
+                <div className="text-center py-8">Cargando...</div>
+              ) : filteredDocuments.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay contratos disponibles</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredDocuments.map((doc) => (
+                    <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center space-x-4">
+                        <FileText className="h-8 w-8 text-blue-500" />
+                        <div>
+                          <h3 className="font-medium">{doc.title}</h3>
+                          <p className="text-sm text-gray-500">
+                            {new Date(doc.created_at).toLocaleDateString('es-DO')} • 
+                            {doc.file_size ? ` ${(doc.file_size / 1024).toFixed(2)} KB` : ''}
+                          </p>
+                          {doc.description && (
+                            <p className="text-sm text-gray-600 mt-1">{doc.description}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleDownloadDocument(doc)}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleDeleteDocument(doc.id, doc.file_url)}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="contratos">
+        <TabsContent value="comprobantes" className="space-y-6">
           <Card>
-            <CardContent className="text-center py-8">
-              <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <h3 className="text-lg font-medium mb-2">Contratos de Préstamo</h3>
-              <p className="text-gray-600">Gestiona todos los contratos de préstamo</p>
+            <CardHeader>
+              <CardTitle>Comprobantes de Pago</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!selectedLoan ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Selecciona un préstamo para ver sus documentos</p>
+                </div>
+              ) : loading ? (
+                <div className="text-center py-8">Cargando...</div>
+              ) : filteredDocuments.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay comprobantes disponibles</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredDocuments.map((doc) => (
+                    <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center space-x-4">
+                        <FileText className="h-8 w-8 text-blue-500" />
+                        <div>
+                          <h3 className="font-medium">{doc.title}</h3>
+                          <p className="text-sm text-gray-500">
+                            {new Date(doc.created_at).toLocaleDateString('es-DO')} • 
+                            {doc.file_size ? ` ${(doc.file_size / 1024).toFixed(2)} KB` : ''}
+                          </p>
+                          {doc.description && (
+                            <p className="text-sm text-gray-600 mt-1">{doc.description}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleDownloadDocument(doc)}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleDeleteDocument(doc.id, doc.file_url)}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="comprobantes">
+        <TabsContent value="identificaciones" className="space-y-6">
           <Card>
-            <CardContent className="text-center py-8">
-              <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <h3 className="text-lg font-medium mb-2">Comprobantes de Pago</h3>
-              <p className="text-gray-600">Comprobantes y recibos de pagos</p>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="identificaciones">
-          <Card>
-            <CardContent className="text-center py-8">
-              <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <h3 className="text-lg font-medium mb-2">Documentos de Identificación</h3>
-              <p className="text-gray-600">Cédulas y documentos de identidad</p>
+            <CardHeader>
+              <CardTitle>Documentos de Identificación</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!selectedLoan ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Selecciona un préstamo para ver sus documentos</p>
+                </div>
+              ) : loading ? (
+                <div className="text-center py-8">Cargando...</div>
+              ) : filteredDocuments.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay documentos de identificación disponibles</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredDocuments.map((doc) => (
+                    <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center space-x-4">
+                        <FileText className="h-8 w-8 text-blue-500" />
+                        <div>
+                          <h3 className="font-medium">{doc.title}</h3>
+                          <p className="text-sm text-gray-500">
+                            {new Date(doc.created_at).toLocaleDateString('es-DO')} • 
+                            {doc.file_size ? ` ${(doc.file_size / 1024).toFixed(2)} KB` : ''}
+                          </p>
+                          {doc.description && (
+                            <p className="text-sm text-gray-600 mt-1">{doc.description}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleDownloadDocument(doc)}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleDeleteDocument(doc.id, doc.file_url)}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Modal de Subir Documento */}
+      <Dialog open={showUploadDialog} onOpenChange={setShowUploadDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Subir Documento</DialogTitle>
+          </DialogHeader>
+          {!selectedLoan ? (
+            <div className="p-4 text-center text-gray-500 bg-gray-50 rounded-md">
+              <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p>Debes seleccionar un préstamo primero para subir documentos</p>
+            </div>
+          ) : (
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="doc-title">Nombre del Documento *</Label>
+              <Input
+                id="doc-title"
+                value={documentForm.title}
+                onChange={(e) => setDocumentForm(prev => ({ ...prev, title: e.target.value }))}
+                placeholder="Ej: Contrato de préstamo, Comprobante de pago, etc."
+              />
+            </div>
+            <div>
+              <Label htmlFor="doc-file-name">Nombre de Guardado *</Label>
+              <Input
+                id="doc-file-name"
+                value={documentForm.file_name}
+                onChange={(e) => setDocumentForm(prev => ({ ...prev, file_name: e.target.value }))}
+                placeholder="Ej: contrato_prestamo_001.pdf"
+              />
+              <p className="text-xs text-gray-500 mt-1">Nombre con el que se guardará el archivo</p>
+            </div>
+            <div>
+              <Label htmlFor="doc-type">Tipo de Documento *</Label>
+              <select
+                id="doc-type"
+                value={documentForm.document_type}
+                onChange={(e) => setDocumentForm(prev => ({ ...prev, document_type: e.target.value }))}
+                className="w-full px-3 py-2 border rounded-md"
+              >
+                <option value="general">General</option>
+                <option value="contract">Contrato</option>
+                <option value="receipt">Comprobante</option>
+                <option value="identification">Identificación</option>
+                <option value="loan_document">Documento de Préstamo</option>
+              </select>
+            </div>
+            <div>
+              <Label htmlFor="doc-description">Descripción</Label>
+              <Textarea
+                id="doc-description"
+                value={documentForm.description}
+                onChange={(e) => setDocumentForm(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="Detalle de qué trata este documento..."
+                rows={4}
+              />
+            </div>
+            <div>
+              <Label htmlFor="doc-file">Archivo *</Label>
+              <Input
+                id="doc-file"
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                className="cursor-pointer"
+              />
+              {documentForm.file && (
+                <p className="text-sm text-gray-600 mt-1">
+                  Archivo seleccionado: {documentForm.file.name} ({(documentForm.file.size / 1024).toFixed(2)} KB)
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => {
+                setShowUploadDialog(false);
+                setDocumentForm({
+                  title: '',
+                  file_name: '',
+                  description: '',
+                  document_type: 'general',
+                  file: null
+                });
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = '';
+                }
+              }}>
+                Cancelar
+              </Button>
+              <Button onClick={handleUploadDocument}>
+                <Upload className="h-4 w-4 mr-2" />
+                Subir
+              </Button>
+            </div>
+          </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

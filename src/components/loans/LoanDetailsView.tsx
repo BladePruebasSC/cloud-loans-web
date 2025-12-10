@@ -3,6 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { 
@@ -12,7 +15,11 @@ import {
   History,
   StickyNote,
   Handshake,
-  Calendar
+  Calendar,
+  Upload,
+  FolderOpen,
+  Download,
+  Trash2
 } from 'lucide-react';
 import { LoanHistoryView } from './LoanHistoryView';
 import { AccountStatement } from './AccountStatement';
@@ -75,8 +82,19 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [selectedAgreement, setSelectedAgreement] = useState<any>(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [loanHistoryNotes, setLoanHistoryNotes] = useState<any[]>([]);
+  const [showDocuments, setShowDocuments] = useState(false);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [showUploadDocument, setShowUploadDocument] = useState(false);
+  const [documentForm, setDocumentForm] = useState({
+    title: '',
+    file_name: '',
+    description: '',
+    document_type: 'loan_document',
+    file: null as File | null
+  });
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
 
   useEffect(() => {
     if (isOpen && loanId) {
@@ -85,6 +103,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       fetchInstallments();
       fetchAgreements();
       fetchLoanHistoryNotes();
+      fetchDocuments();
     }
   }, [isOpen, loanId]);
 
@@ -193,6 +212,164 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     } catch (error) {
       console.error('Error fetching loan history notes:', error);
       setLoanHistoryNotes([]);
+    }
+  };
+
+  const fetchDocuments = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('loan_id', loanId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching documents:', error);
+        setDocuments([]);
+      } else {
+        setDocuments(data || []);
+      }
+    } catch (error) {
+      console.error('Error fetching documents:', error);
+      setDocuments([]);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setDocumentForm(prev => ({
+        ...prev,
+        file,
+        file_name: prev.file_name || file.name
+      }));
+    }
+  };
+
+  const handleUploadDocument = async () => {
+    if (!documentForm.file || !documentForm.title || !documentForm.file_name) {
+      toast.error('Completa todos los campos requeridos');
+      return;
+    }
+
+    if (!user || !companyId) {
+      toast.error('Debes iniciar sesión para subir documentos');
+      return;
+    }
+
+    try {
+      toast.loading('Subiendo documento...', { id: 'upload-doc' });
+
+      // Subir archivo a storage
+      const filePath = `user-${companyId}/loans/${loanId}/${Date.now()}-${documentForm.file_name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, documentForm.file, {
+          upsert: false,
+        });
+
+      if (uploadError) throw uploadError;
+
+      // Guardar metadata en la tabla documents
+      const { error: insertError } = await supabase
+        .from('documents')
+        .insert({
+          user_id: companyId,
+          loan_id: loanId,
+          client_id: loan?.client?.dni ? null : null, // Se puede agregar si hay client_id disponible
+          title: documentForm.title,
+          file_name: documentForm.file_name,
+          file_url: filePath,
+          description: documentForm.description || null,
+          document_type: documentForm.document_type,
+          mime_type: documentForm.file.type || null,
+          file_size: documentForm.file.size || null,
+          status: 'active',
+        });
+
+      if (insertError) throw insertError;
+
+      toast.success('Documento subido correctamente', { id: 'upload-doc' });
+      
+      // Limpiar formulario
+      setDocumentForm({
+        title: '',
+        file_name: '',
+        description: '',
+        document_type: 'loan_document',
+        file: null
+      });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      setShowUploadDocument(false);
+      
+      // Recargar documentos
+      fetchDocuments();
+    } catch (error: any) {
+      console.error('Error al subir documento:', error);
+      toast.error(error.message || 'Error al subir documento', { id: 'upload-doc' });
+    }
+  };
+
+  const handleDownloadDocument = async (doc: any) => {
+    try {
+      if (!doc.file_url) {
+        toast.error('No hay URL de archivo disponible');
+        return;
+      }
+
+      const { data, error } = await supabase.storage
+        .from('documents')
+        .download(doc.file_url);
+
+      if (error) throw error;
+
+      // Crear URL temporal y descargar
+      const url = window.URL.createObjectURL(data);
+      const a = window.document.createElement('a');
+      a.href = url;
+      a.download = doc.file_name || doc.title;
+      window.document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      window.document.body.removeChild(a);
+    } catch (error: any) {
+      console.error('Error al descargar documento:', error);
+      toast.error('Error al descargar documento');
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: string, fileUrl: string) => {
+    if (!confirm('¿Estás seguro de que deseas eliminar este documento?')) {
+      return;
+    }
+
+    try {
+      // Eliminar de storage
+      if (fileUrl) {
+        const { error: storageError } = await supabase.storage
+          .from('documents')
+          .remove([fileUrl]);
+        
+        if (storageError) {
+          console.error('Error eliminando archivo de storage:', storageError);
+        }
+      }
+
+      // Eliminar de la base de datos
+      const { error: deleteError } = await supabase
+        .from('documents')
+        .delete()
+        .eq('id', documentId);
+
+      if (deleteError) throw deleteError;
+
+      toast.success('Documento eliminado correctamente');
+      fetchDocuments();
+    } catch (error: any) {
+      console.error('Error al eliminar documento:', error);
+      toast.error('Error al eliminar documento');
     }
   };
 
@@ -575,6 +752,10 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                   <Calendar className="h-4 w-4 mr-2" />
                   Agendas
                 </Button>
+                <Button variant="outline" onClick={() => setShowDocuments(true)}>
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                  Documentos
+                </Button>
               </div>
             </div>
           )}
@@ -740,7 +921,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       </CardContent>
                     </Card>
                   ))}
-                </div>
+            </div>
               )}
             </div>
           </DialogContent>
@@ -786,7 +967,179 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
               }}
             />
           </div>
-        </div>
+            </div>
+      )}
+
+      {/* Modal de Documentos */}
+      {showDocuments && (
+        <Dialog open={showDocuments} onOpenChange={setShowDocuments}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center justify-between">
+                <span>Documentos del Préstamo</span>
+                <Button onClick={() => setShowUploadDocument(true)}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Subir Documento
+                </Button>
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              {documents.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <FolderOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay documentos para este préstamo</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {documents.map((doc) => (
+                    <Card key={doc.id}>
+                      <CardContent className="p-4">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <FileText className="h-5 w-5 text-blue-500" />
+                              <h3 className="font-semibold">{doc.title}</h3>
+                            </div>
+                            <div className="text-sm text-gray-600 space-y-1">
+                              <div><strong>Nombre de archivo:</strong> {doc.file_name || 'N/A'}</div>
+                              {doc.description && (
+                                <div><strong>Descripción:</strong> {doc.description}</div>
+                              )}
+                              <div>
+                                <strong>Fecha:</strong> {new Date(doc.created_at || '').toLocaleDateString('es-DO', {
+                                  year: 'numeric',
+                                  month: 'long',
+                                  day: 'numeric'
+                                })}
+                              </div>
+                              {doc.file_size && (
+                                <div>
+                                  <strong>Tamaño:</strong> {(doc.file_size / 1024).toFixed(2)} KB
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDownloadDocument(doc)}
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDeleteDocument(doc.id, doc.file_url || '')}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Modal de Subir Documento */}
+      {showUploadDocument && (
+        <Dialog open={showUploadDocument} onOpenChange={setShowUploadDocument}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Subir Documento</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="doc-title">Nombre del Documento *</Label>
+                <Input
+                  id="doc-title"
+                  value={documentForm.title}
+                  onChange={(e) => setDocumentForm(prev => ({ ...prev, title: e.target.value }))}
+                  placeholder="Ej: Contrato de préstamo, Comprobante de pago, etc."
+                />
+              </div>
+              <div>
+                <Label htmlFor="doc-file-name">Nombre de Guardado *</Label>
+                <Input
+                  id="doc-file-name"
+                  value={documentForm.file_name}
+                  onChange={(e) => setDocumentForm(prev => ({ ...prev, file_name: e.target.value }))}
+                  placeholder="Ej: contrato_prestamo_001.pdf"
+                />
+                <p className="text-xs text-gray-500 mt-1">Nombre con el que se guardará el archivo</p>
+              </div>
+              <div>
+                <Label htmlFor="doc-type">Tipo de Documento *</Label>
+                <select
+                  id="doc-type"
+                  value={documentForm.document_type}
+                  onChange={(e) => setDocumentForm(prev => ({ ...prev, document_type: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-md"
+                >
+                  <option value="loan_document">Documento de Préstamo</option>
+                  <option value="contract">Contrato</option>
+                  <option value="receipt">Comprobante</option>
+                  <option value="identification">Identificación</option>
+                  <option value="general">General</option>
+                  <option value="invoice">Factura</option>
+                  <option value="statement">Estado de Cuenta</option>
+                  <option value="other">Otro</option>
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="doc-description">Descripción</Label>
+                <Textarea
+                  id="doc-description"
+                  value={documentForm.description}
+                  onChange={(e) => setDocumentForm(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Detalle de qué trata este documento..."
+                  rows={4}
+                />
+              </div>
+              <div>
+                <Label htmlFor="doc-file">Archivo *</Label>
+                <Input
+                  id="doc-file"
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileSelect}
+                  className="cursor-pointer"
+                />
+                {documentForm.file && (
+                  <p className="text-sm text-gray-600 mt-1">
+                    Archivo seleccionado: {documentForm.file.name} ({(documentForm.file.size / 1024).toFixed(2)} KB)
+                  </p>
+                )}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => {
+                  setShowUploadDocument(false);
+                  setDocumentForm({
+                    title: '',
+                    file_name: '',
+                    description: '',
+                    document_type: 'loan_document',
+                    file: null
+                  });
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = '';
+                  }
+                }}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleUploadDocument}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Subir
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
     </>
   );

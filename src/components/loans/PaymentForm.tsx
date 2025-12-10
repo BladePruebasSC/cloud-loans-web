@@ -1353,21 +1353,21 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                 />
                               </FormControl>
                               {lateFeeAmount > 0 && (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => field.onChange(roundToTwoDecimals(lateFeeAmount))}
-                                  className="whitespace-nowrap"
-                                >
-                                  Pagar Toda
-                                </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => field.onChange(roundToTwoDecimals(lateFeeAmount))}
+                                className="whitespace-nowrap"
+                              >
+                                Pagar Toda
+                              </Button>
                               )}
                             </div>
                             {lateFeeAmount > 0 ? (
-                              <div className="text-xs text-orange-600 mt-1">
-                                💡 Mora pendiente: RD${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </div>
+                            <div className="text-xs text-orange-600 mt-1">
+                              💡 Mora pendiente: RD${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
                             ) : (
                               <div className="text-xs text-green-600 mt-1">
                                 ✅ No hay mora pendiente

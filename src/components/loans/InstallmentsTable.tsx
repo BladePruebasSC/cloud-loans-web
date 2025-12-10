@@ -64,7 +64,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       // Hacer ambas consultas en paralelo para mayor velocidad
       const [loanInfoResult, installmentsResult] = await Promise.all([
         supabase
-          .from('loans')
+        .from('loans')
           .select(`
             id,
             amount,
@@ -81,12 +81,12 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               dni
             )
           `)
-          .eq('id', loanId)
+        .eq('id', loanId)
           .single(),
         supabase
-          .from('installments')
-          .select('*')
-          .eq('loan_id', loanId)
+        .from('installments')
+        .select('*')
+        .eq('loan_id', loanId)
           .order('installment_number', { ascending: true })
       ]);
 
@@ -150,20 +150,20 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         // Hacer las actualizaciones en segundo plano sin bloquear
         setTimeout(async () => {
           const updates = [];
-          for (let i = 0; i < (data || []).length; i++) {
-            const originalInstallment = data[i];
-            const correctedInstallment = correctedInstallments[i];
-            
-            if ((!originalInstallment.amount || originalInstallment.amount === 0) && 
-                correctedInstallment.amount > 0) {
+        for (let i = 0; i < (data || []).length; i++) {
+          const originalInstallment = data[i];
+          const correctedInstallment = correctedInstallments[i];
+          
+          if ((!originalInstallment.amount || originalInstallment.amount === 0) && 
+              correctedInstallment.amount > 0) {
               updates.push(
                 supabase
-                  .from('installments')
-                  .update({
-                    amount: correctedInstallment.amount,
-                    principal_amount: correctedInstallment.principal_amount,
-                    interest_amount: correctedInstallment.interest_amount
-                  })
+                .from('installments')
+                .update({
+                  amount: correctedInstallment.amount,
+                  principal_amount: correctedInstallment.principal_amount,
+                  interest_amount: correctedInstallment.interest_amount
+                })
                   .eq('id', originalInstallment.id)
               );
             }
@@ -171,7 +171,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           // Ejecutar todas las actualizaciones en paralelo
           if (updates.length > 0) {
             await Promise.all(updates);
-          }
+            }
         }, 0);
       }
     } catch (error) {
