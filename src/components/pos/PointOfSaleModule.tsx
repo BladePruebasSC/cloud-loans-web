@@ -884,9 +884,8 @@ export const PointOfSaleModule = () => {
           if (hasFinancing && saleData.customer) {
             try {
               const financingSplit = saleData.paymentSplits.find(split => split.method.type === 'financing');
-              // El monto del préstamo es el total menos cualquier enganche pagado
-              const downPayment = financingSplit?.amount || 0;
-              loanAmount = saleData.total - downPayment;
+              // El monto del préstamo es exactamente el monto indicado en el campo de financiamiento
+              loanAmount = financingSplit?.amount || 0;
               
               const interestRate = financingSplit?.details?.financingRate || saleData.paymentDetails?.financingRate || saleData.financingRate || 20;
               termMonths = financingSplit?.details?.financingMonths || saleData.paymentDetails?.financingMonths || saleData.financingMonths || 12;

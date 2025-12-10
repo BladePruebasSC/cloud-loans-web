@@ -34,7 +34,7 @@ import { PaymentForm } from './PaymentForm';
 import { Handshake } from 'lucide-react';
 
 const updateSchema = z.object({
-  update_type: z.enum(['add_charge', 'term_extension', 'balance_adjustment', 'delete_loan', 'remove_late_fee', 'payment_agreement']),
+  update_type: z.enum(['add_charge', 'term_extension', 'balance_adjustment', 'delete_loan', 'remove_late_fee', 'payment_agreement', 'edit_loan']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   late_fee_amount: z.number().min(0.01, 'El monto de mora debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
@@ -43,6 +43,15 @@ const updateSchema = z.object({
   reference_number: z.string().optional(),
   notes: z.string().optional(),
   charge_date: z.string().optional(), // Fecha de creación del cargo
+  // Campos para editar préstamo
+  edit_amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
+  edit_interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0').optional(),
+  edit_term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes').optional(),
+  edit_amortization_type: z.enum(['simple', 'french']).optional(),
+  edit_payment_frequency: z.enum(['daily', 'weekly', 'biweekly', 'monthly']).optional(),
+  edit_late_fee_enabled: z.boolean().optional(),
+  edit_late_fee_rate: z.number().min(0).max(100).optional(),
+  edit_grace_period_days: z.number().min(0).max(30).optional(),
 }).refine((data) => {
   if (data.update_type === 'remove_late_fee') {
     return data.late_fee_amount !== undefined && data.late_fee_amount > 0;
@@ -59,6 +68,15 @@ const updateSchema = z.object({
 }, {
   message: 'Debe especificar la fecha del cargo',
   path: ['charge_date'],
+}).refine((data) => {
+  if (data.update_type === 'edit_loan') {
+    return data.edit_amount !== undefined && data.edit_interest_rate !== undefined && 
+           data.edit_term_months !== undefined && data.edit_amortization_type !== undefined;
+  }
+  return true;
+}, {
+  message: 'Debe completar todos los campos requeridos para editar el préstamo',
+  path: ['edit_amount'],
 });
 
 type UpdateFormData = z.infer<typeof updateSchema>;
@@ -82,6 +100,7 @@ interface Loan {
   grace_period_days?: number;
   max_late_fee?: number;
   late_fee_calculation_type?: 'daily' | 'monthly' | 'compound';
+  amortization_type?: string;
   client: {
     full_name: string;
     dni: string;
@@ -226,7 +245,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     },
   });
 
-  const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount']);
+  const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount', 'edit_amount', 'edit_interest_rate', 'edit_term_months', 'edit_amortization_type']);
 
   useEffect(() => {
     const updateType = form.watch('update_type');
@@ -318,7 +337,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
 
   const calculateUpdatedValues = () => {
-    const [updateType, amount, additionalMonths] = watchedValues;
+    const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType] = watchedValues;
     
     let newBalance = loan.remaining_balance;
     let newPayment = loan.monthly_payment;
@@ -363,6 +382,45 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       case 'balance_adjustment':
         if (amount) {
           newBalance = amount;
+        }
+        break;
+        
+      case 'edit_loan':
+        if (editAmount && editInterestRate !== undefined && editTermMonths && editAmortizationType) {
+          // Calcular nueva cuota mensual según el tipo de amortización
+          let monthlyInterest = 0;
+          let monthlyPrincipal = 0;
+          
+          if (editAmortizationType === 'french') {
+            // Amortización francesa - cuota fija
+            const periodRate = editInterestRate / 100;
+            if (periodRate > 0) {
+              newPayment = (editAmount * periodRate * Math.pow(1 + periodRate, editTermMonths)) / 
+                          (Math.pow(1 + periodRate, editTermMonths) - 1);
+              monthlyInterest = editAmount * periodRate;
+              monthlyPrincipal = newPayment - monthlyInterest;
+            } else {
+              newPayment = editAmount / editTermMonths;
+              monthlyPrincipal = newPayment;
+              monthlyInterest = 0;
+            }
+          } else {
+            // Amortización simple (por defecto)
+            monthlyInterest = Math.round((editAmount * editInterestRate / 100) * 100) / 100;
+            monthlyPrincipal = Math.round((editAmount / editTermMonths) * 100) / 100;
+            newPayment = Math.round((monthlyInterest + monthlyPrincipal) * 100) / 100;
+          }
+          
+          newBalance = editAmount; // El balance restante es el nuevo monto
+          
+          // Calcular nueva fecha de fin
+          const startDate = new Date(loan.start_date);
+          const newEndDateObj = new Date(startDate);
+          newEndDateObj.setMonth(newEndDateObj.getMonth() + editTermMonths);
+          newEndDate = newEndDateObj.toISOString().split('T')[0];
+          
+          interestAmount = monthlyInterest;
+          principalAmount = monthlyPrincipal;
         }
         break;
         
@@ -596,6 +654,113 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // La mora se recalculará automáticamente basándose en las cuotas pendientes
           break;
           
+        case 'edit_loan':
+          // Solo permitir editar préstamos pendientes
+          if (loan.status !== 'pending') {
+            toast.error('Solo se pueden editar préstamos pendientes');
+            setLoading(false);
+            return;
+          }
+          
+          if (!data.edit_amount || !data.edit_interest_rate || !data.edit_term_months || !data.edit_amortization_type) {
+            toast.error('Debe completar todos los campos requeridos');
+            setLoading(false);
+            return;
+          }
+          
+          // Calcular nuevas fechas
+          const startDate = new Date(loan.start_date);
+          const newEndDate = new Date(startDate);
+          newEndDate.setMonth(newEndDate.getMonth() + data.edit_term_months);
+          const nextPaymentDate = new Date(startDate);
+          nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
+          const firstPaymentDate = new Date(nextPaymentDate);
+          
+          // Calcular total_amount
+          const totalInterest = (data.edit_amount * data.edit_interest_rate * data.edit_term_months) / 100;
+          const totalAmount = data.edit_amount + totalInterest;
+          
+          loanUpdates = {
+            amount: data.edit_amount,
+            interest_rate: data.edit_interest_rate,
+            term_months: data.edit_term_months,
+            monthly_payment: calculatedValues.newPayment,
+            total_amount: totalAmount,
+            remaining_balance: data.edit_amount,
+            end_date: newEndDate.toISOString().split('T')[0],
+            next_payment_date: nextPaymentDate.toISOString().split('T')[0],
+            first_payment_date: firstPaymentDate.toISOString().split('T')[0],
+            amortization_type: data.edit_amortization_type,
+            payment_frequency: data.edit_payment_frequency || loan.payment_frequency || 'monthly',
+            late_fee_enabled: data.edit_late_fee_enabled !== undefined ? data.edit_late_fee_enabled : (loan.late_fee_enabled || false),
+            late_fee_rate: data.edit_late_fee_enabled && data.edit_late_fee_rate !== undefined ? data.edit_late_fee_rate : (loan.late_fee_rate || null),
+            grace_period_days: data.edit_late_fee_enabled && data.edit_grace_period_days !== undefined ? data.edit_grace_period_days : (loan.grace_period_days || null),
+          };
+          
+          // Eliminar todas las cuotas existentes y crear nuevas
+          const { error: deleteInstallmentsError } = await supabase
+            .from('installments')
+            .delete()
+            .eq('loan_id', loan.id);
+          
+          if (deleteInstallmentsError) {
+            console.error('Error eliminando cuotas antiguas:', deleteInstallmentsError);
+            toast.error('Error al eliminar cuotas antiguas');
+            setLoading(false);
+            return;
+          }
+          
+          // Crear nuevas cuotas
+          const newInstallments = [];
+          const monthlyInterest = calculatedValues.interestAmount;
+          const monthlyPrincipal = calculatedValues.principalAmount;
+          const paymentFrequency = data.edit_payment_frequency || loan.payment_frequency || 'monthly';
+          
+          for (let i = 1; i <= data.edit_term_months; i++) {
+            const dueDate = new Date(firstPaymentDate);
+            let periodsToAdd = i - 1;
+            
+            switch (paymentFrequency) {
+              case 'daily':
+                dueDate.setDate(dueDate.getDate() + periodsToAdd);
+                break;
+              case 'weekly':
+                dueDate.setDate(dueDate.getDate() + periodsToAdd * 7);
+                break;
+              case 'biweekly':
+                dueDate.setDate(dueDate.getDate() + periodsToAdd * 14);
+                break;
+              case 'monthly':
+                dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
+                break;
+              default:
+                dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
+            }
+            
+            newInstallments.push({
+              loan_id: loan.id,
+              installment_number: i,
+              due_date: dueDate.toISOString().split('T')[0],
+              total_amount: calculatedValues.newPayment,
+              principal_amount: monthlyPrincipal,
+              interest_amount: monthlyInterest,
+              is_paid: false,
+              late_fee_paid: 0
+            });
+          }
+          
+          const { error: insertInstallmentsError } = await supabase
+            .from('installments')
+            .insert(newInstallments);
+          
+          if (insertInstallmentsError) {
+            console.error('Error creando nuevas cuotas:', insertInstallmentsError);
+            toast.error('Error al crear nuevas cuotas');
+            setLoading(false);
+            return;
+          }
+          
+          break;
           
         case 'delete_loan':
           loanUpdates = {
@@ -777,6 +942,24 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           if (data.charge_date) {
             historyData.charge_date = data.charge_date;
           }
+        } else if (updateType === 'edit_loan') {
+          historyData.old_values = {
+            amount: loan.amount,
+            balance: loan.remaining_balance,
+            payment: loan.monthly_payment,
+            rate: loan.interest_rate,
+            term_months: loan.term_months,
+            amortization_type: loan.amortization_type || 'simple'
+          };
+          historyData.new_values = {
+            amount: data.edit_amount || loan.amount,
+            balance: calculatedValues.newBalance,
+            payment: calculatedValues.newPayment,
+            rate: data.edit_interest_rate || loan.interest_rate,
+            term_months: data.edit_term_months || loan.term_months,
+            amortization_type: data.edit_amortization_type || loan.amortization_type || 'simple'
+          };
+          historyData.amount = data.edit_amount || loan.amount;
         } else {
           historyData.amount = data.amount;
         }
@@ -810,7 +993,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         term_extension: 'Plazo extendido exitosamente',
         balance_adjustment: 'Balance ajustado exitosamente',
         delete_loan: 'Préstamo eliminado exitosamente (recuperable por 2 meses)',
-        remove_late_fee: `Mora eliminada exitosamente`
+        remove_late_fee: `Mora eliminada exitosamente`,
+        edit_loan: 'Préstamo editado exitosamente. Las cuotas han sido recalculadas.'
       };
 
       const message = updateType === 'remove_late_fee' 
@@ -850,6 +1034,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       case 'delete_loan': return <Trash2 className="h-4 w-4" />;
       case 'remove_late_fee': return <MinusCircle className="h-4 w-4" />;
       case 'payment_agreement': return <Handshake className="h-4 w-4" />;
+      case 'edit_loan': return <Edit className="h-4 w-4" />;
       default: return <Edit className="h-4 w-4" />;
     }
   };
@@ -861,7 +1046,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       balance_adjustment: 'Ajuste de Balance',
       delete_loan: 'Eliminar Préstamo',
       remove_late_fee: 'Eliminar Mora',
-      payment_agreement: 'Acuerdos de Pago'
+      payment_agreement: 'Acuerdos de Pago',
+      edit_loan: 'Editar Préstamo'
     };
     return labels[type as keyof typeof labels] || type;
   };
@@ -922,6 +1108,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           { value: 'administrative_decision', label: 'Decisión Administrativa' },
           { value: 'client_complaint', label: 'Reclamo del Cliente' },
           { value: 'system_error', label: 'Error del Sistema' },
+          { value: 'other', label: 'Otra Razón' }
+        ];
+      case 'edit_loan':
+        return [
+          { value: 'data_correction', label: 'Corrección de Datos' },
+          { value: 'client_request', label: 'Solicitud del Cliente' },
+          { value: 'rate_adjustment', label: 'Ajuste de Tasa' },
+          { value: 'term_adjustment', label: 'Ajuste de Plazo' },
+          { value: 'amount_adjustment', label: 'Ajuste de Monto' },
           { value: 'other', label: 'Otra Razón' }
         ];
       default:
@@ -1000,6 +1195,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   Acuerdos de Pago
                                 </div>
                               </SelectItem>
+                              {loan.status === 'pending' && (
+                                <SelectItem value="edit_loan">
+                                  <div className="flex items-center gap-2">
+                                    <Edit className="h-4 w-4" />
+                                    Editar Préstamo
+                                  </div>
+                                </SelectItem>
+                              )}
                             </SelectContent>
                           </Select>
                           <FormMessage />
@@ -1134,6 +1337,203 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       />
                     )}
 
+                    {form.watch('update_type') === 'edit_loan' && (
+                      <div className="space-y-4">
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                          <div className="text-sm text-yellow-800">
+                            <strong>Nota:</strong> Solo se pueden editar préstamos pendientes. Al editar, se eliminarán todas las cuotas existentes y se crearán nuevas cuotas según los nuevos parámetros.
+                          </div>
+                        </div>
+                        <FormField
+                          control={form.control}
+                          name="edit_amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Monto del Préstamo</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder={loan.amount.toString()}
+                                  step="0.01"
+                                  {...field}
+                                  value={field.value || loan.amount}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    field.onChange(value === '' ? loan.amount : parseFloat(value) || loan.amount);
+                                  }}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="edit_interest_rate"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Tasa de Interés (%)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder={loan.interest_rate.toString()}
+                                  step="0.01"
+                                  {...field}
+                                  value={field.value || loan.interest_rate}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    field.onChange(value === '' ? loan.interest_rate : parseFloat(value) || loan.interest_rate);
+                                  }}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="edit_term_months"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Plazo (Meses)</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder={loan.term_months.toString()}
+                                  min="1"
+                                  {...field}
+                                  value={field.value || loan.term_months}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    field.onChange(value === '' ? loan.term_months : parseInt(value) || loan.term_months);
+                                  }}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="edit_amortization_type"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Tipo de Amortización</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value || loan.amortization_type || 'simple'}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Seleccionar tipo de amortización" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="simple">Simple</SelectItem>
+                                  <SelectItem value="french">Francesa</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="edit_payment_frequency"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Frecuencia de Pago</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value || loan.payment_frequency || 'monthly'}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Seleccionar frecuencia" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="daily">Diaria</SelectItem>
+                                  <SelectItem value="weekly">Semanal</SelectItem>
+                                  <SelectItem value="biweekly">Quincenal</SelectItem>
+                                  <SelectItem value="monthly">Mensual</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="edit_late_fee_enabled"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                              <div className="space-y-0.5">
+                                <FormLabel>Habilitar Mora</FormLabel>
+                                <div className="text-sm text-muted-foreground">
+                                  Activar cálculo de mora para este préstamo
+                                </div>
+                              </div>
+                              <FormControl>
+                                <input
+                                  type="checkbox"
+                                  checked={field.value !== undefined ? field.value : (loan.late_fee_enabled || false)}
+                                  onChange={(e) => field.onChange(e.target.checked)}
+                                  className="h-4 w-4"
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                        {form.watch('edit_late_fee_enabled') && (
+                          <>
+                            <FormField
+                              control={form.control}
+                              name="edit_late_fee_rate"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Tasa de Mora (%)</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      placeholder={(loan.late_fee_rate || 3).toString()}
+                                      step="0.01"
+                                      min="0"
+                                      max="100"
+                                      {...field}
+                                      value={field.value || loan.late_fee_rate || 3}
+                                      onChange={(e) => {
+                                        const value = e.target.value;
+                                        field.onChange(value === '' ? (loan.late_fee_rate || 3) : parseFloat(value) || (loan.late_fee_rate || 3));
+                                      }}
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={form.control}
+                              name="edit_grace_period_days"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Días de Gracia</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      placeholder={(loan.grace_period_days || 3).toString()}
+                                      min="0"
+                                      max="30"
+                                      {...field}
+                                      value={field.value || loan.grace_period_days || 3}
+                                      onChange={(e) => {
+                                        const value = e.target.value;
+                                        field.onChange(value === '' ? (loan.grace_period_days || 3) : parseInt(value) || (loan.grace_period_days || 3));
+                                      }}
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </>
+                        )}
+                      </div>
+                    )}
 
                     {form.watch('update_type') === 'add_charge' && (
                       <>
@@ -1203,6 +1603,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                 {form.watch('update_type') === 'add_charge' ? 'Razón del Cargo' :
                                  form.watch('update_type') === 'delete_loan' ? 'Razón de Eliminación' :
                                  form.watch('update_type') === 'remove_late_fee' ? 'Razón de Eliminación de Mora' :
+                                 form.watch('update_type') === 'edit_loan' ? 'Razón de Edición' :
                                  'Razón del Ajuste'}
                               </FormLabel>
                               <Select onValueChange={field.onChange} value={field.value}>

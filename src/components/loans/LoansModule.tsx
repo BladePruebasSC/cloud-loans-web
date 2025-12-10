@@ -1121,7 +1121,7 @@ export const LoansModule = () => {
                         {/* Botones de acción mejorados */}
                         <div className="border-t border-gray-100 pt-6">
                           {loan.status === 'pending' ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                               <Button
                                 variant="default"
                                 size="lg"
@@ -1130,6 +1130,18 @@ export const LoansModule = () => {
                               >
                                 <CheckCircle className="h-5 w-5 mr-2" />
                                 Aprobar Préstamo
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="lg"
+                                onClick={() => {
+                                  setSelectedLoan(loan);
+                                  setShowUpdateForm(true);
+                                }}
+                                className="h-12 text-base font-semibold border-2 border-blue-200 text-blue-700 hover:bg-blue-50 hover:border-blue-300 transition-all duration-200"
+                              >
+                                <Edit className="h-5 w-5 mr-2" />
+                                Editar
                               </Button>
                               <Button
                                 variant="destructive"
