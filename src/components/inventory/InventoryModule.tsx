@@ -131,7 +131,8 @@ const InventoryModule = () => {
   
   const [salesDateFrom, setSalesDateFrom] = useState<string>('');
   const [salesDateTo, setSalesDateTo] = useState<string>('');
-  const [salesProductFilter, setSalesProductFilter] = useState<string>('');
+  const [salesProductFilter, setSalesProductFilter] = useState<string>(''); // ID del producto para filtrar
+  const [salesProductFilterName, setSalesProductFilterName] = useState<string>(''); // Nombre del producto para mostrar
   const [salesCategoryFilter, setSalesCategoryFilter] = useState<string>('');
   const [salesBrandFilter, setSalesBrandFilter] = useState<string>('');
   const [showSalesProductSuggestions, setShowSalesProductSuggestions] = useState(false);
@@ -157,7 +158,8 @@ const InventoryModule = () => {
   const [loadingMovements, setLoadingMovements] = useState(false);
   const [movementDateFrom, setMovementDateFrom] = useState<string>('');
   const [movementDateTo, setMovementDateTo] = useState<string>('');
-  const [movementProductFilter, setMovementProductFilter] = useState<string>('');
+  const [movementProductFilter, setMovementProductFilter] = useState<string>(''); // ID del producto para filtrar
+  const [movementProductFilterName, setMovementProductFilterName] = useState<string>(''); // Nombre del producto para mostrar
   const [movementCategoryFilter, setMovementCategoryFilter] = useState<string>('');
   const [movementBrandFilter, setMovementBrandFilter] = useState<string>('');
   const [showMovementProductSuggestions, setShowMovementProductSuggestions] = useState(false);
@@ -2679,11 +2681,20 @@ const InventoryModule = () => {
                   <div className="relative">
                     <Input
                       placeholder="Buscar producto..."
-                      value={salesProductFilter}
-                      onChange={(e) => handleSalesProductSearch(e.target.value)}
+                      value={salesProductFilterName}
+                      onChange={(e) => {
+                        const searchValue = e.target.value;
+                        setSalesProductFilterName(searchValue);
+                        // Si se borra el texto, limpiar también el filtro
+                        if (!searchValue.trim()) {
+                          setSalesProductFilter('');
+                      setSalesProductFilterName('');
+                        }
+                        handleSalesProductSearch(searchValue);
+                      }}
                       onFocus={() => {
-                        if (salesProductFilter.trim()) {
-                          handleSalesProductSearch(salesProductFilter);
+                        if (salesProductFilterName.trim()) {
+                          handleSalesProductSearch(salesProductFilterName);
                         }
                       }}
                       onBlur={() => {
@@ -2698,7 +2709,8 @@ const InventoryModule = () => {
                             className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
                             onMouseDown={(e) => {
                               e.preventDefault();
-                              setSalesProductFilter(product.id);
+                              setSalesProductFilter(product.id); // Guardar ID para filtrar
+                              setSalesProductFilterName(product.name); // Mostrar nombre en el campo
                               setShowSalesProductSuggestions(false);
                             }}
                           >
@@ -2795,6 +2807,7 @@ const InventoryModule = () => {
                       setSalesDateFrom(getTodayStart());
                       setSalesDateTo(getTodayEnd());
                       setSalesProductFilter('');
+                      setSalesProductFilterName('');
                       setSalesCategoryFilter('');
                       setSalesBrandFilter('');
                     }}
@@ -3047,11 +3060,19 @@ const InventoryModule = () => {
                   <div className="relative">
                     <Input
                       placeholder="Buscar producto..."
-                      value={movementProductFilter}
-                      onChange={(e) => handleMovementProductSearch(e.target.value)}
+                      value={movementProductFilterName}
+                      onChange={(e) => {
+                        const searchValue = e.target.value;
+                        setMovementProductFilterName(searchValue);
+                        // Si se borra el texto, limpiar también el filtro
+                        if (!searchValue.trim()) {
+                          setMovementProductFilter('');
+                        }
+                        handleMovementProductSearch(searchValue);
+                      }}
                       onFocus={() => {
-                        if (movementProductFilter.trim()) {
-                          handleMovementProductSearch(movementProductFilter);
+                        if (movementProductFilterName.trim()) {
+                          handleMovementProductSearch(movementProductFilterName);
                         }
                       }}
                       onBlur={() => {
@@ -3066,7 +3087,8 @@ const InventoryModule = () => {
                             className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
                             onMouseDown={(e) => {
                               e.preventDefault();
-                              setMovementProductFilter(product.id);
+                              setMovementProductFilter(product.id); // Guardar ID para filtrar
+                              setMovementProductFilterName(product.name); // Mostrar nombre en el campo
                               setShowMovementProductSuggestions(false);
                             }}
                           >
@@ -3163,6 +3185,7 @@ const InventoryModule = () => {
                       setMovementDateFrom('');
                       setMovementDateTo('');
                       setMovementProductFilter('');
+                      setMovementProductFilterName('');
                       setMovementCategoryFilter('');
                       setMovementBrandFilter('');
                     }}
