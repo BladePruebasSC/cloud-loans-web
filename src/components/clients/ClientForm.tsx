@@ -47,6 +47,24 @@ const defaultFormState: ClientFormState = {
   status: 'active'
 };
 
+// Función para formatear cédula dominicana: 000-0000000-0
+const formatDni = (value: string): string => {
+  // Remover todo excepto números
+  const numbers = value.replace(/\D/g, '');
+  
+  // Limitar a 11 dígitos
+  const limited = numbers.slice(0, 11);
+  
+  // Aplicar formato: 000-0000000-0
+  if (limited.length <= 3) {
+    return limited;
+  } else if (limited.length <= 10) {
+    return `${limited.slice(0, 3)}-${limited.slice(3)}`;
+  } else {
+    return `${limited.slice(0, 3)}-${limited.slice(3, 10)}-${limited.slice(10)}`;
+  }
+};
+
 const ClientForm = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -55,6 +73,7 @@ const ClientForm = () => {
 
   const isEditing = location.pathname.startsWith('/clientes/editar');
   const [formData, setFormData] = useState<ClientFormState>(defaultFormState);
+  const [previousFormData, setPreviousFormData] = useState<ClientFormState>(defaultFormState);
   const [loading, setLoading] = useState(isEditing);
   const [saving, setSaving] = useState(false);
 
@@ -83,10 +102,10 @@ const ClientForm = () => {
         return;
       }
 
-      setFormData({
+      const loadedData = {
         full_name: data.full_name || '',
-        dni: data.dni || '',
-        phone: data.phone || '',
+        dni: data.dni ? formatDni(data.dni) : '',
+        phone: data.phone || '', // Sin formato
         email: data.email || '',
         address: data.address || '',
         city: data.city || '',
@@ -96,7 +115,9 @@ const ClientForm = () => {
         monthly_income: data.monthly_income ? String(data.monthly_income) : '',
         credit_score: data.credit_score ? String(data.credit_score) : '',
         status: (data.status as ClientFormState['status']) || 'active'
-      });
+      };
+      setFormData(loadedData);
+      setPreviousFormData(loadedData);
     } catch (error) {
       console.error('Error cargando cliente', error);
       toast.error('No se pudo cargar la información del cliente');
@@ -107,10 +128,24 @@ const ClientForm = () => {
   };
 
   const handleChange = (field: keyof ClientFormState, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: value
-    }));
+    let formattedValue = value;
+    
+    // Aplicar formato automático solo para DNI
+    if (field === 'dni') {
+      formattedValue = formatDni(value);
+    }
+    // Para teléfono, no aplicar formato - dejar que el usuario escriba libremente
+    
+    // Actualizar el estado con el nuevo valor
+    setFormData((prev) => {
+      const updated = {
+        ...prev,
+        [field]: formattedValue
+      };
+      // Guardar el nuevo valor como "anterior" para la próxima actualización
+      setPreviousFormData(updated);
+      return updated;
+    });
   };
 
   const handleSubmit = async (event: FormEvent) => {
@@ -126,10 +161,23 @@ const ClientForm = () => {
       return;
     }
 
+    // Limpiar formato de DNI y teléfono antes de guardar (solo números)
+    const cleanDni = formData.dni.replace(/\D/g, '');
+    
+    // Limpiar teléfono: remover todo excepto números, luego agregar +1 si no lo tiene
+    let cleanPhone = formData.phone.replace(/\D/g, '');
+    // Si empieza con 1 y tiene más de 10 dígitos, remover el 1 inicial
+    if (cleanPhone.startsWith('1') && cleanPhone.length > 10) {
+      cleanPhone = cleanPhone.slice(1);
+    }
+    // Limitar a 10 dígitos y agregar +1
+    cleanPhone = cleanPhone.slice(0, 10);
+    const formattedPhone = cleanPhone ? `+1${cleanPhone}` : formData.phone.trim();
+
     const payload = {
       full_name: formData.full_name.trim(),
-      dni: formData.dni.trim(),
-      phone: formData.phone.trim(),
+      dni: cleanDni || formData.dni.trim(),
+      phone: formattedPhone || formData.phone.trim(),
       email: formData.email.trim() || null,
       address: formData.address.trim() || null,
       city: formData.city.trim() || null,
@@ -233,6 +281,7 @@ const ClientForm = () => {
               <div>
                 <Label>Teléfono *</Label>
                 <Input
+                  type="tel"
                   value={formData.phone}
                   onChange={(e) => handleChange('phone', e.target.value)}
                   placeholder="+1 809 000 0000"

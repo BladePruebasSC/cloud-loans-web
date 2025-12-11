@@ -99,11 +99,11 @@ export const ReportsModule = () => {
         console.error('Error fetching clients:', clientsError);
         // Si falla, intentar sin el join
         const { data: clientsDataAlt, error: clientsErrorAlt } = await supabase
-          .from('clients')
-          .select('*')
+        .from('clients')
+        .select('*')
           .eq('user_id', companyId || user?.id)
-          .order('created_at', { ascending: false });
-        
+        .order('created_at', { ascending: false });
+
         if (clientsErrorAlt) throw clientsErrorAlt;
         setReportData(prev => ({ ...prev, clients: clientsDataAlt || [] }));
       }
@@ -758,9 +758,242 @@ export const ReportsModule = () => {
     }
   };
 
-  // Función para descargar recibo de venta
+  // Función para descargar recibo de venta como PDF
   const downloadReceiptFromSale = async (sale: any) => {
-    await generateReceiptFromSale(sale, 'POS80');
+    try {
+      const { default: jsPDF } = await import('jspdf');
+      const { default: autoTable } = await import('jspdf-autotable');
+      
+      const invoiceNumber = `${sale.id.substring(0, 8)}`;
+      const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+      
+      // Obtener información de la empresa
+      let companyName = 'SH Computers';
+      let companyAddress = '';
+      let companyPhone = '';
+      
+      try {
+        const { data: companySettings } = await supabase
+          .from('company_settings')
+          .select('company_name, address, phone')
+          .eq('user_id', user?.id)
+          .maybeSingle();
+        
+        if (companySettings) {
+          companyName = companySettings.company_name || companyName;
+          companyAddress = companySettings.address || '';
+          companyPhone = companySettings.phone || '';
+        }
+      } catch (error) {
+        console.error('Error fetching company settings:', error);
+      }
+      
+      // Obtener detalles de la venta si no están incluidos
+      let saleDetails = sale.sale_details || [];
+      if (!saleDetails || saleDetails.length === 0) {
+        const { data: details, error: detailsError } = await supabase
+          .from('sale_details')
+          .select(`
+            *,
+            products (
+              id,
+              name,
+              sku,
+              itbis_rate
+            )
+          `)
+          .eq('sale_id', sale.id);
+        
+        if (!detailsError && details) {
+          saleDetails = details;
+        }
+      }
+      
+      // Calcular subtotal e ITBIS desde los detalles
+      let subtotal = 0;
+      let totalTax = 0;
+      
+      const tableData = saleDetails.map((detail: any) => {
+        const itbisRate = detail.products?.itbis_rate ?? detail.product?.itbis_rate ?? 18;
+        const itemSubtotal = detail.total_price; // Ya es sin ITBIS
+        const itemTax = itemSubtotal * (itbisRate / 100);
+        const itemTotalWithTax = itemSubtotal + itemTax;
+        
+        subtotal += itemSubtotal;
+        totalTax += itemTax;
+        
+        return [
+          detail.products?.name || detail.product?.name || 'Producto desconocido',
+          detail.quantity.toString(),
+          money(detail.unit_price), // Precio unitario con ITBIS
+          money(itemTotalWithTax) // Total del item con ITBIS
+        ];
+      });
+      
+      const totalWithTax = subtotal + totalTax;
+      
+      // Traducir método de pago
+      const translatePaymentMethod = (method: string) => {
+        const methods: { [key: string]: string } = {
+          'cash': 'Efectivo',
+          'card': 'Tarjeta',
+          'transfer': 'Transferencia',
+          'check': 'Cheque',
+          'financing': 'Financiamiento'
+        };
+        return methods[method] || method;
+      };
+      
+      // Crear documento PDF
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 15;
+      let yPos = margin;
+
+      // Encabezado
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text(companyName, margin, yPos);
+      yPos += 7;
+
+      if (companyAddress) {
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.text(companyAddress, margin, yPos);
+        yPos += 5;
+      }
+
+      if (companyPhone) {
+        doc.setFontSize(10);
+        doc.text(`Tel: ${companyPhone}`, margin, yPos);
+        yPos += 5;
+      }
+
+      // Línea separadora
+      yPos += 3;
+      doc.setLineWidth(0.5);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 8;
+
+      // Título del documento
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.text('FACTURA', margin, yPos);
+      yPos += 5;
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Número: ${invoiceNumber}`, margin, yPos);
+      yPos += 8;
+
+      // Información del cliente y fecha
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Cliente:', margin, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(sale.clients?.full_name || sale.customer_name || 'Cliente General', margin + 25, yPos);
+      yPos += 6;
+
+      const saleDate = sale.sale_date 
+        ? new Date(sale.sale_date).toLocaleDateString('es-DO', { 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+        : sale.created_at
+          ? new Date(sale.created_at).toLocaleDateString('es-DO', { 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })
+          : 'N/A';
+      
+      doc.setFont('helvetica', 'bold');
+      doc.text('Fecha:', margin, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(saleDate, margin + 25, yPos);
+      yPos += 6;
+
+      // Método de pago
+      doc.setFont('helvetica', 'bold');
+      doc.text('Método de pago:', margin, yPos);
+      doc.setFont('helvetica', 'normal');
+      doc.text(translatePaymentMethod(sale.payment_method || 'cash'), margin + 40, yPos);
+      yPos += 10;
+
+      // Agregar tabla con autoTable
+      autoTable(doc, {
+        head: [['Descripción', 'Cant.', 'Precio', 'Importe']],
+        body: tableData,
+        startY: yPos,
+        styles: { fontSize: 9, cellPadding: 3 },
+        headStyles: { 
+          fillColor: [66, 139, 202], 
+          textColor: 255, 
+          fontStyle: 'bold',
+          halign: 'center'
+        },
+        columnStyles: {
+          0: { cellWidth: 'auto' },
+          1: { halign: 'center' },
+          2: { halign: 'right' },
+          3: { halign: 'right' }
+        },
+        margin: { left: margin, right: margin },
+        didDrawPage: (data) => {
+          yPos = data.cursor.y;
+        }
+      });
+
+      // Obtener la posición final después de la tabla
+      const finalY = (doc as any).lastAutoTable.finalY || yPos + 20;
+      yPos = finalY + 10;
+
+      // Resumen con subtotal, ITBIS y total
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      
+      const subtotalText = `Subtotal: ${money(subtotal)}`;
+      const subtotalWidth = doc.getTextWidth(subtotalText);
+      doc.text(subtotalText, pageWidth - margin - subtotalWidth, yPos);
+      yPos += 6;
+
+      const taxText = `ITBIS: ${money(totalTax)}`;
+      const taxWidth = doc.getTextWidth(taxText);
+      doc.text(taxText, pageWidth - margin - taxWidth, yPos);
+      yPos += 8;
+
+      // Total con ITBIS
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      const totalText = `Total: ${money(totalWithTax)}`;
+      const totalWidth = doc.getTextWidth(totalText);
+      doc.text(totalText, pageWidth - margin - totalWidth, yPos);
+
+      // Pie de página
+      yPos = doc.internal.pageSize.getHeight() - 20;
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 100, 100);
+      doc.text('Gracias por su preferencia', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 5;
+      doc.text(
+        `Generado el: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}`,
+        pageWidth / 2,
+        yPos,
+        { align: 'center' }
+      );
+
+      // Descargar PDF
+      doc.save(`factura_${invoiceNumber}_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error('Error generando PDF:', error);
+      toast.error('Error al generar el PDF');
+    }
   };
 
   // Cálculos para estadísticas
@@ -810,11 +1043,11 @@ export const ReportsModule = () => {
     return `
       <!DOCTYPE html>
       <html lang="es">
-      <head>
+          <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Recibo de Pago</title>
-        <style>
+            <style>
           @page { size: A4; margin: 18mm; }
           body { font-family: Arial, sans-serif; font-size: 12px; color: #1f2937; }
           .receipt { max-width: 800px; margin: 0 auto; }
@@ -829,24 +1062,24 @@ export const ReportsModule = () => {
           .summary { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-top: 10px; }
           .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
           .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
-        </style>
-      </head>
-      <body>
+            </style>
+          </head>
+          <body>
         <div class="receipt">
-          <div class="header">
+            <div class="header">
             <div class="brand-name">SH Computers</div>
-            <div>
+              <div>
               <div class="doc-type">RECIBO DE PAGO</div>
               <div class="doc-number">Recibo #${payment.id.substring(0, 8)}</div>
-            </div>
-          </div>
+              </div>
+              </div>
           <div class="section">
             <div><strong>Cliente:</strong> ${payment.loans?.clients?.full_name || 'N/A'}</div>
             <div><strong>Préstamo #:</strong> ${payment.loans?.id?.substring(0, 8) || 'N/A'}</div>
             <div><strong>Monto del Préstamo:</strong> ${money(payment.loans?.amount || 0)}</div>
             <div><strong>Fecha:</strong> ${new Date(payment.payment_date).toLocaleDateString('es-DO')} ${new Date(payment.payment_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</div>
             <div><strong>Método de pago:</strong> ${translatePaymentMethod(payment.payment_method)}</div>
-          </div>
+            </div>
           <div class="summary">
             <div class="sum-row"><span>Pago Principal:</span><span>${money(payment.principal_amount || 0)}</span></div>
             <div class="sum-row"><span>Intereses:</span><span>${money(payment.interest_amount || 0)}</span></div>
@@ -856,9 +1089,9 @@ export const ReportsModule = () => {
               <span>${money(payment.amount || 0)}</span>
             </div>
           </div>
-        </div>
-      </body>
-      </html>
+            </div>
+          </body>
+        </html>
     `;
   };
 
@@ -1365,7 +1598,7 @@ export const ReportsModule = () => {
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
                             Préstamo #{payment.loans?.id?.substring(0, 8) || 'N/A'} · Monto: ${payment.loans?.amount?.toLocaleString() || 'N/A'}
-                          </div>
+                        </div>
                         </div>
                         <div className="text-right text-sm mr-4">
                           <div><strong>Total:</strong> ${payment.amount.toLocaleString()}</div>

@@ -1305,7 +1305,7 @@ export const PawnShopModule = () => {
       // Usar directamente la fecha seleccionada sin conversiones que puedan causar problemas de zona horaria
       // El input type="date" ya devuelve la fecha en formato YYYY-MM-DD según la zona horaria local del navegador
       const chargeDateString = chargeFormData.charge_date;
-      
+
       // Calcular fecha de vencimiento (un día después de la fecha del cargo)
       // Parsear la fecha como fecha local para evitar problemas de zona horaria
       const [year, month, day] = chargeDateString.split('-').map(Number);

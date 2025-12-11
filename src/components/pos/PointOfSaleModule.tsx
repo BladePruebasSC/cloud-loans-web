@@ -191,6 +191,22 @@ export const PointOfSaleModule = () => {
     return null;
   });
   
+  // Eliminar financiamiento si el cliente cambia a "Cliente General"
+  useEffect(() => {
+    if (selectedCustomer?.full_name === 'Cliente General' || !selectedCustomer) {
+      // Si hay métodos de pago con financiamiento, eliminarlos
+      const hasFinancing = saleData.paymentSplits.some(split => split.method.type === 'financing');
+      if (hasFinancing) {
+        setSaleData(prev => ({
+          ...prev,
+          paymentSplits: prev.paymentSplits.filter(split => split.method.type !== 'financing')
+        }));
+        toast.warning('Se eliminó el método de pago "Financiamiento" porque requiere un cliente específico.');
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCustomer]);
+
   // Guardar cliente seleccionado en localStorage cada vez que cambie
   useEffect(() => {
     try {
@@ -661,6 +677,12 @@ export const PointOfSaleModule = () => {
     const hasFinancing = saleData.paymentSplits.some(split => split.method.type === 'financing');
     const financingSplit = hasFinancing ? saleData.paymentSplits.find(split => split.method.type === 'financing') : null;
     
+    // Validar que no se use financiamiento con Cliente General
+    if (hasFinancing && (selectedCustomer?.full_name === 'Cliente General' || !selectedCustomer)) {
+      toast.error('No se puede usar financiamiento con Cliente General. Debe seleccionar un cliente específico.');
+      return;
+    }
+    
     if (hasFinancing) {
       const financingMonths = financingSplit?.details?.financingMonths || saleData.paymentDetails?.financingMonths || saleData.financingMonths;
       const financingRate = financingSplit?.details?.financingRate || saleData.paymentDetails?.financingRate || saleData.financingRate;
@@ -726,7 +748,7 @@ export const PointOfSaleModule = () => {
       if (totalPaid + epsilon < saleData.total) {
       toast.error('El monto pagado es menor al total');
       return;
-      }
+    }
     }
     
     // Calcular el cambio (solo para pagos en efectivo)
@@ -2198,6 +2220,13 @@ export const PointOfSaleModule = () => {
                               onValueChange={(value) => {
                                 const method = paymentMethods.find(m => m.id === value);
                                 if (method) {
+                                  // Validar que no se seleccione financiamiento con Cliente General
+                                  if (method.type === 'financing' && 
+                                      (selectedCustomer?.full_name === 'Cliente General' || !selectedCustomer)) {
+                                    toast.error('No se puede usar financiamiento con Cliente General. Debe seleccionar un cliente específico.');
+                                    return;
+                                  }
+                                  
                                   setSaleData(prev => ({
                                     ...prev,
                                     paymentSplits: prev.paymentSplits.map((s, i) => 
@@ -2223,14 +2252,25 @@ export const PointOfSaleModule = () => {
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                {paymentMethods.map((method) => (
-                                  <SelectItem key={method.id} value={method.id}>
-                                    <div className="flex items-center gap-2">
-                                      {method.icon}
-                                      {method.name}
-                                    </div>
-                                  </SelectItem>
-                                ))}
+                {paymentMethods.map((method) => {
+                                  // Deshabilitar financiamiento si el cliente es "Cliente General"
+                                  const isDisabled = method.type === 'financing' && 
+                                    (selectedCustomer?.full_name === 'Cliente General' || !selectedCustomer);
+                                  return (
+                                    <SelectItem 
+                                      key={method.id} 
+                                      value={method.id}
+                                      disabled={isDisabled}
+                                      className={isDisabled ? 'opacity-50 cursor-not-allowed' : ''}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        {method.icon}
+                                        {method.name}
+                                        {isDisabled && <span className="text-xs text-gray-500 ml-auto">(Requiere cliente)</span>}
+                                      </div>
+                                    </SelectItem>
+                                  );
+                                })}
                               </SelectContent>
                             </Select>
                           </div>

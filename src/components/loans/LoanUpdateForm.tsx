@@ -671,10 +671,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             return;
           }
           
-          if (!data.edit_amount || !data.edit_interest_rate || !data.edit_term_months || !data.edit_amortization_type) {
-            toast.error('Debe completar todos los campos requeridos');
-            setLoading(false);
-            return;
+          // Si el préstamo es pendiente, no validar edit_amount (no se puede modificar)
+          if (loan.status === 'pending') {
+            if (!data.edit_interest_rate || !data.edit_term_months || !data.edit_amortization_type) {
+              toast.error('Debe completar todos los campos requeridos');
+              setLoading(false);
+              return;
+            }
+          } else {
+            if (!data.edit_amount || !data.edit_interest_rate || !data.edit_term_months || !data.edit_amortization_type) {
+              toast.error('Debe completar todos los campos requeridos');
+              setLoading(false);
+              return;
+            }
           }
           
           // Calcular nuevas fechas
@@ -686,16 +695,18 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           const firstPaymentDate = new Date(nextPaymentDate);
           
           // Calcular total_amount
-          const totalInterest = (data.edit_amount * data.edit_interest_rate * data.edit_term_months) / 100;
-          const totalAmount = data.edit_amount + totalInterest;
+          // Si el préstamo es pendiente, no modificar el monto (es un financiamiento de factura)
+          const finalAmount = loan.status === 'pending' ? loan.amount : data.edit_amount;
+          const totalInterest = (finalAmount * data.edit_interest_rate * data.edit_term_months) / 100;
+          const totalAmount = finalAmount + totalInterest;
           
           loanUpdates = {
-            amount: data.edit_amount,
+            amount: finalAmount, // Usar el monto original si es pendiente
             interest_rate: data.edit_interest_rate,
             term_months: data.edit_term_months,
             monthly_payment: calculatedValues.newPayment,
             total_amount: totalAmount,
-            remaining_balance: data.edit_amount,
+            remaining_balance: finalAmount,
             end_date: newEndDate.toISOString().split('T')[0],
             next_payment_date: nextPaymentDate.toISOString().split('T')[0],
             first_payment_date: firstPaymentDate.toISOString().split('T')[0],
@@ -960,15 +971,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             term_months: loan.term_months,
             amortization_type: loan.amortization_type || 'simple'
           };
+          // Si el préstamo es pendiente, no modificar el monto en el historial
+          const finalAmountForHistory = loan.status === 'pending' ? loan.amount : (data.edit_amount || loan.amount);
           historyData.new_values = {
-            amount: data.edit_amount || loan.amount,
+            amount: finalAmountForHistory,
             balance: calculatedValues.newBalance,
             payment: calculatedValues.newPayment,
             rate: data.edit_interest_rate || loan.interest_rate,
             term_months: data.edit_term_months || loan.term_months,
             amortization_type: data.edit_amortization_type || loan.amortization_type || 'simple'
           };
-          historyData.amount = data.edit_amount || loan.amount;
+          historyData.amount = finalAmountForHistory;
         } else {
           historyData.amount = data.amount;
         }
@@ -1372,6 +1385,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   type="number"
                                   placeholder={loan.amount.toString()}
                                   step="0.01"
+                                  disabled={loan.status === 'pending'}
                                   {...field}
                                   value={field.value || loan.amount}
                                   onChange={(e) => {
@@ -1380,6 +1394,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   }}
                                 />
                               </FormControl>
+                              {loan.status === 'pending' && (
+                                <p className="text-xs text-gray-500">
+                                  El monto no se puede modificar porque este préstamo es un financiamiento de una factura.
+                                </p>
+                              )}
                               <FormMessage />
                             </FormItem>
                           )}

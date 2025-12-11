@@ -228,26 +228,26 @@ export const DocumentsModule = () => {
           upsert: false,
         });
 
-      if (uploadError) throw uploadError;
+        if (uploadError) throw uploadError;
 
       // Guardar metadata en la tabla documents
       const { error: insertError } = await supabase
-        .from('documents')
-        .insert({
+          .from('documents')
+          .insert({
           user_id: companyId,
           loan_id: selectedLoan.id,
           client_id: null,
           title: documentForm.title,
           file_name: documentForm.file_name,
-          file_url: filePath,
+            file_url: filePath,
           description: documentForm.description || null,
           document_type: documentForm.document_type,
           mime_type: documentForm.file.type || null,
           file_size: documentForm.file.size || null,
-          status: 'active',
-        });
+            status: 'active',
+          });
 
-      if (insertError) throw insertError;
+        if (insertError) throw insertError;
 
       toast.success('Documento subido correctamente', { id: 'upload-doc' });
       
@@ -549,12 +549,12 @@ export const DocumentsModule = () => {
                   <p>No hay documentos {searchTerm ? 'que coincidan con la búsqueda' : 'disponibles para este préstamo'}</p>
                 </div>
               ) : (
-                <div className="space-y-4">
+              <div className="space-y-4">
                   {filteredDocuments.map((doc) => (
-                    <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center space-x-4">
-                        <FileText className="h-8 w-8 text-blue-500" />
-                        <div>
+                  <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg">
+                    <div className="flex items-center space-x-4">
+                      <FileText className="h-8 w-8 text-blue-500" />
+                      <div>
                           <h3 className="font-medium">{doc.title}</h3>
                           <p className="text-sm text-gray-500">
                             {doc.document_type} • {new Date(doc.created_at).toLocaleDateString('es-DO')} • 
@@ -563,25 +563,25 @@ export const DocumentsModule = () => {
                           {doc.description && (
                             <p className="text-sm text-gray-600 mt-1">{doc.description}</p>
                           )}
-                        </div>
                       </div>
-                      <div className="flex items-center space-x-2">
+                    </div>
+                    <div className="flex items-center space-x-2">
                         <Button 
                           variant="outline" 
                           size="sm"
                           onClick={() => handlePreviewDocument(doc)}
                           title="Previsualizar"
                         >
-                          <Eye className="h-4 w-4" />
-                        </Button>
+                        <Eye className="h-4 w-4" />
+                      </Button>
                         <Button 
                           variant="outline" 
                           size="sm"
                           onClick={() => handleDownloadDocument(doc)}
                           title="Descargar"
                         >
-                          <Download className="h-4 w-4" />
-                        </Button>
+                        <Download className="h-4 w-4" />
+                      </Button>
                         <Button 
                           variant="outline" 
                           size="sm"
@@ -589,11 +589,11 @@ export const DocumentsModule = () => {
                           title="Eliminar"
                         >
                           <Trash2 className="h-4 w-4 text-red-500" />
-                        </Button>
-                      </div>
+                      </Button>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
+              </div>
               )}
             </CardContent>
           </Card>

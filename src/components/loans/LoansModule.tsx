@@ -85,11 +85,48 @@ export const LoansModule = () => {
   
      // Estados para filtros y búsqueda
    const [searchTerm, setSearchTerm] = useState('');
-   const [statusFilter, setStatusFilter] = useState('active'); // Por defecto mostrar solo activos
-   const [dateFilter, setDateFilter] = useState('all');
-   const [amountFilter, setAmountFilter] = useState('all');
-   const [overdueFilter, setOverdueFilter] = useState(false);
-   const [showDeleted, setShowDeleted] = useState(false);
+   // Cargar filtros desde localStorage si existen
+   const [statusFilter, setStatusFilter] = useState(() => {
+     const saved = localStorage.getItem('loans_statusFilter');
+     return saved || 'active';
+   });
+   const [dateFilter, setDateFilter] = useState(() => {
+     const saved = localStorage.getItem('loans_dateFilter');
+     return saved || 'all';
+   });
+   const [amountFilter, setAmountFilter] = useState(() => {
+     const saved = localStorage.getItem('loans_amountFilter');
+     return saved || 'all';
+   });
+   const [overdueFilter, setOverdueFilter] = useState(() => {
+     const saved = localStorage.getItem('loans_overdueFilter');
+     return saved === 'true';
+   });
+   const [showDeleted, setShowDeleted] = useState(() => {
+     const saved = localStorage.getItem('loans_showDeleted');
+     return saved === 'true';
+   });
+
+   // Guardar filtros en localStorage cuando cambien
+   useEffect(() => {
+     localStorage.setItem('loans_statusFilter', statusFilter);
+   }, [statusFilter]);
+
+   useEffect(() => {
+     localStorage.setItem('loans_dateFilter', dateFilter);
+   }, [dateFilter]);
+
+   useEffect(() => {
+     localStorage.setItem('loans_amountFilter', amountFilter);
+   }, [amountFilter]);
+
+   useEffect(() => {
+     localStorage.setItem('loans_overdueFilter', overdueFilter.toString());
+   }, [overdueFilter]);
+
+   useEffect(() => {
+     localStorage.setItem('loans_showDeleted', showDeleted.toString());
+   }, [showDeleted]);
   
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();

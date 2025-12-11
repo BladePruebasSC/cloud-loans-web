@@ -98,7 +98,6 @@ const InventoryModule = () => {
   const [selectedBrand, setSelectedBrand] = useState('all');
   const [showProductForm, setShowProductForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const { user } = useAuth();
   
   // Estados para filtros de Stock Bajo
   const [lowStockCategoryFilter, setLowStockCategoryFilter] = useState<string>('');
@@ -171,7 +170,22 @@ const InventoryModule = () => {
   // Estados para acciones de ventas
   const [selectedSale, setSelectedSale] = useState<SaleWithDetails | null>(null);
   const [showSaleDetails, setShowSaleDetails] = useState(false);
+  const [editingSale, setEditingSale] = useState<SaleWithDetails | null>(null);
+  const [showEditSaleModal, setShowEditSaleModal] = useState(false);
+  const [showCashRegister, setShowCashRegister] = useState(false);
+  const [editSaleClientSearch, setEditSaleClientSearch] = useState('');
+  const [editSaleFilteredClients, setEditSaleFilteredClients] = useState<any[]>([]);
+  const [editSaleSelectedClient, setEditSaleSelectedClient] = useState<any | null>(null);
+  const [showEditSaleClientDropdown, setShowEditSaleClientDropdown] = useState(false);
+  const [editSaleProducts, setEditSaleProducts] = useState<any[]>([]);
+  const [editSaleProductSearch, setEditSaleProductSearch] = useState('');
+  const [editSaleFilteredProducts, setEditSaleFilteredProducts] = useState<Product[]>([]);
+  const [showEditSaleProductDropdown, setShowEditSaleProductDropdown] = useState(false);
+  const [editSalePaymentMethod, setEditSalePaymentMethod] = useState<string>('cash');
+  const [editSaleNotes, setEditSaleNotes] = useState<string>('');
 
+  const { user, companyId } = useAuth();
+  
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -216,6 +230,48 @@ const InventoryModule = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, salesDateFrom, salesDateTo, salesProductFilter, salesCategoryFilter, salesBrandFilter]);
+
+  // Inicializar datos cuando se abre el modal de edición
+  useEffect(() => {
+    if (showEditSaleModal && editingSale && companyId) {
+      // Inicializar cliente
+      if (editingSale.client_id) {
+        supabase
+          .from('clients')
+          .select('id, full_name, dni, phone')
+          .eq('id', editingSale.client_id)
+          .eq('user_id', companyId)
+          .single()
+          .then(({ data }) => {
+            if (data) {
+              setEditSaleSelectedClient(data);
+              setEditSaleClientSearch(data.full_name);
+            } else {
+              // Si no se encuentra el cliente, limpiar
+              setEditSaleSelectedClient(null);
+              setEditSaleClientSearch('');
+            }
+          });
+      } else {
+        setEditSaleSelectedClient(null);
+        setEditSaleClientSearch('');
+      }
+      
+      // Inicializar productos
+      setEditSaleProducts(editingSale.details.map(detail => ({
+        id: detail.id,
+        product_id: detail.product_id,
+        product: detail.product,
+        quantity: detail.quantity,
+        unit_price: detail.unit_price,
+        total_price: detail.total_price
+      })));
+      
+      // Inicializar método de pago y notas
+      setEditSalePaymentMethod(editingSale.payment_method || 'cash');
+      setEditSaleNotes(editingSale.notes || '');
+    }
+  }, [showEditSaleModal, editingSale]);
 
   // Cargar movimientos cuando cambian los filtros
   useEffect(() => {
@@ -606,10 +662,18 @@ const InventoryModule = () => {
   const calculateSaleTotalWithTax = (sale: SaleWithDetails): number => {
     if (sale.details && sale.details.length > 0) {
       return sale.details.reduce((sum: number, detail: any) => {
-        const itbisRate = detail.product?.itbis_rate ?? 18;
-        const itemSubtotal = detail.total_price; // Sin ITBIS
-        const itemTax = itemSubtotal * (itbisRate / 100);
-        return sum + itemSubtotal + itemTax;
+        // Si total_price tiene valor, usarlo (ya es sin ITBIS) y agregar ITBIS
+        if (detail.total_price && detail.total_price > 0) {
+          const itbisRate = detail.product?.itbis_rate ?? 18;
+          const itemSubtotal = detail.total_price; // Sin ITBIS
+          const itemTax = itemSubtotal * (itbisRate / 100);
+          return sum + itemSubtotal + itemTax;
+        }
+        // Si total_price es 0 o no existe, calcular desde unit_price (que tiene ITBIS)
+        if (detail.unit_price && detail.unit_price > 0 && detail.quantity) {
+          return sum + (detail.unit_price * detail.quantity);
+        }
+        return sum;
       }, 0);
     }
     // Si no hay detalles, usar total_amount (que debería tener ITBIS)
@@ -639,7 +703,10 @@ const InventoryModule = () => {
       console.log('Ventas encontradas:', salesData?.length || 0);
 
       // Filtrar por fecha manualmente (incluyendo horas)
+      // SIEMPRE aplicar filtro de fecha - si no hay fechas, no mostrar ventas
       let filteredSales = salesData || [];
+      
+      // Aplicar filtro de fecha - REQUERIDO que haya al menos una fecha
       if (salesDateFrom || salesDateTo) {
         filteredSales = filteredSales.filter(sale => {
           const saleAny = sale as any;
@@ -648,20 +715,26 @@ const InventoryModule = () => {
           
           const date = new Date(saleDate);
           
+          // Si hay fecha desde, la venta debe ser >= fecha desde
           if (salesDateFrom) {
             const fromDate = new Date(salesDateFrom);
+            fromDate.setSeconds(0, 0); // Inicio del minuto
             if (date < fromDate) return false;
           }
           
+          // Si hay fecha hasta, la venta debe ser <= fecha hasta
           if (salesDateTo) {
             const toDate = new Date(salesDateTo);
-            // Agregar 1 segundo para incluir hasta el final del minuto seleccionado
+            // Agregar hasta el final del minuto seleccionado
             toDate.setSeconds(59, 999);
             if (date > toDate) return false;
           }
           
           return true;
         });
+      } else {
+        // Si no hay filtros de fecha seleccionados, no mostrar ninguna venta
+        filteredSales = [];
       }
 
       // Optimización: Obtener todos los datos en batch en lugar de consultas secuenciales
@@ -699,8 +772,8 @@ const InventoryModule = () => {
         // Obtener todos los productos necesarios (para ventas antiguas sin sale_details)
         const { data: allProducts } = productIdsFromSales.length > 0
           ? await supabase
-              .from('products')
-              .select('*')
+            .from('products')
+            .select('*')
               .in('id', productIdsFromSales)
           : { data: null, error: null };
 
@@ -758,57 +831,57 @@ const InventoryModule = () => {
           } else if (saleAny.product_id) {
             // Esquema simple: datos directos en sales
             const product = productsMap.get(saleAny.product_id);
-            if (product) {
-              saleDetails = [{
-                id: sale.id,
-                sale_id: sale.id,
-                product_id: product.id,
-                quantity: saleAny.quantity || 0,
-                unit_price: saleAny.unit_price || 0,
-                total_price: saleAny.total_price || 0,
-                product
-              }];
-            }
+          if (product) {
+            saleDetails = [{
+              id: sale.id,
+              sale_id: sale.id,
+              product_id: product.id,
+              quantity: saleAny.quantity || 0,
+              unit_price: saleAny.unit_price || 0,
+              total_price: saleAny.total_price || 0,
+              product
+            }];
           }
+        }
 
           // Obtener nombre del cliente del mapa
-          let clientName = 'Cliente General';
-          if (saleAny.client_id) {
+        let clientName = 'Cliente General';
+        if (saleAny.client_id) {
             const client = clientsMap.get(saleAny.client_id);
-            if (client) {
-              clientName = client.full_name;
-            }
-          } else if (saleAny.customer_name) {
-            // Esquema simple usa customer_name
-            clientName = saleAny.customer_name;
+          if (client) {
+            clientName = client.full_name;
           }
+        } else if (saleAny.customer_name) {
+          // Esquema simple usa customer_name
+          clientName = saleAny.customer_name;
+        }
 
-          // Aplicar filtros de producto, categoría y marca
-          const matchesProduct = !salesProductFilter || 
-              saleDetails.length === 0 || // Si no hay detalles, mostrar igual
-              saleDetails.some(d => d.product_id === salesProductFilter || d.product?.name === salesProductFilter);
-          
-          const matchesCategory = !salesCategoryFilter || 
-              saleDetails.length === 0 ||
-              saleDetails.some(d => d.product?.category === salesCategoryFilter);
-          
-          const matchesBrand = !salesBrandFilter || 
-              saleDetails.length === 0 ||
-              saleDetails.some(d => d.product?.brand === salesBrandFilter);
-          
-          if (matchesProduct && matchesCategory && matchesBrand) {
-            salesWithDetails.push({
-              id: sale.id,
-              sale_date: saleAny.sale_date || saleAny.created_at,
-              total_amount: saleAny.total_amount || saleAny.total_price || 0,
-              payment_method: saleAny.payment_method || null,
-              notes: saleAny.notes || null,
-              sale_number: saleAny.sale_number || sale.id.substring(0, 8),
-              client_id: saleAny.client_id || null,
-              status: saleAny.status || 'completed',
-              details: saleDetails,
-              client_name: clientName
-            });
+        // Aplicar filtros de producto, categoría y marca
+        const matchesProduct = !salesProductFilter || 
+            saleDetails.length === 0 || // Si no hay detalles, mostrar igual
+            saleDetails.some(d => d.product_id === salesProductFilter || d.product?.name === salesProductFilter);
+        
+        const matchesCategory = !salesCategoryFilter || 
+            saleDetails.length === 0 ||
+            saleDetails.some(d => d.product?.category === salesCategoryFilter);
+        
+        const matchesBrand = !salesBrandFilter || 
+            saleDetails.length === 0 ||
+            saleDetails.some(d => d.product?.brand === salesBrandFilter);
+        
+        if (matchesProduct && matchesCategory && matchesBrand) {
+          salesWithDetails.push({
+            id: sale.id,
+            sale_date: saleAny.sale_date || saleAny.created_at,
+            total_amount: saleAny.total_amount || saleAny.total_price || 0,
+            payment_method: saleAny.payment_method || null,
+            notes: saleAny.notes || null,
+            sale_number: saleAny.sale_number || sale.id.substring(0, 8),
+            client_id: saleAny.client_id || null,
+            status: saleAny.status || 'completed',
+            details: saleDetails,
+            client_name: clientName
+          });
           }
         }
       }
@@ -1174,6 +1247,527 @@ const InventoryModule = () => {
     setShowSaleDetails(true);
   };
 
+  const handleEditSale = async (updatedSale: SaleWithDetails) => {
+    try {
+      // Actualizar la venta principal
+      const { error: saleError } = await supabase
+        .from('sales')
+        .update({
+          client_id: updatedSale.client_id,
+          payment_method: updatedSale.payment_method,
+          notes: updatedSale.notes,
+          total_amount: updatedSale.total_amount
+        })
+        .eq('id', updatedSale.id);
+
+      if (saleError) throw saleError;
+
+      // Eliminar los detalles antiguos
+      const { error: deleteError } = await supabase
+        .from('sale_details')
+        .delete()
+        .eq('sale_id', updatedSale.id);
+
+      if (deleteError) throw deleteError;
+
+      // Insertar los nuevos detalles
+      if (updatedSale.details && updatedSale.details.length > 0) {
+        const detailsToInsert = updatedSale.details.map(detail => ({
+          sale_id: updatedSale.id,
+          product_id: detail.product_id,
+          quantity: detail.quantity,
+          unit_price: detail.unit_price,
+          total_price: detail.total_price
+        }));
+
+        const { error: insertError } = await supabase
+          .from('sale_details')
+          .insert(detailsToInsert);
+
+        if (insertError) throw insertError;
+      }
+
+      toast.success('Venta actualizada exitosamente');
+      setShowEditSaleModal(false);
+      setEditingSale(null);
+      fetchSales();
+    } catch (error: any) {
+      console.error('Error actualizando venta:', error);
+      toast.error(`Error al actualizar venta: ${error.message}`);
+    }
+  };
+
+  const generateCashRegister = async (format: 'A4' | 'POS80' | 'POS58' = 'POS80') => {
+    try {
+      // Usar las fechas seleccionadas en los filtros, o el día actual si no hay filtros
+      let startDate: Date;
+      let endDate: Date;
+      
+      if (salesDateFrom && salesDateTo) {
+        startDate = new Date(salesDateFrom);
+        endDate = new Date(salesDateTo);
+        // Asegurar que endDate incluya todo el día
+        endDate.setHours(23, 59, 59, 999);
+      } else {
+        // Si no hay filtros, usar el día actual
+        const today = new Date();
+        startDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
+        endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+      }
+
+      // Obtener ventas del rango de fechas
+      const { data: todaySales, error: salesError } = await supabase
+        .from('sales')
+        .select('*')
+        .eq('user_id', user?.id)
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
+        .order('created_at', { ascending: true });
+
+      if (salesError) throw salesError;
+
+      if (!todaySales || todaySales.length === 0) {
+        toast.error('No hay ventas registradas para el día de hoy');
+        return;
+      }
+
+      // Obtener detalles de ventas y clientes en batch
+      const saleIds = todaySales.map(s => s.id);
+      const clientIds = todaySales
+        .map(s => (s as any).client_id)
+        .filter((id): id is string => !!id);
+
+      // Obtener sale_details y productos
+      let allSaleDetails: any[] = [];
+      const { data: detailsData, error: detailsError } = await supabase
+        .from('sale_details')
+        .select('*')
+        .in('sale_id', saleIds);
+
+      if (detailsError) {
+        console.error('Error obteniendo detalles:', detailsError);
+      } else if (detailsData && detailsData.length > 0) {
+        // Obtener productos para los detalles
+        const productIds = detailsData
+          .map(d => d.product_id)
+          .filter((id): id is string => !!id);
+        
+        const { data: productsData } = productIds.length > 0
+          ? await supabase
+              .from('products')
+              .select('id, name, itbis_rate')
+              .in('id', productIds)
+          : { data: null, error: null };
+
+        const productsMap = new Map();
+        if (productsData) {
+          productsData.forEach((p: any) => {
+            productsMap.set(p.id, p);
+          });
+        }
+
+        // Combinar detalles con productos
+        allSaleDetails = detailsData.map((detail: any) => ({
+          ...detail,
+          products: productsMap.get(detail.product_id) || null
+        }));
+      }
+
+      // Para ventas antiguas sin sale_details, intentar obtener el producto desde la venta misma
+      const oldSalesProductIds = todaySales
+        .filter(s => !saleIds.some(id => allSaleDetails.some(d => d.sale_id === id && d.sale_id === s.id)))
+        .map(s => (s as any).product_id)
+        .filter((id): id is string => !!id);
+
+      const oldProductsMap = new Map();
+      if (oldSalesProductIds.length > 0) {
+        const { data: oldProductsData } = await supabase
+          .from('products')
+          .select('id, name, itbis_rate')
+          .in('id', oldSalesProductIds);
+
+        if (oldProductsData) {
+          oldProductsData.forEach((p: any) => {
+            oldProductsMap.set(p.id, p);
+          });
+        }
+      }
+
+      // Obtener clientes
+      const { data: allClients } = clientIds.length > 0
+        ? await supabase
+            .from('clients')
+            .select('id, full_name')
+            .in('id', clientIds)
+        : { data: null, error: null };
+
+      // Crear mapas para acceso rápido
+      const saleDetailsMap = new Map<string, any[]>();
+      if (allSaleDetails) {
+        allSaleDetails.forEach((detail: any) => {
+          const saleId = detail.sale_id;
+          if (!saleDetailsMap.has(saleId)) {
+            saleDetailsMap.set(saleId, []);
+          }
+          saleDetailsMap.get(saleId)!.push(detail);
+        });
+      }
+
+      const clientsMap = new Map<string, any>();
+      if (allClients) {
+        allClients.forEach((client: any) => {
+          clientsMap.set(client.id, client);
+        });
+      }
+
+      // Enriquecer las ventas con detalles, clientes y productos antiguos
+      const enrichedSales = todaySales.map((sale: any) => {
+        const saleDetails = saleDetailsMap.get(sale.id) || [];
+        // Si no hay sale_details pero hay product_id, crear un detalle simulado
+        if (saleDetails.length === 0 && sale.product_id) {
+          const oldProduct = oldProductsMap.get(sale.product_id);
+          if (oldProduct) {
+            saleDetails.push({
+              id: sale.id,
+              sale_id: sale.id,
+              product_id: sale.product_id,
+              quantity: sale.quantity || 1,
+              unit_price: sale.unit_price || 0,
+              total_price: sale.total_price || 0,
+              products: oldProduct
+            });
+          }
+        }
+        return {
+          ...sale,
+          sale_details: saleDetails,
+          clients: sale.client_id ? clientsMap.get(sale.client_id) : null
+        };
+      });
+
+      // Obtener información de la empresa
+      let companyName = 'SH Computers';
+      let companyAddress = '';
+      let companyPhone = '';
+      
+      const { data: companySettings } = await supabase
+        .from('company_settings')
+        .select('company_name, address, phone')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      
+      if (companySettings) {
+        companyName = companySettings.company_name || companyName;
+        companyAddress = companySettings.address || '';
+        companyPhone = companySettings.phone || '';
+      }
+
+      // Calcular totales
+      let totalSales = 0;
+      let totalTax = 0;
+      let totalByPaymentMethod: Record<string, number> = {};
+
+      enrichedSales.forEach((sale: any) => {
+        let saleTotal = 0;
+        
+        // Si hay sale_details, calcular desde ellos
+        if (sale.sale_details && sale.sale_details.length > 0) {
+          // Mapear sale_details a details con la estructura correcta
+          const mappedDetails = sale.sale_details.map((detail: any) => ({
+            ...detail,
+            product: detail.products || detail.product // Asegurar que product esté disponible
+          }));
+          
+          const saleWithMappedDetails = { ...sale, details: mappedDetails };
+          saleTotal = calculateSaleTotalWithTax(saleWithMappedDetails as SaleWithDetails);
+        } else {
+          // Si no hay detalles, usar total_amount directamente
+          // Si total_amount es 0 o null, intentar calcular desde unit_price si está disponible
+          if (sale.total_amount && sale.total_amount > 0) {
+            saleTotal = sale.total_amount;
+          } else if (sale.unit_price && sale.quantity) {
+            // Para ventas antiguas sin sale_details, usar unit_price * quantity
+            saleTotal = sale.unit_price * sale.quantity;
+          } else {
+            saleTotal = 0;
+          }
+          console.log('No sale_details found, using total_amount:', saleTotal, 'for sale:', sale.id, 'total_amount:', sale.total_amount);
+        }
+        
+        console.log('Sale total calculated:', saleTotal, 'for sale:', sale.id);
+        totalSales += saleTotal;
+
+        // Calcular ITBIS solo si hay sale_details
+        if (sale.sale_details && sale.sale_details.length > 0) {
+          sale.sale_details.forEach((detail: any) => {
+            const itbisRate = detail.products?.itbis_rate ?? detail.product?.itbis_rate ?? 18;
+            // Si total_price tiene valor, usarlo para calcular ITBIS
+            if (detail.total_price && detail.total_price > 0) {
+              const itemSubtotal = detail.total_price;
+              const itemTax = itemSubtotal * (itbisRate / 100);
+              totalTax += itemTax;
+            } else if (detail.unit_price && detail.unit_price > 0 && detail.quantity) {
+              // Si total_price no tiene valor, calcular desde unit_price
+              const priceWithTax = detail.unit_price;
+              const priceWithoutTax = priceWithTax / (1 + itbisRate / 100);
+              const itemSubtotal = priceWithoutTax * detail.quantity;
+              const itemTax = itemSubtotal * (itbisRate / 100);
+              totalTax += itemTax;
+            }
+          });
+        } else {
+          // Si no hay detalles, estimar ITBIS desde total_amount (asumiendo 18%)
+          // Esto es una aproximación, pero mejor que 0
+          const estimatedSubtotal = saleTotal / 1.18;
+          const estimatedTax = saleTotal - estimatedSubtotal;
+          totalTax += estimatedTax;
+        }
+
+        // Agrupar por método de pago
+        const paymentMethod = sale.payment_method || 'cash';
+        if (!totalByPaymentMethod[paymentMethod]) {
+          totalByPaymentMethod[paymentMethod] = 0;
+        }
+        totalByPaymentMethod[paymentMethod] += saleTotal;
+      });
+
+      const subtotal = totalSales - totalTax;
+
+      // Generar HTML del cuadre de caja
+      const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+      const isThermal = format === 'POS80' || format === 'POS58';
+      const isPOS58 = format === 'POS58';
+
+      // CSS específico para cada formato
+      const pageCss = format === 'A4'
+        ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
+        : format === 'POS80'
+          ? '@page { size: 80mm auto; margin: 2mm 1mm; } .invoice{width:76mm;margin:0 auto;font-size:9px;}'
+          : '@page { size: 58mm auto; margin: 2mm 1mm; } .invoice{width:54mm;margin:0 auto;font-size:8px;}';
+
+      const thermalCss = isThermal ? `
+        body { font-size: ${isPOS58 ? '8px' : '9px'}; font-family: 'Courier New', monospace; }
+        .invoice { width: ${isPOS58 ? '54mm' : '76mm'}; margin: 0 auto; }
+        .header { padding: 4px 0; border-bottom: 1px solid #000; text-align: center; }
+        .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+        .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+        .section { padding: 4px 0; margin: 4px 0; border: none; }
+        .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 2px; }
+        .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
+        .label { font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
+        th, td { padding: 2px 1px; border-bottom: 1px dashed #ccc; }
+        thead th { background: transparent; border-bottom: 1px solid #000; font-size: ${isPOS58 ? '7px' : '8px'}; }
+        .total-row { font-weight: bold; border-top: 2px solid #000; }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+      ` : '';
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Cuadre de Caja - ${salesDateFrom && salesDateTo 
+            ? `${new Date(salesDateFrom).toLocaleDateString('es-DO')} - ${new Date(salesDateTo).toLocaleDateString('es-DO')}`
+            : `${startDate.toLocaleDateString('es-DO')}`}</title>
+          <style>
+            ${pageCss}
+            ${thermalCss}
+            body { font-family: ${isThermal ? "'Courier New', monospace" : 'Arial, sans-serif'}; margin: 0; padding: 10px; }
+            .invoice { padding: ${isThermal ? '4px' : '20px'}; }
+            .header { text-align: center; margin-bottom: ${isThermal ? '4px' : '20px'}; }
+            .brand-name { font-size: ${isThermal ? (isPOS58 ? '10px' : '12px') : '24px'}; font-weight: bold; }
+            .brand-meta { font-size: ${isThermal ? (isPOS58 ? '7px' : '8px') : '12px'}; color: #666; }
+            .doc-type { font-size: ${isThermal ? (isPOS58 ? '10px' : '12px') : '18px'}; font-weight: bold; margin: ${isThermal ? '4px' : '10px'} 0; }
+            .section { margin: ${isThermal ? '4px' : '15px'} 0; }
+            .section-title { font-weight: bold; margin-bottom: ${isThermal ? '2px' : '10px'}; }
+            table { width: 100%; border-collapse: collapse; margin: ${isThermal ? '4px' : '10px'} 0; }
+            th, td { padding: ${isThermal ? '2px 1px' : '8px'}; text-align: left; border-bottom: 1px ${isThermal ? 'dashed' : 'solid'} #ccc; }
+            thead th { background: ${isThermal ? 'transparent' : '#f5f5f5'}; font-weight: bold; border-bottom: 1px solid #000; }
+            .total-row { font-weight: bold; border-top: 2px solid #000; }
+            .text-right { text-align: right; }
+            .text-center { text-align: center; }
+            @media print {
+              body { margin: 0; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="invoice">
+            <div class="header">
+              <div class="brand-name">${companyName}</div>
+              ${companyAddress ? `<div class="brand-meta">${companyAddress}</div>` : ''}
+              ${companyPhone ? `<div class="brand-meta">Tel: ${companyPhone}</div>` : ''}
+              <div class="doc-type">CUADRE DE CAJA</div>
+              <div class="brand-meta">Fecha: ${salesDateFrom && salesDateTo 
+                ? `${new Date(salesDateFrom).toLocaleDateString('es-DO')} - ${new Date(salesDateTo).toLocaleDateString('es-DO')}`
+                : `${startDate.toLocaleDateString('es-DO')} ${startDate.toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}`}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">RESUMEN DEL DÍA</div>
+              <table>
+                <tr>
+                  <td>Total de Ventas:</td>
+                  <td class="text-right">${enrichedSales.length}</td>
+                </tr>
+                <tr>
+                  <td>Subtotal:</td>
+                  <td class="text-right">${money(subtotal)}</td>
+                </tr>
+                <tr>
+                  <td>ITBIS:</td>
+                  <td class="text-right">${money(totalTax)}</td>
+                </tr>
+                <tr class="total-row">
+                  <td>TOTAL:</td>
+                  <td class="text-right">${money(totalSales)}</td>
+                </tr>
+              </table>
+            </div>
+
+            <div class="section">
+              <div class="section-title">POR MÉTODO DE PAGO</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Método</th>
+                    <th class="text-right">Monto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${Object.entries(totalByPaymentMethod).map(([method, amount]) => {
+                    const methodNames: Record<string, string> = {
+                      'cash': 'Efectivo',
+                      'card': 'Tarjeta',
+                      'transfer': 'Transferencia',
+                      'check': 'Cheque',
+                      'financing': 'Financiamiento'
+                    };
+                    return `
+                      <tr>
+                        <td>${methodNames[method] || method}</td>
+                        <td class="text-right">${money(amount)}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLE DE VENTAS</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Hora</th>
+                    <th>Cliente</th>
+                    <th>Productos</th>
+                    <th class="text-right">Monto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${enrichedSales.map((sale: any, index: number) => {
+                    const saleDate = new Date(sale.created_at);
+                    let saleTotal = 0;
+                    let productsList = 'N/A';
+                    
+                    // Si hay sale_details, calcular desde ellos y obtener productos
+                    if (sale.sale_details && sale.sale_details.length > 0) {
+                      const mappedDetails = sale.sale_details.map((detail: any) => ({
+                        ...detail,
+                        product: detail.products || detail.product
+                      }));
+                      const saleWithMappedDetails = { ...sale, details: mappedDetails };
+                      saleTotal = calculateSaleTotalWithTax(saleWithMappedDetails as SaleWithDetails);
+                      
+                      // Construir lista de productos con nombres reales
+                      productsList = sale.sale_details.map((detail: any) => {
+                        const productName = detail.products?.name || detail.product?.name || 'Producto desconocido';
+                        return `${detail.quantity}x ${productName}`;
+                      }).join(', ');
+                    } else {
+                      // Si no hay detalles, usar total_amount directamente
+                      // Si total_amount es 0 o null, intentar calcular desde unit_price si está disponible
+                      if (sale.total_amount && sale.total_amount > 0) {
+                        saleTotal = sale.total_amount;
+                      } else if (sale.unit_price && sale.quantity) {
+                        // Para ventas antiguas sin sale_details, usar unit_price * quantity
+                        saleTotal = sale.unit_price * sale.quantity;
+                      } else {
+                        saleTotal = 0;
+                      }
+                      // Intentar obtener nombre del producto desde sale_details enriquecidos o sale.product_name
+                      // Los productos ya deberían estar en sale.sale_details si fueron enriquecidos
+                      if (sale.sale_details && sale.sale_details.length > 0) {
+                        // Si hay sale_details enriquecidos, usarlos
+                        productsList = sale.sale_details.map((detail: any) => {
+                          const productName = detail.products?.name || detail.product?.name || 'Producto desconocido';
+                          return `${detail.quantity || 1}x ${productName}`;
+                        }).join(', ');
+                      } else if (sale.product_id) {
+                        // Si no hay sale_details pero hay product_id, intentar desde sale.product_name
+                        if (sale.product_name) {
+                          productsList = `${sale.quantity || 1}x ${sale.product_name}`;
+                        } else {
+                          productsList = 'Producto desconocido';
+                        }
+                      } else if (sale.product_name) {
+                        productsList = `${sale.quantity || 1}x ${sale.product_name}`;
+                      } else {
+                        productsList = 'Sin productos';
+                      }
+                    }
+                    
+                    // Limitar longitud de productos para impresión térmica, pero mostrar más información
+                    const maxProductLength = isPOS58 ? 25 : 40;
+                    if (productsList.length > maxProductLength) {
+                      productsList = productsList.substring(0, maxProductLength - 3) + '...';
+                    }
+                    
+                    return `
+                      <tr>
+                        <td>${index + 1}</td>
+                        <td>${saleDate.toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</td>
+                        <td>${sale.clients?.full_name || sale.customer_name || 'Cliente General'}</td>
+                        <td>${productsList}</td>
+                        <td class="text-right">${money(saleTotal)}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+                <tfoot>
+                  <tr class="total-row">
+                    <td colspan="4">TOTAL</td>
+                    <td class="text-right">${money(totalSales)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      // Abrir ventana de impresión
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+          printWindow.print();
+        }, 250);
+      }
+    } catch (error: any) {
+      console.error('Error generando cuadre de caja:', error);
+      toast.error(`Error al generar cuadre de caja: ${error.message}`);
+    }
+  };
+
 
 
   const generateReceiptFromSale = async (sale: SaleWithDetails, format: 'A4' | 'POS80' | 'POS58' = 'POS80') => {
@@ -1235,11 +1829,11 @@ const InventoryModule = () => {
       return `
         <tr>
           <td>${productName}</td>
-          <td class="right">${detail.quantity}</td>
+        <td class="right">${detail.quantity}</td>
           ${unitPrice}
           ${discountCol}
           <td class="right">${money(itemTotalWithTax)}</td>
-        </tr>
+      </tr>
       `;
     }).join('');
 
@@ -1322,7 +1916,16 @@ const InventoryModule = () => {
             <div class="field"><span class="label">Nombre:</span><span>${sale.client_name || 'Cliente General'}</span></div>
             <div class="section-title" style="margin-top:4px;">Venta</div>
             <div class="field"><span class="label">Fecha:</span><span>${sale.sale_date ? new Date(sale.sale_date).toLocaleDateString('es-DO') + ' ' + new Date(sale.sale_date).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' }) : 'N/A'}</span></div>
-            <div class="field"><span class="label">Método de Pago:</span><span>${sale.payment_method || 'Efectivo'}</span></div>
+            <div class="field"><span class="label">Método de Pago:</span><span>${(() => {
+              const methodNames: Record<string, string> = {
+                'cash': 'Efectivo',
+                'card': 'Tarjeta',
+                'transfer': 'Transferencia',
+                'check': 'Cheque',
+                'financing': 'Financiamiento'
+              };
+              return methodNames[sale.payment_method || 'cash'] || sale.payment_method || 'Efectivo';
+            })()}</span></div>
           </div>
 
           <div class="divider"></div>
@@ -1347,7 +1950,7 @@ const InventoryModule = () => {
           <div class="summary">
             <div class="sum-row"><span>Subtotal:</span><span>${money(subtotal)}</span></div>
             <div class="sum-row"><span>ITBIS:</span><span>${money(totalTax)}</span></div>
-            <div class="sum-row total"><span>TOTAL:</span><span>${money(sale.total_amount || 0)}</span></div>
+            <div class="sum-row total"><span>TOTAL:</span><span>${money(subtotal + totalTax)}</span></div>
           </div>
 
           <div class="footer">
@@ -1394,7 +1997,16 @@ const InventoryModule = () => {
           <div class="section">
             <div><strong>Cliente:</strong> ${sale.client_name || 'Cliente General'}</div>
             <div><strong>Fecha:</strong> ${sale.sale_date ? new Date(sale.sale_date).toLocaleDateString('es-DO') : 'N/A'}</div>
-            <div><strong>Método de pago:</strong> ${sale.payment_method || 'N/A'}</div>
+            <div><strong>Método de pago:</strong> ${(() => {
+              const methodNames: Record<string, string> = {
+                'cash': 'Efectivo',
+                'card': 'Tarjeta',
+                'transfer': 'Transferencia',
+                'check': 'Cheque',
+                'financing': 'Financiamiento'
+              };
+              return methodNames[sale.payment_method || 'cash'] || sale.payment_method || 'Efectivo';
+            })()}</div>
           </div>
           <table>
             <thead>
@@ -1414,7 +2026,7 @@ const InventoryModule = () => {
             <div class="sum-row"><span>ITBIS:</span><span>${money(totalTax)}</span></div>
             <div class="sum-row total">
               <span>Total</span>
-              <span>${money(sale.total_amount || 0)}</span>
+              <span>${money(subtotal + totalTax)}</span>
             </div>
           </div>
         </div>
@@ -1430,74 +2042,207 @@ const InventoryModule = () => {
     }
   };
 
-  const downloadReceiptFromSale = (sale: SaleWithDetails) => {
+  const downloadReceiptFromSale = async (sale: SaleWithDetails) => {
+    const { default: jsPDF } = await import('jspdf');
+    const { default: autoTable } = await import('jspdf-autotable');
+    
     const invoiceNumber = `${sale.id.substring(0, 8)}`;
     const companyName = 'SH Computers';
     const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
     
-    const itemsRows = sale.details.map(detail => `
-      <tr>
-        <td>${detail.product?.name || 'Producto desconocido'}</td>
-        <td class="right">${detail.quantity}</td>
-        <td class="right">${money(detail.unit_price)}</td>
-        <td class="right">${money(detail.total_price)}</td>
-      </tr>
-    `).join('');
+    // Traducir método de pago
+    const translatePaymentMethod = (method: string | null) => {
+      const methods: { [key: string]: string } = {
+        'cash': 'Efectivo',
+        'card': 'Tarjeta',
+        'transfer': 'Transferencia',
+        'check': 'Cheque',
+        'financing': 'Financiamiento'
+      };
+      return methods[method || 'cash'] || method || 'Efectivo';
+    };
+    
+    // Obtener información de la empresa
+    const { data: companySettings } = await supabase
+      .from('company_settings')
+      .select('company_name, address, phone')
+      .eq('user_id', user?.id)
+      .maybeSingle();
+    
+    const finalCompanyName = companySettings?.company_name || companyName;
+    const companyAddress = companySettings?.address || '';
+    const companyPhone = companySettings?.phone || '';
 
-    const receiptHTML = `
-      <!DOCTYPE html>
-      <html lang="es">
-      <head>
-        <meta charset="UTF-8">
-        <title>Factura ${invoiceNumber}</title>
-        <style>
-          body { font-family: Arial, sans-serif; font-size: 12px; }
-          .header { border-bottom: 2px solid #111827; padding-bottom: 12px; margin-bottom: 12px; }
-          .brand-name { font-size: 18px; font-weight: 700; }
-          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-          th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
-          .right { text-align: right; }
-          .total { font-weight: 800; font-size: 14px; border-top: 2px solid #111827; padding-top: 10px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div class="brand-name">${companyName}</div>
-          <div>Factura #${invoiceNumber}</div>
-        </div>
-        <div>
-          <div><strong>Cliente:</strong> ${sale.client_name || 'Cliente General'}</div>
-          <div><strong>Fecha:</strong> ${sale.sale_date ? new Date(sale.sale_date).toLocaleDateString('es-DO') : 'N/A'}</div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Descripción</th>
-              <th class="right">Cant.</th>
-              <th class="right">Precio</th>
-              <th class="right">Importe</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsRows}
-          </tbody>
-        </table>
-        <div class="total" style="text-align: right; margin-top: 12px;">
-          Total: ${money(sale.total_amount || 0)}
-        </div>
-      </body>
-      </html>
-    `;
+    // Calcular subtotal e ITBIS desde los detalles
+    let subtotal = 0;
+    let totalTax = 0;
+    
+    const tableData = sale.details.map(detail => {
+      const itbisRate = detail.product?.itbis_rate ?? 18;
+      const itemSubtotal = detail.total_price; // Ya es sin ITBIS
+      const itemTax = itemSubtotal * (itbisRate / 100);
+      const itemTotalWithTax = itemSubtotal + itemTax;
+      
+      subtotal += itemSubtotal;
+      totalTax += itemTax;
+      
+      return [
+        detail.product?.name || 'Producto desconocido',
+        detail.quantity.toString(),
+        money(detail.unit_price), // Precio unitario con ITBIS
+        money(itemTotalWithTax) // Total del item con ITBIS
+      ];
+    });
+    
+    // Calcular total con ITBIS usando la función existente
+    const totalWithTax = calculateSaleTotalWithTax(sale);
 
-    const blob = new Blob([receiptHTML], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `factura_${invoiceNumber}_${new Date().toISOString().split('T')[0]}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Crear documento PDF
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    let yPos = margin;
+
+    // Encabezado
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text(finalCompanyName, margin, yPos);
+    yPos += 7;
+
+    if (companyAddress) {
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(companyAddress, margin, yPos);
+      yPos += 5;
+    }
+
+    if (companyPhone) {
+      doc.setFontSize(10);
+      doc.text(`Tel: ${companyPhone}`, margin, yPos);
+      yPos += 5;
+    }
+
+    // Línea separadora
+    yPos += 3;
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 8;
+
+    // Título del documento
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('FACTURA', margin, yPos);
+    yPos += 5;
+
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Número: ${invoiceNumber}`, margin, yPos);
+    yPos += 8;
+
+    // Información del cliente y fecha
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Cliente:', margin, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(sale.client_name || 'Cliente General', margin + 25, yPos);
+    yPos += 6;
+
+    const saleDate = sale.sale_date 
+      ? new Date(sale.sale_date).toLocaleDateString('es-DO', { 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      : sale.created_at
+        ? new Date(sale.created_at).toLocaleDateString('es-DO', { 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+        : 'N/A';
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Fecha:', margin, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(saleDate, margin + 25, yPos);
+    yPos += 6;
+
+    // Método de pago
+    doc.setFont('helvetica', 'bold');
+    doc.text('Método de pago:', margin, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(translatePaymentMethod(sale.payment_method), margin + 40, yPos);
+    yPos += 10;
+
+    // Agregar tabla con autoTable
+    autoTable(doc, {
+      head: [['Descripción', 'Cant.', 'Precio', 'Importe']],
+      body: tableData,
+      startY: yPos,
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { 
+        fillColor: [66, 139, 202], 
+        textColor: 255, 
+        fontStyle: 'bold',
+        halign: 'center'
+      },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { halign: 'center' },
+        2: { halign: 'right' },
+        3: { halign: 'right' }
+      },
+      margin: { left: margin, right: margin },
+      didDrawPage: (data) => {
+        yPos = data.cursor.y;
+      }
+    });
+
+    // Obtener la posición final después de la tabla
+    const finalY = (doc as any).lastAutoTable.finalY || yPos + 20;
+    yPos = finalY + 10;
+
+    // Resumen con subtotal, ITBIS y total
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    
+    const subtotalText = `Subtotal: ${money(subtotal)}`;
+    const subtotalWidth = doc.getTextWidth(subtotalText);
+    doc.text(subtotalText, pageWidth - margin - subtotalWidth, yPos);
+    yPos += 6;
+
+    const taxText = `ITBIS: ${money(totalTax)}`;
+    const taxWidth = doc.getTextWidth(taxText);
+    doc.text(taxText, pageWidth - margin - taxWidth, yPos);
+    yPos += 8;
+
+    // Total con ITBIS
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    const totalText = `Total: ${money(totalWithTax)}`;
+    const totalWidth = doc.getTextWidth(totalText);
+    doc.text(totalText, pageWidth - margin - totalWidth, yPos);
+
+    // Pie de página
+    yPos = doc.internal.pageSize.getHeight() - 20;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 100, 100);
+    doc.text('Gracias por su preferencia', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 5;
+    doc.text(
+      `Generado el: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}`,
+      pageWidth / 2,
+      yPos,
+      { align: 'center' }
+    );
+
+    // Descargar PDF
+    doc.save(`factura_${invoiceNumber}_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   return (
@@ -2114,6 +2859,21 @@ const InventoryModule = () => {
             </Card>
           </div>
 
+          {/* Botón de Cuadre de Caja */}
+          <Card>
+            <CardContent className="pt-6">
+              <Button
+                variant="default"
+                size="lg"
+                onClick={() => setShowCashRegister(true)}
+                className="w-full"
+              >
+                <FileText className="h-5 w-5 mr-2" />
+                Generar Cuadre de Caja
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* Lista de Ventas */}
           <Card>
             <CardHeader>
@@ -2163,15 +2923,15 @@ const InventoryModule = () => {
                             const itemTotalWithTax = itemSubtotal + itemTax;
                             
                             return (
-                              <div key={detail.id} className="flex justify-between text-sm bg-gray-50 p-2 rounded">
-                                <span>
-                                  {detail.product?.name || 'Producto desconocido'} 
-                                  {detail.product?.sku && ` (Código: ${detail.product.sku})`}
-                                </span>
-                                <span className="font-medium">
+                            <div key={detail.id} className="flex justify-between text-sm bg-gray-50 p-2 rounded">
+                              <span>
+                                {detail.product?.name || 'Producto desconocido'} 
+                                {detail.product?.sku && ` (Código: ${detail.product.sku})`}
+                              </span>
+                              <span className="font-medium">
                                   {detail.quantity} x ${detail.unit_price.toFixed(2)} = ${itemTotalWithTax.toFixed(2)}
-                                </span>
-                              </div>
+                              </span>
+                            </div>
                             );
                           })}
                         </div>
@@ -2183,6 +2943,17 @@ const InventoryModule = () => {
                           >
                             <Eye className="h-4 w-4 mr-2" />
                             Detalles
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setEditingSale(sale);
+                              setShowEditSaleModal(true);
+                            }}
+                          >
+                            <Edit className="h-4 w-4 mr-2" />
+                            Editar
                           </Button>
                           <Button
                             variant="outline"
@@ -2976,19 +3747,16 @@ const InventoryModule = () => {
                   onChange={(e) => {
                     const rate = Number(e.target.value) || 0;
                     setItbisRate(rate);
-                    // Recalcular precios con el nuevo ITBIS
+                    // Recalcular SOLO los precios CON ITBIS basándose en los precios SIN ITBIS
+                    // El precio sin ITBIS NO debe cambiar cuando cambia el ITBIS
                     if (purchaseNoTax > 0) {
                       setPurchaseWithTax(Number((purchaseNoTax * (1 + rate / 100)).toFixed(2)));
                     }
                     if (sellingNoTax > 0) {
                       setSellingWithTax(Number((sellingNoTax * (1 + rate / 100)).toFixed(2)));
                     }
-                    if (purchaseWithTax > 0) {
-                      setPurchaseNoTax(Number((purchaseWithTax / (1 + rate / 100)).toFixed(2)));
-                    }
-                    if (sellingWithTax > 0) {
-                      setSellingNoTax(Number((sellingWithTax / (1 + rate / 100)).toFixed(2)));
-                    }
+                    // NO recalcular los precios sin ITBIS cuando cambia el ITBIS
+                    // Los precios sin ITBIS deben mantenerse constantes
                   }}
                   className="w-24"
                 />
@@ -3040,6 +3808,361 @@ const InventoryModule = () => {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Sale Dialog */}
+      <Dialog open={showEditSaleModal} onOpenChange={(open) => {
+        setShowEditSaleModal(open);
+        if (!open) {
+          setEditingSale(null);
+          setEditSaleSelectedClient(null);
+          setEditSaleClientSearch('');
+          setEditSaleProducts([]);
+          setEditSalePaymentMethod('cash');
+          setEditSaleNotes('');
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Editar Venta #{editingSale?.sale_number || editingSale?.id.substring(0, 8)}</DialogTitle>
+          </DialogHeader>
+          {editingSale && (
+            <div className="space-y-4">
+              {/* Cliente */}
+              <div>
+                <Label>Cliente</Label>
+                <div className="relative">
+                  <Input
+                    placeholder="Buscar cliente..."
+                    value={editSaleClientSearch}
+                    onChange={async (e) => {
+                      const search = e.target.value;
+                      setEditSaleClientSearch(search);
+                      if (search.length > 0 && companyId) {
+                        const { data } = await supabase
+                          .from('clients')
+                          .select('id, full_name, dni, phone')
+                          .eq('user_id', companyId)
+                          .ilike('full_name', `%${search}%`)
+                          .limit(10);
+                        setEditSaleFilteredClients(data || []);
+                        setShowEditSaleClientDropdown(true);
+                      } else {
+                        setEditSaleFilteredClients([]);
+                        setShowEditSaleClientDropdown(false);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (editSaleClientSearch.length > 0) {
+                        setShowEditSaleClientDropdown(true);
+                      }
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setShowEditSaleClientDropdown(false), 200);
+                    }}
+                  />
+                  {showEditSaleClientDropdown && editSaleFilteredClients.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      {editSaleFilteredClients.map((client) => (
+                        <div
+                          key={client.id}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setEditSaleSelectedClient(client);
+                            setEditSaleClientSearch(client.full_name);
+                            setShowEditSaleClientDropdown(false);
+                          }}
+                        >
+                          <div className="font-medium">{client.full_name}</div>
+                          <div className="text-sm text-gray-600">DNI: {client.dni} | Tel: {client.phone}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {editSaleSelectedClient && (
+                  <p className="text-sm text-gray-600 mt-1">Cliente seleccionado: {editSaleSelectedClient.full_name}</p>
+                )}
+              </div>
+
+              {/* Productos */}
+              <div>
+                <Label>Productos</Label>
+                <div className="relative mb-2">
+                  <Input
+                    placeholder="Buscar producto para agregar..."
+                    value={editSaleProductSearch}
+                    onChange={async (e) => {
+                      const search = e.target.value;
+                      setEditSaleProductSearch(search);
+                      if (search.length > 0) {
+                        const filtered = products.filter(p => 
+                          p.name.toLowerCase().includes(search.toLowerCase()) ||
+                          (p.sku && p.sku.toLowerCase().includes(search.toLowerCase()))
+                        ).slice(0, 10);
+                        setEditSaleFilteredProducts(filtered);
+                        setShowEditSaleProductDropdown(true);
+                      } else {
+                        setShowEditSaleProductDropdown(false);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (editSaleProductSearch.length > 0) {
+                        setShowEditSaleProductDropdown(true);
+                      }
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setShowEditSaleProductDropdown(false), 200);
+                    }}
+                  />
+                  {showEditSaleProductDropdown && editSaleFilteredProducts.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto mt-1">
+                      {editSaleFilteredProducts.map((product) => (
+                        <div
+                          key={product.id}
+                          className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            const itbisRate = product.itbis_rate ?? 18;
+                            const priceWithTax = product.selling_price;
+                            const priceWithoutTax = priceWithTax / (1 + itbisRate / 100);
+                            setEditSaleProducts([...editSaleProducts, {
+                              id: `temp-${Date.now()}`,
+                              product_id: product.id,
+                              product: product,
+                              quantity: 1,
+                              unit_price: priceWithTax,
+                              total_price: priceWithoutTax
+                            }]);
+                            setEditSaleProductSearch('');
+                            setShowEditSaleProductDropdown(false);
+                          }}
+                        >
+                          <div className="font-medium">{product.name}</div>
+                          <div className="text-sm text-gray-600">
+                            {product.sku && `Código: ${product.sku} | `}
+                            Precio: ${product.selling_price.toFixed(2)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2 border rounded-lg p-3 max-h-60 overflow-y-auto">
+                  {editSaleProducts.length === 0 ? (
+                    <p className="text-sm text-gray-500 text-center py-4">No hay productos agregados</p>
+                  ) : (
+                    editSaleProducts.map((item, index) => {
+                      const itbisRate = item.product?.itbis_rate ?? 18;
+                      const itemSubtotal = item.total_price;
+                      const itemTax = itemSubtotal * (itbisRate / 100);
+                      const itemTotalWithTax = itemSubtotal + itemTax;
+                      return (
+                        <div key={item.id || index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                          <div className="flex-1">
+                            <p className="font-medium">{item.product?.name || 'Producto'}</p>
+                            <div className="flex items-center gap-4 mt-1">
+                              <div>
+                                <Label className="text-xs">Cantidad</Label>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity}
+                                  onChange={(e) => {
+                                    const qty = Number(e.target.value) || 1;
+                                    const newItems = [...editSaleProducts];
+                                    newItems[index].quantity = qty;
+                                    newItems[index].total_price = (item.unit_price / (1 + itbisRate / 100)) * qty;
+                                    setEditSaleProducts(newItems);
+                                  }}
+                                  className="w-20 h-8"
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs">Precio Unit.</Label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  value={item.unit_price}
+                                  onChange={(e) => {
+                                    const price = Number(e.target.value) || 0;
+                                    const newItems = [...editSaleProducts];
+                                    newItems[index].unit_price = price;
+                                    newItems[index].total_price = (price / (1 + itbisRate / 100)) * item.quantity;
+                                    setEditSaleProducts(newItems);
+                                  }}
+                                  className="w-24 h-8"
+                                />
+                              </div>
+                              <div>
+                                <p className="text-xs text-gray-600">Total: ${itemTotalWithTax.toFixed(2)}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setEditSaleProducts(editSaleProducts.filter((_, i) => i !== index));
+                            }}
+                            className="ml-2 text-red-600"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+    </div>
+  );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Método de Pago */}
+              <div>
+                <Label>Método de Pago</Label>
+                <Select value={editSalePaymentMethod} onValueChange={setEditSalePaymentMethod}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Efectivo</SelectItem>
+                    <SelectItem value="card">Tarjeta</SelectItem>
+                    <SelectItem value="transfer">Transferencia</SelectItem>
+                    <SelectItem value="check">Cheque</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Notas */}
+              <div>
+                <Label>Notas</Label>
+                <Textarea
+                  value={editSaleNotes}
+                  onChange={(e) => setEditSaleNotes(e.target.value)}
+                  placeholder="Notas adicionales..."
+                  rows={3}
+                />
+              </div>
+
+              {/* Total */}
+              <div className="border-t pt-4">
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold">Total:</span>
+                  <span className="text-2xl font-bold text-green-600">
+                    ${editSaleProducts.reduce((sum, item) => {
+                      const itbisRate = item.product?.itbis_rate ?? 18;
+                      const itemSubtotal = item.total_price;
+                      const itemTax = itemSubtotal * (itbisRate / 100);
+                      return sum + itemSubtotal + itemTax;
+                    }, 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Botones */}
+              <div className="flex gap-2 justify-end pt-4 border-t">
+                <Button variant="outline" onClick={() => {
+                  setShowEditSaleModal(false);
+                  setEditingSale(null);
+                }}>
+                  Cancelar
+                </Button>
+                <Button onClick={async () => {
+                  if (editSaleProducts.length === 0) {
+                    toast.error('Debe agregar al menos un producto');
+                    return;
+                  }
+                  const totalAmount = editSaleProducts.reduce((sum, item) => {
+                    const itbisRate = item.product?.itbis_rate ?? 18;
+                    const itemSubtotal = item.total_price;
+                    const itemTax = itemSubtotal * (itbisRate / 100);
+                    return sum + itemSubtotal + itemTax;
+                  }, 0);
+                  const updatedSale: SaleWithDetails = {
+                    ...editingSale,
+                    client_id: editSaleSelectedClient?.id || editingSale.client_id,
+                    payment_method: editSalePaymentMethod,
+                    notes: editSaleNotes,
+                    total_amount: totalAmount,
+                    details: editSaleProducts.map(item => ({
+                      id: item.id,
+                      sale_id: editingSale.id,
+                      product_id: item.product_id,
+                      quantity: item.quantity,
+                      unit_price: item.unit_price,
+                      total_price: item.total_price,
+                      product: item.product
+                    }))
+                  };
+                  await handleEditSale(updatedSale);
+                }}>
+                  Guardar Cambios
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Cash Register Dialog */}
+      <Dialog open={showCashRegister} onOpenChange={setShowCashRegister}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Generar Cuadre de Caja</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Seleccione el formato para imprimir el cuadre de caja.
+              {salesDateFrom && salesDateTo ? (
+                <span className="block mt-1 font-medium">
+                  Período: {new Date(salesDateFrom).toLocaleDateString('es-DO')} - {new Date(salesDateTo).toLocaleDateString('es-DO')}
+                </span>
+              ) : (
+                <span className="block mt-1 font-medium">
+                  Período: Día de hoy
+                </span>
+              )}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  generateCashRegister('POS80');
+                  setShowCashRegister(false);
+                }}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                POS80
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  generateCashRegister('POS58');
+                  setShowCashRegister(false);
+                }}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                POS58
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  generateCashRegister('A4');
+                  setShowCashRegister(false);
+                }}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                A4
+              </Button>
+            </div>
+            <Button variant="outline" onClick={() => setShowCashRegister(false)} className="w-full">
+              Cancelar
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
