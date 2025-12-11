@@ -112,13 +112,15 @@ interface LoanUpdateFormProps {
   isOpen: boolean;
   onClose: () => void;
   onUpdate: () => void;
+  editOnly?: boolean; // Si es true, solo muestra la opción de editar préstamo
 }
 
 export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({ 
   loan, 
   isOpen, 
   onClose, 
-  onUpdate 
+  onUpdate,
+  editOnly = false
 }) => {
   const [loading, setLoading] = useState(false);
   const [currentLateFee, setCurrentLateFee] = useState(loan.current_late_fee || 0);
@@ -240,10 +242,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const form = useForm<UpdateFormData>({
     resolver: zodResolver(updateSchema),
     defaultValues: {
-      update_type: 'add_charge',
+      update_type: editOnly ? 'edit_loan' : 'add_charge',
       payment_method: 'cash',
     },
   });
+
+  // Establecer el tipo de actualización cuando editOnly cambia
+  useEffect(() => {
+    if (isOpen && editOnly) {
+      form.setValue('update_type', 'edit_loan');
+    }
+  }, [isOpen, editOnly, form]);
 
   const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount', 'edit_amount', 'edit_interest_rate', 'edit_term_months', 'edit_amortization_type']);
 
@@ -1152,49 +1161,57 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Seleccionar Acción</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <Select 
+                            onValueChange={field.onChange} 
+                            defaultValue={field.value}
+                            disabled={editOnly}
+                          >
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Seleccionar tipo de actualización" />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
-                              <SelectItem value="add_charge">
-                                <div className="flex items-center gap-2">
-                                  <PlusCircle className="h-4 w-4" />
-                                  Agregar Cargo
-                                </div>
-                              </SelectItem>
-                              <SelectItem value="term_extension">
-                                <div className="flex items-center gap-2">
-                                  <Calendar className="h-4 w-4" />
-                                  Extensión de Plazo
-                                </div>
-                              </SelectItem>
-                              <SelectItem value="balance_adjustment">
-                                <div className="flex items-center gap-2">
-                                  <Calculator className="h-4 w-4" />
-                                  Ajuste de Balance
-                                </div>
-                              </SelectItem>
-                              <SelectItem value="delete_loan">
-                                <div className="flex items-center gap-2">
-                                  <Trash2 className="h-4 w-4" />
-                                  Eliminar Préstamo
-                                </div>
-                              </SelectItem>
-                              <SelectItem value="remove_late_fee">
-                                <div className="flex items-center gap-2">
-                                  <MinusCircle className="h-4 w-4" />
-                                  Eliminar Mora
-                                </div>
-                              </SelectItem>
-                              <SelectItem value="payment_agreement">
-                                <div className="flex items-center gap-2">
-                                  <Handshake className="h-4 w-4" />
-                                  Acuerdos de Pago
-                                </div>
-                              </SelectItem>
+                              {!editOnly && (
+                                <>
+                                  <SelectItem value="add_charge">
+                                    <div className="flex items-center gap-2">
+                                      <PlusCircle className="h-4 w-4" />
+                                      Agregar Cargo
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="term_extension">
+                                    <div className="flex items-center gap-2">
+                                      <Calendar className="h-4 w-4" />
+                                      Extensión de Plazo
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="balance_adjustment">
+                                    <div className="flex items-center gap-2">
+                                      <Calculator className="h-4 w-4" />
+                                      Ajuste de Balance
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="delete_loan">
+                                    <div className="flex items-center gap-2">
+                                      <Trash2 className="h-4 w-4" />
+                                      Eliminar Préstamo
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="remove_late_fee">
+                                    <div className="flex items-center gap-2">
+                                      <MinusCircle className="h-4 w-4" />
+                                      Eliminar Mora
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="payment_agreement">
+                                    <div className="flex items-center gap-2">
+                                      <Handshake className="h-4 w-4" />
+                                      Acuerdos de Pago
+                                    </div>
+                                  </SelectItem>
+                                </>
+                              )}
                               {loan.status === 'pending' && (
                                 <SelectItem value="edit_loan">
                                   <div className="flex items-center gap-2">

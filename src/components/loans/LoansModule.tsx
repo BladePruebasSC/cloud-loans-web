@@ -66,6 +66,7 @@ export const LoansModule = () => {
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
   const [initialLoanData, setInitialLoanData] = useState(null);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [showRequestSelector, setShowRequestSelector] = useState(false);
   const [requests, setRequests] = useState([]);
   const [currentViewMonth, setCurrentViewMonth] = useState(new Date());
@@ -687,13 +688,16 @@ export const LoansModule = () => {
         onClose={() => {
           setShowUpdateForm(false);
           setSelectedLoan(null);
+          setIsEditMode(false);
         }}
         onUpdate={() => {
           setShowUpdateForm(false);
           setSelectedLoan(null);
+          setIsEditMode(false);
           // Refresh loans data
           refetch();
         }}
+        editOnly={isEditMode}
       />
     );
   }
@@ -1136,6 +1140,7 @@ export const LoansModule = () => {
                                 size="lg"
                                 onClick={() => {
                                   setSelectedLoan(loan);
+                                  setIsEditMode(true);
                                   setShowUpdateForm(true);
                                 }}
                                 className="h-12 text-base font-semibold border-2 border-blue-200 text-blue-700 hover:bg-blue-50 hover:border-blue-300 transition-all duration-200"
@@ -1169,6 +1174,7 @@ export const LoansModule = () => {
                                 size="lg"
                                 onClick={() => {
                                   setSelectedLoan(loan);
+                                  setIsEditMode(false);
                                   setShowUpdateForm(true);
                                 }}
                                 className="h-12 text-base font-semibold border-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
@@ -1209,6 +1215,7 @@ export const LoansModule = () => {
                                 size="lg"
                                 onClick={() => {
                                   setSelectedLoan(loan);
+                                  setIsEditMode(loan.status === 'pending');
                                   setShowUpdateForm(true);
                                 }}
                                 disabled={loan.status === 'paid'}
@@ -1531,6 +1538,7 @@ export const LoansModule = () => {
                                  size="sm"
                                  onClick={() => {
                                    setSelectedLoan(loan);
+                                   setIsEditMode(false);
                                    setShowUpdateForm(true);
                                  }}
                                  className="w-full sm:w-auto text-xs"
@@ -1560,6 +1568,7 @@ export const LoansModule = () => {
                                  size="sm"
                                  onClick={() => {
                                    setSelectedLoan(loan);
+                                   setIsEditMode(loan.status === 'pending');
                                    setShowUpdateForm(true);
                                  }}
                                  disabled={loan.status === 'paid'}
@@ -1821,6 +1830,7 @@ export const LoansModule = () => {
                                      size="sm"
                                      onClick={() => {
                                        setSelectedLoan(loan);
+                                       setIsEditMode(loan.status === 'pending');
                                        setShowUpdateForm(true);
                                      }}
                                      className="w-full sm:w-auto text-xs"
@@ -1857,6 +1867,7 @@ export const LoansModule = () => {
                                      size="sm"
                                      onClick={() => {
                                        setSelectedLoan(loan);
+                                       setIsEditMode(false);
                                        setShowUpdateForm(true);
                                      }}
                                      className="w-full sm:w-auto text-xs"
@@ -1886,6 +1897,7 @@ export const LoansModule = () => {
                                      size="sm"
                                      onClick={() => {
                                        setSelectedLoan(loan);
+                                       setIsEditMode(loan.status === 'pending');
                                        setShowUpdateForm(true);
                                      }}
                                      className="w-full sm:w-auto text-xs"
@@ -2788,6 +2800,7 @@ export const LoansModule = () => {
                                    <Button 
                                      onClick={() => {
                                        setSelectedLoan(loan);
+                                       setIsEditMode(false);
                                        setShowUpdateForm(true);
                                      }}
                                      variant="ghost"
