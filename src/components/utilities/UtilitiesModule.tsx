@@ -44,7 +44,12 @@ const UtilitiesModule = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('calculadora');
   const [showExpenseForm, setShowExpenseForm] = useState(false);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
+
+  // Calculator configuration state
+  const [defaultInterestRate, setDefaultInterestRate] = useState(15);
+  const [defaultTermMonths, setDefaultTermMonths] = useState(12);
+  const [loadingConfig, setLoadingConfig] = useState(false);
 
   // Calculator state
   const [loanAmount, setLoanAmount] = useState(100000);
@@ -81,6 +86,11 @@ const UtilitiesModule = () => {
   const [showProfitability, setShowProfitability] = useState(false);
   const [showCurrencyConverter, setShowCurrencyConverter] = useState(false);
 
+  // Report filters
+  const [reportDateFrom, setReportDateFrom] = useState<string>('');
+  const [reportDateTo, setReportDateTo] = useState<string>('');
+  const [reportCategoryFilter, setReportCategoryFilter] = useState<string>('all');
+
   // Expense form
   const [expenseForm, setExpenseForm] = useState({
     amount: 0,
@@ -92,8 +102,96 @@ const UtilitiesModule = () => {
   useEffect(() => {
     if (user) {
       fetchExpenses();
+      fetchCalculatorConfig();
     }
-  }, [user]);
+  }, [user, companyId]);
+
+  const fetchCalculatorConfig = async () => {
+    if (!companyId) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('company_settings')
+        .select('interest_rate_default, min_term_months')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error fetching calculator config:', error);
+        return;
+      }
+
+      if (data) {
+        if (data.interest_rate_default) {
+          setDefaultInterestRate(Number(data.interest_rate_default));
+          setInterestRate(Number(data.interest_rate_default));
+        }
+        if (data.min_term_months) {
+          setDefaultTermMonths(Number(data.min_term_months));
+          setTermMonths(Number(data.min_term_months));
+        }
+      }
+    } catch (error) {
+      console.error('Error loading calculator config:', error);
+    }
+  };
+
+  const saveCalculatorConfig = async () => {
+    if (!companyId) {
+      toast.error('No se pudo identificar la empresa');
+      return;
+    }
+
+    try {
+      setLoadingConfig(true);
+      
+      // Verificar si existe configuración
+      const { data: existing } = await supabase
+        .from('company_settings')
+        .select('id')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const configData = {
+        interest_rate_default: defaultInterestRate,
+        min_term_months: defaultTermMonths,
+        updated_at: new Date().toISOString()
+      };
+
+      let error;
+      if (existing) {
+        // Actualizar
+        const { error: updateError } = await supabase
+          .from('company_settings')
+          .update(configData)
+          .eq('user_id', companyId);
+        error = updateError;
+      } else {
+        // Crear (necesitamos al menos company_name)
+        const { error: insertError } = await supabase
+          .from('company_settings')
+          .insert({
+            user_id: companyId,
+            company_name: 'Mi Empresa',
+            ...configData
+          });
+        error = insertError;
+      }
+
+      if (error) throw error;
+
+      // Actualizar valores en la calculadora
+      setInterestRate(defaultInterestRate);
+      setTermMonths(defaultTermMonths);
+
+      toast.success('Configuración guardada exitosamente');
+    } catch (error) {
+      console.error('Error saving calculator config:', error);
+      toast.error('Error al guardar configuración');
+    } finally {
+      setLoadingConfig(false);
+    }
+  };
 
   const fetchExpenses = async () => {
     try {
@@ -186,7 +284,57 @@ const UtilitiesModule = () => {
   const monthlyExpenses = expenses
     .filter(exp => new Date(exp.expense_date).getMonth() === new Date().getMonth())
     .reduce((sum, exp) => sum + exp.amount, 0);
-  const categories = [...new Set(expenses.map(exp => exp.category).filter(Boolean))];
+  
+  // Categorías predefinidas del sistema
+  const predefinedCategories = ['Oficina', 'Marketing', 'Transporte', 'Servicios', 'Equipos', 'Otros'];
+  // Categorías de los gastos existentes
+  const expenseCategories = [...new Set(expenses.map(exp => exp.category).filter(Boolean))];
+  // Combinar ambas listas y eliminar duplicados
+  const categories = [...new Set([...predefinedCategories, ...expenseCategories])].sort();
+
+  // Filtered expenses for reports
+  const filteredExpenses = expenses.filter(exp => {
+    const expenseDate = new Date(exp.expense_date);
+    
+    // Date filter
+    if (reportDateFrom) {
+      const fromDate = new Date(reportDateFrom);
+      fromDate.setHours(0, 0, 0, 0);
+      if (expenseDate < fromDate) return false;
+    }
+    if (reportDateTo) {
+      const toDate = new Date(reportDateTo);
+      toDate.setHours(23, 59, 59, 999);
+      if (expenseDate > toDate) return false;
+    }
+    
+    // Category filter
+    if (reportCategoryFilter !== 'all' && exp.category !== reportCategoryFilter) {
+      return false;
+    }
+    
+    return true;
+  });
+
+  const filteredTotalExpenses = filteredExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+  const filteredPeriodExpenses = filteredExpenses
+    .filter(exp => {
+      if (!reportDateFrom && !reportDateTo) return true;
+      const expenseDate = new Date(exp.expense_date);
+      if (reportDateFrom) {
+        const fromDate = new Date(reportDateFrom);
+        fromDate.setHours(0, 0, 0, 0);
+        if (expenseDate < fromDate) return false;
+      }
+      if (reportDateTo) {
+        const toDate = new Date(reportDateTo);
+        toDate.setHours(23, 59, 59, 999);
+        if (expenseDate > toDate) return false;
+      }
+      return true;
+    })
+    .reduce((sum, exp) => sum + exp.amount, 0);
+  const filteredCategories = [...new Set(filteredExpenses.map(exp => exp.category).filter(Boolean))];
 
   // Funciones para calculadoras adicionales
   const calculateSimpleInterest = () => {
@@ -482,6 +630,63 @@ const UtilitiesModule = () => {
         </TabsContent>
 
         <TabsContent value="reportes" className="space-y-6">
+          {/* Filtros */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Filtros de Reporte</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <Label htmlFor="report_date_from">Fecha Desde</Label>
+                  <Input
+                    id="report_date_from"
+                    type="date"
+                    value={reportDateFrom}
+                    onChange={(e) => setReportDateFrom(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="report_date_to">Fecha Hasta</Label>
+                  <Input
+                    id="report_date_to"
+                    type="date"
+                    value={reportDateTo}
+                    onChange={(e) => setReportDateTo(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="report_category">Categoría</Label>
+                  <Select value={reportCategoryFilter} onValueChange={setReportCategoryFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todas las categorías" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las categorías</SelectItem>
+                      {categories.map((cat) => (
+                        <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-end">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => {
+                      setReportDateFrom('');
+                      setReportDateTo('');
+                      setReportCategoryFilter('all');
+                    }}
+                    className="w-full"
+                  >
+                    Limpiar Filtros
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Resumen */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
@@ -491,20 +696,20 @@ const UtilitiesModule = () => {
                 <div className="space-y-4">
                   <div className="flex justify-between">
                     <span>Gastos totales:</span>
-                    <span className="font-semibold">{expenses.length}</span>
+                    <span className="font-semibold">{filteredExpenses.length}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Monto total:</span>
-                    <span className="font-semibold">${totalExpenses.toLocaleString()}</span>
+                    <span className="font-semibold">${filteredTotalExpenses.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Gastos este mes:</span>
-                    <span className="font-semibold">${monthlyExpenses.toLocaleString()}</span>
+                    <span>Gastos en período:</span>
+                    <span className="font-semibold">${filteredPeriodExpenses.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Promedio por gasto:</span>
                     <span className="font-semibold">
-                      ${expenses.length > 0 ? (totalExpenses / expenses.length).toFixed(2) : '0'}
+                      ${filteredExpenses.length > 0 ? (filteredTotalExpenses / filteredExpenses.length).toFixed(2) : '0'}
                     </span>
                   </div>
                 </div>
@@ -517,13 +722,22 @@ const UtilitiesModule = () => {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {categories.map((category) => {
-                    const categoryExpenses = expenses.filter(exp => exp.category === category);
+                  {filteredCategories.map((category) => {
+                    const categoryExpenses = filteredExpenses.filter(exp => exp.category === category);
                     const categoryTotal = categoryExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+                    const percentage = filteredTotalExpenses > 0 ? (categoryTotal / filteredTotalExpenses * 100).toFixed(1) : '0';
                     return (
-                      <div key={category} className="flex justify-between">
-                        <span className="truncate">{category}</span>
-                        <span className="font-semibold">${categoryTotal.toLocaleString()}</span>
+                      <div key={category} className="space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="truncate">{category}</span>
+                          <span className="font-semibold">${categoryTotal.toLocaleString()} ({percentage}%)</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div 
+                            className="bg-blue-600 h-2 rounded-full" 
+                            style={{ width: `${percentage}%` }}
+                          ></div>
+                        </div>
                       </div>
                     );
                   })}
@@ -531,6 +745,59 @@ const UtilitiesModule = () => {
               </CardContent>
             </Card>
           </div>
+
+          {/* Tabla detallada */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Detalle de Gastos</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {filteredExpenses.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Receipt className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No hay gastos que coincidan con los filtros seleccionados</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left p-2">Fecha</th>
+                        <th className="text-left p-2">Descripción</th>
+                        <th className="text-left p-2">Categoría</th>
+                        <th className="text-right p-2">Monto</th>
+                        <th className="text-left p-2">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredExpenses.map((expense) => (
+                        <tr key={expense.id} className="border-b hover:bg-gray-50">
+                          <td className="p-2">{new Date(expense.expense_date).toLocaleDateString('es-DO')}</td>
+                          <td className="p-2">{expense.description}</td>
+                          <td className="p-2">
+                            <Badge variant="secondary">{expense.category}</Badge>
+                          </td>
+                          <td className="p-2 text-right font-semibold">${expense.amount.toLocaleString()}</td>
+                          <td className="p-2">
+                            <Badge variant={expense.status === 'approved' ? 'default' : 'secondary'}>
+                              {expense.status === 'approved' ? 'Aprobado' : expense.status}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t font-bold">
+                        <td colSpan={3} className="p-2 text-right">Total:</td>
+                        <td className="p-2 text-right">${filteredTotalExpenses.toLocaleString()}</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="configuracion" className="space-y-6">
@@ -554,7 +821,8 @@ const UtilitiesModule = () => {
                         id="default_interest"
                         type="number" 
                         step="0.1"
-                        defaultValue="15"
+                        value={defaultInterestRate}
+                        onChange={(e) => setDefaultInterestRate(Number(e.target.value))}
                         placeholder="Tasa por defecto"
                       />
                     </div>
@@ -563,7 +831,8 @@ const UtilitiesModule = () => {
                       <Input 
                         id="default_term"
                         type="number" 
-                        defaultValue="12"
+                        value={defaultTermMonths}
+                        onChange={(e) => setDefaultTermMonths(Number(e.target.value))}
                         placeholder="Plazo por defecto"
                       />
                     </div>
@@ -594,7 +863,9 @@ const UtilitiesModule = () => {
               </div>
 
               <div className="flex justify-end">
-                <Button>Guardar Configuración</Button>
+                <Button onClick={saveCalculatorConfig} disabled={loadingConfig}>
+                  {loadingConfig ? 'Guardando...' : 'Guardar Configuración'}
+                </Button>
               </div>
             </CardContent>
           </Card>
