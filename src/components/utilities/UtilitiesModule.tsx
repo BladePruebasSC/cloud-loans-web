@@ -24,7 +24,10 @@ import {
   TrendingUp,
   Receipt,
   Edit,
-  Trash2
+  Trash2,
+  Printer,
+  Download,
+  Eye
 } from 'lucide-react';
 
 interface Expense {
@@ -232,13 +235,15 @@ const UtilitiesModule = () => {
     if (!user) return;
 
     try {
-      const { error } = await supabase
+      const { data: newExpense, error } = await supabase
         .from('expenses')
         .insert([{
           ...expenseForm,
           created_by: user.id,
           status: 'approved'
-        }]);
+        }])
+        .select()
+        .single();
 
       if (error) throw error;
 
@@ -246,6 +251,13 @@ const UtilitiesModule = () => {
       setShowExpenseForm(false);
       resetExpenseForm();
       fetchExpenses();
+      
+      // Imprimir el gasto recién creado
+      if (newExpense) {
+        setTimeout(() => {
+          printSingleExpense(newExpense);
+        }, 500);
+      }
     } catch (error) {
       console.error('Error creating expense:', error);
       toast.error('Error al registrar gasto');
@@ -335,6 +347,461 @@ const UtilitiesModule = () => {
     })
     .reduce((sum, exp) => sum + exp.amount, 0);
   const filteredCategories = [...new Set(filteredExpenses.map(exp => exp.category).filter(Boolean))];
+
+  // Funciones para previsualizar, imprimir y descargar PDF
+  const generateExpenseReportHTML = () => {
+    const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+    
+    const periodText = reportDateFrom && reportDateTo
+      ? `del ${new Date(reportDateFrom).toLocaleDateString('es-DO')} al ${new Date(reportDateTo).toLocaleDateString('es-DO')}`
+      : reportDateFrom
+        ? `desde ${new Date(reportDateFrom).toLocaleDateString('es-DO')}`
+        : reportDateTo
+          ? `hasta ${new Date(reportDateTo).toLocaleDateString('es-DO')}`
+          : 'Todos los períodos';
+    
+    const categoryText = reportCategoryFilter !== 'all' ? reportCategoryFilter : 'Todas las categorías';
+    
+    const tableRows = filteredExpenses.map(expense => `
+      <tr>
+        <td>${new Date(expense.expense_date).toLocaleDateString('es-DO')}</td>
+        <td>${expense.description}</td>
+        <td>${expense.category}</td>
+        <td class="text-right">${money(expense.amount)}</td>
+        <td>${expense.status === 'approved' ? 'Aprobado' : expense.status}</td>
+      </tr>
+    `).join('');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Reporte de Gastos</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .header { text-align: center; margin-bottom: 30px; }
+            .header h1 { color: #2563eb; margin: 0; }
+            .header h2 { color: #666; margin: 5px 0; }
+            .info { margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; }
+            .info p { margin: 5px 0; }
+            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+            th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+            th { background-color: #2563eb; color: white; font-weight: bold; }
+            .text-right { text-align: right; }
+            .summary { margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 5px; }
+            .summary h3 { margin-top: 0; color: #2563eb; }
+            .summary-row { display: flex; justify-content: space-between; padding: 5px 0; }
+            .total { font-weight: bold; font-size: 1.1em; border-top: 2px solid #2563eb; padding-top: 10px; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; color: #666; font-size: 0.9em; }
+            @media print {
+              body { margin: 0; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>REPORTE DE GASTOS</h1>
+            <h2>${new Date().toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' })}</h2>
+          </div>
+          
+          <div class="info">
+            <p><strong>Período:</strong> ${periodText}</p>
+            <p><strong>Categoría:</strong> ${categoryText}</p>
+            <p><strong>Total de gastos:</strong> ${filteredExpenses.length}</p>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Descripción</th>
+                <th>Categoría</th>
+                <th class="text-right">Monto</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows || '<tr><td colspan="5" style="text-align: center;">No hay gastos en este período</td></tr>'}
+            </tbody>
+            <tfoot>
+              <tr class="total">
+                <td colspan="3"><strong>TOTAL</strong></td>
+                <td class="text-right"><strong>${money(filteredTotalExpenses)}</strong></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="summary">
+            <h3>Resumen</h3>
+            <div class="summary-row">
+              <span>Total de gastos:</span>
+              <span><strong>${filteredExpenses.length}</strong></span>
+            </div>
+            <div class="summary-row">
+              <span>Monto total:</span>
+              <span><strong>${money(filteredTotalExpenses)}</strong></span>
+            </div>
+            <div class="summary-row">
+              <span>Promedio por gasto:</span>
+              <span><strong>${money(filteredExpenses.length > 0 ? filteredTotalExpenses / filteredExpenses.length : 0)}</strong></span>
+            </div>
+            ${filteredCategories.length > 0 ? `
+              <div style="margin-top: 15px;">
+                <h4>Gastos por Categoría:</h4>
+                ${filteredCategories.map(cat => {
+                  const catExpenses = filteredExpenses.filter(exp => exp.category === cat);
+                  const catTotal = catExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+                  return `<div class="summary-row"><span>${cat}:</span><span>${money(catTotal)}</span></div>`;
+                }).join('')}
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="footer">
+            <p>Generado el ${new Date().toLocaleString('es-DO')}</p>
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
+  const previewExpenseReport = () => {
+    const html = generateExpenseReportHTML();
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(html);
+      printWindow.document.close();
+    }
+  };
+
+  const printExpenseReport = () => {
+    const html = generateExpenseReportHTML();
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(html);
+      printWindow.document.close();
+      setTimeout(() => {
+        printWindow.print();
+      }, 250);
+    }
+  };
+
+  const downloadExpenseReportPDF = async () => {
+    try {
+      const { default: jsPDF } = await import('jspdf');
+      const { default: autoTable } = await import('jspdf-autotable');
+      
+      const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+      
+      // Obtener información de la empresa
+      const { data: companySettings } = await supabase
+        .from('company_settings')
+        .select('company_name, address, phone')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      
+      const companyName = companySettings?.company_name || 'Mi Empresa';
+      const companyAddress = companySettings?.address || '';
+      const companyPhone = companySettings?.phone || '';
+
+      const periodText = reportDateFrom && reportDateTo
+        ? `del ${new Date(reportDateFrom).toLocaleDateString('es-DO')} al ${new Date(reportDateTo).toLocaleDateString('es-DO')}`
+        : reportDateFrom
+          ? `desde ${new Date(reportDateFrom).toLocaleDateString('es-DO')}`
+          : reportDateTo
+            ? `hasta ${new Date(reportDateTo).toLocaleDateString('es-DO')}`
+            : 'Todos los períodos';
+      
+      const categoryText = reportCategoryFilter !== 'all' ? reportCategoryFilter : 'Todas las categorías';
+
+      // Preparar datos de la tabla
+      const tableData = filteredExpenses.map(expense => [
+        new Date(expense.expense_date).toLocaleDateString('es-DO'),
+        expense.description,
+        expense.category,
+        money(expense.amount),
+        expense.status === 'approved' ? 'Aprobado' : expense.status
+      ]);
+
+      // Crear documento PDF
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 15;
+      let yPos = margin;
+
+      // Encabezado
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('REPORTE DE GASTOS', margin, yPos);
+      yPos += 7;
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(companyName, margin, yPos);
+      yPos += 5;
+
+      if (companyAddress) {
+        doc.text(companyAddress, margin, yPos);
+        yPos += 5;
+      }
+
+      if (companyPhone) {
+        doc.text(`Tel: ${companyPhone}`, margin, yPos);
+        yPos += 5;
+      }
+
+      // Línea separadora
+      yPos += 3;
+      doc.setLineWidth(0.5);
+      doc.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 8;
+
+      // Información del reporte
+      doc.setFontSize(10);
+      doc.text(`Período: ${periodText}`, margin, yPos);
+      yPos += 5;
+      doc.text(`Categoría: ${categoryText}`, margin, yPos);
+      yPos += 5;
+      doc.text(`Fecha de generación: ${new Date().toLocaleDateString('es-DO')}`, margin, yPos);
+      yPos += 8;
+
+      // Agregar tabla con autoTable
+      autoTable(doc, {
+        head: [['Fecha', 'Descripción', 'Categoría', 'Monto', 'Estado']],
+        body: tableData.length > 0 ? tableData : [['No hay gastos en este período', '', '', '', '']],
+        startY: yPos,
+        styles: { fontSize: 9, cellPadding: 3 },
+        headStyles: { 
+          fillColor: [66, 139, 202], 
+          textColor: 255, 
+          fontStyle: 'bold',
+          halign: 'center'
+        },
+        columnStyles: {
+          0: { cellWidth: 30 },
+          1: { cellWidth: 'auto' },
+          2: { cellWidth: 35 },
+          3: { cellWidth: 35, halign: 'right' },
+          4: { cellWidth: 30 }
+        },
+        margin: { left: margin, right: margin }
+      });
+
+      // Obtener la posición final después de la tabla
+      const finalY = (doc as any).lastAutoTable.finalY || yPos + 50;
+
+      // Resumen
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('RESUMEN', margin, finalY + 10);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Total de gastos: ${filteredExpenses.length}`, margin, finalY + 18);
+      doc.text(`Monto total: ${money(filteredTotalExpenses)}`, margin, finalY + 23);
+      doc.text(`Promedio por gasto: ${money(filteredExpenses.length > 0 ? filteredTotalExpenses / filteredExpenses.length : 0)}`, margin, finalY + 28);
+
+      // Gastos por categoría
+      if (filteredCategories.length > 0) {
+        doc.setFont('helvetica', 'bold');
+        doc.text('Gastos por Categoría:', margin, finalY + 36);
+        doc.setFont('helvetica', 'normal');
+        let categoryY = finalY + 43;
+        filteredCategories.forEach(cat => {
+          const catExpenses = filteredExpenses.filter(exp => exp.category === cat);
+          const catTotal = catExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+          doc.text(`${cat}: ${money(catTotal)}`, margin + 5, categoryY);
+          categoryY += 5;
+        });
+      }
+
+      // Pie de página
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.text(
+          `Página ${i} de ${pageCount}`,
+          pageWidth - margin - 20,
+          doc.internal.pageSize.getHeight() - 10
+        );
+      }
+
+      // Descargar PDF
+      const fileName = `reporte-gastos-${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+      toast.success('PDF descargado exitosamente');
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast.error('Error al generar el PDF');
+    }
+  };
+
+  // Función para imprimir un gasto individual
+  const printSingleExpense = (expense: Expense) => {
+    const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
+    
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const expenseDate = new Date(expense.expense_date).toLocaleDateString('es-DO', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    const createdDate = expense.created_at 
+      ? new Date(expense.created_at).toLocaleDateString('es-DO', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      : new Date().toLocaleString('es-DO');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Comprobante de Gasto</title>
+          <style>
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              max-width: 600px;
+              margin: 20px auto;
+            }
+            .header { 
+              text-align: center; 
+              margin-bottom: 30px; 
+              border-bottom: 2px solid #2563eb;
+              padding-bottom: 20px;
+            }
+            .header h1 { 
+              color: #2563eb; 
+              margin: 0; 
+              font-size: 24px;
+            }
+            .header h2 { 
+              color: #666; 
+              margin: 5px 0; 
+              font-size: 14px;
+            }
+            .info { 
+              margin-bottom: 20px; 
+              padding: 15px; 
+              background: #f8f9fa; 
+              border-radius: 5px; 
+            }
+            .info-row { 
+              display: flex; 
+              justify-content: space-between; 
+              padding: 8px 0;
+              border-bottom: 1px solid #e0e0e0;
+            }
+            .info-row:last-child {
+              border-bottom: none;
+            }
+            .info-label { 
+              font-weight: bold; 
+              color: #333;
+            }
+            .info-value { 
+              color: #666; 
+            }
+            .amount-section {
+              margin-top: 20px;
+              padding: 20px;
+              background: #e3f2fd;
+              border-radius: 5px;
+              text-align: center;
+            }
+            .amount-label {
+              font-size: 14px;
+              color: #666;
+              margin-bottom: 10px;
+            }
+            .amount-value {
+              font-size: 32px;
+              font-weight: bold;
+              color: #2563eb;
+            }
+            .footer { 
+              margin-top: 30px; 
+              text-align: center; 
+              color: #666; 
+              font-size: 0.9em; 
+              border-top: 1px solid #e0e0e0;
+              padding-top: 20px;
+            }
+            .status-badge {
+              display: inline-block;
+              padding: 5px 15px;
+              border-radius: 20px;
+              font-size: 12px;
+              font-weight: bold;
+              background: #4caf50;
+              color: white;
+            }
+            @media print {
+              body { margin: 0; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>COMPROBANTE DE GASTO</h1>
+            <h2>${createdDate}</h2>
+          </div>
+          
+          <div class="info">
+            <div class="info-row">
+              <span class="info-label">Número de Comprobante:</span>
+              <span class="info-value">${expense.id.substring(0, 8).toUpperCase()}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Fecha del Gasto:</span>
+              <span class="info-value">${expenseDate}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Descripción:</span>
+              <span class="info-value">${expense.description}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Categoría:</span>
+              <span class="info-value">${expense.category}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Estado:</span>
+              <span class="info-value">
+                <span class="status-badge">${expense.status === 'approved' ? 'Aprobado' : expense.status}</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="amount-section">
+            <div class="amount-label">MONTO DEL GASTO</div>
+            <div class="amount-value">${money(expense.amount)}</div>
+          </div>
+
+          <div class="footer">
+            <p>Este es un comprobante generado automáticamente</p>
+            <p>Fecha de emisión: ${new Date().toLocaleString('es-DO')}</p>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    setTimeout(() => {
+      printWindow.print();
+    }, 250);
+  };
 
   // Funciones para calculadoras adicionales
   const calculateSimpleInterest = () => {
@@ -613,6 +1080,9 @@ const UtilitiesModule = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          <Button variant="outline" size="sm" onClick={() => printSingleExpense(expense)} title="Imprimir comprobante">
+                            <Printer className="h-4 w-4" />
+                          </Button>
                           <Button variant="outline" size="sm">
                             <Edit className="h-4 w-4" />
                           </Button>
@@ -633,7 +1103,23 @@ const UtilitiesModule = () => {
           {/* Filtros */}
           <Card>
             <CardHeader>
-              <CardTitle>Filtros de Reporte</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>Filtros de Reporte</CardTitle>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={previewExpenseReport} disabled={filteredExpenses.length === 0}>
+                    <Eye className="h-4 w-4 mr-2" />
+                    Previsualizar
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={printExpenseReport} disabled={filteredExpenses.length === 0}>
+                    <Printer className="h-4 w-4 mr-2" />
+                    Imprimir
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={downloadExpenseReportPDF} disabled={filteredExpenses.length === 0}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Descargar PDF
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
