@@ -20,6 +20,7 @@ CREATE OR REPLACE FUNCTION reset_company_data(p_owner_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   v_result JSONB := '{"success": true, "deleted": {}, "errors": []}'::JSONB;
@@ -30,6 +31,8 @@ BEGIN
   IF auth.uid() IS NULL OR auth.uid() != p_owner_id THEN
     RAISE EXCEPTION 'Unauthorized: Only the company owner can reset company data';
   END IF;
+
+  -- Note: SECURITY DEFINER should bypass RLS, but we'll handle errors gracefully
 
   BEGIN
     -- 1. Delete pawn payments first (they reference pawn_transactions)

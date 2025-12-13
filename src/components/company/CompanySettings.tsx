@@ -323,30 +323,51 @@ const CompanySettings = () => {
 
       if (data) {
         const result = data as any;
-        if (result.success) {
-          const deleted = result.deleted || {};
-          const errors = result.errors || [];
+        const deleted = result.deleted || {};
+        const errors = result.errors || [];
+        
+        console.log('✅ Datos eliminados:', deleted);
+        console.log('⚠️ Errores encontrados:', errors);
+        
+        // Si hay errores, mostrarlos de forma detallada
+        if (errors.length > 0) {
+          const errorMessages = errors.map((e: string) => `- ${e}`).join('\n');
+          console.error('❌ Errores durante la eliminación:\n', errorMessages);
           
-          console.log('✅ Datos eliminados:', deleted);
+          // Mostrar un mensaje más detallado
+          toast.error(
+            `Error al eliminar algunos datos. ${errors.length} operación(es) fallaron. Revisa la consola para más detalles.`,
+            {
+              duration: 5000,
+            }
+          );
           
-          if (errors.length > 0) {
-            console.warn('⚠️ Advertencias durante la eliminación:', errors);
-            toast.success('Los datos se eliminaron, pero algunas operaciones arrojaron advertencias. Revisa la consola para más detalles.');
-          } else {
-            toast.success('Todos los datos de la empresa han sido eliminados exitosamente');
-          }
-          
-          setShowResetDialog(false);
-          setResetCode('');
-          
-          // Recargar la página para reflejar los cambios
-          setTimeout(() => {
-            window.location.reload();
-          }, 1500);
-        } else {
-          toast.error('Error al eliminar los datos. Revisa la consola para más detalles.');
-          console.error('Error en resultado:', result);
+          // Mostrar los errores en un alert para que el usuario los vea
+          alert(
+            `Se encontraron ${errors.length} error(es) al eliminar los datos:\n\n${errorMessages}\n\nRevisa la consola del navegador para más detalles.`
+          );
         }
+        
+        // Si success es false, no continuar
+        if (result.success === false) {
+          setResetting(false);
+          return;
+        }
+        
+        // Si llegamos aquí, la operación fue exitosa (aunque pueda tener advertencias)
+        if (errors.length === 0) {
+          toast.success('Todos los datos de la empresa han sido eliminados exitosamente');
+        } else {
+          toast.warning('Los datos se eliminaron, pero algunas operaciones arrojaron errores. Revisa la consola para más detalles.');
+        }
+        
+        setShowResetDialog(false);
+        setResetCode('');
+        
+        // Recargar la página para reflejar los cambios
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
       }
     } catch (error: any) {
       console.error('Error al resetear datos:', error);
