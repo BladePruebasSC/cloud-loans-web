@@ -94,6 +94,21 @@ const UtilitiesModule = () => {
   const [reportDateTo, setReportDateTo] = useState<string>('');
   const [reportCategoryFilter, setReportCategoryFilter] = useState<string>('all');
 
+  // Expense categories management
+  const [expenseCategories, setExpenseCategories] = useState<string[]>(['Oficina', 'Marketing', 'Transporte', 'Servicios', 'Equipos', 'Otros']);
+  const [editingCategoryIndex, setEditingCategoryIndex] = useState<number | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState<string>('');
+  const [newCategoryName, setNewCategoryName] = useState<string>('');
+  const [showAddCategory, setShowAddCategory] = useState(false);
+
+  // Expense editing
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [showEditExpenseForm, setShowEditExpenseForm] = useState(false);
+
+  // Print format selection
+  const [showPrintFormatDialog, setShowPrintFormatDialog] = useState(false);
+  const [expenseToPrint, setExpenseToPrint] = useState<Expense | null>(null);
+
   // Expense form
   const [expenseForm, setExpenseForm] = useState({
     amount: 0,
@@ -252,10 +267,11 @@ const UtilitiesModule = () => {
       resetExpenseForm();
       fetchExpenses();
       
-      // Imprimir el gasto recién creado
+      // Abrir diálogo para seleccionar formato de impresión
       if (newExpense) {
         setTimeout(() => {
-          printSingleExpense(newExpense);
+          setExpenseToPrint(newExpense);
+          setShowPrintFormatDialog(true);
         }, 500);
       }
     } catch (error) {
@@ -297,12 +313,9 @@ const UtilitiesModule = () => {
     .filter(exp => new Date(exp.expense_date).getMonth() === new Date().getMonth())
     .reduce((sum, exp) => sum + exp.amount, 0);
   
-  // Categorías predefinidas del sistema
-  const predefinedCategories = ['Oficina', 'Marketing', 'Transporte', 'Servicios', 'Equipos', 'Otros'];
-  // Categorías de los gastos existentes
-  const expenseCategories = [...new Set(expenses.map(exp => exp.category).filter(Boolean))];
-  // Combinar ambas listas y eliminar duplicados
-  const categories = [...new Set([...predefinedCategories, ...expenseCategories])].sort();
+  // Categorías: combinar las configuradas con las de los gastos existentes
+  const expenseCategoriesFromData = [...new Set(expenses.map(exp => exp.category).filter(Boolean))];
+  const categories = [...new Set([...expenseCategories, ...expenseCategoriesFromData])].sort();
 
   // Filtered expenses for reports
   const filteredExpenses = expenses.filter(exp => {
@@ -640,12 +653,123 @@ const UtilitiesModule = () => {
     }
   };
 
-  // Función para imprimir un gasto individual
-  const printSingleExpense = (expense: Expense) => {
+  // Funciones para gestionar categorías
+  const handleAddCategory = () => {
+    if (newCategoryName.trim() && !expenseCategories.includes(newCategoryName.trim())) {
+      setExpenseCategories([...expenseCategories, newCategoryName.trim()]);
+      setNewCategoryName('');
+      setShowAddCategory(false);
+      toast.success('Categoría agregada exitosamente');
+    } else if (expenseCategories.includes(newCategoryName.trim())) {
+      toast.error('Esta categoría ya existe');
+    }
+  };
+
+  const handleEditCategory = (index: number) => {
+    setEditingCategoryIndex(index);
+    setEditingCategoryName(expenseCategories[index]);
+  };
+
+  const handleSaveCategoryEdit = () => {
+    if (editingCategoryIndex !== null && editingCategoryName.trim()) {
+      const updated = [...expenseCategories];
+      updated[editingCategoryIndex] = editingCategoryName.trim();
+      setExpenseCategories(updated);
+      setEditingCategoryIndex(null);
+      setEditingCategoryName('');
+      toast.success('Categoría actualizada exitosamente');
+    }
+  };
+
+  const handleCancelCategoryEdit = () => {
+    setEditingCategoryIndex(null);
+    setEditingCategoryName('');
+  };
+
+  const handleDeleteCategory = (index: number) => {
+    const categoryToDelete = expenseCategories[index];
+    // Verificar si hay gastos usando esta categoría
+    const hasExpenses = expenses.some(exp => exp.category === categoryToDelete);
+    if (hasExpenses) {
+      toast.error('No se puede eliminar una categoría que tiene gastos asociados');
+      return;
+    }
+    if (confirm(`¿Estás seguro de que deseas eliminar la categoría "${categoryToDelete}"?`)) {
+      const updated = expenseCategories.filter((_, i) => i !== index);
+      setExpenseCategories(updated);
+      toast.success('Categoría eliminada exitosamente');
+    }
+  };
+
+  // Funciones para editar gastos
+  const handleEditExpense = (expense: Expense) => {
+    setEditingExpense(expense);
+    setExpenseForm({
+      amount: expense.amount,
+      description: expense.description,
+      category: expense.category,
+      expense_date: expense.expense_date
+    });
+    setShowEditExpenseForm(true);
+  };
+
+  const handleUpdateExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !editingExpense) return;
+
+    try {
+      const { error } = await supabase
+        .from('expenses')
+        .update({
+          amount: expenseForm.amount,
+          description: expenseForm.description,
+          category: expenseForm.category,
+          expense_date: expenseForm.expense_date
+        })
+        .eq('id', editingExpense.id);
+
+      if (error) throw error;
+
+      toast.success('Gasto actualizado exitosamente');
+      setShowEditExpenseForm(false);
+      setEditingExpense(null);
+      resetExpenseForm();
+      fetchExpenses();
+    } catch (error) {
+      console.error('Error updating expense:', error);
+      toast.error('Error al actualizar gasto');
+    }
+  };
+
+  // Función para imprimir un gasto individual con selección de formato
+  const openPrintFormatDialog = (expense: Expense) => {
+    setExpenseToPrint(expense);
+    setShowPrintFormatDialog(true);
+  };
+
+  const printSingleExpense = async (expense: Expense, format: 'POS80' | 'POS58' | 'A4' = 'A4') => {
     const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
     
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+    // Obtener información de la empresa
+    let companyName = 'Mi Empresa';
+    let companyAddress = '';
+    let companyPhone = '';
+    
+    try {
+      const { data: companySettings } = await supabase
+        .from('company_settings')
+        .select('company_name, address, phone')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      
+      if (companySettings) {
+        companyName = companySettings.company_name || companyName;
+        companyAddress = companySettings.address || '';
+        companyPhone = companySettings.phone || '';
+      }
+    } catch (error) {
+      console.error('Error fetching company settings:', error);
+    }
 
     const expenseDate = new Date(expense.expense_date).toLocaleDateString('es-DO', {
       year: 'numeric',
@@ -663,18 +787,107 @@ const UtilitiesModule = () => {
         })
       : new Date().toLocaleString('es-DO');
 
-    printWindow.document.write(`
+    const isThermal = format === 'POS80' || format === 'POS58';
+    const isPOS58 = format === 'POS58';
+
+    // CSS específico para cada formato
+    const pageCss = format === 'A4'
+      ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
+      : format === 'POS80'
+        ? '@page { size: 80mm auto; margin: 2mm 1mm; } .invoice{width:76mm;margin:0 auto;font-size:9px;}'
+        : '@page { size: 58mm auto; margin: 2mm 1mm; } .invoice{width:54mm;margin:0 auto;font-size:8px;}';
+    
+    // CSS compacto para térmicas
+    const thermalCss = isThermal ? `
+      body { font-size: ${isPOS58 ? '8px' : '9px'}; font-family: 'Courier New', monospace; }
+      .invoice { width: ${isPOS58 ? '54mm' : '76mm'}; margin: 0 auto; }
+      .header { padding: 4px 0; border-bottom: 1px solid #000; text-align: center; }
+      .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
+      .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
+      .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; }
+      .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .section { padding: 4px 0; margin: 4px 0; border: none; }
+      .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 2px; }
+      .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
+      .label { font-weight: bold; }
+      .amount-section { padding: 4px 0; border-top: 1px solid #000; margin-top: 4px; text-align: center; }
+      .amount-label { font-size: ${isPOS58 ? '7px' : '8px'}; }
+      .amount-value { font-size: ${isPOS58 ? '12px' : '14px'}; font-weight: bold; }
+      .footer { margin-top: 8px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
+      .divider { border-top: 1px dashed #000; margin: 2px 0; }
+    ` : '';
+
+    // HTML según el formato
+    const receiptHTML = isThermal ? `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <title>Comprobante de Gasto</title>
+        <style>
+          ${pageCss}
+          ${thermalCss}
+          body { font-family: 'Courier New', monospace; color: #000; margin: 0; padding: 0; }
+        </style>
+      </head>
+      <body>
+        <div class="invoice">
+          <div class="header">
+            <div class="brand-name">${companyName}</div>
+            ${companyAddress ? `<div class="brand-meta">${companyAddress}</div>` : ''}
+            ${companyPhone ? `<div class="brand-meta">Tel: ${companyPhone}</div>` : ''}
+            <div class="divider"></div>
+            <div class="doc-type">COMPROBANTE DE GASTO</div>
+            <div class="doc-number">#${expense.id.substring(0, 8).toUpperCase()}</div>
+          </div>
+          
+          <div class="section">
+            <div class="field">
+              <span class="label">Fecha:</span>
+              <span>${expenseDate}</span>
+            </div>
+            <div class="field">
+              <span class="label">Descripción:</span>
+              <span>${expense.description}</span>
+            </div>
+            <div class="field">
+              <span class="label">Categoría:</span>
+              <span>${expense.category}</span>
+            </div>
+            <div class="field">
+              <span class="label">Estado:</span>
+              <span>${expense.status === 'approved' ? 'Aprobado' : expense.status}</span>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="amount-section">
+            <div class="amount-label">MONTO</div>
+            <div class="amount-value">${money(expense.amount)}</div>
+          </div>
+
+          <div class="footer">
+            <div>${new Date().toLocaleString('es-DO')}</div>
+          </div>
+        </div>
+      </body>
+      </html>
+    ` : `
       <!DOCTYPE html>
       <html>
         <head>
           <meta charset="UTF-8">
           <title>Comprobante de Gasto</title>
           <style>
+            ${pageCss}
             body { 
               font-family: Arial, sans-serif; 
               margin: 20px; 
+            }
+            .invoice {
               max-width: 600px;
-              margin: 20px auto;
+              margin: 0 auto;
             }
             .header { 
               text-align: center; 
@@ -755,10 +968,14 @@ const UtilitiesModule = () => {
           </style>
         </head>
         <body>
-          <div class="header">
-            <h1>COMPROBANTE DE GASTO</h1>
-            <h2>${createdDate}</h2>
-          </div>
+          <div class="invoice">
+            <div class="header">
+              <h1>${companyName}</h1>
+              ${companyAddress ? `<p>${companyAddress}</p>` : ''}
+              ${companyPhone ? `<p>Tel: ${companyPhone}</p>` : ''}
+              <h1>COMPROBANTE DE GASTO</h1>
+              <h2>${createdDate}</h2>
+            </div>
           
           <div class="info">
             <div class="info-row">
@@ -794,9 +1011,15 @@ const UtilitiesModule = () => {
             <p>Este es un comprobante generado automáticamente</p>
             <p>Fecha de emisión: ${new Date().toLocaleString('es-DO')}</p>
           </div>
-        </body>
+        </div>
+      </body>
       </html>
-    `);
+    `;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    printWindow.document.write(receiptHTML);
     printWindow.document.close();
     setTimeout(() => {
       printWindow.print();
@@ -1080,10 +1303,13 @@ const UtilitiesModule = () => {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Button variant="outline" size="sm" onClick={() => printSingleExpense(expense)} title="Imprimir comprobante">
+                          <Button variant="outline" size="sm" onClick={() => {
+                            setExpenseToPrint(expense);
+                            setShowPrintFormatDialog(true);
+                          }} title="Imprimir comprobante">
                             <Printer className="h-4 w-4" />
                           </Button>
-                          <Button variant="outline" size="sm">
+                          <Button variant="outline" size="sm" onClick={() => handleEditExpense(expense)} title="Editar gasto">
                             <Edit className="h-4 w-4" />
                           </Button>
                           <Button variant="outline" size="sm" onClick={() => deleteExpense(expense.id)}>
@@ -1215,7 +1441,7 @@ const UtilitiesModule = () => {
                     return (
                       <div key={category} className="space-y-1">
                         <div className="flex justify-between text-sm">
-                          <span className="truncate">{category}</span>
+                        <span className="truncate">{category}</span>
                           <span className="font-semibold">${categoryTotal.toLocaleString()} ({percentage}%)</span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
@@ -1331,19 +1557,75 @@ const UtilitiesModule = () => {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="space-y-2">
-                      {['Oficina', 'Marketing', 'Transporte', 'Servicios', 'Equipos'].map((category, index) => (
-                        <div key={index} className="flex items-center justify-between">
-                          <span className="text-sm">{category}</span>
-                          <Button size="sm" variant="outline">
+                      {expenseCategories.map((category, index) => (
+                        <div key={index} className="flex items-center justify-between gap-2">
+                          {editingCategoryIndex === index ? (
+                            <div className="flex items-center gap-2 flex-1">
+                              <Input
+                                value={editingCategoryName}
+                                onChange={(e) => setEditingCategoryName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveCategoryEdit();
+                                  if (e.key === 'Escape') handleCancelCategoryEdit();
+                                }}
+                                className="h-8 text-sm"
+                                autoFocus
+                              />
+                              <Button size="sm" variant="outline" onClick={handleSaveCategoryEdit}>
+                                ✓
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={handleCancelCategoryEdit}>
+                                ✕
+                              </Button>
+                            </div>
+                          ) : (
+                            <>
+                              <span className="text-sm flex-1">{category}</span>
+                              <div className="flex gap-1">
+                                <Button size="sm" variant="outline" onClick={() => handleEditCategory(index)}>
                             <Edit className="h-3 w-3" />
                           </Button>
+                                <Button size="sm" variant="outline" onClick={() => handleDeleteCategory(index)}>
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       ))}
                     </div>
-                    <Button variant="outline" size="sm" className="w-full">
+                    {showAddCategory ? (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleAddCategory();
+                            if (e.key === 'Escape') {
+                              setShowAddCategory(false);
+                              setNewCategoryName('');
+                            }
+                          }}
+                          placeholder="Nombre de la categoría"
+                          className="h-8 text-sm"
+                          autoFocus
+                        />
+                        <Button size="sm" variant="outline" onClick={handleAddCategory}>
+                          ✓
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => {
+                          setShowAddCategory(false);
+                          setNewCategoryName('');
+                        }}>
+                          ✕
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button variant="outline" size="sm" className="w-full" onClick={() => setShowAddCategory(true)}>
                       <Plus className="h-3 w-3 mr-2" />
                       Agregar Categoría
                     </Button>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -1406,12 +1688,9 @@ const UtilitiesModule = () => {
                   <SelectValue placeholder="Seleccionar categoría" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Oficina">Oficina</SelectItem>
-                  <SelectItem value="Marketing">Marketing</SelectItem>
-                  <SelectItem value="Transporte">Transporte</SelectItem>
-                  <SelectItem value="Servicios">Servicios</SelectItem>
-                  <SelectItem value="Equipos">Equipos</SelectItem>
-                  <SelectItem value="Otros">Otros</SelectItem>
+                  {expenseCategories.map((cat) => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1426,6 +1705,139 @@ const UtilitiesModule = () => {
               <Button type="submit">Guardar Gasto</Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Expense Form Dialog */}
+      <Dialog open={showEditExpenseForm} onOpenChange={setShowEditExpenseForm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar Gasto</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdateExpense} className="space-y-4">
+            <div>
+              <Label htmlFor="edit_description">Descripción *</Label>
+              <Input
+                id="edit_description"
+                value={expenseForm.description}
+                onChange={(e) => setExpenseForm({...expenseForm, description: e.target.value})}
+                required
+              />
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit_amount">Monto *</Label>
+                <Input
+                  id="edit_amount"
+                  type="number"
+                  step="0.01"
+                  value={expenseForm.amount}
+                  onChange={(e) => setExpenseForm({...expenseForm, amount: Number(e.target.value)})}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit_expense_date">Fecha *</Label>
+                <Input
+                  id="edit_expense_date"
+                  type="date"
+                  value={expenseForm.expense_date}
+                  onChange={(e) => setExpenseForm({...expenseForm, expense_date: e.target.value})}
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="edit_category">Categoría *</Label>
+              <Select value={expenseForm.category} onValueChange={(value) => setExpenseForm({...expenseForm, category: value})}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar categoría" />
+                </SelectTrigger>
+                <SelectContent>
+                  {expenseCategories.map((cat) => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => {
+                setShowEditExpenseForm(false);
+                setEditingExpense(null);
+                resetExpenseForm();
+              }}>
+                Cancelar
+              </Button>
+              <Button type="submit">Actualizar Gasto</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Print Format Selection Dialog */}
+      <Dialog open={showPrintFormatDialog} onOpenChange={setShowPrintFormatDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Seleccionar Formato de Impresión</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">Selecciona el formato para imprimir el comprobante:</p>
+            <div className="grid grid-cols-3 gap-4">
+              <Button
+                variant="outline"
+                className="h-20 flex flex-col"
+                onClick={() => {
+                  if (expenseToPrint) {
+                    printSingleExpense(expenseToPrint, 'POS80');
+                    setShowPrintFormatDialog(false);
+                    setExpenseToPrint(null);
+                  }
+                }}
+              >
+                <Printer className="h-6 w-6 mb-2" />
+                POS80
+              </Button>
+              <Button
+                variant="outline"
+                className="h-20 flex flex-col"
+                onClick={() => {
+                  if (expenseToPrint) {
+                    printSingleExpense(expenseToPrint, 'POS58');
+                    setShowPrintFormatDialog(false);
+                    setExpenseToPrint(null);
+                  }
+                }}
+              >
+                <Printer className="h-6 w-6 mb-2" />
+                POS58
+              </Button>
+              <Button
+                variant="outline"
+                className="h-20 flex flex-col"
+                onClick={() => {
+                  if (expenseToPrint) {
+                    printSingleExpense(expenseToPrint, 'A4');
+                    setShowPrintFormatDialog(false);
+                    setExpenseToPrint(null);
+                  }
+                }}
+              >
+                <Printer className="h-6 w-6 mb-2" />
+                A4
+              </Button>
+            </div>
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={() => {
+                setShowPrintFormatDialog(false);
+                setExpenseToPrint(null);
+              }}>
+                Cancelar
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
