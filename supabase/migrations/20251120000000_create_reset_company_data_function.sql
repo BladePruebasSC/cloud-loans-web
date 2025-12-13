@@ -199,8 +199,11 @@ BEGIN
   END;
 
   BEGIN
-    -- 14. Delete payment agreements
-    DELETE FROM public.payment_agreements WHERE created_by = p_owner_id;
+    -- 14. Delete payment agreements (must be deleted before loans due to foreign key)
+    DELETE FROM public.payment_agreements 
+    WHERE loan_id IN (
+      SELECT id FROM public.loans WHERE loan_officer_id = p_owner_id
+    ) OR created_by = p_owner_id;
     GET DIAGNOSTICS v_count = ROW_COUNT;
     v_result := jsonb_set(v_result, '{deleted,payment_agreements}', to_jsonb(v_count));
   EXCEPTION WHEN OTHERS THEN
@@ -232,8 +235,38 @@ BEGIN
   END;
 
   BEGIN
-    -- 17. Delete loans (after all related data is deleted)
-    DELETE FROM public.loans WHERE loan_officer_id = p_owner_id;
+    -- 16.5. Delete documents (must be deleted before loans due to foreign key)
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'documents') THEN
+      DELETE FROM public.documents 
+      WHERE loan_id IN (
+        SELECT id FROM public.loans 
+        WHERE loan_officer_id = p_owner_id 
+        OR client_id IN (SELECT id FROM public.clients WHERE user_id = p_owner_id)
+      ) OR user_id = p_owner_id;
+      GET DIAGNOSTICS v_count = ROW_COUNT;
+      v_result := jsonb_set(v_result, '{deleted,documents}', to_jsonb(v_count));
+    ELSE
+      v_result := jsonb_set(v_result, '{deleted,documents}', to_jsonb(0));
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    v_error := SQLERRM;
+    -- Only log error if it's not a "table does not exist" error
+    IF v_error NOT LIKE '%does not exist%' THEN
+      v_result := jsonb_set(v_result, '{errors}', 
+        COALESCE(v_result->'errors', '[]'::jsonb) || jsonb_build_array('documents: ' || v_error));
+    ELSE
+      v_result := jsonb_set(v_result, '{deleted,documents}', to_jsonb(0));
+    END IF;
+  END;
+
+  BEGIN
+    -- 17. Delete loans (after all related data is deleted, but before clients)
+    -- Delete all loans that belong to clients of this owner OR have loan_officer_id = owner
+    DELETE FROM public.loans 
+    WHERE loan_officer_id = p_owner_id 
+    OR client_id IN (
+      SELECT id FROM public.clients WHERE user_id = p_owner_id
+    );
     GET DIAGNOSTICS v_count = ROW_COUNT;
     v_result := jsonb_set(v_result, '{deleted,loans}', to_jsonb(v_count));
   EXCEPTION WHEN OTHERS THEN
@@ -244,7 +277,7 @@ BEGIN
   END;
 
   BEGIN
-    -- 18. Delete clients
+    -- 18. Delete clients (after loans are deleted)
     DELETE FROM public.clients WHERE user_id = p_owner_id;
     GET DIAGNOSTICS v_count = ROW_COUNT;
     v_result := jsonb_set(v_result, '{deleted,clients}', to_jsonb(v_count));
@@ -288,36 +321,63 @@ BEGIN
   END;
 
   BEGIN
-    -- 22. Delete income
-    DELETE FROM public.income WHERE user_id = p_owner_id;
-    GET DIAGNOSTICS v_count = ROW_COUNT;
-    v_result := jsonb_set(v_result, '{deleted,income}', to_jsonb(v_count));
+    -- 22. Delete income (only if table exists)
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'income') THEN
+      DELETE FROM public.income WHERE user_id = p_owner_id;
+      GET DIAGNOSTICS v_count = ROW_COUNT;
+      v_result := jsonb_set(v_result, '{deleted,income}', to_jsonb(v_count));
+    ELSE
+      v_result := jsonb_set(v_result, '{deleted,income}', to_jsonb(0));
+    END IF;
   EXCEPTION WHEN OTHERS THEN
     v_error := SQLERRM;
-    v_result := jsonb_set(v_result, '{errors}', 
-      COALESCE(v_result->'errors', '[]'::jsonb) || jsonb_build_array('income: ' || v_error));
+    -- Only log error if it's not a "table does not exist" error
+    IF v_error NOT LIKE '%does not exist%' THEN
+      v_result := jsonb_set(v_result, '{errors}', 
+        COALESCE(v_result->'errors', '[]'::jsonb) || jsonb_build_array('income: ' || v_error));
+    ELSE
+      v_result := jsonb_set(v_result, '{deleted,income}', to_jsonb(0));
+    END IF;
   END;
 
   BEGIN
-    -- 23. Delete cash movements
-    DELETE FROM public.cash_movements WHERE created_by = p_owner_id;
-    GET DIAGNOSTICS v_count = ROW_COUNT;
-    v_result := jsonb_set(v_result, '{deleted,cash_movements}', to_jsonb(v_count));
+    -- 23. Delete cash movements (only if table exists)
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'cash_movements') THEN
+      DELETE FROM public.cash_movements WHERE created_by = p_owner_id;
+      GET DIAGNOSTICS v_count = ROW_COUNT;
+      v_result := jsonb_set(v_result, '{deleted,cash_movements}', to_jsonb(v_count));
+    ELSE
+      v_result := jsonb_set(v_result, '{deleted,cash_movements}', to_jsonb(0));
+    END IF;
   EXCEPTION WHEN OTHERS THEN
     v_error := SQLERRM;
-    v_result := jsonb_set(v_result, '{errors}', 
-      COALESCE(v_result->'errors', '[]'::jsonb) || jsonb_build_array('cash_movements: ' || v_error));
+    -- Only log error if it's not a "table does not exist" error
+    IF v_error NOT LIKE '%does not exist%' THEN
+      v_result := jsonb_set(v_result, '{errors}', 
+        COALESCE(v_result->'errors', '[]'::jsonb) || jsonb_build_array('cash_movements: ' || v_error));
+    ELSE
+      v_result := jsonb_set(v_result, '{deleted,cash_movements}', to_jsonb(0));
+    END IF;
   END;
 
   BEGIN
-    -- 24. Delete saved reports
-    DELETE FROM public.saved_reports WHERE user_id = p_owner_id;
-    GET DIAGNOSTICS v_count = ROW_COUNT;
-    v_result := jsonb_set(v_result, '{deleted,saved_reports}', to_jsonb(v_count));
+    -- 24. Delete saved reports (only if table exists)
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'saved_reports') THEN
+      DELETE FROM public.saved_reports WHERE user_id = p_owner_id;
+      GET DIAGNOSTICS v_count = ROW_COUNT;
+      v_result := jsonb_set(v_result, '{deleted,saved_reports}', to_jsonb(v_count));
+    ELSE
+      v_result := jsonb_set(v_result, '{deleted,saved_reports}', to_jsonb(0));
+    END IF;
   EXCEPTION WHEN OTHERS THEN
     v_error := SQLERRM;
-    v_result := jsonb_set(v_result, '{errors}', 
-      COALESCE(v_result->'errors', '[]'::jsonb) || jsonb_build_array('saved_reports: ' || v_error));
+    -- Only log error if it's not a "table does not exist" error
+    IF v_error NOT LIKE '%does not exist%' THEN
+      v_result := jsonb_set(v_result, '{errors}', 
+        COALESCE(v_result->'errors', '[]'::jsonb) || jsonb_build_array('saved_reports: ' || v_error));
+    ELSE
+      v_result := jsonb_set(v_result, '{deleted,saved_reports}', to_jsonb(0));
+    END IF;
   END;
 
   BEGIN
