@@ -329,6 +329,12 @@ const UtilitiesModule = () => {
     e.preventDefault();
     if (!user) return;
 
+    // Validar que el monto sea mayor a 0
+    if (!expenseForm.amount || expenseForm.amount <= 0) {
+      toast.error('El monto debe ser mayor a 0');
+      return;
+    }
+
     // Validar que se haya seleccionado una categoría
     if (!expenseForm.category || expenseForm.category.trim() === '') {
       toast.error('Debe seleccionar una categoría');
@@ -832,6 +838,12 @@ const UtilitiesModule = () => {
   const handleUpdateExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !editingExpense) return;
+
+    // Validar que el monto sea mayor a 0
+    if (!expenseForm.amount || expenseForm.amount <= 0) {
+      toast.error('El monto debe ser mayor a 0');
+      return;
+    }
 
     // Validar que se haya seleccionado una categoría
     if (!expenseForm.category || expenseForm.category.trim() === '') {
