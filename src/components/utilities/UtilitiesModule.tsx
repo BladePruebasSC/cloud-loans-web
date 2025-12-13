@@ -130,7 +130,7 @@ const UtilitiesModule = () => {
     try {
       const { data, error } = await supabase
         .from('company_settings')
-        .select('interest_rate_default, min_term_months')
+        .select('interest_rate_default, min_term_months, expense_categories')
         .eq('user_id', companyId)
         .maybeSingle();
 
@@ -148,9 +148,88 @@ const UtilitiesModule = () => {
           setDefaultTermMonths(Number(data.min_term_months));
           setTermMonths(Number(data.min_term_months));
         }
+        // Cargar categorías de gastos desde la base de datos
+        if (data.expense_categories && Array.isArray(data.expense_categories) && data.expense_categories.length > 0) {
+          setExpenseCategories(data.expense_categories);
+        } else {
+          // Si no hay categorías guardadas, usar las por defecto y guardarlas
+          const defaultCategories = ['Oficina', 'Marketing', 'Transporte', 'Servicios', 'Equipos', 'Otros'];
+          setExpenseCategories(defaultCategories);
+          // Guardar las categorías por defecto en la base de datos
+          try {
+            const { data: existing } = await supabase
+              .from('company_settings')
+              .select('id')
+              .eq('user_id', companyId)
+              .maybeSingle();
+            
+            if (existing) {
+              await supabase
+                .from('company_settings')
+                .update({ expense_categories: defaultCategories })
+                .eq('user_id', companyId);
+            } else {
+              await supabase
+                .from('company_settings')
+                .insert({
+                  user_id: companyId,
+                  company_name: 'Mi Empresa',
+                  expense_categories: defaultCategories
+                });
+            }
+          } catch (error) {
+            console.error('Error saving default categories:', error);
+          }
+        }
       }
     } catch (error) {
       console.error('Error loading calculator config:', error);
+    }
+  };
+
+  const saveExpenseCategories = async () => {
+    if (!companyId) {
+      toast.error('No se pudo identificar la empresa');
+      return;
+    }
+
+    try {
+      // Verificar si existe configuración
+      const { data: existing } = await supabase
+        .from('company_settings')
+        .select('id')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const updateData = {
+        expense_categories: expenseCategories,
+        updated_at: new Date().toISOString()
+      };
+
+      let error;
+      if (existing) {
+        // Actualizar
+        const { error: updateError } = await supabase
+          .from('company_settings')
+          .update(updateData)
+          .eq('user_id', companyId);
+        error = updateError;
+      } else {
+        // Crear (necesitamos al menos company_name)
+        const { error: insertError } = await supabase
+          .from('company_settings')
+          .insert({
+            user_id: companyId,
+            company_name: 'Mi Empresa',
+            ...updateData
+          });
+        error = insertError;
+      }
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error saving expense categories:', error);
+      throw error;
     }
   };
 
@@ -173,6 +252,7 @@ const UtilitiesModule = () => {
       const configData = {
         interest_rate_default: defaultInterestRate,
         min_term_months: defaultTermMonths,
+        expense_categories: expenseCategories,
         updated_at: new Date().toISOString()
       };
 
@@ -248,6 +328,12 @@ const UtilitiesModule = () => {
   const handleExpenseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    // Validar que se haya seleccionado una categoría
+    if (!expenseForm.category || expenseForm.category.trim() === '') {
+      toast.error('Debe seleccionar una categoría');
+      return;
+    }
 
     try {
       const { data: newExpense, error } = await supabase
@@ -654,12 +740,22 @@ const UtilitiesModule = () => {
   };
 
   // Funciones para gestionar categorías
-  const handleAddCategory = () => {
+  const handleAddCategory = async () => {
     if (newCategoryName.trim() && !expenseCategories.includes(newCategoryName.trim())) {
-      setExpenseCategories([...expenseCategories, newCategoryName.trim()]);
+      const updatedCategories = [...expenseCategories, newCategoryName.trim()];
+      setExpenseCategories(updatedCategories);
       setNewCategoryName('');
       setShowAddCategory(false);
-      toast.success('Categoría agregada exitosamente');
+      
+      // Guardar en la base de datos
+      try {
+        await saveExpenseCategories();
+        toast.success('Categoría agregada exitosamente');
+      } catch (error) {
+        // Revertir cambio local si falla
+        setExpenseCategories(expenseCategories);
+        toast.error('Error al guardar la categoría');
+      }
     } else if (expenseCategories.includes(newCategoryName.trim())) {
       toast.error('Esta categoría ya existe');
     }
@@ -670,14 +766,24 @@ const UtilitiesModule = () => {
     setEditingCategoryName(expenseCategories[index]);
   };
 
-  const handleSaveCategoryEdit = () => {
+  const handleSaveCategoryEdit = async () => {
     if (editingCategoryIndex !== null && editingCategoryName.trim()) {
+      const oldCategories = [...expenseCategories];
       const updated = [...expenseCategories];
       updated[editingCategoryIndex] = editingCategoryName.trim();
       setExpenseCategories(updated);
       setEditingCategoryIndex(null);
       setEditingCategoryName('');
-      toast.success('Categoría actualizada exitosamente');
+      
+      // Guardar en la base de datos
+      try {
+        await saveExpenseCategories();
+        toast.success('Categoría actualizada exitosamente');
+      } catch (error) {
+        // Revertir cambio local si falla
+        setExpenseCategories(oldCategories);
+        toast.error('Error al actualizar la categoría');
+      }
     }
   };
 
@@ -686,7 +792,7 @@ const UtilitiesModule = () => {
     setEditingCategoryName('');
   };
 
-  const handleDeleteCategory = (index: number) => {
+  const handleDeleteCategory = async (index: number) => {
     const categoryToDelete = expenseCategories[index];
     // Verificar si hay gastos usando esta categoría
     const hasExpenses = expenses.some(exp => exp.category === categoryToDelete);
@@ -695,9 +801,19 @@ const UtilitiesModule = () => {
       return;
     }
     if (confirm(`¿Estás seguro de que deseas eliminar la categoría "${categoryToDelete}"?`)) {
+      const oldCategories = [...expenseCategories];
       const updated = expenseCategories.filter((_, i) => i !== index);
       setExpenseCategories(updated);
-      toast.success('Categoría eliminada exitosamente');
+      
+      // Guardar en la base de datos
+      try {
+        await saveExpenseCategories();
+        toast.success('Categoría eliminada exitosamente');
+      } catch (error) {
+        // Revertir cambio local si falla
+        setExpenseCategories(oldCategories);
+        toast.error('Error al eliminar la categoría');
+      }
     }
   };
 
@@ -716,6 +832,12 @@ const UtilitiesModule = () => {
   const handleUpdateExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !editingExpense) return;
+
+    // Validar que se haya seleccionado una categoría
+    if (!expenseForm.category || expenseForm.category.trim() === '') {
+      toast.error('Debe seleccionar una categoría');
+      return;
+    }
 
     try {
       const { error } = await supabase

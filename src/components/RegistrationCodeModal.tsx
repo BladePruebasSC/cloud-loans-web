@@ -70,9 +70,11 @@ const RegistrationCodeModal = () => {
   const handleSignOut = async () => {
     try {
       await signOut();
-      navigate('/');
+      navigate('/login', { replace: true });
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
+      // Aún así, redirigir a login
+      navigate('/login', { replace: true });
     }
   };
 

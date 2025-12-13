@@ -720,15 +720,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
-    setLoading(true);
     try {
-      await supabase.auth.signOut();
+      // Limpiar el estado primero para evitar problemas
       setUser(null);
       setProfile(null);
       setCompanyId(null);
+      setNeedsRegistrationCode(false);
+      setError(null);
+      
+      // Luego cerrar sesión en Supabase
+      await supabase.auth.signOut();
+      
       toast.success('Sesión cerrada exitosamente');
     } catch (err: any) {
       console.error('Error signing out:', err);
+      // Aún así, limpiar el estado local
+      setUser(null);
+      setProfile(null);
+      setCompanyId(null);
+      setNeedsRegistrationCode(false);
+      setError(null);
       toast.error('Error al cerrar sesión');
     } finally {
       setLoading(false);
@@ -755,10 +766,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleAuthStateChange = async (event: string, session: any) => {
       // Solo procesar SIGNED_OUT para limpiar la sesión
       if (event === 'SIGNED_OUT') {
+        console.log('🔍 SIGNED_OUT detectado, limpiando estado...');
         setUser(null);
         setProfile(null);
         setCompanyId(null);
         setNeedsRegistrationCode(false);
+        setError(null);
         setLoading(false);
         hasInitialized = false;
         return;
@@ -829,10 +842,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await Promise.race([authPromise(), timeoutPromise]);
         } catch (error) {
           console.error('Error en autenticación:', error);
-          // En caso de error, establecer valores por defecto para evitar carga infinita
-          setProfile(null);
-          setCompanyId(null);
-          setNeedsRegistrationCode(true);
+          // En caso de error o timeout, verificar si el usuario aún existe
+          if (session?.user) {
+            try {
+              // Intentar verificar código de registro de forma más simple
+              const { data: usedCode } = await supabase
+                .from('registration_codes')
+                .select('id, expires_at')
+                .eq('used_by', session.user.id)
+                .maybeSingle();
+              
+              if (!usedCode) {
+                const recovered = await ensureOwnerAccessWithoutCode(session.user);
+                if (!recovered) {
+                  setNeedsRegistrationCode(true);
+                  setProfile(null);
+                  setCompanyId(null);
+                }
+              } else {
+                // Si tiene código usado, intentar cargar perfil
+                await loadOwnerProfile(session.user);
+                setNeedsRegistrationCode(false);
+              }
+            } catch (fallbackError) {
+              console.error('Error en fallback de autenticación:', fallbackError);
+              // Si todo falla, establecer needsRegistrationCode para que el usuario pueda ingresar código
+              setNeedsRegistrationCode(true);
+              setProfile(null);
+              setCompanyId(null);
+            }
+          } else {
+            // Si no hay usuario, limpiar todo
+            setUser(null);
+            setProfile(null);
+            setCompanyId(null);
+            setNeedsRegistrationCode(false);
+          }
         }
         
         setLoading(false);

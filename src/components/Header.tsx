@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { LogOut, User, Building, Users } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Notifications from './Notifications';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -12,6 +12,7 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
   const { user, profile, companyId, signOut } = useAuth();
+  const navigate = useNavigate();
   const [companyName, setCompanyName] = useState<string>('Panel de Control');
 
   useEffect(() => {
@@ -33,8 +34,12 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
   const handleSignOut = async () => {
     try {
       await signOut();
+      // Redirigir a la página de login después de cerrar sesión
+      navigate('/login', { replace: true });
     } catch (error) {
       console.error('Error signing out:', error);
+      // Aún así, redirigir a login
+      navigate('/login', { replace: true });
     }
   };
 

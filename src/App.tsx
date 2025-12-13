@@ -151,7 +151,7 @@ function App() {
   }
 
   // Si el usuario está autenticado pero necesita código de registro
-  if (user && needsRegistrationCode) {
+  if (user && needsRegistrationCode && !loading) {
     console.log('🔍 App.tsx: Mostrando modal de código de registro');
     console.log('🔍 App.tsx: user =', user?.email);
     console.log('🔍 App.tsx: needsRegistrationCode =', needsRegistrationCode);
