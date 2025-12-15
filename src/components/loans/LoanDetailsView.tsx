@@ -550,7 +550,11 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       </div>
                       <div>
                         <span className="text-gray-600">Próxima cuota:</span>
-                        <div className="font-semibold">{new Date(loan.next_payment_date).toLocaleDateString('es-DO')}</div>
+                        <div className="font-semibold">
+                          {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
+                            ? 'N/A' 
+                            : new Date(loan.next_payment_date).toLocaleDateString('es-DO')}
+                        </div>
                       </div>
                       <div>
                         <span className="text-gray-600">Fecha final:</span>

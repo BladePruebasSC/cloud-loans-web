@@ -1109,12 +1109,21 @@ export const LoansModule = () => {
 
                         {/* Información adicional en grid */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                          <div className="text-center p-3 bg-gray-50 rounded-lg">
-                            <div className="text-lg font-bold text-gray-800 mb-1">
-                              {formatDateStringForSantoDomingo(loan.next_payment_date)}
+                          {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) ? (
+                            <div className="text-center p-3 bg-gray-50 rounded-lg">
+                              <div className="text-lg font-bold text-gray-800 mb-1">
+                                -
+                              </div>
+                              <div className="text-xs text-gray-600">Próximo Pago</div>
                             </div>
-                            <div className="text-xs text-gray-600">Próximo Pago</div>
-                          </div>
+                          ) : (
+                            <div className="text-center p-3 bg-gray-50 rounded-lg">
+                              <div className="text-lg font-bold text-gray-800 mb-1">
+                                {formatDateStringForSantoDomingo(loan.next_payment_date)}
+                              </div>
+                              <div className="text-xs text-gray-600">Próximo Pago</div>
+                            </div>
+                          )}
                           
                           <div className="text-center p-3 bg-gray-50 rounded-lg">
                             <div className="text-lg font-bold text-gray-800 mb-1">
@@ -1513,7 +1522,11 @@ export const LoansModule = () => {
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Próximo Pago:</span> 
-                               <span className="text-xs sm:text-sm">{formatDateStringForSantoDomingo(loan.next_payment_date)}</span>
+                               <span className="text-xs sm:text-sm">
+                                 {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
+                                   ? 'N/A' 
+                                   : formatDateStringForSantoDomingo(loan.next_payment_date)}
+                               </span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Plazo:</span> 
@@ -2819,7 +2832,9 @@ export const LoansModule = () => {
                                  </div>
                                  <div className="flex items-center">
                                    <Clock className="h-3 w-3 mr-1" />
-                                   Próximo: {new Date(loan.next_payment_date).toLocaleDateString()}
+                                   Próximo: {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
+                                     ? 'N/A' 
+                                     : new Date(loan.next_payment_date).toLocaleDateString()}
                                  </div>
                                </div>
                              </div>

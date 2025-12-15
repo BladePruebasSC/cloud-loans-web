@@ -1048,7 +1048,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 <tr><td>Cuota Mensual:</td><td>${formatCurrency(loan.monthly_payment)}</td></tr>
                 <tr><td>Tasa de Interés:</td><td>${loan.interest_rate}%</td></tr>
                 <tr><td>Fecha de Inicio:</td><td>${formatDate(loan.start_date)}</td></tr>
-                <tr><td>Próximo Pago:</td><td>${formatDate(loan.next_payment_date)}</td></tr>
+                <tr><td>Próximo Pago:</td><td>${(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) ? 'N/A' : formatDate(loan.next_payment_date)}</td></tr>
                 <tr><td>Estado:</td><td>${loan.status}</td></tr>
               </table>
             </div>
@@ -1239,7 +1239,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Cuota Mensual:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.monthly_payment)}</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Tasa de Interés:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.interest_rate}%</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Fecha de Inicio:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatDate(loan.start_date)}</td></tr>
-            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Próximo Pago:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatDate(loan.next_payment_date)}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Próximo Pago:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) ? 'N/A' : formatDate(loan.next_payment_date)}</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Estado:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.status}</td></tr>
           </table>
         </div>
@@ -1429,7 +1429,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                   </div>
                   <div>
                     <span className="text-gray-600">Próximo Pago:</span>
-                    <div className="font-semibold">{formatDate(loan.next_payment_date)}</div>
+                    <div className="font-semibold">
+                      {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
+                        ? 'N/A' 
+                        : formatDate(loan.next_payment_date)}
+                    </div>
                   </div>
                 </div>
               </CardContent>

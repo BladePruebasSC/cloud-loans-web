@@ -34,7 +34,7 @@ import { PaymentForm } from './PaymentForm';
 import { Handshake } from 'lucide-react';
 
 const updateSchema = z.object({
-  update_type: z.enum(['add_charge', 'term_extension', 'balance_adjustment', 'delete_loan', 'remove_late_fee', 'payment_agreement', 'edit_loan']),
+  update_type: z.enum(['add_charge', 'term_extension', 'settle_loan', 'delete_loan', 'remove_late_fee', 'payment_agreement', 'edit_loan']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   late_fee_amount: z.number().min(0.01, 'El monto de mora debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
@@ -43,6 +43,7 @@ const updateSchema = z.object({
   reference_number: z.string().optional(),
   notes: z.string().optional(),
   charge_date: z.string().optional(), // Fecha de creación del cargo
+  settle_amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(), // Monto para saldar préstamo
   // Campos para editar préstamo
   edit_amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   edit_interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0').optional(),
@@ -77,6 +78,14 @@ const updateSchema = z.object({
 }, {
   message: 'Debe completar todos los campos requeridos para editar el préstamo',
   path: ['edit_amount'],
+}).refine((data) => {
+  if (data.update_type === 'settle_loan') {
+    return data.settle_amount !== undefined && data.settle_amount > 0;
+  }
+  return true;
+}, {
+  message: 'Debe especificar el monto para saldar el préstamo',
+  path: ['settle_amount'],
 });
 
 type UpdateFormData = z.infer<typeof updateSchema>;
@@ -135,7 +144,87 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     interestAmount: 0,
     principalAmount: 0
   });
+  const [installments, setInstallments] = useState<any[]>([]);
+  const [settleBreakdown, setSettleBreakdown] = useState({
+    capitalPending: 0,
+    interestPending: 0,
+    lateFeePending: 0,
+    totalToSettle: 0
+  });
   const { user, companyId } = useAuth();
+
+  const form = useForm<UpdateFormData>({
+    resolver: zodResolver(updateSchema),
+    defaultValues: {
+      update_type: editOnly ? 'edit_loan' : 'add_charge',
+      payment_method: 'cash',
+    },
+  });
+
+  // Obtener cuotas del préstamo
+  useEffect(() => {
+    if (isOpen && loan.id) {
+      const fetchInstallments = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('installments')
+            .select('*')
+            .eq('loan_id', loan.id)
+            .order('installment_number', { ascending: true });
+
+          if (error) throw error;
+          setInstallments(data || []);
+        } catch (error) {
+          console.error('Error obteniendo cuotas:', error);
+        }
+      };
+      fetchInstallments();
+    }
+  }, [isOpen, loan.id]);
+
+  // Calcular desglose para saldar préstamo
+  const updateType = form.watch('update_type');
+  useEffect(() => {
+    if (isOpen && loan.id && updateType === 'settle_loan') {
+      const calculateSettleBreakdown = async () => {
+        try {
+          // Obtener todos los pagos para calcular el capital pagado
+          const { data: payments, error: paymentsError } = await supabase
+            .from('payments')
+            .select('principal_amount')
+            .eq('loan_id', loan.id);
+
+          if (paymentsError) throw paymentsError;
+
+          // Calcular cuánto capital se ha pagado
+          const totalPaidCapital = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
+          
+          // Capital pendiente = Monto original - Capital pagado
+          const capitalPending = Math.max(0, loan.amount - totalPaidCapital);
+
+          // Interés pendiente: sumar interés de cuotas no pagadas
+          const unpaidInstallments = installments.filter(inst => !inst.is_paid);
+          const interestPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+
+          // Mora pendiente
+          const lateFeePending = currentLateFee || 0;
+
+          // Total a saldar
+          const totalToSettle = capitalPending + interestPending + lateFeePending;
+
+          setSettleBreakdown({
+            capitalPending: Math.round(capitalPending * 100) / 100,
+            interestPending: Math.round(interestPending * 100) / 100,
+            lateFeePending: Math.round(lateFeePending * 100) / 100,
+            totalToSettle: Math.round(totalToSettle * 100) / 100
+          });
+        } catch (error) {
+          console.error('Error calculando desglose:', error);
+        }
+      };
+      calculateSettleBreakdown();
+    }
+  }, [isOpen, loan.id, loan.amount, installments, currentLateFee, updateType]);
 
   // Obtener la mora actual del préstamo cuando se abre el formulario
   // Calcular la mora basándose en las cuotas reales, no solo leer de la BD
@@ -238,14 +327,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       fetchCurrentLateFee();
     }
   }, [isOpen, loan.id]);
-
-  const form = useForm<UpdateFormData>({
-    resolver: zodResolver(updateSchema),
-    defaultValues: {
-      update_type: editOnly ? 'edit_loan' : 'add_charge',
-      payment_method: 'cash',
-    },
-  });
 
   // Establecer el tipo de actualización cuando editOnly cambia
   useEffect(() => {
@@ -388,10 +469,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         }
         break;
         
-      case 'balance_adjustment':
-        if (amount) {
-          newBalance = amount;
-        }
+      case 'settle_loan':
+        // Para saldar préstamo, el balance se calcula según el monto pagado
+        // Se maneja en onSubmit
         break;
         
       case 'edit_loan':
@@ -654,13 +734,162 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           }
           break;
           
-        case 'balance_adjustment':
-          loanUpdates = {
-            remaining_balance: calculatedValues.newBalance,
-          };
-          // NOTA: El ajuste de balance no afecta paid_installments ni installments
-          // porque solo modifica el balance restante sin marcar cuotas como pagadas
-          // La mora se recalculará automáticamente basándose en las cuotas pendientes
+        case 'settle_loan':
+          {
+            if (!data.settle_amount || data.settle_amount <= 0) {
+              toast.error('Debe especificar un monto para saldar el préstamo');
+              setLoading(false);
+              return;
+            }
+
+            // Validar que el monto sea al menos el capital pendiente
+            if (data.settle_amount < settleBreakdown.capitalPending) {
+              toast.error(`El monto mínimo para saldar es RD$${settleBreakdown.capitalPending.toLocaleString()}`);
+              setLoading(false);
+              return;
+            }
+
+            try {
+              // Obtener todas las cuotas pendientes
+              const unpaidInstallments = installments.filter(inst => !inst.is_paid);
+              
+              // Calcular distribución del pago
+              const totalInterestPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+              const totalPrincipalPending = settleBreakdown.capitalPending;
+              const totalLateFeePending = settleBreakdown.lateFeePending;
+              
+              // El monto a pagar puede ser mayor o igual al total
+              const paymentAmount = data.settle_amount;
+              const lateFeePayment = Math.min(paymentAmount - totalPrincipalPending - totalInterestPending, totalLateFeePending);
+              
+              // Calcular distribución: primero interés, luego capital, luego mora
+              let remainingPayment = paymentAmount;
+              let interestPayment = Math.min(remainingPayment, totalInterestPending);
+              remainingPayment -= interestPayment;
+              let principalPayment = Math.min(remainingPayment, totalPrincipalPending);
+              remainingPayment -= principalPayment;
+              const actualLateFeePayment = Math.min(remainingPayment, totalLateFeePending);
+
+              // Crear fecha de pago en zona horaria de Santo Domingo
+              const now = new Date();
+              const santoDomingoFormatter = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Santo_Domingo',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+              });
+              
+              const parts = santoDomingoFormatter.formatToParts(now);
+              const year = parts.find(part => part.type === 'year')?.value;
+              const month = parts.find(part => part.type === 'month')?.value;
+              const day = parts.find(part => part.type === 'day')?.value;
+              const paymentDate = `${year}-${month}-${day}`;
+
+              // Registrar el pago en la tabla payments
+              const paymentData = {
+                loan_id: loan.id,
+                amount: Math.round(principalPayment + interestPayment),
+                principal_amount: Math.round(principalPayment),
+                interest_amount: Math.round(interestPayment),
+                late_fee: Math.round(actualLateFeePayment * 100) / 100,
+                due_date: loan.next_payment_date,
+                payment_date: paymentDate,
+                payment_method: data.payment_method || 'cash',
+                reference_number: data.reference_number,
+                notes: data.notes || `Saldado completamente - ${data.adjustment_reason}`,
+                status: 'completed',
+                created_by: companyId,
+              };
+
+              const { data: insertedPayment, error: paymentError } = await supabase
+                .from('payments')
+                .insert([paymentData])
+                .select();
+
+              if (paymentError) {
+                console.error('Error insertando pago:', paymentError);
+                throw paymentError;
+              }
+
+              // Marcar todas las cuotas pendientes como pagadas
+              const unpaidInstallmentNumbers = unpaidInstallments.map(inst => inst.installment_number);
+              if (unpaidInstallmentNumbers.length > 0) {
+                const { error: updateInstallmentsError } = await supabase
+                  .from('installments')
+                  .update({
+                    is_paid: true,
+                    paid_date: paymentDate,
+                    late_fee_paid: 0 // Resetear mora pagada
+                  })
+                  .eq('loan_id', loan.id)
+                  .in('installment_number', unpaidInstallmentNumbers);
+
+                if (updateInstallmentsError) {
+                  console.error('Error marcando cuotas como pagadas:', updateInstallmentsError);
+                  throw updateInstallmentsError;
+                }
+              }
+
+              // Obtener todas las cuotas para actualizar paid_installments
+              const { data: allInstallments, error: allInstallmentsError } = await supabase
+                .from('installments')
+                .select('installment_number')
+                .eq('loan_id', loan.id)
+                .eq('is_paid', true);
+
+              if (!allInstallmentsError && allInstallments) {
+                const allPaidInstallments = allInstallments.map(inst => inst.installment_number).sort((a, b) => a - b);
+
+                // Actualizar el préstamo como saldado
+                loanUpdates = {
+                  remaining_balance: 0,
+                  status: 'paid',
+                  paid_installments: allPaidInstallments,
+                  current_late_fee: 0,
+                  next_payment_date: null, // No hay próximo pago si está saldado
+                };
+
+                // Si se pagó mora, actualizar total_late_fee_paid
+                if (actualLateFeePayment > 0) {
+                  const { data: currentLoan, error: loanError } = await supabase
+                    .from('loans')
+                    .select('total_late_fee_paid')
+                    .eq('id', loan.id)
+                    .single();
+
+                  if (!loanError && currentLoan) {
+                    const currentTotalPaid = currentLoan.total_late_fee_paid || 0;
+                    loanUpdates.total_late_fee_paid = currentTotalPaid + actualLateFeePayment;
+                  }
+                }
+              } else {
+                // Fallback si no se pueden obtener las cuotas
+                loanUpdates = {
+                  remaining_balance: 0,
+                  status: 'paid',
+                  current_late_fee: 0,
+                  next_payment_date: null, // No hay próximo pago si está saldado
+                };
+              }
+
+              console.log('✅ Préstamo saldado exitosamente:', {
+                paymentAmount,
+                principalPayment,
+                interestPayment,
+                lateFeePayment: actualLateFeePayment,
+                cuotasPagadas: unpaidInstallmentNumbers.length
+              });
+            } catch (error) {
+              console.error('Error saldando préstamo:', error);
+              toast.error('Error al saldar el préstamo');
+              setLoading(false);
+              return;
+            }
+          }
           break;
           
         case 'edit_loan':
@@ -1013,7 +1242,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       const actionMessages = {
         add_charge: 'Cargo agregado exitosamente como nueva cuota',
         term_extension: 'Plazo extendido exitosamente',
-        balance_adjustment: 'Balance ajustado exitosamente',
+        settle_loan: 'Préstamo saldado exitosamente',
         delete_loan: 'Préstamo eliminado exitosamente (recuperable por 2 meses)',
         remove_late_fee: `Mora eliminada exitosamente`,
         edit_loan: 'Préstamo editado exitosamente. Las cuotas han sido recalculadas.'
@@ -1052,7 +1281,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     switch (type) {
       case 'add_charge': return <PlusCircle className="h-4 w-4" />;
       case 'term_extension': return <Calendar className="h-4 w-4" />;
-      case 'balance_adjustment': return <Calculator className="h-4 w-4" />;
+      case 'settle_loan': return <DollarSign className="h-4 w-4" />;
       case 'delete_loan': return <Trash2 className="h-4 w-4" />;
       case 'remove_late_fee': return <MinusCircle className="h-4 w-4" />;
       case 'payment_agreement': return <Handshake className="h-4 w-4" />;
@@ -1065,7 +1294,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     const labels = {
       add_charge: 'Agregar Cargo',
       term_extension: 'Extensión de Plazo',
-      balance_adjustment: 'Ajuste de Balance',
+      settle_loan: 'Saldar Préstamo',
       delete_loan: 'Eliminar Préstamo',
       remove_late_fee: 'Eliminar Mora',
       payment_agreement: 'Acuerdos de Pago',
@@ -1099,16 +1328,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           { value: 'goodwill_extension', label: 'Extensión de Buena Voluntad' },
           { value: 'other', label: 'Otra Razón' }
         ];
-      case 'balance_adjustment':
+      case 'settle_loan':
         return [
-          { value: 'error_correction', label: 'Corrección de Error' },
-          { value: 'administrative_adjustment', label: 'Ajuste Administrativo' },
-          { value: 'rate_adjustment', label: 'Ajuste de Tasa de Interés' },
-          { value: 'principal_reduction', label: 'Reducción de Capital' },
-          { value: 'interest_adjustment', label: 'Ajuste de Intereses' },
-          { value: 'forgiveness', label: 'Perdón de Deuda Parcial' },
-          { value: 'goodwill_adjustment', label: 'Ajuste de Buena Voluntad' },
-          { value: 'legal_settlement', label: 'Acuerdo Legal' },
+          { value: 'full_payment', label: 'Pago Completo del Préstamo' },
+          { value: 'early_settlement', label: 'Liquidación Anticipada' },
+          { value: 'client_request', label: 'Solicitud del Cliente' },
+          { value: 'refinancing', label: 'Refinanciamiento' },
           { value: 'other', label: 'Otra Razón' }
         ];
       case 'delete_loan':
@@ -1199,10 +1424,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                       Extensión de Plazo
                                     </div>
                                   </SelectItem>
-                                  <SelectItem value="balance_adjustment">
+                                  <SelectItem value="settle_loan">
                                     <div className="flex items-center gap-2">
-                                      <Calculator className="h-4 w-4" />
-                                      Ajuste de Balance
+                                      <DollarSign className="h-4 w-4" />
+                                      Saldar Préstamo
                                     </div>
                                   </SelectItem>
                                   <SelectItem value="delete_loan">
@@ -1262,16 +1487,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     )}
 
                     {/* Campos condicionales según el tipo de actualización */}
-                    {['add_charge', 'balance_adjustment'].includes(form.watch('update_type')) && (
+                    {form.watch('update_type') === 'add_charge' && (
                       <FormField
                         control={form.control}
                         name="amount"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>
-                              {form.watch('update_type') === 'add_charge' ? 'Monto del Cargo' :
-                               'Nuevo Balance'}
-                            </FormLabel>
+                            <FormLabel>Monto del Cargo</FormLabel>
                             <FormControl>
                               <Input
                                 type="number"
@@ -1289,6 +1511,67 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           </FormItem>
                         )}
                       />
+                    )}
+
+                    {form.watch('update_type') === 'settle_loan' && (
+                      <div className="space-y-4">
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <div className="text-sm text-blue-800 space-y-1">
+                            <div><strong>Capital Pendiente:</strong> RD${settleBreakdown.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            <div><strong>Interés Pendiente:</strong> RD${settleBreakdown.interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            <div><strong>Mora Pendiente:</strong> RD${settleBreakdown.lateFeePending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            <div className="pt-2 border-t border-blue-300">
+                              <strong>Total a Saldar:</strong> RD${settleBreakdown.totalToSettle.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                        </div>
+                        <FormField
+                          control={form.control}
+                          name="settle_amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Monto a Pagar</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder={settleBreakdown.totalToSettle.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  step="0.01"
+                                  min={settleBreakdown.capitalPending}
+                                  {...field}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    // Permitir escribir libremente, incluyendo valores vacíos o parciales
+                                    if (value === '') {
+                                      field.onChange(undefined);
+                                    } else {
+                                      const numValue = parseFloat(value);
+                                      if (!isNaN(numValue)) {
+                                        field.onChange(numValue);
+                                      }
+                                    }
+                                  }}
+                                />
+                              </FormControl>
+                              <div className="text-xs text-gray-500">
+                                Mínimo: RD${settleBreakdown.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | 
+                                Ideal: RD${settleBreakdown.totalToSettle.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => {
+                            form.setValue('settle_amount', settleBreakdown.totalToSettle);
+                          }}
+                        >
+                          Usar Monto Total a Saldar
+                        </Button>
+                      </div>
                     )}
 
                     {form.watch('update_type') === 'remove_late_fee' && (
@@ -1640,6 +1923,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                  form.watch('update_type') === 'delete_loan' ? 'Razón de Eliminación' :
                                  form.watch('update_type') === 'remove_late_fee' ? 'Razón de Eliminación de Mora' :
                                  form.watch('update_type') === 'edit_loan' ? 'Razón de Edición' :
+                                 form.watch('update_type') === 'settle_loan' ? 'Razón de Saldo' :
                                  'Razón del Ajuste'}
                               </FormLabel>
                               <Select onValueChange={field.onChange} value={field.value}>
@@ -1765,11 +2049,46 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       </>
                     )}
                     
-                    {form.watch('update_type') === 'balance_adjustment' && form.watch('amount') && (
+                    {form.watch('update_type') === 'settle_loan' && (
                       <>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Nuevo Balance:</span>
-                          <span className="font-semibold text-blue-600">${form.watch('amount')?.toLocaleString()}</span>
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                          <div className="text-sm font-semibold text-green-800 mb-2">Desglose del Saldo</div>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Capital Pendiente:</span>
+                              <span className="font-semibold">RD${settleBreakdown.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Interés Pendiente:</span>
+                              <span className="font-semibold">RD${settleBreakdown.interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Mora Pendiente:</span>
+                              <span className="font-semibold text-red-600">RD${settleBreakdown.lateFeePending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                            <hr className="my-2" />
+                            <div className="flex justify-between">
+                              <span className="text-gray-700 font-semibold">Total a Saldar:</span>
+                              <span className="font-bold text-lg text-green-600">RD${settleBreakdown.totalToSettle.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </div>
+                            {form.watch('settle_amount') && form.watch('settle_amount')! > 0 && (
+                              <>
+                                <hr className="my-2" />
+                                <div className="flex justify-between">
+                                  <span className="text-gray-700 font-semibold">Monto a Pagar:</span>
+                                  <span className="font-bold text-lg text-blue-600">RD${form.watch('settle_amount')?.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                </div>
+                                {form.watch('settle_amount')! >= settleBreakdown.totalToSettle && (
+                                  <div className="bg-green-100 border border-green-300 rounded p-2 mt-2">
+                                    <div className="flex items-center gap-2 text-green-800 text-xs">
+                                      <CheckCircle className="h-4 w-4" />
+                                      <span>El préstamo será saldado completamente</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </div>
                       </>
                     )}
@@ -1934,7 +2253,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Próximo Pago:</span>
-                  <span className="font-semibold">{loan.next_payment_date}</span>
+                  <span className="font-semibold">
+                    {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
+                      ? 'N/A' 
+                      : loan.next_payment_date}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Estado:</span>
@@ -2032,7 +2355,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               id: loan.id,
               amount: loan.amount,
               remaining_balance: loan.remaining_balance,
-              monthly_payment: selectedAgreement.agreed_amount || selectedAgreement.agreed_payment_amount || loan.monthly_payment,
+              monthly_payment: selectedAgreement?.agreed_amount || selectedAgreement?.agreed_payment_amount || loan.monthly_payment,
               interest_rate: loan.interest_rate,
               term_months: loan.term_months,
               next_payment_date: loan.next_payment_date,
