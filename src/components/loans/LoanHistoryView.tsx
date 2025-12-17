@@ -60,6 +60,7 @@ interface Loan {
   amount: number;
   interest_rate: number;
   term_months: number;
+  status?: string;
   client: {
     full_name: string;
     dni: string;
@@ -146,6 +147,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
           amount,
           interest_rate,
           term_months,
+          status,
           client:client_id (
             full_name,
             dni,
@@ -482,6 +484,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                   <PaymentActions 
                                     payment={payment} 
                                     onPaymentUpdated={refreshAfterPaymentDeletion}
+                                    loanStatus={loan?.status}
                                   />
                                 </div>
                               </div>

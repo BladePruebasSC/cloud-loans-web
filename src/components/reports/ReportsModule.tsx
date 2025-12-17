@@ -124,6 +124,7 @@ export const ReportsModule = () => {
           *,
           loans (
             amount,
+            status,
             clients (
               full_name,
               dni
@@ -187,6 +188,7 @@ export const ReportsModule = () => {
           *,
           loans (
             amount,
+            status,
             clients (
               full_name,
               dni
@@ -735,6 +737,7 @@ export const ReportsModule = () => {
                           <PaymentActions 
                             payment={payment} 
                             onPaymentUpdated={forceRefresh}
+                            loanStatus={payment.loans?.status}
                           />
                         </div>
                       </div>

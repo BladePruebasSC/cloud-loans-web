@@ -71,11 +71,13 @@ interface CompanySettings {
 interface PaymentActionsProps {
   payment: Payment;
   onPaymentUpdated?: () => void;
+  loanStatus?: string; // Estado del préstamo para validar si se puede eliminar
 }
 
 export const PaymentActions: React.FC<PaymentActionsProps> = ({ 
   payment, 
-  onPaymentUpdated 
+  onPaymentUpdated,
+  loanStatus
 }) => {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -676,7 +678,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <Download className="mr-2 h-4 w-4" />
             Descargar
           </DropdownMenuItem>
-          {isLatestPayment && (
+          {isLatestPayment && loanStatus !== 'paid' && (
             <DropdownMenuItem 
               onClick={() => {
                 setForceDelete(false);
