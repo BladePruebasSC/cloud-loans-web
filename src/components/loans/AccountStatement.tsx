@@ -56,6 +56,7 @@ interface Installment {
   interest_amount: number;
   late_fee_paid: number;
   is_paid: boolean;
+  is_settled?: boolean;
   paid_date?: string;
   created_at: string;
   updated_at: string;
@@ -260,7 +261,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Obtener las cuotas del préstamo
       const { data: installmentsData, error: installmentsError } = await supabase
         .from('installments')
-        .select('*')
+        .select('*, is_settled')
         .eq('loan_id', loanId)
         .order('installment_number', { ascending: true });
 
@@ -632,6 +633,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Obtener datos reales de la cuota si existe
       const realInstallment = installmentsMap.get(i);
       const isPaid = realInstallment ? realInstallment.is_paid : false;
+      const isSettled = realInstallment ? (realInstallment as any).is_settled : false;
       const paidDate = realInstallment ? realInstallment.paid_date : null;
 
       // CORRECCIÓN: Usar la tabla installments directamente para determinar qué cuotas están pagadas
@@ -826,6 +828,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         remainingBalance: remainingBalanceAfterThisInstallment,
         isPaid: paymentStatus === 'paid',
         isPartial: paymentStatus === 'partial',
+        isSettled: isSettled && !isPaid, // Saldada solo si está saldada pero no pagada individualmente
         paidDate: displayPaidDate, // Usar la fecha de pago correcta (del pago encontrado o de la cuota)
         hasRealData: !!realInstallment,
         paymentStatus,
@@ -1019,6 +1022,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               
               .status-badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; }
               .status-paid { background-color: #dcfce7; color: #166534; }
+              .status-settled { background-color: #dbeafe; color: #1e40af; }
               .status-partial { background-color: #fed7aa; color: #c2410c; }
               .status-pending { background-color: #fef3c7; color: #92400e; }
               .status-failed { background-color: #fee2e2; color: #991b1b; }
@@ -1099,10 +1103,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 </thead>
                 <tbody>
                   ${amortizationSchedule.map(installment => `
-                    <tr style="${installment.isPaid ? 'background-color: #f0fdf4;' : installment.isPartial ? 'background-color: #fef3c7;' : ''}">
+                    <tr style="${installment.isSettled ? 'background-color: #eff6ff;' : installment.isPaid ? 'background-color: #f0fdf4;' : installment.isPartial ? 'background-color: #fef3c7;' : ''}">
                       <td style="padding: 6px; text-align: left; border: 1px solid #ddd; font-weight: bold;">
                         ${installment.installment}
-                        ${installment.isPaid ? ' ✅' : installment.isPartial ? ' ⚠️' : ''}
+                        ${installment.isSettled ? ' 🔵' : installment.isPaid ? ' ✅' : installment.isPartial ? ' ⚠️' : ''}
                       </td>
                       <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatDate(installment.dueDate)}</td>
                       <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">
@@ -1140,8 +1144,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                         ${formatCurrency(installment.remainingBalance)}
                       </td>
                       <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">
-                        <span class="status-badge ${installment.isPaid ? 'status-paid' : installment.isPartial ? 'status-partial' : 'status-pending'}">
-                          ${installment.isPaid ? 'Pagado' : installment.isPartial ? 'Parcial' : 'Pendiente'}
+                        <span class="status-badge ${installment.isSettled ? 'status-settled' : installment.isPaid ? 'status-paid' : installment.isPartial ? 'status-partial' : 'status-pending'}">
+                          ${installment.isSettled ? 'Saldada' : installment.isPaid ? 'Pagado' : installment.isPartial ? 'Parcial' : 'Pendiente'}
                         </span>
                       </td>
                     </tr>
@@ -1522,11 +1526,13 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                           return index < limit;
                         })
                         .map((installment) => (
-                          <tr key={installment.installment} className={`border-b hover:bg-gray-50 ${installment.isPaid ? 'bg-green-50' : ''}`}>
+                          <tr key={installment.installment} className={`border-b hover:bg-gray-50 ${(installment as any).isSettled ? 'bg-blue-50' : installment.isPaid ? 'bg-green-50' : ''}`}>
                             <td className="p-3">
                               <div className="flex items-center gap-2">
                                 <span className="font-medium">{installment.installment}</span>
-                                {installment.isPaid && (
+                                {(installment as any).isSettled ? (
+                                  <CheckCircle className="h-4 w-4 text-blue-600" />
+                                ) : installment.isPaid && (
                                   <CheckCircle className="h-4 w-4 text-green-600" />
                                 )}
                               </div>
@@ -1573,7 +1579,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                               </div>
                             </td>
                             <td className="p-3">
-                              {installment.isPaid ? (
+                              {(installment as any).isSettled ? (
+                                <Badge variant="secondary" className="bg-blue-100 text-blue-800 border-blue-200">
+                                  <CheckCircle className="h-3 w-3 mr-1" />
+                                  Saldada
+                                </Badge>
+                              ) : installment.isPaid ? (
                                 <Badge variant="secondary" className="bg-green-100 text-green-800 border-green-200">
                                   <CheckCircle className="h-3 w-3 mr-1" />
                                   Pagado

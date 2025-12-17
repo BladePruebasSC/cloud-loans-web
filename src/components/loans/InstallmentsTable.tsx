@@ -27,6 +27,7 @@ interface Installment {
   interest_amount: number;
   late_fee_paid: number;
   is_paid: boolean;
+  is_settled?: boolean;
   paid_date?: string;
   created_at: string;
   updated_at: string;
@@ -46,6 +47,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [loading, setLoading] = useState(false);
   const [loanInfo, setLoanInfo] = useState<any>(null);
+  const [totalPaidFromPayments, setTotalPaidFromPayments] = useState(0);
 
   useEffect(() => {
     if (isOpen && loanId) {
@@ -85,7 +87,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           .single(),
         supabase
         .from('installments')
-        .select('*')
+        .select('*, is_settled, total_amount')
         .eq('loan_id', loanId)
           .order('installment_number', { ascending: true })
       ]);
@@ -108,36 +110,60 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
       // Corregir los datos de las cuotas (solo en memoria, sin actualizar BD inmediatamente)
       const correctedInstallments = (data || []).map(installment => {
-        // Si el amount es 0 o undefined, calcularlo
-        let correctedAmount = installment.amount;
+        // Usar total_amount de la BD como fuente de verdad para evitar problemas de redondeo
+        const totalAmountFromDB = (installment as any).total_amount;
+        let correctedAmount = totalAmountFromDB || installment.amount;
         let correctedPrincipal = installment.principal_amount;
         let correctedInterest = installment.interest_amount;
 
+        // Si no hay total_amount en la BD, usar el amount o calcularlo
         if (!correctedAmount || correctedAmount === 0) {
-          // Usar el monto de la cuota mensual del préstamo
           correctedAmount = loanData.monthly_payment;
         }
 
+        // Si no hay interés, calcularlo
         if (!correctedInterest || correctedInterest === 0) {
-          // Calcular el interés fijo por cuota (basado en el monto original)
           correctedInterest = (loanData.amount * loanData.interest_rate) / 100;
         }
 
+        // Si no hay capital, calcularlo
         if (!correctedPrincipal || correctedPrincipal === 0) {
-          // Calcular el capital: cuota mensual - interés fijo
           correctedPrincipal = correctedAmount - correctedInterest;
         }
 
+        // Usar total_amount de la BD como fuente de verdad para el amount
+        // Esto evita problemas de redondeo acumulativo
+        const finalAmount = totalAmountFromDB || Math.round((correctedPrincipal + correctedInterest) * 100) / 100;
+        const finalPrincipal = Math.round(correctedPrincipal * 100) / 100;
+        const finalInterest = Math.round(correctedInterest * 100) / 100;
+
         return {
           ...installment,
-          amount: Math.round(correctedAmount * 100) / 100,
-          principal_amount: Math.round(correctedPrincipal * 100) / 100,
-          interest_amount: Math.round(correctedInterest * 100) / 100
+          amount: finalAmount,
+          principal_amount: finalPrincipal,
+          interest_amount: finalInterest
         };
       });
 
       // Establecer las cuotas inmediatamente para mostrar los datos
       setInstallments(correctedInstallments);
+
+      // Calcular el total pagado desde los pagos reales (no desde cuotas marcadas como pagadas)
+      const { data: payments, error: paymentsError } = await supabase
+        .from('payments')
+        .select('amount')
+        .eq('loan_id', loanId);
+
+      if (!paymentsError && payments) {
+        const totalPaid = payments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+        setTotalPaidFromPayments(totalPaid);
+      } else {
+        // Fallback: calcular desde cuotas pagadas si no hay pagos
+        const totalPaid = correctedInstallments
+          .filter(inst => inst.is_paid)
+          .reduce((sum, inst) => sum + (inst.amount || 0), 0);
+        setTotalPaidFromPayments(totalPaid);
+      }
 
       // Actualizar BD en segundo plano (no bloquea la UI)
       const needsUpdate = (data || []).some(inst => 
@@ -184,6 +210,18 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
 
   const getStatusBadge = (installment: Installment) => {
+    // Si la cuota está marcada como saldada (pero no pagada individualmente), mostrar "Saldada"
+    // Esto tiene prioridad sobre is_paid porque indica que fue saldada en una negociación
+    if (installment.is_settled && !installment.is_paid) {
+      return (
+        <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+          <CheckCircle className="h-3 w-3 mr-1" />
+          Saldada
+        </Badge>
+      );
+    }
+
+    // Si la cuota está marcada como pagada (y no está saldada), mostrar "Pagada"
     if (installment.is_paid) {
       return (
         <Badge variant="secondary" className="bg-green-100 text-green-800">
@@ -253,9 +291,20 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     }
   };
 
-  const totalAmount = installments.reduce((sum, inst) => sum + (inst.amount || 0), 0);
-  const totalPaid = installments.filter(inst => inst.is_paid).reduce((sum, inst) => sum + (inst.amount || 0), 0);
-  const totalPending = totalAmount - totalPaid;
+  // Usar total_amount de la BD directamente para evitar problemas de redondeo acumulativo
+  const totalAmount = installments.reduce((sum, inst) => {
+    const amount = (inst as any).total_amount || inst.amount || 0;
+    return sum + amount;
+  }, 0);
+  
+  // Usar el total pagado desde los pagos reales, no desde las cuotas marcadas como pagadas
+  // Esto es importante cuando se salda un préstamo (negociación) y no todas las cuotas se pagaron realmente
+  const totalPaid = totalPaidFromPayments > 0 ? totalPaidFromPayments : 
+    installments.filter(inst => inst.is_paid).reduce((sum, inst) => {
+      const amount = (inst as any).total_amount || inst.amount || 0;
+      return sum + amount;
+    }, 0);
+  const totalPending = Math.round((totalAmount - totalPaid) * 100) / 100;
   const paidCount = installments.filter(inst => inst.is_paid).length;
   const pendingCount = installments.length - paidCount;
 

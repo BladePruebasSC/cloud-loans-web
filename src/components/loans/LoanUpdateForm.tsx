@@ -886,9 +886,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // Permitir pagos parciales negociados - no validar que el capital deba ser completo
 
             try {
-              // Obtener todas las cuotas pendientes
-              const unpaidInstallments = installments.filter(inst => !inst.is_paid);
-              
               // Usar los valores directamente de los campos
               const principalPayment = capitalPayment;
               const actualInterestPayment = interestPayment;
@@ -939,40 +936,45 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 throw paymentError;
               }
 
-              // En "Saldar Préstamo", siempre se marca como completado (es una negociación)
-              // Marcar TODAS las cuotas como pagadas, sin importar el monto pagado
+              // En "Saldar Préstamo", NO marcar todas las cuotas como pagadas
+              // Solo marcar como pagadas las cuotas que realmente se pagaron antes del saldo
+              // Las cuotas restantes se marcan como "saldadas" (is_settled: true) pero NO como pagadas
+              
+              // Obtener todas las cuotas
               const { data: allInstallments, error: allInstallmentsError } = await supabase
                 .from('installments')
-                .select('installment_number')
+                .select('installment_number, is_paid')
                 .eq('loan_id', loan.id);
 
               if (allInstallmentsError) {
-                console.error('Error obteniendo cuotas:', allInstallmentsError);
+                console.error('Error obteniendo todas las cuotas:', allInstallmentsError);
                 throw allInstallmentsError;
               }
 
-              // Marcar todas las cuotas como pagadas
-              if (allInstallments && allInstallments.length > 0) {
-                const allInstallmentNumbers = allInstallments.map(inst => inst.installment_number);
-                const { error: updateInstallmentsError } = await supabase
+              // Identificar cuotas realmente pagadas (is_paid: true)
+              const paidInstallments = allInstallments?.filter(inst => inst.is_paid) || [];
+              const unpaidInstallments = allInstallments?.filter(inst => !inst.is_paid) || [];
+
+              // Marcar las cuotas no pagadas como "saldadas" (pero NO como pagadas)
+              if (unpaidInstallments.length > 0) {
+                const unpaidInstallmentNumbers = unpaidInstallments.map(inst => inst.installment_number);
+                const { error: updateSettledError } = await supabase
                   .from('installments')
                   .update({
-                    is_paid: true,
-                    paid_date: paymentDate,
+                    is_settled: true,
                     late_fee_paid: 0 // Resetear mora pagada
                   })
                   .eq('loan_id', loan.id)
-                  .in('installment_number', allInstallmentNumbers);
+                  .in('installment_number', unpaidInstallmentNumbers);
 
-                if (updateInstallmentsError) {
-                  console.error('Error marcando cuotas como pagadas:', updateInstallmentsError);
-                  throw updateInstallmentsError;
+                if (updateSettledError) {
+                  console.error('Error marcando cuotas como saldadas:', updateSettledError);
+                  throw updateSettledError;
                 }
               }
 
-              // Obtener todas las cuotas pagadas para actualizar paid_installments
-              const allPaidInstallments = allInstallments ? 
-                allInstallments.map(inst => inst.installment_number).sort((a, b) => a - b) : [];
+              // Solo usar las cuotas que realmente están pagadas para paid_installments
+              const allPaidInstallments = paidInstallments.map(inst => inst.installment_number).sort((a, b) => a - b);
 
               // En "Saldar Préstamo", siempre se marca como completado y todo queda en 0
               // Esto es una negociación, así que el préstamo queda saldado sin importar el monto

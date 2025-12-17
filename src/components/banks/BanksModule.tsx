@@ -57,7 +57,7 @@ const BanksModule = () => {
   const [activeTab, setActiveTab] = useState('cuentas');
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [editingAccount, setEditingAccount] = useState<BankAccount | null>(null);
-  const { user } = useAuth();
+  const { user, companyId } = useAuth();
 
   const [accountForm, setAccountForm] = useState({
     bank_name: '',
@@ -77,34 +77,44 @@ const BanksModule = () => {
   });
 
   useEffect(() => {
-    if (user) {
+    if (user && companyId) {
       fetchAccounts();
       fetchTransactions();
     }
-  }, [user]);
+  }, [user, companyId]);
 
-  // Note: Since there's no bank_accounts table in the schema, I'll simulate this functionality
-  // In a real implementation, you would need to create these tables in Supabase
-  
   const fetchAccounts = async () => {
+    if (!companyId) return;
+    
     try {
       setLoading(true);
-      // Simulated data - in real app you'd fetch from supabase
-      const mockAccounts: BankAccount[] = [
-        {
-          id: '1',
-          user_id: user?.id || '',
-          bank_name: 'Banco Popular',
-          account_type: 'checking',
-          account_number: '****7890',
-          balance: 123456.78,
-          description: 'Cuenta principal del negocio',
-          status: 'active',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }
-      ];
-      setAccounts(mockAccounts);
+      const { data, error } = await supabase
+        .from('bank_accounts')
+        .select('*')
+        .eq('company_owner_id', companyId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching accounts:', error);
+        toast.error('Error al cargar cuentas bancarias');
+        return;
+      }
+
+      // Mapear los datos de Supabase al formato esperado
+      const mappedAccounts: BankAccount[] = (data || []).map(acc => ({
+        id: acc.id,
+        user_id: acc.company_owner_id,
+        bank_name: acc.bank_name,
+        account_type: acc.account_type,
+        account_number: acc.account_number,
+        balance: Number(acc.balance),
+        description: acc.description,
+        status: acc.status,
+        created_at: acc.created_at,
+        updated_at: acc.updated_at
+      }));
+
+      setAccounts(mappedAccounts);
     } catch (error) {
       console.error('Error fetching accounts:', error);
       toast.error('Error al cargar cuentas bancarias');
@@ -114,55 +124,101 @@ const BanksModule = () => {
   };
 
   const fetchTransactions = async () => {
+    if (!companyId) return;
+    
     try {
-      // Simulated transactions
-      const mockTransactions: Transaction[] = [
-        {
-          id: '1',
-          account_id: '1',
-          type: 'income',
-          amount: 2500,
-          description: 'Pago de Préstamo - Cliente Juan Pérez',
-          reference_number: 'REF001',
-          transaction_date: new Date().toISOString().split('T')[0],
-          created_at: new Date().toISOString()
-        }
-      ];
-      setTransactions(mockTransactions);
+      const { data, error } = await supabase
+        .from('bank_transactions')
+        .select('*')
+        .eq('company_owner_id', companyId)
+        .order('transaction_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching transactions:', error);
+        toast.error('Error al cargar transacciones');
+        return;
+      }
+
+      // Mapear los datos de Supabase al formato esperado
+      const mappedTransactions: Transaction[] = (data || []).map(trans => ({
+        id: trans.id,
+        account_id: trans.account_id,
+        type: trans.type as 'income' | 'expense' | 'transfer',
+        amount: Number(trans.amount),
+        description: trans.description,
+        reference_number: trans.reference_number,
+        transaction_date: trans.transaction_date,
+        created_at: trans.created_at
+      }));
+
+      setTransactions(mappedTransactions);
     } catch (error) {
       console.error('Error fetching transactions:', error);
+      toast.error('Error al cargar transacciones');
     }
   };
 
   const handleAccountSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    try {
-      // In a real app, you would save to Supabase here
-      const newAccount: BankAccount = {
-        id: Date.now().toString(),
-        user_id: user?.id || '',
-        ...accountForm,
-        status: 'active',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
+    if (!companyId) {
+      toast.error('No se pudo identificar la empresa');
+      return;
+    }
 
+    try {
       if (editingAccount) {
-        setAccounts(prev => prev.map(acc => 
-          acc.id === editingAccount.id 
-            ? { ...acc, ...accountForm, updated_at: new Date().toISOString() }
-            : acc
-        ));
+        // Actualizar cuenta existente
+        const { error } = await supabase
+          .from('bank_accounts')
+          .update({
+            bank_name: accountForm.bank_name,
+            account_type: accountForm.account_type,
+            account_number: accountForm.account_number,
+            balance: accountForm.balance,
+            description: accountForm.description || null,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', editingAccount.id)
+          .eq('company_owner_id', companyId);
+
+        if (error) {
+          console.error('Error updating account:', error);
+          toast.error('Error al actualizar cuenta');
+          return;
+        }
+
         toast.success('Cuenta actualizada exitosamente');
       } else {
-        setAccounts(prev => [...prev, newAccount]);
+        // Crear nueva cuenta
+        const { data, error } = await supabase
+          .from('bank_accounts')
+          .insert([{
+            company_owner_id: companyId,
+            bank_name: accountForm.bank_name,
+            account_type: accountForm.account_type,
+            account_number: accountForm.account_number,
+            balance: accountForm.balance,
+            description: accountForm.description || null,
+            status: 'active'
+          }])
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Error creating account:', error);
+          toast.error('Error al crear cuenta');
+          return;
+        }
+
         toast.success('Cuenta agregada exitosamente');
       }
 
       setShowAccountForm(false);
       setEditingAccount(null);
       resetAccountForm();
+      fetchAccounts(); // Recargar cuentas desde la base de datos
     } catch (error) {
       console.error('Error saving account:', error);
       toast.error('Error al guardar cuenta');
@@ -172,29 +228,57 @@ const BanksModule = () => {
   const handleTransactionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    try {
-      const newTransaction: Transaction = {
-        id: Date.now().toString(),
-        ...transactionForm,
-        created_at: new Date().toISOString()
-      };
+    if (!companyId || !user) {
+      toast.error('No se pudo identificar la empresa o usuario');
+      return;
+    }
 
-      setTransactions(prev => [newTransaction, ...prev]);
-      
-      // Update account balance
-      setAccounts(prev => prev.map(acc => 
-        acc.id === transactionForm.account_id
-          ? { 
-              ...acc, 
-              balance: transactionForm.type === 'income' 
-                ? acc.balance + transactionForm.amount
-                : acc.balance - transactionForm.amount
-            }
-          : acc
-      ));
+    try {
+      // Crear la transacción en Supabase
+      const { data: newTransaction, error: transactionError } = await supabase
+        .from('bank_transactions')
+        .insert([{
+          account_id: transactionForm.account_id,
+          company_owner_id: companyId,
+          type: transactionForm.type,
+          amount: transactionForm.amount,
+          description: transactionForm.description,
+          reference_number: transactionForm.reference_number || null,
+          transaction_date: transactionForm.transaction_date,
+          created_by: user.id
+        }])
+        .select()
+        .single();
+
+      if (transactionError) {
+        console.error('Error creating transaction:', transactionError);
+        toast.error('Error al registrar transacción');
+        return;
+      }
+
+      // Actualizar el balance de la cuenta
+      const account = accounts.find(acc => acc.id === transactionForm.account_id);
+      if (account) {
+        const newBalance = transactionForm.type === 'income' 
+          ? account.balance + transactionForm.amount
+          : account.balance - transactionForm.amount;
+
+        const { error: balanceError } = await supabase
+          .from('bank_accounts')
+          .update({ balance: newBalance })
+          .eq('id', transactionForm.account_id)
+          .eq('company_owner_id', companyId);
+
+        if (balanceError) {
+          console.error('Error updating account balance:', balanceError);
+          toast.error('Transacción creada pero error al actualizar balance');
+        }
+      }
 
       toast.success('Transacción registrada exitosamente');
       resetTransactionForm();
+      fetchAccounts(); // Recargar cuentas para actualizar balances
+      fetchTransactions(); // Recargar transacciones
     } catch (error) {
       console.error('Error saving transaction:', error);
       toast.error('Error al registrar transacción');
