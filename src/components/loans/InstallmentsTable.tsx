@@ -266,6 +266,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   };
 
   const getDaysOverdue = (dueDate: string) => {
+    // Si el préstamo está saldado, no mostrar días de atraso
+    if (loanInfo?.status === 'paid') {
+      return 0;
+    }
     if (!dueDate) return 0;
     try {
       const due = new Date(dueDate);
@@ -297,6 +301,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     return sum + amount;
   }, 0);
   
+  // Si el préstamo está saldado, el total pendiente debe ser 0
+  const isLoanSettled = loanInfo?.status === 'paid';
+  
   // Usar el total pagado desde los pagos reales, no desde las cuotas marcadas como pagadas
   // Esto es importante cuando se salda un préstamo (negociación) y no todas las cuotas se pagaron realmente
   const totalPaid = totalPaidFromPayments > 0 ? totalPaidFromPayments : 
@@ -304,7 +311,8 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       const amount = (inst as any).total_amount || inst.amount || 0;
       return sum + amount;
     }, 0);
-  const totalPending = Math.round((totalAmount - totalPaid) * 100) / 100;
+  // Si el préstamo está saldado, el total pendiente es 0
+  const totalPending = isLoanSettled ? 0 : Math.round((totalAmount - totalPaid) * 100) / 100;
   const paidCount = installments.filter(inst => inst.is_paid).length;
   const pendingCount = installments.length - paidCount;
 
@@ -467,7 +475,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                           </div>
                         )}
 
-                        {!installment.is_paid && getDaysOverdue(installment.due_date) > 0 && (
+                        {!isLoanSettled && !installment.is_paid && getDaysOverdue(installment.due_date) > 0 && (
                           <div className="mt-2 pt-2 border-t text-sm text-red-600">
                             <span className="font-medium">Días de atraso:</span> {getDaysOverdue(installment.due_date)}
                           </div>
@@ -508,7 +516,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                               {installment.paid_date ? formatDate(installment.paid_date) : '-'}
                             </td>
                             <td className="p-3">
-                              {!installment.is_paid && getDaysOverdue(installment.due_date) > 0 ? (
+                              {!isLoanSettled && !installment.is_paid && getDaysOverdue(installment.due_date) > 0 ? (
                                 <span className="text-red-600 font-semibold">
                                   {getDaysOverdue(installment.due_date)} días
                                 </span>

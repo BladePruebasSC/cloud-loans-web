@@ -2475,8 +2475,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               </CardContent>
             </Card>
 
-            {/* Desglose de Mora - mostrar en todas las actualizaciones excepto eliminar, eliminar mora y acuerdos de pago */}
-            {form.watch('update_type') !== 'delete_loan' && form.watch('update_type') !== 'remove_late_fee' && form.watch('update_type') !== 'payment_agreement' && (
+            {/* Desglose de Mora - mostrar en todas las actualizaciones excepto eliminar, eliminar mora, acuerdos de pago y si el préstamo está saldado */}
+            {form.watch('update_type') !== 'delete_loan' && form.watch('update_type') !== 'remove_late_fee' && form.watch('update_type') !== 'payment_agreement' && loan.status !== 'paid' && (
               <div className="mt-4">
                 <LateFeeInfo
                   loanId={loan.id}

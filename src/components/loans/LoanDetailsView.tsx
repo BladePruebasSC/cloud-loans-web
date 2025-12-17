@@ -422,9 +422,13 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     ? interestPendingFromInstallments 
     : (loan.amount * loan.interest_rate / 100 * loan.term_months) - totalInterestPaid;
   
-  const totalPending = capitalPending + interestPending + (loan.current_late_fee || 0);
-  const amountToPay = loan.monthly_payment + (loan.current_late_fee || 0);
-  const toSettle = loan.remaining_balance + (loan.current_late_fee || 0);
+  // Si el préstamo está saldado, la mora debe ser 0
+  const isLoanSettled = loan.status === 'paid';
+  const effectiveLateFee = isLoanSettled ? 0 : (loan.current_late_fee || 0);
+  
+  const totalPending = capitalPending + interestPending + effectiveLateFee;
+  const amountToPay = loan.monthly_payment + effectiveLateFee;
+  const toSettle = loan.remaining_balance + effectiveLateFee;
 
   // Calcular porcentaje pagado
   const paidPercentage = loan.amount > 0 ? (totalPaid / loan.amount) * 100 : 0;
@@ -626,10 +630,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                     <CardTitle>RESUMEN</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div>
-                      <div className="text-sm text-gray-600">Mora pendiente</div>
-                      <div className="text-lg font-semibold text-red-600">RD {(loan.current_late_fee || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                    </div>
+                    {!isLoanSettled && (
+                      <div>
+                        <div className="text-sm text-gray-600">Mora pendiente</div>
+                        <div className="text-lg font-semibold text-red-600">RD {effectiveLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      </div>
+                    )}
                     <div>
                       <div className="text-sm text-gray-600">Otros pendiente</div>
                       <div className="text-lg font-semibold">RD {interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>

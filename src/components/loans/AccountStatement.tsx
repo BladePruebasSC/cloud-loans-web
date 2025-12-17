@@ -269,7 +269,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       setInstallments(installmentsData || []);
 
       // Calcular la mora actual basándose en las cuotas reales del préstamo
+      // Si el préstamo está saldado (status = 'paid'), la mora debe ser 0
       if (loanData && installmentsData) {
+        // Si el préstamo está saldado, no calcular mora
+        if (loanData.status === 'paid') {
+          console.log('🔍 AccountStatement: Préstamo saldado - mora establecida en 0');
+          setCurrentLateFee(0);
+          return;
+        }
+
         try {
           console.log('🔍 AccountStatement: Calculando mora usando datos reales de cuotas...');
           console.log('🔍 AccountStatement: Datos del préstamo:', {
@@ -284,7 +292,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             late_fee_rate: loanData.late_fee_rate,
             grace_period_days: loanData.grace_period_days,
             max_late_fee: loanData.max_late_fee,
-            late_fee_calculation_type: loanData.late_fee_calculation_type
+            late_fee_calculation_type: loanData.late_fee_calculation_type,
+            status: loanData.status
           });
 
           // Calcular mora actual basándose en las cuotas reales
@@ -303,8 +312,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               lateFeePaid: installment.late_fee_paid
             });
             
-            // Solo calcular mora para cuotas vencidas y no pagadas
-            if (daysOverdue > 0 && !installment.is_paid) {
+            // Solo calcular mora para cuotas vencidas y no pagadas (y no saldadas)
+            const isSettled = (installment as any).is_settled;
+            if (daysOverdue > 0 && !installment.is_paid && !isSettled) {
               const gracePeriod = loanData.grace_period_days || 0;
               const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
               
@@ -1076,10 +1086,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                   <div class="amount">${formatCurrency(totals.totalLateFee)}</div>
                   <div class="label">Mora Pagada</div>
                 </div>
+                ${loan.status !== 'paid' ? `
                 <div class="summary-card current-late-fee">
                   <div class="amount">${formatCurrency(currentLateFee)}</div>
                   <div class="label">Mora Actual</div>
                 </div>
+                ` : ''}
                 <div class="summary-card payment-count">
                   <div class="amount">${payments.length}</div>
                   <div class="label">Número de Pagos</div>
@@ -1267,10 +1279,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #dc2626;">${formatCurrency(totals.totalLateFee)}</div>
               <div style="font-size: 12px; color: #666;">Mora Pagada</div>
             </div>
+            ${loan.status !== 'paid' ? `
             <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center;">
               <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #d97706;">${formatCurrency(currentLateFee)}</div>
               <div style="font-size: 12px; color: #666;">Mora Actual</div>
             </div>
+            ` : ''}
             <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; text-align: center;">
               <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #7c3aed;">${payments.length}</div>
               <div style="font-size: 12px; color: #666;">Número de Pagos</div>
@@ -1466,10 +1480,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                     <div className="text-2xl font-bold text-red-600">{formatCurrency(totals.totalLateFee)}</div>
                     <div className="text-sm text-gray-600">Mora Pagada</div>
                   </div>
-                <div className="text-center p-3 bg-yellow-50 rounded-lg">
-                  <div className="text-2xl font-bold text-yellow-600">{formatCurrency(currentLateFee)}</div>
-                  <div className="text-sm text-gray-600">Mora Actual</div>
-                </div>
+                {loan?.status !== 'paid' && (
+                  <div className="text-center p-3 bg-yellow-50 rounded-lg">
+                    <div className="text-2xl font-bold text-yellow-600">{formatCurrency(currentLateFee)}</div>
+                    <div className="text-sm text-gray-600">Mora Actual</div>
+                  </div>
+                )}
                   <div className="text-center p-3 bg-purple-50 rounded-lg">
                     <div className="text-2xl font-bold text-purple-600">{payments.length}</div>
                     <div className="text-sm text-gray-600">Número de Pagos</div>

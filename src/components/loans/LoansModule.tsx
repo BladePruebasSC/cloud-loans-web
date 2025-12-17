@@ -1147,26 +1147,28 @@ export const LoansModule = () => {
                           </div>
                         </div>
 
-                        {/* Información de mora */}
-                        <LateFeeInfo
-                          loanId={loan.id}
-                          nextPaymentDate={loan.next_payment_date}
-                          currentLateFee={loan.current_late_fee || 0}
-                          lateFeeEnabled={loan.late_fee_enabled || false}
-                          lateFeeRate={loan.late_fee_rate || 2.0}
-                          gracePeriodDays={loan.grace_period_days || 0}
-                          maxLateFee={loan.max_late_fee || 0}
-                          lateFeeCalculationType={loan.late_fee_calculation_type || 'daily'}
-                          remainingBalance={loan.remaining_balance}
-                          clientName={loan.client?.full_name || 'Cliente'}
-                          amount={loan.amount}
-                          term={loan.term_months}
-                          payment_frequency={loan.payment_frequency || 'monthly'}
-                          interest_rate={loan.interest_rate}
-                          monthly_payment={loan.monthly_payment}
-                          paid_installments={loan.paid_installments || []} // Usar cuotas pagadas de la base de datos
-                          start_date={loan.start_date} // CRÍTICO: Fecha de inicio del préstamo
-                        />
+                        {/* Información de mora - Solo mostrar si el préstamo no está saldado */}
+                        {loan.status !== 'paid' && (
+                          <LateFeeInfo
+                            loanId={loan.id}
+                            nextPaymentDate={loan.next_payment_date}
+                            currentLateFee={loan.current_late_fee || 0}
+                            lateFeeEnabled={loan.late_fee_enabled || false}
+                            lateFeeRate={loan.late_fee_rate || 2.0}
+                            gracePeriodDays={loan.grace_period_days || 0}
+                            maxLateFee={loan.max_late_fee || 0}
+                            lateFeeCalculationType={loan.late_fee_calculation_type || 'daily'}
+                            remainingBalance={loan.remaining_balance}
+                            clientName={loan.client?.full_name || 'Cliente'}
+                            amount={loan.amount}
+                            term={loan.term_months}
+                            payment_frequency={loan.payment_frequency || 'monthly'}
+                            interest_rate={loan.interest_rate}
+                            monthly_payment={loan.monthly_payment}
+                            paid_installments={loan.paid_installments || []} // Usar cuotas pagadas de la base de datos
+                            start_date={loan.start_date} // CRÍTICO: Fecha de inicio del préstamo
+                          />
+                        )}
 
                         {/* Botones de acción mejorados */}
                         <div className="border-t border-gray-100 pt-6">
