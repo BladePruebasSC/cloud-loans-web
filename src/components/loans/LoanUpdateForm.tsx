@@ -924,7 +924,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 payment_date: paymentDate,
                 payment_method: data.payment_method || 'cash',
                 reference_number: data.reference_number,
-                notes: data.notes || `Saldado - Capital: RD$${principalPayment.toLocaleString()}, Interés: RD$${actualInterestPayment.toLocaleString()}, Mora: RD$${actualLateFeePayment.toLocaleString()} - ${data.adjustment_reason}`,
+                notes: data.notes || `Saldado - Capital: RD$${principalPayment.toLocaleString()}, Interés: RD$${actualInterestPayment.toLocaleString()}, Mora: RD$${actualLateFeePayment.toLocaleString()} - ${getAdjustmentReasonLabel(data.adjustment_reason)}`,
                 status: 'completed',
                 created_by: companyId,
               };
@@ -939,99 +939,71 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 throw paymentError;
               }
 
-              // Marcar cuotas como pagadas solo si se pagó el capital completo
-              // Si se pagó capital completo, marcar todas las cuotas pendientes como pagadas
-              const isFullySettled = principalPayment >= settleBreakdown.capitalPending && 
-                                     actualInterestPayment >= settleBreakdown.interestPending &&
-                                     actualLateFeePayment >= settleBreakdown.lateFeePending;
-              
-              if (isFullySettled) {
-                const unpaidInstallmentNumbers = unpaidInstallments.map(inst => inst.installment_number);
-                if (unpaidInstallmentNumbers.length > 0) {
-                  const { error: updateInstallmentsError } = await supabase
-                    .from('installments')
-                    .update({
-                      is_paid: true,
-                      paid_date: paymentDate,
-                      late_fee_paid: 0 // Resetear mora pagada
-                    })
-                    .eq('loan_id', loan.id)
-                    .in('installment_number', unpaidInstallmentNumbers);
-
-                  if (updateInstallmentsError) {
-                    console.error('Error marcando cuotas como pagadas:', updateInstallmentsError);
-                    throw updateInstallmentsError;
-                  }
-                }
-              } else {
-                // Si es pago parcial, actualizar las cuotas correspondientes
-                // Esto se manejará de forma similar a un pago normal
-                // Por ahora, solo registramos el pago sin marcar todas las cuotas como pagadas
-              }
-
-              // Calcular nuevo balance
-              const newBalance = Math.max(0, loan.remaining_balance - principalPayment - actualInterestPayment);
-              
-              // Obtener todas las cuotas para actualizar paid_installments
+              // En "Saldar Préstamo", siempre se marca como completado (es una negociación)
+              // Marcar TODAS las cuotas como pagadas, sin importar el monto pagado
               const { data: allInstallments, error: allInstallmentsError } = await supabase
                 .from('installments')
                 .select('installment_number')
-                .eq('loan_id', loan.id)
-                .eq('is_paid', true);
+                .eq('loan_id', loan.id);
 
-              if (!allInstallmentsError && allInstallments) {
-                const allPaidInstallments = allInstallments.map(inst => inst.installment_number).sort((a, b) => a - b);
-
-                // Determinar si está completamente saldado
-                const isCompletelySettled = newBalance === 0 && 
-                                           principalPayment >= settleBreakdown.capitalPending &&
-                                           actualInterestPayment >= settleBreakdown.interestPending;
-
-                // Calcular nueva mora (mora pendiente - mora pagada)
-                const newLateFee = Math.max(0, settleBreakdown.lateFeePending - actualLateFeePayment);
-
-                // Actualizar el préstamo
-                loanUpdates = {
-                  remaining_balance: newBalance,
-                  status: isCompletelySettled ? 'paid' : 'active',
-                  paid_installments: allPaidInstallments,
-                  current_late_fee: newLateFee,
-                  // Usar end_date si está completamente saldado, sino mantener next_payment_date actual
-                  next_payment_date: isCompletelySettled ? ((loan as any).end_date || loan.next_payment_date) : loan.next_payment_date,
-                };
-
-                // Si se pagó mora, actualizar total_late_fee_paid
-                if (actualLateFeePayment > 0) {
-                  const { data: currentLoan, error: loanError } = await supabase
-                    .from('loans')
-                    .select('total_late_fee_paid')
-                    .eq('id', loan.id)
-                    .single();
-
-                  if (!loanError && currentLoan) {
-                    const currentTotalPaid = currentLoan.total_late_fee_paid || 0;
-                    loanUpdates.total_late_fee_paid = currentTotalPaid + actualLateFeePayment;
-                  }
-                }
-              } else {
-                // Fallback si no se pueden obtener las cuotas
-                const isCompletelySettled = newBalance === 0;
-                const newLateFee = Math.max(0, settleBreakdown.lateFeePending - actualLateFeePayment);
-                
-                loanUpdates = {
-                  remaining_balance: newBalance,
-                  status: isCompletelySettled ? 'paid' : 'active',
-                  current_late_fee: newLateFee,
-                  next_payment_date: isCompletelySettled ? ((loan as any).end_date || loan.next_payment_date) : loan.next_payment_date,
-                };
+              if (allInstallmentsError) {
+                console.error('Error obteniendo cuotas:', allInstallmentsError);
+                throw allInstallmentsError;
               }
 
-              console.log('✅ Préstamo saldado exitosamente:', {
+              // Marcar todas las cuotas como pagadas
+              if (allInstallments && allInstallments.length > 0) {
+                const allInstallmentNumbers = allInstallments.map(inst => inst.installment_number);
+                const { error: updateInstallmentsError } = await supabase
+                  .from('installments')
+                  .update({
+                    is_paid: true,
+                    paid_date: paymentDate,
+                    late_fee_paid: 0 // Resetear mora pagada
+                  })
+                  .eq('loan_id', loan.id)
+                  .in('installment_number', allInstallmentNumbers);
+
+                if (updateInstallmentsError) {
+                  console.error('Error marcando cuotas como pagadas:', updateInstallmentsError);
+                  throw updateInstallmentsError;
+                }
+              }
+
+              // Obtener todas las cuotas pagadas para actualizar paid_installments
+              const allPaidInstallments = allInstallments ? 
+                allInstallments.map(inst => inst.installment_number).sort((a, b) => a - b) : [];
+
+              // En "Saldar Préstamo", siempre se marca como completado y todo queda en 0
+              // Esto es una negociación, así que el préstamo queda saldado sin importar el monto
+              loanUpdates = {
+                remaining_balance: 0, // Siempre en 0
+                status: 'paid', // Siempre marcado como pagado
+                paid_installments: allPaidInstallments, // Todas las cuotas
+                current_late_fee: 0, // Siempre en 0
+                next_payment_date: (loan as any).end_date || null, // Usar end_date o null
+              };
+
+              // Si se pagó mora, actualizar total_late_fee_paid
+              if (actualLateFeePayment > 0) {
+                const { data: currentLoan, error: loanError } = await supabase
+                  .from('loans')
+                  .select('total_late_fee_paid')
+                  .eq('id', loan.id)
+                  .single();
+
+                if (!loanError && currentLoan) {
+                  const currentTotalPaid = currentLoan.total_late_fee_paid || 0;
+                  loanUpdates.total_late_fee_paid = currentTotalPaid + actualLateFeePayment;
+                }
+              }
+
+              console.log('✅ Préstamo saldado exitosamente (negociación):', {
                 capitalPayment: principalPayment,
                 interestPayment: actualInterestPayment,
                 lateFeePayment: actualLateFeePayment,
-                newBalance,
-                isCompletelySettled: newBalance === 0
+                status: 'paid',
+                remaining_balance: 0
               });
             } catch (error) {
               console.error('Error saldando préstamo:', error);
@@ -1451,6 +1423,53 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       edit_loan: 'Editar Préstamo'
     };
     return labels[type as keyof typeof labels] || type;
+  };
+
+  // Función auxiliar para obtener la etiqueta en español de un adjustment_reason
+  const getAdjustmentReasonLabel = (reason: string): string => {
+    // Buscar en todas las categorías
+    const allReasons = [
+      // add_charge
+      { value: 'late_payment_fee', label: 'Multa por Pago Tardío' },
+      { value: 'administrative_fee', label: 'Tarifa Administrativa' },
+      { value: 'penalty_fee', label: 'Cargo por Penalización' },
+      { value: 'insurance_fee', label: 'Seguro del Préstamo' },
+      { value: 'processing_fee', label: 'Tarifa de Procesamiento' },
+      { value: 'legal_fee', label: 'Gastos Legales' },
+      { value: 'collection_fee', label: 'Gastos de Cobranza' },
+      { value: 'other_charge', label: 'Otro Cargo' },
+      // term_extension
+      { value: 'financial_difficulty', label: 'Dificultades Financieras' },
+      { value: 'job_loss', label: 'Pérdida de Empleo' },
+      { value: 'medical_emergency', label: 'Emergencia Médica' },
+      { value: 'family_emergency', label: 'Emergencia Familiar' },
+      { value: 'income_reduction', label: 'Reducción de Ingresos' },
+      { value: 'payment_plan', label: 'Plan de Pagos Especial' },
+      { value: 'rate_negotiation', label: 'Renegociación de Condiciones' },
+      { value: 'goodwill_extension', label: 'Extensión de Buena Voluntad' },
+      // settle_loan
+      { value: 'full_payment', label: 'Pago Completo del Préstamo' },
+      { value: 'early_settlement', label: 'Liquidación Anticipada' },
+      { value: 'client_request', label: 'Solicitud del Cliente' },
+      { value: 'refinancing', label: 'Refinanciamiento' },
+      // delete_loan
+      { value: 'duplicate_entry', label: 'Entrada Duplicada' },
+      { value: 'data_entry_error', label: 'Error de Captura de Datos' },
+      { value: 'wrong_client', label: 'Cliente Incorrecto' },
+      { value: 'test_entry', label: 'Entrada de Prueba' },
+      { value: 'cancelled_loan', label: 'Préstamo Cancelado' },
+      { value: 'paid_outside_system', label: 'Pagado Fuera del Sistema' },
+      { value: 'fraud', label: 'Fraude Detectado' },
+      // remove_late_fee
+      { value: 'error_correction', label: 'Corrección de Error' },
+      { value: 'goodwill_adjustment', label: 'Ajuste de Buena Voluntad' },
+      { value: 'payment_agreement', label: 'Acuerdo de Pago' },
+      { value: 'system_error', label: 'Error del Sistema' },
+      { value: 'other', label: 'Otra Razón' }
+    ];
+    
+    const found = allReasons.find(r => r.value === reason);
+    return found ? found.label : reason;
   };
 
   const getReasonsForUpdateType = (updateType: string) => {
