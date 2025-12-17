@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,7 +43,10 @@ const updateSchema = z.object({
   reference_number: z.string().optional(),
   notes: z.string().optional(),
   charge_date: z.string().optional(), // Fecha de creación del cargo
-  settle_amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(), // Monto para saldar préstamo
+  settle_amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(), // Monto para saldar préstamo (deprecated, usar campos separados)
+  settle_capital: z.number().min(0, 'El capital no puede ser negativo').optional(), // Capital a pagar
+  settle_interest: z.number().min(0, 'El interés no puede ser negativo').optional(), // Interés a pagar
+  settle_late_fee: z.number().min(0, 'La mora no puede ser negativa').optional(), // Mora a pagar
   // Campos para editar préstamo
   edit_amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   edit_interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0').optional(),
@@ -80,12 +83,31 @@ const updateSchema = z.object({
   path: ['edit_amount'],
 }).refine((data) => {
   if (data.update_type === 'settle_loan') {
-    return data.settle_amount !== undefined && data.settle_amount > 0;
+    // Validar que al menos uno de los campos tenga un valor mayor a 0
+    const hasCapital = data.settle_capital !== undefined && data.settle_capital > 0;
+    const hasInterest = data.settle_interest !== undefined && data.settle_interest > 0;
+    const hasLateFee = data.settle_late_fee !== undefined && data.settle_late_fee > 0;
+    const hasOldAmount = data.settle_amount !== undefined && data.settle_amount > 0;
+    
+    return hasCapital || hasInterest || hasLateFee || hasOldAmount;
   }
   return true;
 }, {
-  message: 'Debe especificar el monto para saldar el préstamo',
-  path: ['settle_amount'],
+  message: 'Debe especificar al menos un monto para saldar el préstamo',
+  path: ['settle_capital'],
+}).refine((data) => {
+  if (data.update_type === 'settle_loan') {
+    // Validar que el capital no exceda el capital pendiente
+    if (data.settle_capital !== undefined && data.settle_capital > 0) {
+      // Esta validación se hará en el componente con el breakdown
+      return true;
+    }
+    return true;
+  }
+  return true;
+}, {
+  message: 'El capital a pagar no puede exceder el capital pendiente',
+  path: ['settle_capital'],
 });
 
 type UpdateFormData = z.infer<typeof updateSchema>;
@@ -99,6 +121,7 @@ interface Loan {
   term_months: number;
   next_payment_date: string;
   start_date: string;
+  end_date?: string;
   status: string;
   paid_installments?: number[];
   payment_frequency?: string;
@@ -182,29 +205,96 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     }
   }, [isOpen, loan.id]);
 
+  // Observar el tipo de actualización
+  const updateType = useWatch({
+    control: form.control,
+    name: 'update_type'
+  });
+
   // Calcular desglose para saldar préstamo
-  const updateType = form.watch('update_type');
   useEffect(() => {
     if (isOpen && loan.id && updateType === 'settle_loan') {
       const calculateSettleBreakdown = async () => {
         try {
-          // Obtener todos los pagos para calcular el capital pagado
+          console.log('🔍 Calculando desglose para saldar préstamo:', {
+            loanId: loan.id,
+            loanAmount: loan.amount,
+            installmentsCount: installments.length,
+            currentLateFee,
+            remainingBalance: loan.remaining_balance
+          });
+
+          // Obtener todos los pagos para calcular el capital e interés pagados
           const { data: payments, error: paymentsError } = await supabase
             .from('payments')
-            .select('principal_amount')
+            .select('principal_amount, interest_amount')
             .eq('loan_id', loan.id);
 
-          if (paymentsError) throw paymentsError;
+          if (paymentsError) {
+            console.error('Error obteniendo pagos:', paymentsError);
+            throw paymentsError;
+          }
 
-          // Calcular cuánto capital se ha pagado
-          const totalPaidCapital = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
-          
-          // Capital pendiente = Monto original - Capital pagado
-          const capitalPending = Math.max(0, loan.amount - totalPaidCapital);
-
-          // Interés pendiente: sumar interés de cuotas no pagadas
+          // Calcular desde las cuotas primero (fuente de verdad)
           const unpaidInstallments = installments.filter(inst => !inst.is_paid);
-          const interestPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+          let capitalPending = 0;
+          let interestPending = 0;
+          
+          // Sumar el capital e interés de todas las cuotas
+          const totalCapitalFromInstallments = installments.reduce((sum, inst) => sum + (inst.principal_amount || 0), 0);
+          const totalInterestFromInstallments = installments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+          
+          // Calcular cuánto capital e interés se han pagado desde los pagos
+          const totalPaidCapital = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
+          const totalPaidInterest = payments?.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0) || 0;
+          
+          console.log('🔍 Capital total de cuotas:', totalCapitalFromInstallments);
+          console.log('🔍 Interés total de cuotas:', totalInterestFromInstallments);
+          console.log('🔍 Capital pagado:', totalPaidCapital);
+          console.log('🔍 Interés pagado:', totalPaidInterest);
+          console.log('🔍 Remaining balance:', loan.remaining_balance);
+          
+          if (unpaidInstallments.length > 0) {
+            // Si hay cuotas no pagadas, calcular desde ellas directamente
+            capitalPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.principal_amount || 0), 0);
+            interestPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+          } else {
+            // Si todas las cuotas están marcadas como pagadas pero hay remaining_balance,
+            // calcular desde el total de cuotas menos lo pagado
+            capitalPending = Math.max(0, totalCapitalFromInstallments - totalPaidCapital);
+            interestPending = Math.max(0, totalInterestFromInstallments - totalPaidInterest);
+            
+            // Si el remaining_balance no coincide con capital + interés pendientes,
+            // usar el remaining_balance como fuente de verdad y distribuir proporcionalmente
+            const calculatedTotal = capitalPending + interestPending;
+            if (Math.abs(calculatedTotal - loan.remaining_balance) > 0.01 && calculatedTotal > 0) {
+              // Ajustar proporcionalmente para que coincida con remaining_balance
+              const ratio = loan.remaining_balance / calculatedTotal;
+              capitalPending = Math.round(capitalPending * ratio * 100) / 100;
+              interestPending = Math.round(interestPending * ratio * 100) / 100;
+            } else if (calculatedTotal === 0 && loan.remaining_balance > 0) {
+              // Si no hay cuotas o el cálculo da 0 pero hay remaining_balance,
+              // asumir que todo el remaining_balance es interés (ya que el capital debería estar pagado)
+              capitalPending = 0;
+              interestPending = loan.remaining_balance;
+            }
+            
+            // Asegurar que el capital pendiente no exceda el monto original
+            if (capitalPending > loan.amount) {
+              interestPending += (capitalPending - loan.amount);
+              capitalPending = loan.amount;
+            }
+          }
+
+          console.log('🔍 Interés pendiente:', interestPending, 'de', unpaidInstallments.length, 'cuotas no pagadas');
+          console.log('🔍 Cuotas no pagadas:', unpaidInstallments.map(inst => ({
+            num: inst.installment_number,
+            principal: inst.principal_amount,
+            interest: inst.interest_amount,
+            isPaid: inst.is_paid
+          })));
+          console.log('🔍 Capital pendiente calculado:', capitalPending);
+          console.log('🔍 Interés pendiente calculado:', interestPending);
 
           // Mora pendiente
           const lateFeePending = currentLateFee || 0;
@@ -212,19 +302,41 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // Total a saldar
           const totalToSettle = capitalPending + interestPending + lateFeePending;
 
-          setSettleBreakdown({
+          const breakdown = {
             capitalPending: Math.round(capitalPending * 100) / 100,
             interestPending: Math.round(interestPending * 100) / 100,
             lateFeePending: Math.round(lateFeePending * 100) / 100,
             totalToSettle: Math.round(totalToSettle * 100) / 100
-          });
+          };
+
+          console.log('🔍 Desglose calculado:', breakdown);
+          setSettleBreakdown(breakdown);
         } catch (error) {
           console.error('Error calculando desglose:', error);
+          // Establecer valores por defecto en caso de error
+          const fallbackBreakdown = {
+            capitalPending: Math.round(loan.remaining_balance * 100) / 100,
+            interestPending: 0,
+            lateFeePending: Math.round((currentLateFee || 0) * 100) / 100,
+            totalToSettle: Math.round((loan.remaining_balance + (currentLateFee || 0)) * 100) / 100
+          };
+          console.log('🔍 Usando desglose de respaldo:', fallbackBreakdown);
+          setSettleBreakdown(fallbackBreakdown);
         }
       };
+      
+      // Ejecutar el cálculo
       calculateSettleBreakdown();
+    } else {
+      // Resetear el desglose cuando no es settle_loan
+      setSettleBreakdown({
+        capitalPending: 0,
+        interestPending: 0,
+        lateFeePending: 0,
+        totalToSettle: 0
+      });
     }
-  }, [isOpen, loan.id, loan.amount, installments, currentLateFee, updateType]);
+  }, [isOpen, loan.id, loan.amount, loan.remaining_balance, installments, currentLateFee, updateType]);
 
   // Obtener la mora actual del préstamo cuando se abre el formulario
   // Calcular la mora basándose en las cuotas reales, no solo leer de la BD
@@ -335,7 +447,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     }
   }, [isOpen, editOnly, form]);
 
-  const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount', 'edit_amount', 'edit_interest_rate', 'edit_term_months', 'edit_amortization_type']);
+  const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount', 'edit_amount', 'edit_interest_rate', 'edit_term_months', 'edit_amortization_type', 'settle_capital', 'settle_interest', 'settle_late_fee']);
 
   useEffect(() => {
     const updateType = form.watch('update_type');
@@ -427,7 +539,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
 
   const calculateUpdatedValues = () => {
-    const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType] = watchedValues;
+    const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType, settleCapital, settleInterest, settleLateFee] = watchedValues;
     
     let newBalance = loan.remaining_balance;
     let newPayment = loan.monthly_payment;
@@ -470,8 +582,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         break;
         
       case 'settle_loan':
-        // Para saldar préstamo, el balance se calcula según el monto pagado
-        // Se maneja en onSubmit
+        // Calcular nuevo balance restando los montos pagados
+        const capitalPaid = settleCapital || 0;
+        const interestPaid = settleInterest || 0;
+        newBalance = Math.max(0, loan.remaining_balance - capitalPaid - interestPaid);
+        principalAmount = capitalPaid;
+        interestAmount = interestPaid;
         break;
         
       case 'edit_loan':
@@ -736,39 +852,47 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           
         case 'settle_loan':
           {
-            if (!data.settle_amount || data.settle_amount <= 0) {
-              toast.error('Debe especificar un monto para saldar el préstamo');
+            // Obtener valores de los 3 campos separados
+            const capitalPayment = data.settle_capital || 0;
+            const interestPayment = data.settle_interest || 0;
+            const lateFeePayment = data.settle_late_fee || 0;
+            
+            // Validar que al menos uno tenga un valor mayor a 0
+            if (capitalPayment <= 0 && interestPayment <= 0 && lateFeePayment <= 0) {
+              toast.error('Debe especificar al menos un monto para saldar el préstamo');
               setLoading(false);
               return;
             }
 
-            // Validar que el monto sea al menos el capital pendiente
-            if (data.settle_amount < settleBreakdown.capitalPending) {
-              toast.error(`El monto mínimo para saldar es RD$${settleBreakdown.capitalPending.toLocaleString()}`);
+            // Validar que los montos no excedan los pendientes
+            if (capitalPayment > settleBreakdown.capitalPending) {
+              toast.error(`El capital a pagar no puede exceder RD$${settleBreakdown.capitalPending.toLocaleString()}`);
               setLoading(false);
               return;
             }
+
+            if (interestPayment > settleBreakdown.interestPending) {
+              toast.error(`El interés a pagar no puede exceder RD$${settleBreakdown.interestPending.toLocaleString()}`);
+              setLoading(false);
+              return;
+            }
+
+            if (lateFeePayment > settleBreakdown.lateFeePending) {
+              toast.error(`La mora a pagar no puede exceder RD$${settleBreakdown.lateFeePending.toLocaleString()}`);
+              setLoading(false);
+              return;
+            }
+
+            // Permitir pagos parciales negociados - no validar que el capital deba ser completo
 
             try {
               // Obtener todas las cuotas pendientes
               const unpaidInstallments = installments.filter(inst => !inst.is_paid);
               
-              // Calcular distribución del pago
-              const totalInterestPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
-              const totalPrincipalPending = settleBreakdown.capitalPending;
-              const totalLateFeePending = settleBreakdown.lateFeePending;
-              
-              // El monto a pagar puede ser mayor o igual al total
-              const paymentAmount = data.settle_amount;
-              const lateFeePayment = Math.min(paymentAmount - totalPrincipalPending - totalInterestPending, totalLateFeePending);
-              
-              // Calcular distribución: primero interés, luego capital, luego mora
-              let remainingPayment = paymentAmount;
-              let interestPayment = Math.min(remainingPayment, totalInterestPending);
-              remainingPayment -= interestPayment;
-              let principalPayment = Math.min(remainingPayment, totalPrincipalPending);
-              remainingPayment -= principalPayment;
-              const actualLateFeePayment = Math.min(remainingPayment, totalLateFeePending);
+              // Usar los valores directamente de los campos
+              const principalPayment = capitalPayment;
+              const actualInterestPayment = interestPayment;
+              const actualLateFeePayment = lateFeePayment;
 
               // Crear fecha de pago en zona horaria de Santo Domingo
               const now = new Date();
@@ -792,15 +916,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               // Registrar el pago en la tabla payments
               const paymentData = {
                 loan_id: loan.id,
-                amount: Math.round(principalPayment + interestPayment),
+                amount: Math.round(principalPayment + actualInterestPayment),
                 principal_amount: Math.round(principalPayment),
-                interest_amount: Math.round(interestPayment),
+                interest_amount: Math.round(actualInterestPayment),
                 late_fee: Math.round(actualLateFeePayment * 100) / 100,
-                due_date: loan.next_payment_date,
+                due_date: loan.next_payment_date || (loan as any).end_date || paymentDate,
                 payment_date: paymentDate,
                 payment_method: data.payment_method || 'cash',
                 reference_number: data.reference_number,
-                notes: data.notes || `Saldado completamente - ${data.adjustment_reason}`,
+                notes: data.notes || `Saldado - Capital: RD$${principalPayment.toLocaleString()}, Interés: RD$${actualInterestPayment.toLocaleString()}, Mora: RD$${actualLateFeePayment.toLocaleString()} - ${data.adjustment_reason}`,
                 status: 'completed',
                 created_by: companyId,
               };
@@ -815,25 +939,39 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 throw paymentError;
               }
 
-              // Marcar todas las cuotas pendientes como pagadas
-              const unpaidInstallmentNumbers = unpaidInstallments.map(inst => inst.installment_number);
-              if (unpaidInstallmentNumbers.length > 0) {
-                const { error: updateInstallmentsError } = await supabase
-                  .from('installments')
-                  .update({
-                    is_paid: true,
-                    paid_date: paymentDate,
-                    late_fee_paid: 0 // Resetear mora pagada
-                  })
-                  .eq('loan_id', loan.id)
-                  .in('installment_number', unpaidInstallmentNumbers);
+              // Marcar cuotas como pagadas solo si se pagó el capital completo
+              // Si se pagó capital completo, marcar todas las cuotas pendientes como pagadas
+              const isFullySettled = principalPayment >= settleBreakdown.capitalPending && 
+                                     actualInterestPayment >= settleBreakdown.interestPending &&
+                                     actualLateFeePayment >= settleBreakdown.lateFeePending;
+              
+              if (isFullySettled) {
+                const unpaidInstallmentNumbers = unpaidInstallments.map(inst => inst.installment_number);
+                if (unpaidInstallmentNumbers.length > 0) {
+                  const { error: updateInstallmentsError } = await supabase
+                    .from('installments')
+                    .update({
+                      is_paid: true,
+                      paid_date: paymentDate,
+                      late_fee_paid: 0 // Resetear mora pagada
+                    })
+                    .eq('loan_id', loan.id)
+                    .in('installment_number', unpaidInstallmentNumbers);
 
-                if (updateInstallmentsError) {
-                  console.error('Error marcando cuotas como pagadas:', updateInstallmentsError);
-                  throw updateInstallmentsError;
+                  if (updateInstallmentsError) {
+                    console.error('Error marcando cuotas como pagadas:', updateInstallmentsError);
+                    throw updateInstallmentsError;
+                  }
                 }
+              } else {
+                // Si es pago parcial, actualizar las cuotas correspondientes
+                // Esto se manejará de forma similar a un pago normal
+                // Por ahora, solo registramos el pago sin marcar todas las cuotas como pagadas
               }
 
+              // Calcular nuevo balance
+              const newBalance = Math.max(0, loan.remaining_balance - principalPayment - actualInterestPayment);
+              
               // Obtener todas las cuotas para actualizar paid_installments
               const { data: allInstallments, error: allInstallmentsError } = await supabase
                 .from('installments')
@@ -844,13 +982,22 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               if (!allInstallmentsError && allInstallments) {
                 const allPaidInstallments = allInstallments.map(inst => inst.installment_number).sort((a, b) => a - b);
 
-                // Actualizar el préstamo como saldado
+                // Determinar si está completamente saldado
+                const isCompletelySettled = newBalance === 0 && 
+                                           principalPayment >= settleBreakdown.capitalPending &&
+                                           actualInterestPayment >= settleBreakdown.interestPending;
+
+                // Calcular nueva mora (mora pendiente - mora pagada)
+                const newLateFee = Math.max(0, settleBreakdown.lateFeePending - actualLateFeePayment);
+
+                // Actualizar el préstamo
                 loanUpdates = {
-                  remaining_balance: 0,
-                  status: 'paid',
+                  remaining_balance: newBalance,
+                  status: isCompletelySettled ? 'paid' : 'active',
                   paid_installments: allPaidInstallments,
-                  current_late_fee: 0,
-                  next_payment_date: null, // No hay próximo pago si está saldado
+                  current_late_fee: newLateFee,
+                  // Usar end_date si está completamente saldado, sino mantener next_payment_date actual
+                  next_payment_date: isCompletelySettled ? ((loan as any).end_date || loan.next_payment_date) : loan.next_payment_date,
                 };
 
                 // Si se pagó mora, actualizar total_late_fee_paid
@@ -868,20 +1015,23 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 }
               } else {
                 // Fallback si no se pueden obtener las cuotas
+                const isCompletelySettled = newBalance === 0;
+                const newLateFee = Math.max(0, settleBreakdown.lateFeePending - actualLateFeePayment);
+                
                 loanUpdates = {
-                  remaining_balance: 0,
-                  status: 'paid',
-                  current_late_fee: 0,
-                  next_payment_date: null, // No hay próximo pago si está saldado
+                  remaining_balance: newBalance,
+                  status: isCompletelySettled ? 'paid' : 'active',
+                  current_late_fee: newLateFee,
+                  next_payment_date: isCompletelySettled ? ((loan as any).end_date || loan.next_payment_date) : loan.next_payment_date,
                 };
               }
 
               console.log('✅ Préstamo saldado exitosamente:', {
-                paymentAmount,
-                principalPayment,
-                interestPayment,
+                capitalPayment: principalPayment,
+                interestPayment: actualInterestPayment,
                 lateFeePayment: actualLateFeePayment,
-                cuotasPagadas: unpaidInstallmentNumbers.length
+                newBalance,
+                isCompletelySettled: newBalance === 0
               });
             } catch (error) {
               console.error('Error saldando préstamo:', error);
@@ -1525,48 +1675,123 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             </div>
                           </div>
                         </div>
+                        
                         <FormField
                           control={form.control}
-                          name="settle_amount"
+                          name="settle_capital"
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Monto a Pagar</FormLabel>
+                              <FormLabel>Capital a Pagar</FormLabel>
                               <FormControl>
                                 <Input
                                   type="number"
-                                  placeholder={settleBreakdown.totalToSettle.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  placeholder={settleBreakdown.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   step="0.01"
-                                  min={settleBreakdown.capitalPending}
+                                  min="0"
+                                  max={settleBreakdown.capitalPending}
                                   {...field}
                                   value={field.value || ''}
                                   onChange={(e) => {
                                     const value = e.target.value;
-                                    // Permitir escribir libremente, incluyendo valores vacíos o parciales
                                     if (value === '') {
                                       field.onChange(undefined);
                                     } else {
                                       const numValue = parseFloat(value);
-                                      if (!isNaN(numValue)) {
-                                        field.onChange(numValue);
+                                      if (!isNaN(numValue) && numValue >= 0) {
+                                        field.onChange(Math.min(numValue, settleBreakdown.capitalPending));
                                       }
                                     }
                                   }}
                                 />
                               </FormControl>
                               <div className="text-xs text-gray-500">
-                                Mínimo: RD${settleBreakdown.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | 
-                                Ideal: RD${settleBreakdown.totalToSettle.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                Máximo: RD${settleBreakdown.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </div>
                               <FormMessage />
                             </FormItem>
                           )}
                         />
+
+                        <FormField
+                          control={form.control}
+                          name="settle_interest"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Interés a Pagar</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder={settleBreakdown.interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  step="0.01"
+                                  min="0"
+                                  max={settleBreakdown.interestPending}
+                                  {...field}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    if (value === '') {
+                                      field.onChange(undefined);
+                                    } else {
+                                      const numValue = parseFloat(value);
+                                      if (!isNaN(numValue) && numValue >= 0) {
+                                        field.onChange(Math.min(numValue, settleBreakdown.interestPending));
+                                      }
+                                    }
+                                  }}
+                                />
+                              </FormControl>
+                              <div className="text-xs text-gray-500">
+                                Máximo: RD${settleBreakdown.interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="settle_late_fee"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Mora a Pagar</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder={settleBreakdown.lateFeePending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  step="0.01"
+                                  min="0"
+                                  max={settleBreakdown.lateFeePending}
+                                  {...field}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    if (value === '') {
+                                      field.onChange(undefined);
+                                    } else {
+                                      const numValue = parseFloat(value);
+                                      if (!isNaN(numValue) && numValue >= 0) {
+                                        field.onChange(Math.min(numValue, settleBreakdown.lateFeePending));
+                                      }
+                                    }
+                                  }}
+                                />
+                              </FormControl>
+                              <div className="text-xs text-gray-500">
+                                Máximo: RD${settleBreakdown.lateFeePending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
                         <Button
                           type="button"
                           variant="outline"
                           className="w-full"
                           onClick={() => {
-                            form.setValue('settle_amount', settleBreakdown.totalToSettle);
+                            form.setValue('settle_capital', settleBreakdown.capitalPending);
+                            form.setValue('settle_interest', settleBreakdown.interestPending);
+                            form.setValue('settle_late_fee', settleBreakdown.lateFeePending);
                           }}
                         >
                           Usar Monto Total a Saldar
@@ -2071,21 +2296,46 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               <span className="text-gray-700 font-semibold">Total a Saldar:</span>
                               <span className="font-bold text-lg text-green-600">RD${settleBreakdown.totalToSettle.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
-                            {form.watch('settle_amount') && form.watch('settle_amount')! > 0 && (
+                            {(form.watch('settle_capital') || form.watch('settle_interest') || form.watch('settle_late_fee')) && (
                               <>
                                 <hr className="my-2" />
-                                <div className="flex justify-between">
-                                  <span className="text-gray-700 font-semibold">Monto a Pagar:</span>
-                                  <span className="font-bold text-lg text-blue-600">RD${form.watch('settle_amount')?.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                </div>
-                                {form.watch('settle_amount')! >= settleBreakdown.totalToSettle && (
-                                  <div className="bg-green-100 border border-green-300 rounded p-2 mt-2">
-                                    <div className="flex items-center gap-2 text-green-800 text-xs">
-                                      <CheckCircle className="h-4 w-4" />
-                                      <span>El préstamo será saldado completamente</span>
-                                    </div>
+                                <div className="space-y-1">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-700">Capital a Pagar:</span>
+                                    <span className="font-semibold text-blue-600">RD${(form.watch('settle_capital') || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                   </div>
-                                )}
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-700">Interés a Pagar:</span>
+                                    <span className="font-semibold text-blue-600">RD${(form.watch('settle_interest') || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-700">Mora a Pagar:</span>
+                                    <span className="font-semibold text-blue-600">RD${(form.watch('settle_late_fee') || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                  </div>
+                                  <hr className="my-2" />
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-700 font-semibold">Total a Pagar:</span>
+                                    <span className="font-bold text-lg text-blue-600">
+                                      RD${((form.watch('settle_capital') || 0) + (form.watch('settle_interest') || 0) + (form.watch('settle_late_fee') || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                  </div>
+                                  {(() => {
+                                    const capitalPaid = form.watch('settle_capital') || 0;
+                                    const interestPaid = form.watch('settle_interest') || 0;
+                                    const lateFeePaid = form.watch('settle_late_fee') || 0;
+                                    const isFullySettled = capitalPaid >= settleBreakdown.capitalPending && 
+                                                          interestPaid >= settleBreakdown.interestPending &&
+                                                          lateFeePaid >= settleBreakdown.lateFeePending;
+                                    return isFullySettled && (
+                                      <div className="bg-green-100 border border-green-300 rounded p-2 mt-2">
+                                        <div className="flex items-center gap-2 text-green-800 text-xs">
+                                          <CheckCircle className="h-4 w-4" />
+                                          <span>El préstamo será saldado completamente</span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
                               </>
                             )}
                           </div>
