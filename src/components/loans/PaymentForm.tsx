@@ -914,7 +914,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       if (isFullPayment) {
         // CORRECCIÓN: next_payment_date representa la PRÓXIMA cuota pendiente
         // Se actualiza sumando un período de pago según la frecuencia
-        const nextDate = new Date(selectedLoan.next_payment_date);
+        // Parsear la fecha como fecha local para evitar problemas de zona horaria
+        const [year, month, day] = selectedLoan.next_payment_date.split('-').map(Number);
+        const nextDate = new Date(year, month - 1, day); // month es 0-indexado
 
         // Ajustar según la frecuencia de pago
         // CORRECCIÓN: Usar setFullYear para frecuencia mensual para preservar el día exacto del mes
@@ -930,20 +932,29 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             break;
           case 'monthly':
             // Usar setFullYear para preservar el día exacto del mes (ej: 1 de noviembre -> 1 de diciembre)
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, nextDate.getDate());
+            // Extraer el día original antes de modificar
+            const originalDay = nextDate.getDate();
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDay);
             break;
           case 'quarterly':
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 3, nextDate.getDate());
+            const originalDayQuarterly = nextDate.getDate();
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 3, originalDayQuarterly);
             break;
           case 'yearly':
-            nextDate.setFullYear(nextDate.getFullYear() + 1, nextDate.getMonth(), nextDate.getDate());
+            const originalDayYearly = nextDate.getDate();
+            nextDate.setFullYear(nextDate.getFullYear() + 1, nextDate.getMonth(), originalDayYearly);
             break;
           default:
             // Usar setFullYear para preservar el día exacto del mes
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, nextDate.getDate());
+            const originalDayDefault = nextDate.getDate();
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDayDefault);
         }
 
-        nextPaymentDate = nextDate.toISOString().split('T')[0];
+        // Formatear como YYYY-MM-DD sin conversión de zona horaria
+        const finalYear = nextDate.getFullYear();
+        const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+        const finalDay = String(nextDate.getDate()).padStart(2, '0');
+        nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
 
         // CORRECCIÓN FUNDAMENTAL: Marcar la PRIMERA cuota NO pagada
         // NO calcular basándose en fechas, sino en el array paid_installments
