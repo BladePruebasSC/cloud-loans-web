@@ -152,11 +152,13 @@ export const LoansModule = () => {
       }
 
       // Calcular mora actual basándose en las cuotas reales
-      const currentDate = new Date();
+      const currentDate = getCurrentDateInSantoDomingo();
       let totalCurrentLateFee = 0;
 
       installments.forEach((installment: any) => {
-        const dueDate = new Date(installment.due_date);
+        // Parsear la fecha de vencimiento como fecha local para evitar problemas de zona horaria
+        const [year, month, day] = installment.due_date.split('-').map(Number);
+        const dueDate = new Date(year, month - 1, day);
         const daysOverdue = Math.max(0, Math.floor((currentDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
         
         // Solo calcular mora para cuotas vencidas y no pagadas

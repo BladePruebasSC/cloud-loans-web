@@ -917,6 +917,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         const nextDate = new Date(selectedLoan.next_payment_date);
 
         // Ajustar según la frecuencia de pago
+        // CORRECCIÓN: Usar setFullYear para frecuencia mensual para preservar el día exacto del mes
         switch (selectedLoan.payment_frequency) {
           case 'daily':
             nextDate.setDate(nextDate.getDate() + 1);
@@ -928,16 +929,18 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             nextDate.setDate(nextDate.getDate() + 14);
             break;
           case 'monthly':
-            nextDate.setMonth(nextDate.getMonth() + 1);
+            // Usar setFullYear para preservar el día exacto del mes (ej: 1 de noviembre -> 1 de diciembre)
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, nextDate.getDate());
             break;
           case 'quarterly':
-            nextDate.setMonth(nextDate.getMonth() + 3);
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 3, nextDate.getDate());
             break;
           case 'yearly':
-            nextDate.setFullYear(nextDate.getFullYear() + 1);
+            nextDate.setFullYear(nextDate.getFullYear() + 1, nextDate.getMonth(), nextDate.getDate());
             break;
           default:
-            nextDate.setMonth(nextDate.getMonth() + 1);
+            // Usar setFullYear para preservar el día exacto del mes
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, nextDate.getDate());
         }
 
         nextPaymentDate = nextDate.toISOString().split('T')[0];

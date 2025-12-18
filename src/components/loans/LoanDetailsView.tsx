@@ -28,7 +28,7 @@ import { InstallmentsTable } from './InstallmentsTable';
 import { PaymentForm } from './PaymentForm';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 
 interface LoanDetailsViewProps {
   loanId: string;
@@ -430,13 +430,15 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   
   // Si la mora está habilitada pero el valor es 0, intentar calcularla desde las cuotas
   if (!isLoanSettled && loan.late_fee_enabled && effectiveLateFee === 0 && installments.length > 0) {
-    const today = new Date();
+    const today = getCurrentDateInSantoDomingo();
     let calculatedLateFee = 0;
     
     installments.forEach((installment: any) => {
       if (installment.is_paid) return;
       
-      const dueDate = new Date(installment.due_date);
+      // Parsear la fecha de vencimiento como fecha local para evitar problemas de zona horaria
+      const [year, month, day] = installment.due_date.split('-').map(Number);
+      const dueDate = new Date(year, month - 1, day);
       const daysOverdue = Math.max(0, Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
       const gracePeriod = loan.grace_period_days || 0;
       const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
@@ -572,7 +574,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       </div>
                       <div>
                         <span className="text-gray-600">Fecha inicio:</span>
-                        <div className="font-semibold">{new Date(loan.start_date).toLocaleDateString('es-DO')}</div>
+                        <div className="font-semibold">{formatDateStringForSantoDomingo(loan.start_date)}</div>
                       </div>
                       <div>
                         <span className="text-gray-600">Tipo de préstamo:</span>
