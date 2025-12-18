@@ -15,6 +15,7 @@ export interface Loan {
   start_date: string;
   loan_type: string;
   payment_frequency?: string; // Frecuencia de pago
+  amortization_type?: string; // Tipo de amortización (simple, french, german, american, indefinite)
   
   // Campos de mora
   late_fee_enabled?: boolean;

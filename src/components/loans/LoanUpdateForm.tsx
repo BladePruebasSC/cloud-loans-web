@@ -363,7 +363,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               payment_frequency: loan.payment_frequency || 'monthly',
               interest_rate: loan.interest_rate,
               monthly_payment: loan.monthly_payment,
-              start_date: loan.start_date
+              start_date: loan.start_date,
+              amortization_type: loan.amortization_type
             };
             
             console.log('🔍 LoanUpdateForm: Calculando mora con datos:', loanData);
@@ -409,7 +410,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   payment_frequency: fullLoan.payment_frequency || 'monthly',
                   interest_rate: fullLoan.interest_rate,
                   monthly_payment: fullLoan.monthly_payment,
-                  start_date: fullLoan.start_date
+                  start_date: fullLoan.start_date,
+                  amortization_type: fullLoan.amortization_type
                 };
                 
                 const breakdown = await getLateFeeBreakdownFromInstallments(fullLoan.id, loanDataForCalc);
@@ -494,7 +496,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               payment_frequency: loan.payment_frequency || 'monthly',
               interest_rate: loan.interest_rate,
               monthly_payment: loan.monthly_payment,
-              start_date: loan.start_date
+              start_date: loan.start_date,
+              amortization_type: loan.amortization_type
             };
             
             const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanData);

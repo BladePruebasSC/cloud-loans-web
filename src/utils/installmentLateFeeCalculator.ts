@@ -17,6 +17,7 @@ export interface LoanData {
   interest_rate?: number;
   monthly_payment?: number;
   start_date?: string;
+  amortization_type?: string; // Tipo de amortización (indefinite, simple, etc.)
 }
 
 /**
@@ -155,19 +156,26 @@ export const getLateFeeBreakdownFromInstallments = async (
         
         // Calcular mora si hay días de atraso
         if (daysOverdue > 0) {
+          // CORRECCIÓN: Para préstamos indefinidos, usar interest_amount o total_amount
+          // ya que principal_amount es 0
+          const isIndefinite = loan.amortization_type === 'indefinite';
+          const baseAmount = isIndefinite && installment.principal_amount === 0
+            ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
+            : (installment.principal_amount || installment.total_amount || installment.amount || 0);
+          
           switch (loan.late_fee_calculation_type) {
             case 'daily':
-              lateFee = (installment.principal_amount * loan.late_fee_rate / 100) * daysOverdue;
+              lateFee = (baseAmount * loan.late_fee_rate / 100) * daysOverdue;
               break;
             case 'monthly':
               const monthsOverdue = Math.ceil(daysOverdue / 30);
-              lateFee = (installment.principal_amount * loan.late_fee_rate / 100) * monthsOverdue;
+              lateFee = (baseAmount * loan.late_fee_rate / 100) * monthsOverdue;
               break;
             case 'compound':
-              lateFee = installment.principal_amount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdue) - 1);
+              lateFee = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdue) - 1);
               break;
             default:
-              lateFee = (installment.principal_amount * loan.late_fee_rate / 100) * daysOverdue;
+              lateFee = (baseAmount * loan.late_fee_rate / 100) * daysOverdue;
           }
           
           if (loan.max_late_fee && loan.max_late_fee > 0) {

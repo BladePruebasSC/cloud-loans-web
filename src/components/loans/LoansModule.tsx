@@ -165,23 +165,28 @@ export const LoansModule = () => {
           const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
           
           if (effectiveDaysOverdue > 0) {
-            const principalPerPayment = installment.principal_amount;
+            // CORRECCIÓN: Para préstamos indefinidos, usar interest_amount o total_amount
+            // ya que principal_amount es 0
+            const isIndefinite = loan.amortization_type === 'indefinite';
+            const baseAmount = isIndefinite && installment.principal_amount === 0
+              ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
+              : (installment.principal_amount || installment.total_amount || installment.amount || 0);
             const lateFeeRate = loan.late_fee_rate || 2;
             
             let lateFee = 0;
             switch (loan.late_fee_calculation_type) {
               case 'daily':
-                lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
+                lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
                 break;
               case 'monthly':
                 const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
-                lateFee = (principalPerPayment * lateFeeRate / 100) * monthsOverdue;
+                lateFee = (baseAmount * lateFeeRate / 100) * monthsOverdue;
                 break;
               case 'compound':
-                lateFee = principalPerPayment * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
+                lateFee = baseAmount * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
                 break;
               default:
-                lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
+                lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
             }
             
             // Aplicar límite máximo de mora si está configurado
@@ -1129,9 +1134,11 @@ export const LoansModule = () => {
                           
                           <div className="text-center p-3 bg-gray-50 rounded-lg">
                             <div className="text-lg font-bold text-gray-800 mb-1">
-                              {loan.term_months}
+                              {(loan as any).amortization_type === 'indefinite' ? 'Indefinido' : loan.term_months}
                             </div>
-                            <div className="text-xs text-gray-600">Meses</div>
+                            <div className="text-xs text-gray-600">
+                              {(loan as any).amortization_type === 'indefinite' ? '' : 'Meses'}
+                            </div>
                           </div>
                           
                           <div className="text-center p-3 bg-gray-50 rounded-lg">
@@ -1169,6 +1176,7 @@ export const LoansModule = () => {
                             monthly_payment={loan.monthly_payment}
                             paid_installments={loan.paid_installments || []} // Usar cuotas pagadas de la base de datos
                             start_date={loan.start_date} // CRÍTICO: Fecha de inicio del préstamo
+                            amortization_type={(loan as any).amortization_type}
                           />
                         )}
 
@@ -1534,7 +1542,9 @@ export const LoansModule = () => {
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Plazo:</span> 
-                               <span className="text-xs sm:text-sm">{loan.term_months} meses</span>
+                               <span className="text-xs sm:text-sm">
+                                 {(loan as any).amortization_type === 'indefinite' ? 'Indefinido' : `${loan.term_months} meses`}
+                               </span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Tasa:</span> 

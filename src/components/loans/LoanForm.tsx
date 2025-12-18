@@ -9,11 +9,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer, Plus } from 'lucide-react';
-import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 
@@ -22,7 +25,10 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
   try {
     const installments = [];
     // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
-    const startDate = new Date(loan.start_date);
+    // Parsear la fecha como fecha local (no UTC) para evitar problemas de zona horaria
+    const startDateStr = loan.start_date.split('T')[0]; // Obtener solo la parte de fecha
+    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+    const startDate = createDateInSantoDomingo(startYear, startMonth, startDay);
     const firstPaymentDate = new Date(startDate);
     
     // Ajustar la primera fecha de cobro según la frecuencia
@@ -42,7 +48,10 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
         break;
     }
     
-    const baseDate = firstPaymentDate;
+    // Extraer año, mes y día de firstPaymentDate para formatear correctamente
+    const baseYear = firstPaymentDate.getFullYear();
+    const baseMonth = firstPaymentDate.getMonth() + 1;
+    const baseDay = firstPaymentDate.getDate();
     
     // Calcular cuotas según el tipo de amortización
     let principalPerPayment, interestPerPayment;
@@ -70,71 +79,99 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
     // Generar cada cuota
     let remainingBalance = loan.amount;
     
-    for (let i = 1; i <= loan.term_months; i++) {
-      const installmentDate = new Date(baseDate);
-      const periodsToAdd = i - 1; // Volver a i-1 porque baseDate ya es la fecha de primera cuota
+    // Para préstamos con plazo indefinido, generar solo una cuota inicial
+    if (loan.amortization_type === 'indefinite') {
+      // Solo intereses, sin capital
+      const periodRate = loan.interest_rate / 100;
+      const interestPerPayment = loan.amount * periodRate;
       
-      // Ajustar fecha según la frecuencia de pago
-      switch (loan.payment_frequency) {
-        case 'daily':
-          installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 1));
-          break;
-        case 'weekly':
-          installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 7));
-          break;
-        case 'biweekly':
-          installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 14));
-          break;
-        case 'monthly':
-          installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
-          break;
-        case 'quarterly':
-          installmentDate.setMonth(installmentDate.getMonth() + (periodsToAdd * 3));
-          break;
-        case 'yearly':
-          installmentDate.setFullYear(installmentDate.getFullYear() + periodsToAdd);
-          break;
-        default:
-          installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
-      }
-      
-      // Calcular cuota específica según el tipo de amortización
-      let currentPrincipalAmount, currentInterestAmount, currentTotalAmount;
-      
-      if (loan.amortization_type === 'french') {
-        // Amortización francesa - cuota fija, capital creciente, interés decreciente
-        const periodRate = loan.interest_rate / 100;
-        const totalPeriods = loan.term_months;
-        
-        if (periodRate > 0) {
-          const fixedPayment = loan.amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
-          currentInterestAmount = remainingBalance * periodRate;
-          currentPrincipalAmount = fixedPayment - currentInterestAmount;
-          currentTotalAmount = fixedPayment;
-        } else {
-          currentPrincipalAmount = loan.amount / totalPeriods;
-          currentInterestAmount = 0;
-          currentTotalAmount = currentPrincipalAmount;
-        }
-      } else {
-        // Amortización simple (por defecto)
-        currentPrincipalAmount = principalPerPayment;
-        currentInterestAmount = interestPerPayment;
-        currentTotalAmount = loan.monthly_payment;
-      }
+      // Formatear fecha correctamente usando la fecha local (no UTC) para evitar problemas de zona horaria
+      const formattedDate = `${baseYear}-${String(baseMonth).padStart(2, '0')}-${String(baseDay).padStart(2, '0')}`;
       
       installments.push({
         loan_id: loan.id,
-        installment_number: i,
-        due_date: installmentDate.toISOString().split('T')[0],
-        principal_amount: currentPrincipalAmount,
-        interest_amount: currentInterestAmount,
-        total_amount: currentTotalAmount,
+        installment_number: 1, // Siempre 1 para indefinidos
+        due_date: formattedDate,
+        principal_amount: 0,
+        interest_amount: interestPerPayment,
+        total_amount: interestPerPayment,
         is_paid: false
       });
-      
-      // Actualizar el balance restante para la siguiente cuota
-      remainingBalance -= currentPrincipalAmount;
+    } else {
+      // Para préstamos con plazo definido, generar todas las cuotas
+      for (let i = 1; i <= loan.term_months; i++) {
+        // Calcular la fecha de esta cuota basándose en firstPaymentDate
+        const installmentDate = new Date(firstPaymentDate);
+        const periodsToAdd = i - 1; // i-1 porque firstPaymentDate ya es la fecha de primera cuota
+        
+        // Ajustar fecha según la frecuencia de pago
+        switch (loan.payment_frequency) {
+          case 'daily':
+            installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 1));
+            break;
+          case 'weekly':
+            installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 7));
+            break;
+          case 'biweekly':
+            installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 14));
+            break;
+          case 'monthly':
+            installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
+            break;
+          case 'quarterly':
+            installmentDate.setMonth(installmentDate.getMonth() + (periodsToAdd * 3));
+            break;
+          case 'yearly':
+            installmentDate.setFullYear(installmentDate.getFullYear() + periodsToAdd);
+            break;
+          default:
+            installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
+        }
+        
+        // Formatear fecha correctamente usando la fecha local (no UTC) para evitar problemas de zona horaria
+        const year = installmentDate.getFullYear();
+        const month = installmentDate.getMonth() + 1;
+        const day = installmentDate.getDate();
+        const formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        
+        // Calcular cuota específica según el tipo de amortización
+        let currentPrincipalAmount, currentInterestAmount, currentTotalAmount;
+        
+        if (loan.amortization_type === 'french') {
+          // Amortización francesa - cuota fija, capital creciente, interés decreciente
+          const periodRate = loan.interest_rate / 100;
+          const totalPeriods = loan.term_months;
+          
+          if (periodRate > 0) {
+            const fixedPayment = loan.amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
+            currentInterestAmount = remainingBalance * periodRate;
+            currentPrincipalAmount = fixedPayment - currentInterestAmount;
+            currentTotalAmount = fixedPayment;
+          } else {
+            currentPrincipalAmount = loan.amount / totalPeriods;
+            currentInterestAmount = 0;
+            currentTotalAmount = currentPrincipalAmount;
+          }
+        } else {
+          // Amortización simple (por defecto)
+          currentPrincipalAmount = principalPerPayment;
+          currentInterestAmount = interestPerPayment;
+          currentTotalAmount = loan.monthly_payment;
+        }
+        
+        installments.push({
+          loan_id: loan.id,
+          installment_number: i,
+          due_date: formattedDate,
+          principal_amount: currentPrincipalAmount,
+          interest_amount: currentInterestAmount,
+          total_amount: currentTotalAmount,
+          is_paid: false
+        });
+        
+        // Actualizar el balance restante para la siguiente cuota
+        remainingBalance -= currentPrincipalAmount;
+      }
     }
     
     // Insertar las cuotas en la base de datos
@@ -265,6 +302,10 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   const [excludedDays, setExcludedDays] = useState<string[]>([]);
   const [isFixingQuota, setIsFixingQuota] = useState(false);
   const [guaranteeData, setGuaranteeData] = useState<Partial<GuaranteeFormData>>({});
+  const [showGenerateDocumentsDialog, setShowGenerateDocumentsDialog] = useState(false);
+  const [showDocumentSelectionDialog, setShowDocumentSelectionDialog] = useState(false);
+  const [createdLoanId, setCreatedLoanId] = useState<string | null>(null);
+  const [selectedDocuments, setSelectedDocuments] = useState<string[]>([]);
   const { user, companyId, companySettings } = useAuth();
 
   // Cargar configuración global de mora
@@ -1348,16 +1389,20 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
           firstPaymentDate.setMonth(startDateForCalculation.getMonth() + 1);
       }
       
+      // Formatear fechas correctamente para evitar problemas de zona horaria
+      const startDateFormatted = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+      const firstPaymentDateFormatted = `${firstPaymentDate.getFullYear()}-${String(firstPaymentDate.getMonth() + 1).padStart(2, '0')}-${String(firstPaymentDate.getDate()).padStart(2, '0')}`;
+      
       console.log('🔍 LoanForm: Fecha de inicio seleccionada:', data.first_payment_date);
-      console.log('🔍 LoanForm: Fecha de inicio que se enviará:', startDate.toISOString().split('T')[0]);
-      console.log('🔍 LoanForm: Fecha de primera cuota calculada:', firstPaymentDate.toISOString().split('T')[0]);
+      console.log('🔍 LoanForm: Fecha de inicio que se enviará:', startDateFormatted);
+      console.log('🔍 LoanForm: Fecha de primera cuota calculada:', firstPaymentDateFormatted);
       console.log('🔍 LoanForm: Frecuencia de pago:', data.payment_frequency);
 
       const loanData = {
         client_id: data.client_id,
         amount: data.amount,
         interest_rate: data.interest_rate,
-        term_months: data.term_months,
+        term_months: data.amortization_type === 'indefinite' ? 1 : data.term_months, // Para indefinidos usar 1
         loan_type: data.loan_type,
         purpose: data.comments || null,
         collateral: data.guarantor_required ? 'Garantía requerida' : null,
@@ -1365,9 +1410,9 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         monthly_payment: Math.round(calculatedValues.monthlyPayment),
         total_amount: Math.round(calculatedValues.totalAmount),
         remaining_balance: Math.round(calculatedValues.totalAmount),
-        start_date: startDate.toISOString().split('T')[0], // Fecha de creación del préstamo
-        end_date: endDate.toISOString().split('T')[0],
-        next_payment_date: firstPaymentDate.toISOString().split('T')[0], // Fecha de la primera cuota (calculada según frecuencia)
+        start_date: startDateFormatted, // Fecha de creación del préstamo (formateada como local)
+        end_date: `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`,
+        next_payment_date: firstPaymentDateFormatted, // Fecha de la primera cuota (calculada según frecuencia, formateada como local)
         first_payment_date: data.first_payment_date, // Fecha de inicio del préstamo (lo que seleccionó el usuario)
         status: data.loan_started ? 'active' : 'pending',
         guarantor_name: data.guarantor_name || null,
@@ -1478,7 +1523,10 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       }
 
       toast.success('Préstamo creado exitosamente');
-      onLoanCreated?.();
+      
+      // Preguntar si quiere generar documentos
+      setCreatedLoanId(insertedLoan.id);
+      setShowGenerateDocumentsDialog(true);
     } catch (error) {
       console.error('Error creating loan:', error);
       toast.error('Error al crear el préstamo');
@@ -2654,6 +2702,138 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
           )}
         </div>
       </div>
+
+      {/* Diálogo: ¿Quiere generar documentos? */}
+      <Dialog 
+        open={showGenerateDocumentsDialog} 
+        onOpenChange={(open) => {
+          setShowGenerateDocumentsDialog(open);
+          if (!open) {
+            // Si se cierra el diálogo sin seleccionar, continuar con el flujo normal
+            onLoanCreated?.();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Generar Documentos</DialogTitle>
+            <DialogDescription>
+              ¿Desea generar documentos para este préstamo?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowGenerateDocumentsDialog(false);
+                onLoanCreated?.();
+              }}
+            >
+              No, gracias
+            </Button>
+            <Button
+              onClick={() => {
+                setShowGenerateDocumentsDialog(false);
+                setShowDocumentSelectionDialog(true);
+              }}
+            >
+              Sí, generar documentos
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo: Seleccionar documentos a generar */}
+      <Dialog 
+        open={showDocumentSelectionDialog} 
+        onOpenChange={(open) => {
+          setShowDocumentSelectionDialog(open);
+          if (!open) {
+            // Si se cierra el diálogo sin generar, continuar con el flujo normal
+            setSelectedDocuments([]);
+            onLoanCreated?.();
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Seleccionar Documentos</DialogTitle>
+            <DialogDescription>
+              Seleccione los documentos que desea generar y luego haga clic en el botón "Generar".
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[
+                { id: 'pagare_notarial', label: 'PAGARÉ NOTARIAL' },
+                { id: 'tabla_amortizacion', label: 'TABLA AMORTIZACIÓN' },
+                { id: 'contrato_bluetooth', label: 'CONTRATO IMPRESORA BLUETOOTH' },
+                { id: 'pagare_codeudor', label: 'PAGARÉ NOTARIAL CON CODEUDOR' },
+                { id: 'contrato_salarial', label: 'CONTRATO SALARIAL' },
+                { id: 'carta_intimacion', label: 'CARTA DE INTIMACIÓN' },
+                { id: 'carta_saldo', label: 'CARTA DE SALDO' },
+                { id: 'prueba_documento', label: 'PRUEBA DE DOCUMENTO' },
+              ].map((doc) => (
+                <div key={doc.id} className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-gray-50">
+                  <Checkbox
+                    id={doc.id}
+                    checked={selectedDocuments.includes(doc.id)}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setSelectedDocuments([...selectedDocuments, doc.id]);
+                      } else {
+                        setSelectedDocuments(selectedDocuments.filter(id => id !== doc.id));
+                      }
+                    }}
+                  />
+                  <Label
+                    htmlFor={doc.id}
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1"
+                  >
+                    {doc.label}
+                  </Label>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-6">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowDocumentSelectionDialog(false);
+                setSelectedDocuments([]);
+                onLoanCreated?.();
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedDocuments.length === 0) {
+                  toast.error('Debe seleccionar al menos un documento');
+                  return;
+                }
+                
+                // Aquí se generarían los documentos
+                // Por ahora solo mostramos un mensaje
+                toast.success(`${selectedDocuments.length} documento(s) seleccionado(s) para generar`);
+                console.log('Documentos a generar:', selectedDocuments);
+                console.log('ID del préstamo:', createdLoanId);
+                
+                // TODO: Implementar la generación real de documentos
+                // Por ejemplo, redirigir a la página de documentos o llamar a una función de generación
+                
+                setShowDocumentSelectionDialog(false);
+                setSelectedDocuments([]);
+                onLoanCreated?.();
+              }}
+              disabled={selectedDocuments.length === 0}
+            >
+              Generar Documentos
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

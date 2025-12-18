@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrencyNumber } from '@/lib/utils';
+import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 
 interface Installment {
   id: string;
@@ -63,40 +64,220 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Hacer ambas consultas en paralelo para mayor velocidad
-      const [loanInfoResult, installmentsResult] = await Promise.all([
-        supabase
+      // Primero obtener la información del préstamo para saber si es indefinido
+      const loanInfoResult = await supabase
         .from('loans')
-          .select(`
-            id,
-            amount,
-            remaining_balance,
-            monthly_payment,
-            interest_rate,
-            term_months,
-            status,
-            start_date,
-            first_payment_date,
-            payment_frequency,
-            clients:client_id (
-              full_name,
-              dni
-            )
-          `)
+        .select(`
+          id,
+          amount,
+          remaining_balance,
+          monthly_payment,
+          interest_rate,
+          term_months,
+          status,
+          start_date,
+          first_payment_date,
+          payment_frequency,
+          amortization_type,
+          clients:client_id (
+            full_name,
+            dni
+          )
+        `)
         .eq('id', loanId)
-          .single(),
-        supabase
+        .single();
+
+      if (loanInfoResult.error) throw loanInfoResult.error;
+
+      const loanInfo = loanInfoResult.data;
+      
+      // Luego obtener las cuotas, limitando a 1 si es indefinido
+      const isIndefinite = loanInfo?.amortization_type === 'indefinite';
+      let installmentsQuery = supabase
         .from('installments')
         .select('*, is_settled, total_amount')
         .eq('loan_id', loanId)
-          .order('installment_number', { ascending: true })
-      ]);
-
-      if (loanInfoResult.error) throw loanInfoResult.error;
+        .order('installment_number', { ascending: true });
+      
+      if (isIndefinite) {
+        installmentsQuery = installmentsQuery.limit(1);
+      }
+      
+      const installmentsResult = await installmentsQuery;
+      
       if (installmentsResult.error) throw installmentsResult.error;
 
-      const loanInfo = loanInfoResult.data;
-      const data = installmentsResult.data;
+      let data = installmentsResult.data || [];
+
+      // Para préstamos indefinidos, generar cuotas dinámicamente basándose en el tiempo transcurrido
+      if (isIndefinite && loanInfo) {
+        // CORRECCIÓN: Usar next_payment_date o first_payment_date directamente si está disponible
+        // Solo calcular desde start_date si no están disponibles
+        const firstPaymentDateStr = loanInfo.first_payment_date?.split('T')[0] || loanInfo.next_payment_date?.split('T')[0];
+        let firstPaymentDateBase: Date;
+        const today = getCurrentDateInSantoDomingo();
+        const frequency = loanInfo.payment_frequency || 'monthly';
+        
+        if (firstPaymentDateStr) {
+          // CORRECCIÓN UTC-4: Parsear como fecha local para evitar problemas de zona horaria
+          const [firstYear, firstMonth, firstDay] = firstPaymentDateStr.split('-').map(Number);
+          // Usar new Date(year, month - 1, day) para crear fecha local (no UTC)
+          firstPaymentDateBase = new Date(firstYear, firstMonth - 1, firstDay);
+          
+          // CORRECCIÓN: Si first_payment_date o next_payment_date es igual a start_date,
+          // entonces calcular un mes después (la primera cuota debe ser un mes después de start_date)
+          const startDateStr = loanInfo.start_date?.split('T')[0];
+          if (startDateStr && firstPaymentDateStr === startDateStr) {
+            // Si la fecha es igual a start_date, calcular un mes después
+            const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+            const startDate = new Date(startYear, startMonth - 1, startDay);
+            firstPaymentDateBase = new Date(startDate);
+            
+            switch (frequency) {
+              case 'daily':
+                firstPaymentDateBase.setDate(startDate.getDate() + 1);
+                break;
+              case 'weekly':
+                firstPaymentDateBase.setDate(startDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                firstPaymentDateBase.setDate(startDate.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
+                break;
+            }
+          }
+        } else {
+          // Si no hay first_payment_date ni next_payment_date, calcular desde start_date
+          const startDateStr = loanInfo.start_date?.split('T')[0];
+          if (!startDateStr) return;
+          
+          const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+          const startDate = new Date(startYear, startMonth - 1, startDay);
+          firstPaymentDateBase = new Date(startDate);
+          
+          // Calcular la primera fecha de pago (un mes después de start_date)
+          switch (frequency) {
+            case 'daily':
+              firstPaymentDateBase.setDate(startDate.getDate() + 1);
+              break;
+            case 'weekly':
+              firstPaymentDateBase.setDate(startDate.getDate() + 7);
+              break;
+            case 'biweekly':
+              firstPaymentDateBase.setDate(startDate.getDate() + 14);
+              break;
+            case 'monthly':
+            default:
+              // Usar setFullYear para preservar el día exacto
+              firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
+              break;
+          }
+        }
+        
+        if (firstPaymentDateBase) {
+          // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
+          let monthsElapsed = 0;
+          
+          switch (frequency) {
+            case 'daily':
+              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 30));
+              break;
+            case 'weekly':
+              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 7 * 4));
+              break;
+            case 'biweekly':
+              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 14 * 2));
+              break;
+            case 'monthly':
+            default:
+              // Calcular meses transcurridos correctamente
+              const yearsDiff = today.getFullYear() - firstPaymentDateBase.getFullYear();
+              const monthsDiff = today.getMonth() - firstPaymentDateBase.getMonth();
+              monthsElapsed = yearsDiff * 12 + monthsDiff;
+              // Si el día del mes ya pasó o es el mismo día, contar ese mes también
+              if (today.getDate() >= firstPaymentDateBase.getDate()) {
+                monthsElapsed += 1;
+              }
+              // CORRECCIÓN: Para préstamos indefinidos, siempre incluir el mes siguiente
+              // para asegurar que se muestren todas las cuotas hasta el próximo mes
+              // Si hoy es diciembre y la primera cuota es noviembre, debería haber 3 cuotas (nov, dic, ene)
+              monthsElapsed += 1; // Agregar 1 mes más para incluir el mes siguiente
+              // Asegurar que siempre haya al menos 1 cuota
+              monthsElapsed = Math.max(1, monthsElapsed);
+              break;
+          }
+          
+          // Generar cuotas dinámicamente
+          const dynamicInstallments = [];
+          const periodRate = (loanInfo.interest_rate || 0) / 100;
+          const interestPerPayment = (loanInfo.amount || 0) * periodRate;
+          
+          // CORRECCIÓN: Usar la fecha calculada correctamente
+          const firstPaymentDate = new Date(firstPaymentDateBase);
+          
+          // Generar cuotas hasta el mes actual
+          for (let i = 1; i <= Math.max(1, monthsElapsed); i++) {
+            const installmentDate = new Date(firstPaymentDate);
+            
+            // Calcular fecha según frecuencia
+            // CORRECCIÓN: La cuota 1 debe usar la fecha base sin ajustar (i - 1 = 0)
+            switch (frequency) {
+              case 'daily':
+                installmentDate.setDate(firstPaymentDate.getDate() + (i - 1));
+                break;
+              case 'weekly':
+                installmentDate.setDate(firstPaymentDate.getDate() + ((i - 1) * 7));
+                break;
+              case 'biweekly':
+                installmentDate.setDate(firstPaymentDate.getDate() + ((i - 1) * 14));
+                break;
+              case 'monthly':
+              default:
+                // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
+                // La cuota 1 usa la fecha base (i - 1 = 0), la cuota 2 suma 1 mes, etc.
+                installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), firstPaymentDate.getDate());
+                break;
+            }
+            
+            // CORRECCIÓN UTC-4: Formatear fecha directamente sin usar toISOString()
+            // para evitar problemas de zona horaria que cambian el día
+            const year = installmentDate.getFullYear();
+            const month = installmentDate.getMonth() + 1;
+            const day = installmentDate.getDate();
+            // Formatear directamente como YYYY-MM-DD sin conversión de zona horaria
+            const formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            
+            // Buscar si existe una cuota real en la BD para este número
+            const existingInstallment = data.find(inst => inst.installment_number === i);
+            
+            // CORRECCIÓN: Para préstamos indefinidos, siempre usar la fecha calculada
+            // para evitar usar fechas incorrectas guardadas en la BD
+            const finalDueDate = formattedDate; // Siempre usar la fecha calculada correctamente
+            
+            dynamicInstallments.push({
+              id: existingInstallment?.id || `dynamic-${i}`,
+              loan_id: loanId,
+              installment_number: i,
+              due_date: finalDueDate,
+              amount: existingInstallment?.amount || interestPerPayment,
+              principal_amount: existingInstallment?.principal_amount || 0,
+              interest_amount: existingInstallment?.interest_amount || interestPerPayment,
+              late_fee_paid: existingInstallment?.late_fee_paid || 0,
+              is_paid: existingInstallment?.is_paid || false,
+              is_settled: existingInstallment?.is_settled || false,
+              paid_date: existingInstallment?.paid_date || null,
+              created_at: existingInstallment?.created_at || new Date().toISOString(),
+              updated_at: existingInstallment?.updated_at || new Date().toISOString(),
+              total_amount: existingInstallment?.total_amount || interestPerPayment
+            });
+          }
+          
+          data = dynamicInstallments;
+        }
+      }
 
       // Establecer loanInfo inmediatamente para mostrar datos básicos
       setLoanInfo(loanInfo);
@@ -241,9 +422,16 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     }
 
     try {
-      const dueDate = new Date(installment.due_date);
-      const today = new Date();
-      const isOverdue = dueDate < today;
+      // Parsear la fecha de vencimiento como fecha local (no UTC) para evitar problemas de zona horaria
+      // Usar la fecha directamente sin conversión a Date para evitar problemas de zona horaria
+      const [year, month, day] = installment.due_date.split('-').map(Number);
+      const dueDate = new Date(year, month - 1, day); // month es 0-indexado, crear como fecha local
+      const today = getCurrentDateInSantoDomingo();
+      
+      // Comparar solo las fechas (sin hora) para evitar problemas de zona horaria
+      const dueDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+      const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const isOverdue = dueDateOnly < todayOnly;
 
       if (isOverdue) {
         return (
@@ -272,10 +460,18 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     }
     if (!dueDate) return 0;
     try {
-      const due = new Date(dueDate);
-      const today = new Date();
-      const diffTime = today.getTime() - due.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      // Parsear la fecha de vencimiento como fecha local (no UTC) para evitar problemas de zona horaria
+      const [year, month, day] = dueDate.split('-').map(Number);
+      const due = new Date(year, month - 1, day); // month es 0-indexado, crear como fecha local
+      const today = getCurrentDateInSantoDomingo();
+      
+      // Comparar solo las fechas (sin hora) para evitar problemas de zona horaria
+      const dueDateOnly = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+      const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      
+      // Calcular diferencia en días
+      const diffTime = todayOnly.getTime() - dueDateOnly.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
       return Math.max(0, diffDays);
     } catch (error) {
       return 0;
@@ -285,11 +481,8 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   const formatDate = (dateString: string) => {
     if (!dateString) return '-';
     try {
-      return new Date(dateString).toLocaleDateString('es-DO', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-      });
+      // Usar formatDateStringForSantoDomingo para evitar problemas de zona horaria
+      return formatDateStringForSantoDomingo(dateString);
     } catch (error) {
       return '-';
     }
@@ -406,7 +599,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="text-center p-3 bg-blue-50 rounded-lg">
-                    <div className="text-2xl font-bold text-blue-600">{installments.length}</div>
+                    <div className="text-2xl font-bold text-blue-600">
+                      {loanInfo?.amortization_type === 'indefinite' ? '1/X' : installments.length}
+                    </div>
                     <div className="text-sm text-gray-600">Total Cuotas</div>
                   </div>
                   <div className="text-center p-3 bg-green-50 rounded-lg">
@@ -440,7 +635,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                       <div key={installment.id} className="border rounded-lg p-4 bg-white">
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-lg">#{installment.installment_number}</span>
+                            <span className="font-semibold text-lg">
+                              {loanInfo?.amortization_type === 'indefinite' 
+                                ? `#${installment.installment_number}/X` 
+                                : `#${installment.installment_number}`}
+                            </span>
                             {getStatusBadge(installment)}
                           </div>
                           <div className="text-right">
@@ -503,7 +702,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                       <tbody>
                         {installments.map((installment) => (
                           <tr key={installment.id} className="border-b hover:bg-gray-50">
-                            <td className="p-3 font-semibold">#{installment.installment_number}</td>
+                            <td className="p-3 font-semibold">
+                              {loanInfo?.amortization_type === 'indefinite' 
+                                ? `#${installment.installment_number}/X` 
+                                : `#${installment.installment_number}`}
+                            </td>
                             <td className="p-3">{formatDate(installment.due_date)}</td>
                             <td className="p-3 font-semibold text-green-600">
                               RD${formatCurrencyNumber(installment.amount || 0)}

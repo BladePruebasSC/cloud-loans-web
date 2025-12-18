@@ -229,8 +229,27 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
       // Plazo indefinido - Solo intereses, sin vencimiento
       const interestPerPayment = amount * periodRate;
       
-      // Solo mostrar 1 período para plazo indefinido
+      // CORRECCIÓN: Calcular la primera fecha de pago correctamente
+      // Para préstamos indefinidos, la primera cuota debe ser un mes después de la fecha de inicio
       const paymentDate = new Date(startDateObj);
+      
+      // Ajustar según la frecuencia de pago
+      switch (frequency) {
+        case 'daily':
+          paymentDate.setDate(startDateObj.getDate() + 1);
+          break;
+        case 'weekly':
+          paymentDate.setDate(startDateObj.getDate() + 7);
+          break;
+        case 'biweekly':
+          paymentDate.setDate(startDateObj.getDate() + 14);
+          break;
+        case 'monthly':
+        default:
+          // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
+          paymentDate.setFullYear(startDateObj.getFullYear(), startDateObj.getMonth() + 1, startDateObj.getDate());
+          break;
+      }
 
       rows.push({
         installment: '1/X', // Mostrar 1/X para indicar que es indefinido

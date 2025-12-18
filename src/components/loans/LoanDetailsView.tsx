@@ -28,6 +28,7 @@ import { InstallmentsTable } from './InstallmentsTable';
 import { PaymentForm } from './PaymentForm';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 
 interface LoanDetailsViewProps {
   loanId: string;
@@ -424,7 +425,57 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   
   // Si el préstamo está saldado, la mora debe ser 0
   const isLoanSettled = loan.status === 'paid';
-  const effectiveLateFee = isLoanSettled ? 0 : (loan.current_late_fee || 0);
+  // CORRECCIÓN: Calcular la mora actual si está en 0 o no está disponible
+  let effectiveLateFee = isLoanSettled ? 0 : (loan.current_late_fee || 0);
+  
+  // Si la mora está habilitada pero el valor es 0, intentar calcularla desde las cuotas
+  if (!isLoanSettled && loan.late_fee_enabled && effectiveLateFee === 0 && installments.length > 0) {
+    const today = new Date();
+    let calculatedLateFee = 0;
+    
+    installments.forEach((installment: any) => {
+      if (installment.is_paid) return;
+      
+      const dueDate = new Date(installment.due_date);
+      const daysOverdue = Math.max(0, Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
+      const gracePeriod = loan.grace_period_days || 0;
+      const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
+      
+      if (effectiveDaysOverdue > 0) {
+        // Para préstamos indefinidos, usar interest_amount o total_amount
+        const isIndefinite = loan.amortization_type === 'indefinite';
+        const baseAmount = isIndefinite && installment.principal_amount === 0
+          ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
+          : (installment.principal_amount || installment.total_amount || installment.amount || 0);
+        const lateFeeRate = loan.late_fee_rate || 0;
+        
+        let lateFee = 0;
+        switch (loan.late_fee_calculation_type) {
+          case 'daily':
+            lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
+            break;
+          case 'monthly':
+            const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
+            lateFee = (baseAmount * lateFeeRate / 100) * monthsOverdue;
+            break;
+          case 'compound':
+            lateFee = baseAmount * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
+            break;
+          default:
+            lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
+        }
+        
+        if (loan.max_late_fee && loan.max_late_fee > 0) {
+          lateFee = Math.min(lateFee, loan.max_late_fee);
+        }
+        
+        const remainingLateFee = Math.max(0, lateFee - (installment.late_fee_paid || 0));
+        calculatedLateFee += remainingLateFee;
+      }
+    });
+    
+    effectiveLateFee = Math.round(calculatedLateFee * 100) / 100;
+  }
   
   const totalPending = capitalPending + interestPending + effectiveLateFee;
   const amountToPay = loan.monthly_payment + effectiveLateFee;
@@ -557,13 +608,15 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         <div className="font-semibold">
                           {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
                             ? 'N/A' 
-                            : new Date(loan.next_payment_date).toLocaleDateString('es-DO')}
+                            : formatDateStringForSantoDomingo(loan.next_payment_date)}
                         </div>
                       </div>
-                      <div>
-                        <span className="text-gray-600">Fecha final:</span>
-                        <div className="font-semibold">{new Date(loan.end_date).toLocaleDateString('es-DO')}</div>
-                      </div>
+                      {loan.amortization_type !== 'indefinite' && (
+                        <div>
+                          <span className="text-gray-600">Fecha final:</span>
+                          <div className="font-semibold">{new Date(loan.end_date).toLocaleDateString('es-DO')}</div>
+                        </div>
+                      )}
                       <div>
                         <span className="text-gray-600">Fecha de creación:</span>
                         <div className="font-semibold">{new Date(loan.created_at).toLocaleDateString('es-DO')}</div>

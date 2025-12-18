@@ -50,6 +50,7 @@ interface Loan {
   interest_rate: number;
   term_months?: number;
   payment_frequency?: string;
+  amortization_type?: string; // Tipo de amortización (indefinite, simple, etc.)
   late_fee_enabled?: boolean;
   late_fee_rate?: number;
   grace_period_days?: number;
@@ -221,7 +222,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         payment_frequency: loan.payment_frequency || 'monthly',
         interest_rate: loan.interest_rate,
         monthly_payment: loan.monthly_payment,
-        start_date: loan.start_date
+        start_date: loan.start_date,
+        amortization_type: loan.amortization_type
       };
       
       console.log('🔍 PaymentForm: Datos del préstamo:', loanData);

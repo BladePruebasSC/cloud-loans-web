@@ -24,11 +24,11 @@ import {
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getLateFeeBreakdownFromInstallments } from '@/utils/lateFeeCalculator';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { formatCurrency } from '@/lib/utils';
 import { formatInTimeZone } from 'date-fns-tz';
 import { addHours } from 'date-fns';
-import { formatDateStringForSantoDomingo, createDateInSantoDomingo } from '@/utils/dateUtils';
+import { formatDateStringForSantoDomingo, createDateInSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 
 interface Payment {
   id: string;
@@ -259,11 +259,186 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       setPayments(paymentsData || []);
 
       // Obtener las cuotas del préstamo
-      const { data: installmentsData, error: installmentsError } = await supabase
+      const isIndefinite = loanData.amortization_type === 'indefinite';
+      let installmentsQuery = supabase
         .from('installments')
         .select('*, is_settled')
         .eq('loan_id', loanId)
         .order('installment_number', { ascending: true });
+      
+      const { data: installmentsDataRaw, error: installmentsError } = await installmentsQuery;
+      
+      // Para préstamos indefinidos, generar cuotas dinámicamente basándose en el tiempo transcurrido
+      let installmentsData = installmentsDataRaw || [];
+      if (isIndefinite && loanData) {
+        // CORRECCIÓN: Usar next_payment_date o first_payment_date directamente si está disponible
+        // Solo calcular desde start_date si no están disponibles
+        const firstPaymentDateStr = loanData.first_payment_date?.split('T')[0] || loanData.next_payment_date?.split('T')[0];
+        let firstPaymentDateBase: Date;
+        const today = getCurrentDateInSantoDomingo();
+        const frequency = loanData.payment_frequency || 'monthly';
+        
+        if (firstPaymentDateStr) {
+          // CORRECCIÓN UTC-4: Parsear como fecha local para evitar problemas de zona horaria
+          const [firstYear, firstMonth, firstDay] = firstPaymentDateStr.split('-').map(Number);
+          // Usar new Date(year, month - 1, day) para crear fecha local (no UTC)
+          firstPaymentDateBase = new Date(firstYear, firstMonth - 1, firstDay);
+          
+          // CORRECCIÓN: Si first_payment_date o next_payment_date es igual a start_date,
+          // entonces calcular un mes después (la primera cuota debe ser un mes después de start_date)
+          const startDateStr = loanData.start_date?.split('T')[0];
+          if (startDateStr && firstPaymentDateStr === startDateStr) {
+            // Si la fecha es igual a start_date, calcular un mes después
+            const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+            const startDate = new Date(startYear, startMonth - 1, startDay);
+            firstPaymentDateBase = new Date(startDate);
+            
+            switch (frequency) {
+              case 'daily':
+                firstPaymentDateBase.setDate(startDate.getDate() + 1);
+                break;
+              case 'weekly':
+                firstPaymentDateBase.setDate(startDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                firstPaymentDateBase.setDate(startDate.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
+                break;
+            }
+          }
+        } else {
+          // Si no hay first_payment_date ni next_payment_date, calcular desde start_date
+          const startDateStr = loanData.start_date?.split('T')[0];
+          if (!startDateStr) {
+            installmentsData = installmentsDataRaw || [];
+          } else {
+            const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+            const startDate = new Date(startYear, startMonth - 1, startDay);
+            firstPaymentDateBase = new Date(startDate);
+            
+            // Calcular la primera fecha de pago (un mes después de start_date)
+            switch (frequency) {
+              case 'daily':
+                firstPaymentDateBase.setDate(startDate.getDate() + 1);
+                break;
+              case 'weekly':
+                firstPaymentDateBase.setDate(startDate.getDate() + 7);
+                break;
+              case 'biweekly':
+                firstPaymentDateBase.setDate(startDate.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                // Usar setFullYear para preservar el día exacto
+                firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
+                break;
+            }
+          }
+        }
+        
+        if (firstPaymentDateBase) {
+          
+          // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
+          let monthsElapsed = 0;
+          
+          switch (frequency) {
+            case 'daily':
+              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 30));
+              break;
+            case 'weekly':
+              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 7 * 4));
+              break;
+            case 'biweekly':
+              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 14 * 2));
+              break;
+            case 'monthly':
+            default:
+              // Calcular meses transcurridos correctamente
+              const yearsDiff = today.getFullYear() - firstPaymentDateBase.getFullYear();
+              const monthsDiff = today.getMonth() - firstPaymentDateBase.getMonth();
+              monthsElapsed = yearsDiff * 12 + monthsDiff;
+              // Si el día del mes ya pasó o es el mismo día, contar ese mes también
+              if (today.getDate() >= firstPaymentDateBase.getDate()) {
+                monthsElapsed += 1;
+              }
+              // CORRECCIÓN: Para préstamos indefinidos, siempre incluir el mes siguiente
+              // para asegurar que se muestren todas las cuotas hasta el próximo mes
+              // Si hoy es diciembre y la primera cuota es noviembre, debería haber 3 cuotas (nov, dic, ene)
+              monthsElapsed += 1; // Agregar 1 mes más para incluir el mes siguiente
+              // Asegurar que siempre haya al menos 1 cuota
+              monthsElapsed = Math.max(1, monthsElapsed);
+              break;
+          }
+          
+          // Generar cuotas dinámicamente
+          const dynamicInstallments = [];
+          const periodRate = (loanData.interest_rate || 0) / 100;
+          const interestPerPayment = (loanData.amount || 0) * periodRate;
+          
+          // CORRECCIÓN: Usar la fecha calculada correctamente
+          const firstPaymentDate = new Date(firstPaymentDateBase);
+          
+          // Generar cuotas hasta el mes actual
+          for (let i = 1; i <= Math.max(1, monthsElapsed); i++) {
+            const installmentDate = new Date(firstPaymentDate);
+            
+            // Calcular fecha según frecuencia
+            switch (frequency) {
+              case 'daily':
+                installmentDate.setDate(firstPaymentDate.getDate() + (i - 1));
+                break;
+              case 'weekly':
+                installmentDate.setDate(firstPaymentDate.getDate() + ((i - 1) * 7));
+                break;
+              case 'biweekly':
+                installmentDate.setDate(firstPaymentDate.getDate() + ((i - 1) * 14));
+                break;
+              case 'monthly':
+              default:
+                // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
+                installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), firstPaymentDate.getDate());
+                break;
+            }
+            
+            // CORRECCIÓN UTC-4: Formatear fecha directamente sin usar toISOString()
+            // para evitar problemas de zona horaria que cambian el día
+            const year = installmentDate.getFullYear();
+            const month = installmentDate.getMonth() + 1;
+            const day = installmentDate.getDate();
+            // Formatear directamente como YYYY-MM-DD sin conversión de zona horaria
+            const formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            
+            // Buscar si existe una cuota real en la BD para este número
+            const existingInstallment = installmentsDataRaw?.find(inst => inst.installment_number === i);
+            
+            // CORRECCIÓN: Para préstamos indefinidos, siempre usar la fecha calculada
+            // para evitar usar fechas incorrectas guardadas en la BD
+            const finalDueDate = formattedDate; // Siempre usar la fecha calculada correctamente
+            
+            dynamicInstallments.push({
+              id: existingInstallment?.id || `dynamic-${i}`,
+              loan_id: loanId,
+              installment_number: i,
+              due_date: finalDueDate,
+              amount: existingInstallment?.amount || interestPerPayment,
+              principal_amount: existingInstallment?.principal_amount || 0,
+              interest_amount: existingInstallment?.interest_amount || interestPerPayment,
+              late_fee_paid: existingInstallment?.late_fee_paid || 0,
+              is_paid: existingInstallment?.is_paid || false,
+              is_settled: existingInstallment?.is_settled || false,
+              paid_date: existingInstallment?.paid_date || null,
+              created_at: existingInstallment?.created_at || new Date().toISOString(),
+              updated_at: existingInstallment?.updated_at || new Date().toISOString(),
+              total_amount: existingInstallment?.total_amount || interestPerPayment
+            });
+          }
+          
+          installmentsData = dynamicInstallments;
+        }
+      }
 
       if (installmentsError) throw installmentsError;
       setInstallments(installmentsData || []);
@@ -279,90 +454,34 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
 
         try {
-          console.log('🔍 AccountStatement: Calculando mora usando datos reales de cuotas...');
-          console.log('🔍 AccountStatement: Datos del préstamo:', {
+          console.log('🔍 AccountStatement: Calculando mora usando getLateFeeBreakdownFromInstallments...');
+          
+          // CORRECCIÓN: Usar la misma función que LateFeeInfo para mantener consistencia
+          const loanDataForCalculation = {
             id: loanData.id,
             amount: loanData.amount,
-            interest_rate: loanData.interest_rate,
-            term_months: loanData.term_months,
-            monthly_payment: loanData.monthly_payment,
             remaining_balance: loanData.remaining_balance,
             next_payment_date: loanData.next_payment_date,
+            late_fee_enabled: loanData.late_fee_enabled || false,
+            late_fee_rate: loanData.late_fee_rate || 0,
+            grace_period_days: loanData.grace_period_days || 0,
+            max_late_fee: loanData.max_late_fee || 0,
+            late_fee_calculation_type: (loanData.late_fee_calculation_type || 'daily') as 'daily' | 'monthly' | 'compound',
+            term: loanData.term_months || 0,
+            payment_frequency: loanData.payment_frequency || 'monthly',
+            interest_rate: loanData.interest_rate || 0,
+            monthly_payment: loanData.monthly_payment || 0,
             start_date: loanData.start_date,
-            late_fee_rate: loanData.late_fee_rate,
-            grace_period_days: loanData.grace_period_days,
-            max_late_fee: loanData.max_late_fee,
-            late_fee_calculation_type: loanData.late_fee_calculation_type,
-            status: loanData.status
-          });
+            amortization_type: loanData.amortization_type
+          };
 
-          // Calcular mora actual basándose en las cuotas reales
-          const currentDate = new Date();
-          let totalCurrentLateFee = 0;
-
-          installmentsData.forEach((installment: any) => {
-            const dueDate = new Date(installment.due_date);
-            const daysOverdue = Math.max(0, Math.floor((currentDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
-            
-            console.log(`🔍 Cuota ${installment.installment_number}:`, {
-              dueDate: installment.due_date,
-              isPaid: installment.is_paid,
-              daysOverdue,
-              principalAmount: installment.principal_amount,
-              lateFeePaid: installment.late_fee_paid
-            });
-            
-            // Solo calcular mora para cuotas vencidas y no pagadas (y no saldadas)
-            const isSettled = (installment as any).is_settled;
-            if (daysOverdue > 0 && !installment.is_paid && !isSettled) {
-              const gracePeriod = loanData.grace_period_days || 0;
-              const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
-              
-              if (effectiveDaysOverdue > 0) {
-                const principalPerPayment = installment.principal_amount;
-                const lateFeeRate = loanData.late_fee_rate || 2;
-                
-                let lateFee = 0;
-                switch (loanData.late_fee_calculation_type) {
-                  case 'daily':
-                    lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
-                    break;
-                  case 'monthly':
-                    const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
-                    lateFee = (principalPerPayment * lateFeeRate / 100) * monthsOverdue;
-                    break;
-                  case 'compound':
-                    lateFee = principalPerPayment * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
-                    break;
-                  default:
-                    lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
-                }
-                
-                // Aplicar límite máximo de mora si está configurado
-                if (loanData.max_late_fee && loanData.max_late_fee > 0) {
-                  lateFee = Math.min(lateFee, loanData.max_late_fee);
-                }
-                
-                // Restar la mora ya pagada de esta cuota
-                const remainingLateFee = Math.max(0, lateFee - installment.late_fee_paid);
-                totalCurrentLateFee += remainingLateFee;
-                
-                console.log(`🔍 Cuota ${installment.installment_number}: ${effectiveDaysOverdue} días vencida, mora calculada: RD$${lateFee.toFixed(2)}, mora ya pagada: RD$${installment.late_fee_paid}, mora pendiente: RD$${remainingLateFee.toFixed(2)}`);
-              } else {
-                console.log(`🔍 Cuota ${installment.installment_number}: Vencida pero dentro del período de gracia (${gracePeriod} días)`);
-              }
-            } else if (installment.is_paid) {
-              console.log(`🔍 Cuota ${installment.installment_number}: Ya pagada - no se calcula mora`);
-            } else {
-              console.log(`🔍 Cuota ${installment.installment_number}: No vencida aún`);
-            }
-          });
-
-          totalCurrentLateFee = Math.round(totalCurrentLateFee * 100) / 100;
+          const breakdown = await getLateFeeBreakdownFromInstallments(loanData.id, loanDataForCalculation);
+          const totalCurrentLateFee = breakdown.totalLateFee || 0;
           
           console.log('🔍 AccountStatement: Total mora actual calculado:', totalCurrentLateFee);
+          console.log('🔍 AccountStatement: Desglose completo:', breakdown);
 
-          // Usar el total de mora actual calculado desde las cuotas reales
+          // Usar el total de mora actual calculado desde la función correcta
           setCurrentLateFee(totalCurrentLateFee);
           console.log('🔍 AccountStatement: currentLateFee establecido a:', totalCurrentLateFee);
         } catch (lateFeeError) {
@@ -434,10 +553,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     });
 
     const schedule = [];
-    const numberOfPayments = loanData.term_months;
     const principal = loanData.amount;
     const amortizationType = loanData.amortization_type || 'simple';
     const interestRate = loanData.interest_rate;
+    // Para préstamos indefinidos, usar el número de cuotas generadas dinámicamente
+    const isIndefinite = amortizationType === 'indefinite';
+    const numberOfPayments = isIndefinite ? (installmentsData?.length || 1) : loanData.term_months;
     
     console.log('🔍 TIPO DE AMORTIZACIÓN DETECTADO:', {
       amortizationType,
@@ -546,6 +667,27 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         totalInstallments: amortizationData.length
       });
       
+    } else if (amortizationType === 'indefinite') {
+      console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica INDEFINIDO');
+      // Plazo indefinido - Solo intereses, sin capital
+      const periodRate = interestRate / 100;
+      const interestPerPayment = principal * periodRate;
+      
+      // Generar cuotas dinámicamente basándose en installmentsData
+      for (let i = 1; i <= numberOfPayments; i++) {
+        amortizationData.push({
+          installment: i,
+          principalPayment: 0,
+          interestPayment: interestPerPayment,
+          monthlyPayment: interestPerPayment
+        });
+      }
+      
+      console.log('🔍 AMORTIZACIÓN INDEFINIDA:', {
+        interestPerPayment,
+        totalInstallments: amortizationData.length
+      });
+      
     } else {
       console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica FALLBACK (SIMPLE) - Tipo no reconocido:', amortizationType);
       // Fallback a simple si no se reconoce el tipo
@@ -630,6 +772,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     }
 
     for (let i = 1; i <= numberOfPayments; i++) {
+      // Obtener datos reales de la cuota si existe (debe estar antes de usarla)
+      const realInstallment = installmentsMap.get(i);
+      
       // Usar datos calculados según el tipo de amortización
       const installmentData = amortizationData[i - 1];
       const originalPrincipal = installmentData.principalPayment;
@@ -637,11 +782,35 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const monthlyPayment = installmentData.monthlyPayment;
 
       // Calcular fecha de vencimiento correctamente en zona horaria de Santo Domingo
-      const dueDate = new Date(startDate);
-      dueDate.setMonth(startDate.getMonth() + i);
+      // Usar la fecha real de la cuota si existe, de lo contrario calcularla
+      let dueDate: Date;
+      if (realInstallment && realInstallment.due_date) {
+        // Parsear la fecha de vencimiento como fecha local (no UTC) para evitar problemas de zona horaria
+        const [year, month, day] = realInstallment.due_date.split('-').map(Number);
+        dueDate = new Date(year, month - 1, day); // month es 0-indexado
+      } else {
+        // Calcular fecha basándose en la frecuencia de pago
+        dueDate = new Date(startDate);
+        const periodsToAdd = i - 1; // i-1 porque la primera cuota es en startDate + 1 período
+        
+        switch (loanData.payment_frequency) {
+          case 'daily':
+            dueDate.setDate(startDate.getDate() + periodsToAdd + 1);
+            break;
+          case 'weekly':
+            dueDate.setDate(startDate.getDate() + (periodsToAdd + 1) * 7);
+            break;
+          case 'biweekly':
+            dueDate.setDate(startDate.getDate() + (periodsToAdd + 1) * 14);
+            break;
+          case 'monthly':
+          default:
+            dueDate.setMonth(startDate.getMonth() + periodsToAdd + 1);
+            break;
+        }
+      }
 
-      // Obtener datos reales de la cuota si existe
-      const realInstallment = installmentsMap.get(i);
+      // realInstallment ya está declarado arriba
       const isPaid = realInstallment ? realInstallment.is_paid : false;
       const isSettled = realInstallment ? (realInstallment as any).is_settled : false;
       const paidDate = realInstallment ? realInstallment.paid_date : null;
@@ -825,7 +994,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
 
       schedule.push({
-        installment: i,
+        installment: isIndefinite ? '1/X' : i,
         dueDate: dueDate.toISOString().split('T')[0],
         monthlyPayment: displayAmount, // Mostrar monto real pagado si existe, sino el monto de la cuota
         principalPayment: originalPrincipal,

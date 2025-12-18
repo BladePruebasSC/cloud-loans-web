@@ -23,6 +23,7 @@ export interface LoanData {
   paid_installments?: number[]; // Cuotas que han sido pagadas (opcional)
   start_date?: string; // Fecha de inicio del préstamo (CRÍTICO para el cálculo correcto)
   first_payment_date?: string; // Fecha de la primera cuota (BASE FIJA que nunca cambia)
+  amortization_type?: string; // Tipo de amortización (indefinite, simple, etc.)
 }
 
 /**
@@ -47,9 +48,29 @@ export const calculateLateFee = (
 
   // Calcular el capital real por cuota
   // IMPORTANTE: La mora se calcula solo sobre el capital, no sobre capital + interés
+  // EXCEPCIÓN: Para préstamos indefinidos, la mora se calcula sobre el interés (ya que no hay capital)
+  const isIndefinite = loan.amortization_type === 'indefinite';
   let principalPerPayment: number;
   
-  if (loan.monthly_payment && loan.interest_rate) {
+  if (isIndefinite) {
+    // Para préstamos indefinidos, usar el interés mensual como base para la mora
+    // ya que no hay capital que se esté pagando
+    if (loan.monthly_payment) {
+      principalPerPayment = loan.monthly_payment; // La cuota mensual es solo interés
+    } else if (loan.interest_rate) {
+      principalPerPayment = (loan.amount * loan.interest_rate) / 100;
+    } else {
+      principalPerPayment = Math.round((loan.amount / loan.term) * 100) / 100;
+    }
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔍 Préstamo indefinido - Mora calculada sobre interés:', {
+        monthlyPayment: loan.monthly_payment,
+        interestRate: loan.interest_rate,
+        principalPerPayment
+      });
+    }
+  } else if (loan.monthly_payment && loan.interest_rate) {
     // Calcular el capital real: Cuota mensual - Interés fijo por cuota
     const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
     principalPerPayment = Math.round((loan.monthly_payment - fixedInterestPerPayment) * 100) / 100;

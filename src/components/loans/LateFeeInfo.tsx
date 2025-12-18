@@ -45,6 +45,7 @@ interface LateFeeInfoProps {
   monthly_payment?: number; // Cuota mensual
   paid_installments?: number[]; // Cuotas que han sido pagadas
   start_date?: string; // Fecha de inicio del préstamo (CRÍTICO para el cálculo correcto)
+  amortization_type?: string; // Tipo de amortización (indefinite, simple, etc.)
 }
 
 export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
@@ -64,7 +65,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
   interest_rate,
   monthly_payment,
   paid_installments,
-  start_date
+  start_date,
+  amortization_type
 }) => {
   const [showDetails, setShowDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -255,7 +257,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
         payment_frequency: payment_frequency,
         interest_rate: interest_rate,
         monthly_payment: monthly_payment,
-        start_date: start_date
+        start_date: start_date,
+        amortization_type: amortization_type
       };
       
       console.log('🔍 LateFeeInfo: Datos del préstamo:', loanData);
@@ -272,7 +275,9 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
       // Encontrar la próxima cuota pendiente de pago para mostrar sus días de atraso
       console.log('🔍 LateFeeInfo: Desglose completo para encontrar próxima cuota:', breakdown.breakdown);
       
-      const nextUnpaidInstallment = breakdown.breakdown.find(item => !item.isPaid && item.lateFee > 0);
+      // CORRECCIÓN: Buscar la primera cuota vencida (con días de atraso > 0), no solo las que tienen mora > 0
+      // porque para préstamos indefinidos la mora puede estar en 0 si no se calculó correctamente
+      const nextUnpaidInstallment = breakdown.breakdown.find(item => !item.isPaid && item.daysOverdue > 0);
       console.log('🔍 LateFeeInfo: Próxima cuota pendiente encontrada:', nextUnpaidInstallment);
       
       const daysOverdue = nextUnpaidInstallment ? nextUnpaidInstallment.daysOverdue : 0;
@@ -357,9 +362,16 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
           console.log('🔍 LateFeeInfo: Estableciendo cálculo local:', localCalculation);
           console.log('🔍 LateFeeInfo: ANTES de setLateFeeCalculation - lateFeeCalculation:', lateFeeCalculation);
           setLateFeeCalculation(localCalculation);
+          setCalculatedDaysOverdue(localCalculation.days_overdue || 0);
           console.log('🔍 LateFeeInfo: DESPUÉS de setLateFeeCalculation - localCalculation:', localCalculation);
         } else {
-          console.log('🔍 LateFeeInfo: No se pudo calcular la mora local');
+          console.log('🔍 LateFeeInfo: No se pudo calcular la mora local, calculando días vencidos desde next_payment_date');
+          // CORRECCIÓN: Si no se pudo calcular la mora, calcular días vencidos desde next_payment_date
+          const today = getCurrentDateInSantoDomingo();
+          const nextPayment = new Date(nextPaymentDate);
+          const daysDiff = Math.floor((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24));
+          const effectiveDaysOverdue = Math.max(0, daysDiff - (gracePeriodDays || 0));
+          setCalculatedDaysOverdue(effectiveDaysOverdue);
         }
       } else {
         console.log('🔍 LateFeeInfo: No hay días de mora o mora deshabilitada');

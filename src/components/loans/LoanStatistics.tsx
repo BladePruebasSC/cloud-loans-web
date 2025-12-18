@@ -149,7 +149,8 @@ export const LoanStatistics: React.FC<LoanStatisticsProps> = ({
           late_fee_rate: loanData.late_fee_rate || 2.0,
           grace_period_days: loanData.grace_period_days || 0,
           max_late_fee: loanData.max_late_fee || 0,
-          late_fee_calculation_type: loanData.late_fee_calculation_type || 'daily'
+          late_fee_calculation_type: loanData.late_fee_calculation_type || 'daily',
+          amortization_type: loanData.amortization_type
         };
 
         console.log('🔍 LoanStatistics: Calculando mora en tiempo real...', loanDataForCalculation);
