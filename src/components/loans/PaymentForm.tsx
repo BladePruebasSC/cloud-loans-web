@@ -782,7 +782,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         reference_number: data.reference_number,
         notes: data.notes,
         status: paymentStatusValue,
-        created_by: companyId,
+        created_by: user?.id || companyId, // Usar el user_id del usuario actual, o companyId como respaldo
       };
       
       console.log('🔍 PaymentForm: Datos del pago que se enviarán:', paymentData);

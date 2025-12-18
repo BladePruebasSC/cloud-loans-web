@@ -1091,12 +1091,14 @@ export const LoansModule = () => {
 
                           <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl border border-purple-100">
                             <div className="text-2xl font-bold text-purple-700 mb-1">
-                              ${formatCurrencyNumber(loan.remaining_balance + (dynamicLateFees[loan.id] || loan.current_late_fee || 0))}
+                              ${formatCurrencyNumber(loan.status === 'paid' ? 0 : (loan.remaining_balance + (dynamicLateFees[loan.id] || loan.current_late_fee || 0)))}
                             </div>
                             <div className="text-sm text-purple-600 font-medium">Balance Total Pendiente</div>
-                            <div className="text-xs text-purple-500 mt-1">
-                              Balance + Mora Actual
-                            </div>
+                            {loan.status !== 'paid' && (
+                              <div className="text-xs text-purple-500 mt-1">
+                                Balance + Mora Actual
+                              </div>
+                            )}
                           </div>
                           
                           <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl border border-blue-100">

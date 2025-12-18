@@ -70,13 +70,61 @@ export const ReportsModule = () => {
   const [showLoanDetails, setShowLoanDetails] = useState(false);
   const [selectedClient, setSelectedClient] = useState<any>(null);
   const [showClientDetails, setShowClientDetails] = useState(false);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [posEmployeeFilter, setPosEmployeeFilter] = useState<string>('');
+  const [loansEmployeeFilter, setLoansEmployeeFilter] = useState<string>('');
   const { user, companyId } = useAuth();
 
   useEffect(() => {
     if (user) {
       fetchReportData();
     }
-  }, [user, dateRange]);
+  }, [user, dateRange, posEmployeeFilter, loansEmployeeFilter]);
+
+  // Cargar empleados al montar el componente
+  useEffect(() => {
+    if (companyId) {
+      fetchEmployees();
+    }
+  }, [companyId]);
+
+  const fetchEmployees = async () => {
+    if (!companyId || !user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('employees')
+        .select('id, full_name, auth_user_id')
+        .eq('company_owner_id', companyId)
+        .eq('status', 'active')
+        .order('full_name', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching employees:', error);
+        return;
+      }
+
+      // Obtener información del dueño de la empresa
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', companyId)
+        .maybeSingle();
+
+      // Crear objeto para el dueño de la empresa
+      const ownerEmployee = {
+        id: companyId,
+        full_name: profileData?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Dueño de Empresa',
+        auth_user_id: companyId,
+      };
+
+      // Combinar el dueño con los empleados, poniendo al dueño primero
+      const allEmployees = [ownerEmployee, ...(data || [])];
+      setEmployees(allEmployees);
+    } catch (error) {
+      console.error('Error in fetchEmployees:', error);
+    }
+  };
 
   const fetchReportData = async () => {
     try {
@@ -109,7 +157,7 @@ export const ReportsModule = () => {
       }
 
       // Fetch loans - Solo préstamos de esta empresa
-      const { data: loansData, error: loansError } = await supabase
+      let loansQuery = supabase
         .from('loans')
         .select(`
           *,
@@ -119,15 +167,41 @@ export const ReportsModule = () => {
             phone
           )
         `)
-        .eq('loan_officer_id', companyId || user?.id)
         .gte('created_at', dateRange.startDate)
         .lte('created_at', dateRange.endDate + 'T23:59:59')
         .order('created_at', { ascending: false });
 
+      // Aplicar filtro de empleado si está seleccionado
+      if (loansEmployeeFilter) {
+        const selectedEmployee = employees.find(emp => emp.id === loansEmployeeFilter);
+        if (selectedEmployee?.auth_user_id) {
+          loansQuery = loansQuery.eq('loan_officer_id', selectedEmployee.auth_user_id);
+        } else {
+          loansQuery = loansQuery.eq('loan_officer_id', companyId || user?.id);
+        }
+      } else {
+        // Si no hay filtro, mostrar todos los préstamos de la empresa
+        if (companyId) {
+          const allEmployeeUserIds = employees
+            .map(emp => emp.auth_user_id)
+            .filter((id): id is string => !!id);
+          allEmployeeUserIds.push(companyId);
+          if (allEmployeeUserIds.length > 0) {
+            loansQuery = loansQuery.in('loan_officer_id', allEmployeeUserIds);
+          } else {
+            loansQuery = loansQuery.eq('loan_officer_id', companyId || user?.id);
+          }
+        } else {
+          loansQuery = loansQuery.eq('loan_officer_id', companyId || user?.id);
+        }
+      }
+
+      const { data: loansData, error: loansError } = await loansQuery;
+
       if (loansError) throw loansError;
 
       // Fetch payments - Solo pagos de préstamos de esta empresa
-      const { data: paymentsData, error: paymentsError } = await supabase
+      let paymentsQuery = supabase
         .from('payments')
         .select(`
           *,
@@ -141,10 +215,34 @@ export const ReportsModule = () => {
             )
           )
         `)
-        .eq('loans.loan_officer_id', companyId || user?.id)
         .gte('payment_date', dateRange.startDate)
         .lte('payment_date', dateRange.endDate)
         .order('payment_date', { ascending: false });
+
+      // Aplicar filtro de empleado si está seleccionado
+      // Usar created_by del pago para identificar quién registró el pago
+      if (loansEmployeeFilter) {
+        const selectedEmployee = employees.find(emp => emp.id === loansEmployeeFilter);
+        if (selectedEmployee?.auth_user_id) {
+          // Filtrar por created_by del pago (quien registró el pago)
+          paymentsQuery = paymentsQuery.eq('created_by', selectedEmployee.auth_user_id);
+        } else {
+          // Si el empleado no tiene auth_user_id, no puede haber registrado pagos
+          // Mostrar vacío o usar companyId como respaldo
+          paymentsQuery = paymentsQuery.eq('created_by', companyId || user?.id);
+        }
+      } else if (companyId) {
+        // Si no hay filtro de empleado, mostrar todos los pagos de la empresa
+        const allEmployeeUserIds = employees
+          .map(emp => emp.auth_user_id)
+          .filter((id): id is string => !!id);
+        allEmployeeUserIds.push(companyId);
+        // Filtrar después de obtener los datos ya que Supabase no soporta .in() fácilmente
+      } else {
+        paymentsQuery = paymentsQuery.eq('created_by', companyId || user?.id);
+      }
+
+      const { data: paymentsData, error: paymentsError } = await paymentsQuery;
 
       if (paymentsError) {
         console.error('Error fetching payments:', paymentsError);
@@ -168,11 +266,65 @@ export const ReportsModule = () => {
           .order('payment_date', { ascending: false });
         
         if (allPaymentsError) throw allPaymentsError;
-        // Filtrar por loan_officer_id en el cliente
-        const filteredPayments = (allPayments || []).filter((p: any) => 
-          p.loans?.loan_officer_id === (companyId || user?.id)
-        );
+        
+        // Aplicar filtro de empleado o empresa usando created_by del pago
+        let filteredPayments = allPayments || [];
+        if (loansEmployeeFilter) {
+          const selectedEmployee = employees.find(emp => emp.id === loansEmployeeFilter);
+          if (selectedEmployee?.auth_user_id) {
+            // Filtrar por created_by del pago (quien registró el pago)
+            filteredPayments = filteredPayments.filter((p: any) => 
+              p.created_by === selectedEmployee.auth_user_id
+            );
+          } else {
+            // Si el empleado no tiene auth_user_id, no puede haber registrado pagos
+            filteredPayments = [];
+          }
+        } else if (companyId) {
+          const allEmployeeUserIds = employees
+            .map(emp => emp.auth_user_id)
+            .filter((id): id is string => !!id);
+          allEmployeeUserIds.push(companyId);
+          filteredPayments = filteredPayments.filter((p: any) => 
+            allEmployeeUserIds.includes(p.created_by)
+          );
+        } else {
+          filteredPayments = filteredPayments.filter((p: any) => 
+            p.created_by === (companyId || user?.id)
+          );
+        }
         setReportData(prev => ({ ...prev, payments: filteredPayments }));
+      } else {
+        // Aplicar filtro de empleado o empresa después de obtener los datos
+        // Usar created_by del pago para identificar quién registró el pago
+        let finalPayments = paymentsData || [];
+        
+        if (loansEmployeeFilter) {
+          const selectedEmployee = employees.find(emp => emp.id === loansEmployeeFilter);
+          if (selectedEmployee?.auth_user_id) {
+            // Filtrar por created_by del pago (quien registró el pago)
+            finalPayments = finalPayments.filter((p: any) => 
+              p.created_by === selectedEmployee.auth_user_id
+            );
+          } else {
+            // Si el empleado no tiene auth_user_id, no puede haber registrado pagos
+            finalPayments = [];
+          }
+        } else if (companyId) {
+          const allEmployeeUserIds = employees
+            .map(emp => emp.auth_user_id)
+            .filter((id): id is string => !!id);
+          allEmployeeUserIds.push(companyId);
+          finalPayments = finalPayments.filter((p: any) => 
+            allEmployeeUserIds.includes(p.created_by)
+          );
+        } else {
+          finalPayments = finalPayments.filter((p: any) => 
+            p.created_by === (companyId || user?.id)
+          );
+        }
+        
+        setReportData(prev => ({ ...prev, payments: finalPayments }));
       }
 
       // Fetch expenses
@@ -225,11 +377,35 @@ export const ReportsModule = () => {
 
       // Fetch Punto de Venta (POS) sales
       // Usar select('*') para obtener todos los campos disponibles (maneja ambos esquemas)
-      const { data: salesData, error: salesError } = await supabase
+      let salesQuery = supabase
         .from('sales')
         .select('*')
-        .eq('user_id', user?.id as any)
         .order('created_at', { ascending: false });
+
+      // Aplicar filtro de empleado si está seleccionado
+      if (posEmployeeFilter) {
+        const selectedEmployee = employees.find(emp => emp.id === posEmployeeFilter);
+        if (selectedEmployee?.auth_user_id) {
+          salesQuery = salesQuery.eq('user_id', selectedEmployee.auth_user_id);
+        } else {
+          salesQuery = salesQuery.eq('user_id', user?.id as any);
+        }
+      } else if (companyId) {
+        // Si no hay filtro de empleado, mostrar todas las ventas de la empresa
+        const allEmployeeUserIds = employees
+          .map(emp => emp.auth_user_id)
+          .filter((id): id is string => !!id);
+        allEmployeeUserIds.push(companyId);
+        if (allEmployeeUserIds.length > 0) {
+          salesQuery = salesQuery.in('user_id', allEmployeeUserIds);
+        } else {
+          salesQuery = salesQuery.eq('user_id', user?.id as any);
+        }
+      } else {
+        salesQuery = salesQuery.eq('user_id', user?.id as any);
+      }
+
+      const { data: salesData, error: salesError } = await salesQuery;
 
       if (salesError) {
         console.error('Error fetching sales:', salesError);
@@ -1009,7 +1185,45 @@ export const ReportsModule = () => {
   const paidLoans = reportData.loans.filter(loan => loan.status === 'paid').length;
 
   // Filtros para pagos
-  const filteredPayments = reportData.payments.filter(payment => {
+  let paymentsToFilter = reportData.payments;
+  
+  // Aplicar filtro de empleado si está seleccionado (doble verificación en frontend)
+  // Usar created_by del pago para identificar quién registró el pago
+  if (loansEmployeeFilter) {
+    const selectedEmployee = employees.find(emp => emp.id === loansEmployeeFilter);
+    console.log('🔍 Filtro de empleado activo:', {
+      employeeId: loansEmployeeFilter,
+      selectedEmployee,
+      auth_user_id: selectedEmployee?.auth_user_id,
+      totalPayments: paymentsToFilter.length
+    });
+    if (selectedEmployee?.auth_user_id) {
+      const beforeFilter = paymentsToFilter.length;
+      paymentsToFilter = paymentsToFilter.filter((p: any) => {
+        const createdBy = p.created_by;
+        const matches = createdBy === selectedEmployee.auth_user_id;
+        if (!matches && createdBy) {
+          console.log('❌ Pago filtrado:', {
+            paymentId: p.id,
+            created_by: createdBy,
+            expected: selectedEmployee.auth_user_id,
+            match: matches
+          });
+        }
+        return matches;
+      });
+      console.log('✅ Pagos después del filtro:', {
+        antes: beforeFilter,
+        despues: paymentsToFilter.length
+      });
+    } else {
+      console.log('⚠️ Empleado seleccionado no tiene auth_user_id');
+      // Si el empleado no tiene auth_user_id, no puede haber registrado pagos
+      paymentsToFilter = [];
+    }
+  }
+  
+  const filteredPayments = paymentsToFilter.filter(payment => {
     const matchesSearch = payment.loans?.clients?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          payment.amount.toString().includes(searchTerm) ||
                          payment.payment_date.includes(searchTerm);
@@ -1464,7 +1678,25 @@ export const ReportsModule = () => {
               <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <Label>Buscar Facturas de Punto de Venta</Label>
-                  <Input value={posSearch} onChange={(e)=>setPosSearch(e.target.value)} placeholder="Cliente, código, método..." />
+                  <div className="flex gap-2">
+                    <Input value={posSearch} onChange={(e)=>setPosSearch(e.target.value)} placeholder="Cliente, código, método..." className="flex-1" />
+                    <Select
+                      value={posEmployeeFilter || 'all'}
+                      onValueChange={(value) => setPosEmployeeFilter(value === 'all' ? '' : value)}
+                    >
+                      <SelectTrigger className="w-48">
+                        <SelectValue placeholder="Todos los empleados" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos los empleados</SelectItem>
+                        {employees.map((employee) => (
+                          <SelectItem key={employee.id} value={employee.id}>
+                            {employee.full_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <div>
                   <Label>Desde</Label>
@@ -1484,7 +1716,16 @@ export const ReportsModule = () => {
                   const dt = new Date(d);
                   return dt >= start && dt <= end;
                 };
-                const posRows = (reportData.sales||[]).filter(s => inRange(s.sale_date || s.created_at))
+                // Aplicar filtro de empleado en el frontend
+                let salesToFilter = reportData.sales || [];
+                if (posEmployeeFilter) {
+                  const selectedEmployee = employees.find(emp => emp.id === posEmployeeFilter);
+                  if (selectedEmployee?.auth_user_id) {
+                    salesToFilter = salesToFilter.filter((s: any) => s.user_id === selectedEmployee.auth_user_id);
+                  }
+                }
+
+                const posRows = salesToFilter.filter(s => inRange(s.sale_date || s.created_at))
                   .filter(s => {
                     const q = posSearch.toLowerCase();
                     if (!q) return true;
@@ -1559,21 +1800,43 @@ export const ReportsModule = () => {
                   </>
                 );
               })()}
+              
+              {/* Filtro de empleado para facturas de préstamos */}
+              <div className="mb-4">
+                <Label>Filtrar por Empleado (Préstamos)</Label>
+                <Select
+                  value={loansEmployeeFilter || 'all'}
+                  onValueChange={(value) => setLoansEmployeeFilter(value === 'all' ? '' : value)}
+                >
+                  <SelectTrigger className="w-full sm:w-64">
+                    <SelectValue placeholder="Todos los empleados" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los empleados</SelectItem>
+                    {employees.map((employee) => (
+                      <SelectItem key={employee.id} value={employee.id}>
+                        {employee.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 <div className="text-center p-3 bg-blue-50 rounded">
-                  <div className="text-xl font-bold text-blue-700">{reportData.payments.length}</div>
+                  <div className="text-xl font-bold text-blue-700">{filteredPayments.length}</div>
                   <div className="text-xs text-gray-600">Facturas (Préstamos)</div>
                 </div>
                 <div className="text-center p-3 bg-green-50 rounded">
-                  <div className="text-xl font-bold text-green-700">${(reportData.payments.reduce((s,p)=>s+(p.amount||0),0)).toLocaleString()}</div>
+                  <div className="text-xl font-bold text-green-700">${(filteredPayments.reduce((s,p)=>s+(p.amount||0),0)).toLocaleString()}</div>
                   <div className="text-xs text-gray-600">Total Pagado (Préstamos)</div>
                 </div>
                 <div className="text-center p-3 bg-yellow-50 rounded">
-                  <div className="text-xl font-bold text-yellow-700">${reportData.payments.reduce((s,p)=>s+(p.interest_amount||0),0).toLocaleString()}</div>
+                  <div className="text-xl font-bold text-yellow-700">${filteredPayments.reduce((s,p)=>s+(p.interest_amount||0),0).toLocaleString()}</div>
                   <div className="text-xs text-gray-600">Intereses</div>
                 </div>
                 <div className="text-center p-3 bg-red-50 rounded">
-                  <div className="text-xl font-bold text-red-700">${reportData.payments.reduce((s,p)=>s+(p.late_fee||0),0).toLocaleString()}</div>
+                  <div className="text-xl font-bold text-red-700">${filteredPayments.reduce((s,p)=>s+(p.late_fee||0),0).toLocaleString()}</div>
                   <div className="text-xs text-gray-600">Mora</div>
                 </div>
               </div>
@@ -1581,11 +1844,11 @@ export const ReportsModule = () => {
               <div className="font-semibold mb-2">Facturas de Préstamos (Pagos)</div>
               {loading ? (
                 <div className="text-center py-8">Cargando facturas...</div>
-              ) : reportData.payments.length === 0 ? (
+              ) : filteredPayments.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">No hay facturas en el período</div>
               ) : (
                 <div className="space-y-3">
-                  {reportData.payments.map((payment) => (
+                  {filteredPayments.map((payment) => (
                     <div key={payment.id} className="border rounded-lg p-4">
                       <div className="flex items-start justify-between">
                         <div className="space-y-1 flex-1">

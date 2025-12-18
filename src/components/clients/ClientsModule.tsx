@@ -38,6 +38,7 @@ interface Client {
   credit_score: number | null;
   status: string;
   created_at: string;
+  photo_url: string | null;
 }
 
 export const ClientsModule = () => {
@@ -361,6 +362,21 @@ export const ClientsModule = () => {
               <DialogTitle>Detalles del Cliente</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
+              {/* Foto del cliente */}
+              {selectedClient.photo_url && (
+                <div className="flex justify-center mb-4">
+                  <div className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-gray-200 shadow-lg">
+                    <img
+                      src={selectedClient.photo_url}
+                      alt={selectedClient.full_name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-gray-500">Nombre Completo</label>

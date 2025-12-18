@@ -45,7 +45,6 @@ const employeeSchema = z.object({
   dni: z.string().optional(),
   position: z.string().min(1, 'El cargo es requerido'),
   department: z.string().optional(),
-  salary: z.number().min(0, 'El salario debe ser mayor o igual a 0').optional(),
   hire_date: z.string().optional(),
   role: z.enum(['admin', 'manager', 'employee', 'collector', 'accountant']).default('employee'),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres'),
@@ -58,7 +57,6 @@ const employeeEditSchema = z.object({
   dni: z.string().optional(),
   position: z.string().min(1, 'El cargo es requerido'),
   department: z.string().optional(),
-  salary: z.number().min(0, 'El salario debe ser mayor o igual a 0').optional(),
   hire_date: z.string().optional(),
   role: z.enum(['admin', 'manager', 'employee', 'collector', 'accountant']).default('employee'),
   password: z.string().optional(), // Opcional para edición
@@ -75,7 +73,6 @@ interface Employee {
   dni: string | null;
   position: string | null;
   department: string | null;
-  salary: number | null;
   hire_date: string | null;
   status: string;
   role: string;
@@ -249,7 +246,6 @@ export const EmployeesModule = () => {
         dni: editingEmployee.dni || '',
         position: editingEmployee.position || '',
         department: editingEmployee.department || '',
-        salary: editingEmployee.salary || undefined,
         hire_date: editingEmployee.hire_date || '',
         role: editingEmployee.role as 'admin' | 'manager' | 'employee' | 'collector' | 'accountant',
         password: '', // No pre-llenar contraseña para edición
@@ -312,7 +308,6 @@ export const EmployeesModule = () => {
           dni: data.dni,
           position: data.position,
           department: data.department,
-          salary: data.salary || null,
           hire_date: data.hire_date,
           role: data.role,
           permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
@@ -377,60 +372,106 @@ export const EmployeesModule = () => {
           const errorText = await response.text();
           let errorMessage = 'Error del servidor';
           
+          console.error('❌ Error response status:', response.status);
+          console.error('❌ Error response text:', errorText);
+          
           try {
             const errorJson = JSON.parse(errorText);
-            errorMessage = errorJson.error || errorText;
-            
-                         // Si el error es sobre email ya registrado, intentar crear empleado directamente
-             if (errorMessage.includes('already registered') || errorMessage.includes('ya existe') || errorMessage.includes('duplicate key')) {
-               console.log('Email ya existe, intentando crear empleado directamente...');
-               
-                               // Verificar si ya existe un empleado con este email en esta empresa
-                const { data: existingEmployee, error: checkError } = await supabase
-                  .from('employees')
-                  .select('id, email')
-                  .eq('email', data.email)
-                  .eq('company_owner_id', companyId)
-                  .single();
-
-               if (existingEmployee) {
-                 throw new Error('Ya existe un empleado con este email en tu empresa');
-               }
-               
-                               // Intentar crear el empleado directamente sin crear usuario de auth
-                const { error: directError } = await supabase
-                  .from('employees')
-                  .insert({
-                    company_owner_id: companyId,
-                   full_name: data.full_name,
-                   email: data.email,
-                   phone: data.phone,
-                   dni: data.dni,
-                   position: data.position,
-                   department: data.department,
-                   salary: data.salary || null,
-                   hire_date: data.hire_date,
-                   role: data.role,
-                   status: 'active',
-                   permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
-                 });
-
-                               if (directError) {
-                  // Si falla por restricción única, mostrar mensaje más claro
-                  if (directError.message.includes('duplicate key') || directError.message.includes('employees_email_key')) {
-                    throw new Error('Ya existe un empleado con este email en tu empresa. El sistema necesita ser actualizado para permitir emails duplicados entre empresas.');
-                  }
-                  throw new Error(`Error al crear empleado: ${directError.message}`);
-                }
-
-               toast.success('Empleado creado exitosamente (reutilizando cuenta existente)');
-               return;
-             }
-          } catch (e) {
-            errorMessage = errorText || 'Error desconocido';
+            errorMessage = errorJson.error || errorJson.message || errorText;
+            console.error('❌ Error JSON:', errorJson);
+          } catch (parseError) {
+            // Si no es JSON, usar el texto directamente
+            errorMessage = errorText || `Error del servidor (${response.status})`;
+            console.error('❌ Error no es JSON, usando texto:', errorMessage);
           }
           
-          throw new Error(errorMessage);
+          // Si el error es sobre email ya registrado, intentar crear empleado directamente
+          if (errorMessage.includes('already registered') || errorMessage.includes('ya existe') || errorMessage.includes('duplicate key') || errorMessage.includes('email')) {
+            console.log('📧 Email ya existe, intentando crear empleado directamente...');
+            
+            // Verificar si ya existe un empleado con este email en esta empresa
+            const { data: existingEmployee, error: checkError } = await supabase
+              .from('employees')
+              .select('id, email')
+              .eq('email', data.email)
+              .eq('company_owner_id', companyId)
+              .single();
+
+            if (existingEmployee) {
+              throw new Error('Ya existe un empleado con este email en tu empresa');
+            }
+            
+            // Intentar crear el empleado directamente sin crear usuario de auth
+            const { error: directError } = await supabase
+              .from('employees')
+              .insert({
+                company_owner_id: companyId,
+                full_name: data.full_name,
+                email: data.email,
+                phone: data.phone,
+                dni: data.dni,
+                position: data.position,
+                department: data.department,
+                hire_date: data.hire_date,
+                role: data.role,
+                status: 'active',
+                permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
+              });
+
+            if (directError) {
+              console.error('❌ Error directo al crear empleado:', directError);
+              // Si falla por restricción única, mostrar mensaje más claro
+              if (directError.message.includes('duplicate key') || directError.message.includes('employees_email_key')) {
+                throw new Error('Ya existe un empleado con este email en tu empresa. El sistema necesita ser actualizado para permitir emails duplicados entre empresas.');
+              }
+              throw new Error(`Error al crear empleado: ${directError.message}`);
+            }
+
+            toast.success('Empleado creado exitosamente (reutilizando cuenta existente)');
+            setIsDialogOpen(false);
+            setEditingEmployee(null);
+            form.reset();
+            setSelectedPermissions([]);
+            fetchEmployees();
+            return;
+          }
+          
+          // Si la Edge Function no existe o hay un error de conexión
+          if (response.status === 404 || response.status === 500) {
+            console.log('⚠️ Edge Function no disponible, intentando crear empleado directamente...');
+            
+            // Intentar crear el empleado directamente sin crear usuario de auth
+            const { error: directError } = await supabase
+              .from('employees')
+              .insert({
+                company_owner_id: companyId,
+                full_name: data.full_name,
+                email: data.email,
+                phone: data.phone,
+                dni: data.dni,
+                position: data.position,
+                department: data.department,
+                hire_date: data.hire_date,
+                role: data.role,
+                status: 'active',
+                permissions: selectedPermissions.reduce((acc, perm) => ({ ...acc, [perm]: true }), {}),
+              });
+
+            if (directError) {
+              console.error('❌ Error directo al crear empleado:', directError);
+              throw new Error(`Error al crear empleado: ${directError.message || directError.code || 'Error desconocido'}`);
+            }
+
+            toast.success('Empleado creado exitosamente (sin cuenta de autenticación)');
+            setIsDialogOpen(false);
+            setEditingEmployee(null);
+            form.reset();
+            setSelectedPermissions([]);
+            fetchEmployees();
+            return;
+          }
+          
+          throw new Error(errorMessage || `Error del servidor (${response.status})`);
         }
 
         const result = await response.json();
@@ -689,9 +730,6 @@ export const EmployeesModule = () => {
   );
 
   const activeEmployees = employees.filter(e => e.status === 'active').length;
-  const totalSalary = employees
-    .filter(e => e.status === 'active' && e.salary)
-    .reduce((sum, e) => sum + (e.salary || 0), 0);
 
   // Group permissions by category and sort them in a logical order
   const categoryOrder = [
@@ -855,25 +893,6 @@ export const EmployeesModule = () => {
                         )}
                       />
 
-                      <FormField
-                        control={form.control}
-                        name="salary"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Salario</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                step="0.01"
-                                placeholder="0.00"
-                                {...field}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || undefined)}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
 
                       <FormField
                         control={form.control}
@@ -1040,17 +1059,6 @@ export const EmployeesModule = () => {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Nómina Total</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">${totalSalary.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">Salarios mensuales</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Diagnóstico</CardTitle>
             <Search className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
@@ -1169,12 +1177,6 @@ export const EmployeesModule = () => {
                           </div>
                         )}
                         
-                        {employee.salary && (
-                          <div className="flex items-center gap-2">
-                            <DollarSign className="h-4 w-4" />
-                            <span>${employee.salary.toLocaleString()}</span>
-                          </div>
-                        )}
                       </div>
                     </div>
 

@@ -911,6 +911,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               const paymentDate = `${year}-${month}-${day}`;
 
               // Registrar el pago en la tabla payments
+              // Usar user?.id del usuario actual, o loan_officer_id del préstamo, o companyId como último recurso
+              const createdBy = user?.id || (loan as any).loan_officer_id || companyId;
               const paymentData = {
                 loan_id: loan.id,
                 amount: Math.round(principalPayment + actualInterestPayment),
@@ -923,7 +925,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 reference_number: data.reference_number,
                 notes: data.notes || `Saldado - Capital: RD$${principalPayment.toLocaleString()}, Interés: RD$${actualInterestPayment.toLocaleString()}, Mora: RD$${actualLateFeePayment.toLocaleString()} - ${getAdjustmentReasonLabel(data.adjustment_reason)}`,
                 status: 'completed',
-                created_by: companyId,
+                created_by: createdBy,
               };
 
               const { data: insertedPayment, error: paymentError } = await supabase

@@ -135,12 +135,14 @@ const InventoryModule = () => {
   const [salesProductFilterName, setSalesProductFilterName] = useState<string>(''); // Nombre del producto para mostrar
   const [salesCategoryFilter, setSalesCategoryFilter] = useState<string>('');
   const [salesBrandFilter, setSalesBrandFilter] = useState<string>('');
+  const [salesEmployeeFilter, setSalesEmployeeFilter] = useState<string>(''); // ID del empleado para filtrar
   const [showSalesProductSuggestions, setShowSalesProductSuggestions] = useState(false);
   const [salesProductSuggestions, setSalesProductSuggestions] = useState<Product[]>([]);
   const [showSalesCategorySuggestions, setShowSalesCategorySuggestions] = useState(false);
   const [salesCategorySuggestions, setSalesCategorySuggestions] = useState<string[]>([]);
   const [showSalesBrandSuggestions, setShowSalesBrandSuggestions] = useState(false);
   const [salesBrandSuggestions, setSalesBrandSuggestions] = useState<string[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
   
   // Inicializar fechas por defecto al montar el componente
   useEffect(() => {
@@ -187,6 +189,51 @@ const InventoryModule = () => {
   const [editSaleNotes, setEditSaleNotes] = useState<string>('');
 
   const { user, companyId } = useAuth();
+
+  // Cargar empleados al montar el componente
+  useEffect(() => {
+    if (companyId) {
+      fetchEmployees();
+    }
+  }, [companyId]);
+
+  const fetchEmployees = async () => {
+    if (!companyId || !user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('employees')
+        .select('id, full_name, auth_user_id')
+        .eq('company_owner_id', companyId)
+        .eq('status', 'active')
+        .order('full_name', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching employees:', error);
+        return;
+      }
+
+      // Obtener información del dueño de la empresa
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', companyId)
+        .maybeSingle();
+
+      // Crear objeto para el dueño de la empresa
+      const ownerEmployee = {
+        id: companyId,
+        full_name: profileData?.full_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Dueño de Empresa',
+        auth_user_id: companyId,
+      };
+
+      // Combinar el dueño con los empleados, poniendo al dueño primero
+      const allEmployees = [ownerEmployee, ...(data || [])];
+      setEmployees(allEmployees);
+    } catch (error) {
+      console.error('Error in fetchEmployees:', error);
+    }
+  };
   
   const [formData, setFormData] = useState({
     name: '',
@@ -231,7 +278,7 @@ const InventoryModule = () => {
       fetchSales();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, salesDateFrom, salesDateTo, salesProductFilter, salesCategoryFilter, salesBrandFilter]);
+  }, [user, salesDateFrom, salesDateTo, salesProductFilter, salesCategoryFilter, salesBrandFilter, salesEmployeeFilter]);
 
   // Inicializar datos cuando se abre el modal de edición
   useEffect(() => {
@@ -685,13 +732,42 @@ const InventoryModule = () => {
   const fetchSales = async () => {
     try {
       setLoadingSales(true);
+      // Obtener todos los user_ids de empleados si hay filtro de empleado
+      let employeeUserIds: string[] = [];
+      if (salesEmployeeFilter) {
+        const selectedEmployee = employees.find(emp => emp.id === salesEmployeeFilter);
+        if (selectedEmployee?.auth_user_id) {
+          employeeUserIds = [selectedEmployee.auth_user_id];
+        }
+      }
+
       // Obtener todas las ventas - usar select('*') para obtener todas las columnas disponibles
       // No aplicar filtros de fecha aquí, los aplicaremos después manualmente para evitar errores
       let query = supabase
         .from('sales')
         .select('*')
-        .eq('user_id', user?.id)
         .order('created_at', { ascending: false });
+
+      // Si hay filtro de empleado, filtrar por user_id del empleado
+      if (salesEmployeeFilter && employeeUserIds.length > 0) {
+        query = query.in('user_id', employeeUserIds);
+      } else if (!salesEmployeeFilter && companyId) {
+        // Si no hay filtro de empleado, mostrar todas las ventas de la empresa
+        // Obtener todos los user_ids de empleados de la empresa + el dueño
+        const allEmployeeUserIds = employees
+          .map(emp => emp.auth_user_id)
+          .filter((id): id is string => !!id);
+        if (companyId) {
+          allEmployeeUserIds.push(companyId);
+        }
+        if (allEmployeeUserIds.length > 0) {
+          query = query.in('user_id', allEmployeeUserIds);
+        } else {
+          query = query.eq('user_id', user?.id);
+        }
+      } else {
+        query = query.eq('user_id', user?.id);
+      }
 
       const { data: salesData, error: salesError } = await query;
 
@@ -2659,7 +2735,7 @@ const InventoryModule = () => {
               <CardTitle>Filtros de Ventas</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
                 <div>
                   <Label>Fecha Desde</Label>
                   <Input
@@ -2800,6 +2876,25 @@ const InventoryModule = () => {
                     )}
                   </div>
                 </div>
+                <div>
+                  <Label>Empleado</Label>
+                  <Select
+                    value={salesEmployeeFilter || 'all'}
+                    onValueChange={(value) => setSalesEmployeeFilter(value === 'all' ? '' : value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos los empleados" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los empleados</SelectItem>
+                      {employees.map((employee) => (
+                        <SelectItem key={employee.id} value={employee.id}>
+                          {employee.full_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="flex items-end">
                   <Button 
                     variant="outline" 
@@ -2810,6 +2905,7 @@ const InventoryModule = () => {
                       setSalesProductFilterName('');
                       setSalesCategoryFilter('');
                       setSalesBrandFilter('');
+                      setSalesEmployeeFilter('');
                     }}
                     className="w-full"
                   >
