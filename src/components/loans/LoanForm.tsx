@@ -1401,7 +1401,9 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
           firstPaymentDate.setDate(startDateForCalculation.getDate() + 14);
           break;
         case 'monthly':
-          firstPaymentDate.setMonth(startDateForCalculation.getMonth() + 1);
+          // Preservar el día del mes al avanzar un mes
+          const originalDay = startDateForCalculation.getDate();
+          firstPaymentDate.setFullYear(startDateForCalculation.getFullYear(), startDateForCalculation.getMonth() + 1, originalDay);
           break;
         case 'quarterly':
           firstPaymentDate.setMonth(startDateForCalculation.getMonth() + 3);
@@ -1410,7 +1412,9 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
           firstPaymentDate.setFullYear(startDateForCalculation.getFullYear() + 1);
           break;
         default:
-          firstPaymentDate.setMonth(startDateForCalculation.getMonth() + 1);
+          // Preservar el día del mes al avanzar un mes
+          const originalDayDefault = startDateForCalculation.getDate();
+          firstPaymentDate.setFullYear(startDateForCalculation.getFullYear(), startDateForCalculation.getMonth() + 1, originalDayDefault);
       }
       
       // Formatear fechas correctamente para evitar problemas de zona horaria
