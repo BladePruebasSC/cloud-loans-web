@@ -1197,25 +1197,49 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
        totalAmount = totalPaid;
        monthlyPayment = interestPerPayment; // Cuota fija de intereses
        
-     } else if (amortization_type === 'indefinite') {
-       // Plazo indefinido - Solo intereses, sin fecha de vencimiento
-       const interestPerPayment = amount * periodRate;
-       const paymentDate = adjustDateForExcludedDays(createLocalDate(first_payment_date));
-       
-       // Para plazo indefinido, mostrar solo 1 período con "1/X"
-       const totalPaymentWithClosingCosts = interestPerPayment + (closing_costs || 0);
-       schedule.push({
-         payment: '1/X', // Mostrar 1/X para indicar que es indefinido
-         date: paymentDate.toISOString().split('T')[0],
-         interest: interestPerPayment,
-         principal: 0,
-         totalPayment: totalPaymentWithClosingCosts,
-         remainingBalance: amount
-       });
-       
-       totalAmount = amount + interestPerPayment;
-       monthlyPayment = interestPerPayment;
-     }
+    } else if (amortization_type === 'indefinite') {
+      // Plazo indefinido - Solo intereses, sin fecha de vencimiento
+      const interestPerPayment = amount * periodRate;
+      
+      // CORRECCIÓN: Calcular la primera fecha de pago correctamente
+      // Para préstamos indefinidos, la primera cuota debe ser un período después de la fecha de inicio
+      const startDate = createLocalDate(first_payment_date);
+      const firstPaymentDate = new Date(startDate);
+      
+      // Ajustar la primera fecha de cobro según la frecuencia
+      switch (payment_frequency) {
+        case 'daily':
+          firstPaymentDate.setDate(startDate.getDate() + 1);
+          break;
+        case 'weekly':
+          firstPaymentDate.setDate(startDate.getDate() + 7);
+          break;
+        case 'biweekly':
+          firstPaymentDate.setDate(startDate.getDate() + 14);
+          break;
+        case 'monthly':
+        default:
+          // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
+          firstPaymentDate.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
+          break;
+      }
+      
+      const paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+      
+      // Para plazo indefinido, mostrar solo 1 período con "1/X"
+      const totalPaymentWithClosingCosts = interestPerPayment + (closing_costs || 0);
+      schedule.push({
+        payment: '1/X', // Mostrar 1/X para indicar que es indefinido
+        date: paymentDate.toISOString().split('T')[0],
+        interest: interestPerPayment,
+        principal: 0,
+        totalPayment: totalPaymentWithClosingCosts,
+        remainingBalance: amount
+      });
+      
+      totalAmount = amount + interestPerPayment;
+      monthlyPayment = interestPerPayment;
+    }
 
     const totalInterest = totalAmount - amount;
     const usdAmount = amount / 58.5; // Conversión a USD
