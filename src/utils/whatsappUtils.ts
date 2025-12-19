@@ -73,8 +73,23 @@ export const sendReceiptViaWhatsApp = async (
   amount: number,
   fileName?: string
 ): Promise<void> => {
+  console.log('📱 sendReceiptViaWhatsApp iniciado', { phone, clientName, receiptType, amount });
+  
+  if (!phone) {
+    throw new Error('No se proporcionó un número de teléfono');
+  }
+  
+  // Formatear el teléfono (fuera del try para que esté disponible en el catch)
+  const formattedPhone = formatPhoneForWhatsApp(phone);
+  console.log('📱 Teléfono formateado:', { original: phone, formatted: formattedPhone });
+  
+  if (!formattedPhone) {
+    throw new Error('No se pudo formatear el número de teléfono');
+  }
+  
   try {
     // Importar jsPDF y html2canvas dinámicamente
+    console.log('📱 Importando jsPDF...');
     const { default: jsPDF } = await import('jspdf');
     
     // Crear un iframe temporal para renderizar el HTML
@@ -240,17 +255,27 @@ export const sendReceiptViaWhatsApp = async (
     
     // Generar mensaje y abrir WhatsApp
     const message = generateReceiptMessage(receiptType, clientName, amount);
+    console.log('📱 Mensaje generado:', message);
     
     // Esperar un momento para que el PDF se descargue antes de abrir WhatsApp
+    console.log('📱 Esperando 500ms antes de abrir WhatsApp...');
     setTimeout(() => {
-      openWhatsApp(phone, message);
+      console.log('📱 Abriendo WhatsApp con:', { phone: formattedPhone, message });
+      openWhatsApp(formattedPhone, message);
+      console.log('✅ WhatsApp abierto');
     }, 500);
     
-  } catch (error) {
-    console.error('Error generando PDF o abriendo WhatsApp:', error);
+  } catch (error: any) {
+    console.error('❌ Error generando PDF o abriendo WhatsApp:', error);
     // Si falla la generación del PDF, al menos intentar abrir WhatsApp
-    const message = generateReceiptMessage(receiptType, clientName, amount);
-    openWhatsApp(phone, message);
+    try {
+      const message = generateReceiptMessage(receiptType, clientName, amount);
+      console.log('📱 Intentando abrir WhatsApp sin PDF...', { phone: formattedPhone });
+      openWhatsApp(formattedPhone, message);
+    } catch (fallbackError) {
+      console.error('❌ Error al abrir WhatsApp como fallback:', fallbackError);
+      throw error; // Re-lanzar el error original
+    }
   }
 };
 

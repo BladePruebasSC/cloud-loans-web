@@ -1240,6 +1240,26 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Generar recibo y enviar por WhatsApp si el cliente tiene teléfono
       if (selectedLoan.client?.phone && insertedPayment && insertedPayment[0]) {
         try {
+          console.log('📱 Iniciando envío de recibo por WhatsApp...');
+          console.log('📱 Cliente teléfono:', selectedLoan.client.phone);
+          console.log('📱 CompanySettings disponible:', !!companySettings);
+          
+          // Asegurar que tenemos companySettings
+          let settings = companySettings;
+          if (!settings && companyId) {
+            console.log('📱 Obteniendo companySettings...');
+            const { data: settingsData, error: settingsError } = await supabase
+              .from('company_settings')
+              .select('*')
+              .eq('user_id', companyId)
+              .single();
+            
+            if (!settingsError && settingsData) {
+              settings = settingsData;
+              setCompanySettings(settingsData);
+            }
+          }
+          
           // Obtener datos completos del préstamo para el recibo
           const { data: fullLoanData, error: loanDataError } = await supabase
             .from('loans')
@@ -1255,29 +1275,61 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             .eq('id', data.loan_id)
             .single();
           
-          if (!loanDataError && fullLoanData) {
-            const payment = insertedPayment[0];
-            const client = fullLoanData.clients as any;
-            
-            // Generar recibo HTML
-            const receiptHTML = generateReceiptHTML(fullLoanData, payment, companySettings);
-            
-            // Calcular monto total del pago (cuota + mora)
-            const totalPaymentAmount = payment.amount + (payment.late_fee || 0);
-            
-            // Enviar por WhatsApp
-            await sendReceiptViaWhatsApp(
-              client.phone || selectedLoan.client.phone || '',
-              client.full_name || selectedLoan.client.full_name,
-              receiptHTML,
-              'loan',
-              totalPaymentAmount,
-              `recibo_pago_${client.full_name?.replace(/\s+/g, '_')}_${new Date(payment.payment_date).toISOString().split('T')[0]}.pdf`
-            );
+          if (loanDataError) {
+            console.error('❌ Error obteniendo datos del préstamo:', loanDataError);
+            throw loanDataError;
           }
-        } catch (whatsappError) {
-          console.error('Error enviando recibo por WhatsApp:', whatsappError);
-          // No mostrar error al usuario, solo loguear
+          
+          if (!fullLoanData) {
+            console.error('❌ No se encontraron datos del préstamo');
+            throw new Error('No se encontraron datos del préstamo');
+          }
+          
+          const payment = insertedPayment[0];
+          const client = fullLoanData.clients as any;
+          const clientPhone = client?.phone || selectedLoan.client?.phone || '';
+          
+          if (!clientPhone) {
+            console.warn('⚠️ No se encontró número de teléfono del cliente');
+            toast.warn('No se encontró número de teléfono del cliente para enviar el recibo por WhatsApp.');
+            return;
+          }
+          
+          console.log('📱 Generando recibo HTML...');
+          // Generar recibo HTML
+          const receiptHTML = generateReceiptHTML(fullLoanData, payment, settings);
+          
+          // Calcular monto total del pago (cuota + mora)
+          const totalPaymentAmount = payment.amount + (payment.late_fee || 0);
+          
+          console.log('📱 Enviando por WhatsApp...', {
+            phone: clientPhone,
+            clientName: client?.full_name || selectedLoan.client.full_name,
+            amount: totalPaymentAmount
+          });
+          
+          // Enviar por WhatsApp
+          await sendReceiptViaWhatsApp(
+            clientPhone,
+            client?.full_name || selectedLoan.client.full_name,
+            receiptHTML,
+            'loan',
+            totalPaymentAmount,
+            `recibo_pago_${(client?.full_name || selectedLoan.client.full_name).replace(/\s+/g, '_')}_${new Date(payment.payment_date).toISOString().split('T')[0]}.pdf`
+          );
+          
+          console.log('✅ Recibo enviado por WhatsApp exitosamente');
+          toast.success('Recibo enviado por WhatsApp');
+        } catch (whatsappError: any) {
+          console.error('❌ Error enviando recibo por WhatsApp:', whatsappError);
+          toast.error(`Error al enviar recibo por WhatsApp: ${whatsappError?.message || 'Error desconocido'}`);
+        }
+      } else {
+        if (!selectedLoan.client?.phone) {
+          console.log('⚠️ Cliente no tiene teléfono registrado');
+        }
+        if (!insertedPayment || !insertedPayment[0]) {
+          console.log('⚠️ No se insertó el pago correctamente');
         }
       }
       
