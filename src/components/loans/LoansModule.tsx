@@ -81,6 +81,7 @@ export const LoansModule = () => {
   const [statementStatusFilter, setStatementStatusFilter] = useState('all');
   const [statementAmountFilter, setStatementAmountFilter] = useState('all');
   const [dynamicLateFees, setDynamicLateFees] = useState<{[key: string]: number}>({});
+  const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<{[key: string]: number}>({});
   const [loanAgreements, setLoanAgreements] = useState<{[key: string]: any[]}>({});
   
      // Estados para filtros y búsqueda
@@ -131,6 +132,49 @@ export const LoansModule = () => {
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
+
+  // Función para calcular el interés pendiente total para préstamos indefinidos
+  const calculatePendingInterestForIndefinite = async (loan: any): Promise<number> => {
+    try {
+      // Solo para préstamos indefinidos
+      if (loan.amortization_type !== 'indefinite') {
+        return 0;
+      }
+
+      // Obtener las cuotas del préstamo
+      const { data: installments, error } = await supabase
+        .from('installments')
+        .select('*')
+        .eq('loan_id', loan.id)
+        .order('installment_number', { ascending: true });
+
+      if (error || !installments) {
+        console.error('Error obteniendo cuotas para calcular interés pendiente:', error);
+        return 0;
+      }
+
+      // Calcular interés por cuota para préstamos indefinidos
+      const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+      
+      // Contar cuotas no pagadas
+      const unpaidInstallments = installments.filter((inst: any) => !inst.is_paid);
+      
+      // Calcular interés pendiente total
+      const totalPendingInterest = unpaidInstallments.length * interestPerPayment;
+      
+      console.log('🔍 calculatePendingInterestForIndefinite:', {
+        loanId: loan.id,
+        interestPerPayment,
+        unpaidCount: unpaidInstallments.length,
+        totalPendingInterest
+      });
+      
+      return totalPendingInterest;
+    } catch (error) {
+      console.error('Error calculando interés pendiente para préstamo indefinido:', error);
+      return 0;
+    }
+  };
 
   // Función para calcular la mora actual de un préstamo
   const calculateCurrentLateFee = async (loan: any) => {
@@ -222,6 +266,20 @@ export const LoansModule = () => {
     setDynamicLateFees(newLateFees);
   };
 
+  // Función para actualizar el interés pendiente para préstamos indefinidos
+  const updatePendingInterestForIndefinite = async () => {
+    const newPendingInterest: {[key: string]: number} = {};
+    
+    for (const loan of loans) {
+      if (loan.amortization_type === 'indefinite') {
+        const pendingInterest = await calculatePendingInterestForIndefinite(loan);
+        newPendingInterest[loan.id] = pendingInterest;
+      }
+    }
+    
+    setPendingInterestForIndefinite(newPendingInterest);
+  };
+
   // Función para cargar acuerdos de pago activos
   const fetchLoanAgreements = async () => {
     try {
@@ -284,10 +342,11 @@ export const LoansModule = () => {
     });
   };
 
-  // Actualizar moras dinámicas cuando cambien los préstamos
+  // Actualizar moras dinámicas y interés pendiente cuando cambien los préstamos
   useEffect(() => {
     if (loans && loans.length > 0) {
       updateDynamicLateFees();
+      updatePendingInterestForIndefinite();
       fetchLoanAgreements();
     }
   }, [loans]);
@@ -1091,19 +1150,36 @@ export const LoansModule = () => {
                           
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
-                              ${formatCurrencyNumber(loan.remaining_balance)}
+                              ${formatCurrencyNumber(
+                                loan.amortization_type === 'indefinite' 
+                                  ? loan.remaining_balance + (pendingInterestForIndefinite[loan.id] || 0)
+                                  : loan.remaining_balance
+                              )}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
+                            {loan.amortization_type === 'indefinite' && (pendingInterestForIndefinite[loan.id] || 0) > 0 && (
+                              <div className="text-xs text-red-500 mt-1">
+                                Balance + Interés Pendiente
+                              </div>
+                            )}
                           </div>
 
                           <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl border border-purple-100">
                             <div className="text-2xl font-bold text-purple-700 mb-1">
-                              ${formatCurrencyNumber(loan.status === 'paid' ? 0 : (loan.remaining_balance + (dynamicLateFees[loan.id] || loan.current_late_fee || 0)))}
+                              ${formatCurrencyNumber(
+                                loan.status === 'paid' 
+                                  ? 0 
+                                  : (loan.remaining_balance + 
+                                     (loan.amortization_type === 'indefinite' ? (pendingInterestForIndefinite[loan.id] || 0) : 0) +
+                                     (dynamicLateFees[loan.id] || loan.current_late_fee || 0))
+                              )}
                             </div>
                             <div className="text-sm text-purple-600 font-medium">Balance Total Pendiente</div>
                             {loan.status !== 'paid' && (
                               <div className="text-xs text-purple-500 mt-1">
-                                Balance + Mora Actual
+                                {loan.amortization_type === 'indefinite' 
+                                  ? 'Balance + Interés + Mora'
+                                  : 'Balance + Mora Actual'}
                               </div>
                             )}
                           </div>
