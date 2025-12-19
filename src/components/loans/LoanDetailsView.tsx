@@ -99,6 +99,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const { user, companyId } = useAuth();
+  const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
 
   useEffect(() => {
     if (isOpen && loanId) {
@@ -110,6 +111,103 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       fetchDocuments();
     }
   }, [isOpen, loanId]);
+
+  // Calcular interés pendiente para préstamos indefinidos
+  useEffect(() => {
+    if (loan && loan.amortization_type === 'indefinite' && installments.length >= 0) {
+      calculatePendingInterestForIndefinite();
+    } else {
+      setPendingInterestForIndefinite(0);
+    }
+  }, [loan, installments, payments]);
+
+  // Función para calcular el interés pendiente total para préstamos indefinidos
+  const calculatePendingInterestForIndefinite = async () => {
+    if (!loan || loan.amortization_type !== 'indefinite') {
+      setPendingInterestForIndefinite(0);
+      return;
+    }
+
+    try {
+      if (!loan.start_date) {
+        console.warn('🔍 calculatePendingInterestForIndefinite: Falta start_date, no se puede calcular');
+        setPendingInterestForIndefinite(0);
+        return;
+      }
+
+      // Calcular interés por cuota para préstamos indefinidos
+      const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+
+      // SIEMPRE calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
+      const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+      const startDate = new Date(startYear, startMonth - 1, startDay);
+      const currentDate = getCurrentDateInSantoDomingo();
+
+      // Calcular meses transcurridos desde el inicio
+      const monthsElapsed = Math.max(0, 
+        (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+        (currentDate.getMonth() - startDate.getMonth())
+      );
+
+      // Total de cuotas que deberían existir desde el inicio hasta hoy
+      const totalExpectedInstallments = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
+
+      console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Cálculo dinámico', {
+        loanId: loan.id,
+        startDate: loan.start_date,
+        currentDate: currentDate.toISOString().split('T')[0],
+        monthsElapsed,
+        totalExpectedInstallments
+      });
+
+      // Calcular cuántas cuotas se han pagado
+      let paidCount = 0;
+
+      // Primero, intentar contar desde las cuotas en la BD
+      if (installments && installments.length > 0) {
+        paidCount = installments.filter((inst: any) => inst.is_paid).length;
+        console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Cuotas pagadas desde BD', {
+          totalInBD: installments.length,
+          paidInBD: paidCount
+        });
+      }
+
+      // También verificar pagos para calcular cuántas cuotas de interés se han pagado
+      if (payments && payments.length > 0) {
+        const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+        const paidFromPayments = Math.floor(totalInterestPaid / interestPerPayment);
+
+        // Usar el mayor entre las cuotas pagadas en BD y las calculadas desde pagos
+        paidCount = Math.max(paidCount, paidFromPayments);
+
+        console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Cuotas pagadas desde pagos', {
+          totalInterestPaid,
+          paidFromPayments,
+          finalPaidCount: paidCount
+        });
+      }
+
+      // Cuotas pendientes = total esperadas - pagadas
+      const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
+
+      // Calcular interés pendiente total
+      const totalPendingInterest = unpaidCount * interestPerPayment;
+
+      console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Resumen final', {
+        loanId: loan.id,
+        totalExpectedInstallments,
+        paidCount,
+        unpaidCount,
+        interestPerPayment,
+        totalPendingInterest
+      });
+
+      setPendingInterestForIndefinite(totalPendingInterest);
+    } catch (error) {
+      console.error('❌ Error calculando interés pendiente para préstamo indefinido en LoanDetailsView:', error);
+      setPendingInterestForIndefinite(0);
+    }
+  };
 
   const fetchLoanDetails = async () => {
     try {
@@ -413,15 +511,30 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const totalLateFeePaid = payments.reduce((sum, p) => sum + (p.late_fee || 0), 0);
   const capitalPending = loan.amount - totalPaid;
   
-  // Calcular interés pendiente basado en cuotas no pagadas
-  const interestPendingFromInstallments = installments
-    .filter(inst => !inst.is_paid)
-    .reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+  // Calcular interés pendiente
+  // Para préstamos indefinidos, usar el cálculo dinámico
+  // Para otros tipos, usar el cálculo basado en cuotas
+  let interestPending = 0;
+  if (loan.amortization_type === 'indefinite') {
+    interestPending = pendingInterestForIndefinite;
+  } else {
+    // Calcular interés pendiente basado en cuotas no pagadas
+    const interestPendingFromInstallments = installments
+      .filter(inst => !inst.is_paid)
+      .reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+    
+    // Usar el cálculo de cuotas si está disponible, sino usar el cálculo estimado
+    interestPending = interestPendingFromInstallments > 0 
+      ? interestPendingFromInstallments 
+      : (loan.amount * loan.interest_rate / 100 * loan.term_months) - totalInterestPaid;
+  }
   
-  // Usar el cálculo de cuotas si está disponible, sino usar el cálculo estimado
-  const interestPending = interestPendingFromInstallments > 0 
-    ? interestPendingFromInstallments 
-    : (loan.amount * loan.interest_rate / 100 * loan.term_months) - totalInterestPaid;
+  // Calcular balance restante
+  // Para préstamos indefinidos: amount + interés pendiente total
+  // Para otros tipos: remaining_balance de la BD
+  const remainingBalance = loan.amortization_type === 'indefinite'
+    ? loan.amount + pendingInterestForIndefinite
+    : loan.remaining_balance;
   
   // Si el préstamo está saldado, la mora debe ser 0
   const isLoanSettled = loan.status === 'paid';
@@ -481,7 +594,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   
   const totalPending = capitalPending + interestPending + effectiveLateFee;
   const amountToPay = loan.monthly_payment + effectiveLateFee;
-  const toSettle = loan.remaining_balance + effectiveLateFee;
+  const toSettle = remainingBalance + effectiveLateFee;
 
   // Calcular porcentaje pagado
   const paidPercentage = loan.amount > 0 ? (totalPaid / loan.amount) * 100 : 0;
@@ -574,7 +687,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       </div>
                       <div>
                         <span className="text-gray-600">Balance restante:</span>
-                        <div className="font-semibold text-orange-600">RD {loan.remaining_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        <div className="font-semibold text-orange-600">RD {remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div>
                         <span className="text-gray-600">Estado:</span>
@@ -624,7 +737,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       <div>
                         <span className="text-gray-600">Próxima cuota:</span>
                         <div className="font-semibold">
-                          {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
+                          {(loan.status === 'paid' || remainingBalance === 0 || !loan.next_payment_date) 
                             ? 'N/A' 
                             : formatDateStringForSantoDomingo(loan.next_payment_date)}
                         </div>
@@ -1056,7 +1169,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
               preselectedLoan={{
                 id: loan.id,
                 amount: loan.amount,
-                remaining_balance: loan.remaining_balance,
+                remaining_balance: remainingBalance,
                 monthly_payment: selectedAgreement.agreed_amount || selectedAgreement.agreed_payment_amount || loan.monthly_payment,
                 interest_rate: loan.interest_rate,
                 term_months: loan.term_months,
