@@ -159,81 +159,73 @@ export const LoansModule = () => {
       // Calcular interés por cuota para préstamos indefinidos
       const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
       
-      let unpaidCount = 0;
+      if (!loan.start_date) {
+        console.warn('🔍 calculatePendingInterestForIndefinite: Falta start_date, no se puede calcular');
+        return 0;
+      }
       
-      if (error || !installments || installments.length === 0) {
-        // Si no hay cuotas en la BD, calcular dinámicamente basándose en las fechas
-        console.log('🔍 calculatePendingInterestForIndefinite: No hay cuotas en BD, calculando dinámicamente');
-        
-        if (!loan.start_date || !loan.next_payment_date) {
-          console.warn('🔍 calculatePendingInterestForIndefinite: Faltan fechas, no se puede calcular');
-          return 0;
-        }
-        
-        // Calcular cuántas cuotas deberían existir desde start_date hasta hoy
-        const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
-        const startDate = new Date(startYear, startMonth - 1, startDay);
-        const currentDate = getCurrentDateInSantoDomingo();
-        
-        // Calcular meses transcurridos desde el inicio
-        const monthsElapsed = Math.max(0, 
-          (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
-          (currentDate.getMonth() - startDate.getMonth())
-        );
-        
-        // Para préstamos indefinidos, todas las cuotas desde el inicio hasta hoy están pendientes
-        // (a menos que se hayan pagado)
-        unpaidCount = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
-        
-        console.log('🔍 calculatePendingInterestForIndefinite: Cálculo dinámico', {
-          startDate: loan.start_date,
-          currentDate: currentDate.toISOString().split('T')[0],
-          monthsElapsed,
-          unpaidCount
-        });
-      } else {
-        // Contar cuotas no pagadas de la BD
-        unpaidCount = installments.filter((inst: any) => !inst.is_paid).length;
-        console.log('🔍 calculatePendingInterestForIndefinite: Usando cuotas de BD', {
-          totalInstallments: installments.length,
-          unpaidCount
+      // SIEMPRE calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
+      const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+      const startDate = new Date(startYear, startMonth - 1, startDay);
+      const currentDate = getCurrentDateInSantoDomingo();
+      
+      // Calcular meses transcurridos desde el inicio
+      const monthsElapsed = Math.max(0, 
+        (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+        (currentDate.getMonth() - startDate.getMonth())
+      );
+      
+      // Total de cuotas que deberían existir desde el inicio hasta hoy
+      const totalExpectedInstallments = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
+      
+      console.log('🔍 calculatePendingInterestForIndefinite: Cálculo dinámico de cuotas esperadas', {
+        startDate: loan.start_date,
+        currentDate: currentDate.toISOString().split('T')[0],
+        monthsElapsed,
+        totalExpectedInstallments
+      });
+      
+      // Calcular cuántas cuotas se han pagado
+      let paidCount = 0;
+      
+      // Primero, intentar contar desde las cuotas en la BD
+      if (installments && installments.length > 0) {
+        paidCount = installments.filter((inst: any) => inst.is_paid).length;
+        console.log('🔍 calculatePendingInterestForIndefinite: Cuotas pagadas desde BD', {
+          totalInBD: installments.length,
+          paidInBD: paidCount
         });
       }
       
-      // Si no hay cuotas en BD, también verificar pagos para calcular cuántas cuotas se han pagado
-      if ((!installments || installments.length === 0) && loan.start_date) {
-        // Obtener pagos para verificar cuántas cuotas de interés se han pagado
-        const { data: payments } = await supabase
-          .from('payments')
-          .select('interest_amount')
-          .eq('loan_id', loan.id);
+      // También verificar pagos para calcular cuántas cuotas de interés se han pagado
+      const { data: payments } = await supabase
+        .from('payments')
+        .select('interest_amount')
+        .eq('loan_id', loan.id);
+      
+      if (payments && payments.length > 0) {
+        // Calcular cuántas cuotas de interés se han pagado
+        const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+        const paidFromPayments = Math.floor(totalInterestPaid / interestPerPayment);
         
-        if (payments && payments.length > 0) {
-          // Calcular cuántas cuotas de interés se han pagado
-          const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
-          const paidInstallmentsCount = Math.floor(totalInterestPaid / interestPerPayment);
-          
-          // Calcular total de cuotas desde el inicio
-          const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
-          const startDate = new Date(startYear, startMonth - 1, startDay);
-          const currentDate = getCurrentDateInSantoDomingo();
-          const monthsElapsed = Math.max(0, 
-            (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
-            (currentDate.getMonth() - startDate.getMonth())
-          );
-          const totalInstallments = Math.max(1, monthsElapsed + 1);
-          
-          // Cuotas pendientes = total - pagadas
-          unpaidCount = Math.max(0, totalInstallments - paidInstallmentsCount);
-          
-          console.log('🔍 calculatePendingInterestForIndefinite: Ajustado con pagos', {
-            totalInterestPaid,
-            paidInstallmentsCount,
-            totalInstallments,
-            unpaidCount
-          });
-        }
+        // Usar el mayor entre las cuotas pagadas en BD y las calculadas desde pagos
+        paidCount = Math.max(paidCount, paidFromPayments);
+        
+        console.log('🔍 calculatePendingInterestForIndefinite: Cuotas pagadas desde pagos', {
+          totalInterestPaid,
+          paidFromPayments,
+          finalPaidCount: paidCount
+        });
       }
+      
+      // Cuotas pendientes = total esperadas - pagadas
+      const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
+      
+      console.log('🔍 calculatePendingInterestForIndefinite: Resumen final', {
+        totalExpectedInstallments,
+        paidCount,
+        unpaidCount
+      });
       
       // Calcular interés pendiente total
       const totalPendingInterest = unpaidCount * interestPerPayment;
