@@ -1238,10 +1238,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       toast.success(successMessage);
       
       // Generar recibo y enviar por WhatsApp si el cliente tiene teléfono
-      if (selectedLoan.client?.phone && insertedPayment && insertedPayment[0]) {
+      if (insertedPayment && insertedPayment[0]) {
         try {
           console.log('📱 Iniciando envío de recibo por WhatsApp...');
-          console.log('📱 Cliente teléfono:', selectedLoan.client.phone);
           console.log('📱 CompanySettings disponible:', !!companySettings);
           
           // Asegurar que tenemos companySettings
@@ -1260,7 +1259,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             }
           }
           
-          // Obtener datos completos del préstamo para el recibo
+          // Obtener datos completos del préstamo para el recibo (incluyendo teléfono del cliente)
           const { data: fullLoanData, error: loanDataError } = await supabase
             .from('loans')
             .select(`
@@ -1287,7 +1286,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           
           const payment = insertedPayment[0];
           const client = fullLoanData.clients as any;
+          // Obtener el teléfono del cliente desde los datos completos del préstamo
           const clientPhone = client?.phone || selectedLoan.client?.phone || '';
+          
+          console.log('📱 Teléfono del cliente obtenido:', {
+            fromDB: client?.phone,
+            fromSelectedLoan: selectedLoan.client?.phone,
+            final: clientPhone
+          });
           
           if (!clientPhone) {
             console.warn('⚠️ No se encontró número de teléfono del cliente');
@@ -1325,9 +1331,6 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           toast.error(`Error al enviar recibo por WhatsApp: ${whatsappError?.message || 'Error desconocido'}`);
         }
       } else {
-        if (!selectedLoan.client?.phone) {
-          console.log('⚠️ Cliente no tiene teléfono registrado');
-        }
         if (!insertedPayment || !insertedPayment[0]) {
           console.log('⚠️ No se insertó el pago correctamente');
         }
