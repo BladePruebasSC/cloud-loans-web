@@ -20,6 +20,316 @@ import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDo
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 
+// Función para generar el HTML de un documento
+const generateDocumentHTML = (docType: string, loanData: any, formData: any, companySettings: any): string => {
+  const client = loanData.clients as any;
+  const today = new Date();
+  const formattedDate = today.toLocaleDateString('es-DO', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('es-DO', {
+      style: 'currency',
+      currency: 'DOP',
+      minimumFractionDigits: 2
+    }).format(amount);
+  };
+  
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return 'N/A';
+    try {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const date = new Date(year, month - 1, day);
+      return date.toLocaleDateString('es-DO', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+  
+  switch (docType) {
+    case 'pagare_notarial':
+      return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pagaré Notarial</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
+    .header { text-align: center; margin-bottom: 30px; }
+    .content { max-width: 800px; margin: 0 auto; }
+    .section { margin-bottom: 20px; }
+    .signature-section { margin-top: 60px; display: flex; justify-content: space-between; }
+    .signature-box { width: 45%; text-align: center; border-top: 1px solid #000; padding-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <div class="header">
+      <h1>PAGARÉ NOTARIAL</h1>
+    </div>
+    <div class="section">
+      <p>Por medio del presente documento, yo <strong>${client?.full_name || 'N/A'}</strong>, 
+      con cédula de identidad No. <strong>${client?.dni || 'N/A'}</strong>, 
+      me comprometo a pagar incondicionalmente a la orden de <strong>${companySettings?.company_name || 'LA EMPRESA'}</strong>, 
+      la cantidad de <strong>${formatCurrency(loanData.amount)}</strong> (${loanData.amount.toLocaleString('es-DO')} pesos dominicanos).</p>
+    </div>
+    <div class="section">
+      <p><strong>Condiciones del préstamo:</strong></p>
+      <ul>
+        <li>Monto del préstamo: ${formatCurrency(loanData.amount)}</li>
+        <li>Tasa de interés: ${loanData.interest_rate}% mensual</li>
+        <li>Plazo: ${loanData.term_months} meses</li>
+        <li>Cuota mensual: ${formatCurrency(loanData.monthly_payment)}</li>
+        <li>Fecha de inicio: ${formatDate(loanData.start_date)}</li>
+        <li>Primera fecha de pago: ${formatDate(loanData.first_payment_date)}</li>
+      </ul>
+    </div>
+    <div class="section">
+      <p>El pago se realizará en ${loanData.term_months} cuotas mensuales de ${formatCurrency(loanData.monthly_payment)} cada una, 
+      comenzando el ${formatDate(loanData.first_payment_date)}.</p>
+    </div>
+    <div class="section">
+      <p>En caso de mora, se aplicará una tasa de mora del ${loanData.late_fee_rate || 0}% ${loanData.late_fee_calculation_type === 'daily' ? 'diario' : 'mensual'}.</p>
+    </div>
+    <div class="signature-section">
+      <div class="signature-box">
+        <p>Firma del Deudor</p>
+        <p>${client?.full_name || 'N/A'}</p>
+        <p>Cédula: ${client?.dni || 'N/A'}</p>
+      </div>
+      <div class="signature-box">
+        <p>Fecha: ${formattedDate}</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+    
+    case 'tabla_amortizacion':
+      // Obtener tabla de amortización (simplificada)
+      const installments = [];
+      let balance = loanData.amount;
+      const monthlyInterest = loanData.amount * (loanData.interest_rate / 100);
+      const monthlyPrincipal = loanData.monthly_payment - monthlyInterest;
+      
+      for (let i = 1; i <= loanData.term_months; i++) {
+        const interest = monthlyInterest;
+        const principal = monthlyPrincipal;
+        balance -= principal;
+        installments.push({ i, interest, principal, balance: Math.max(0, balance) });
+      }
+      
+      return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tabla de Amortización</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 40px; }
+    .header { text-align: center; margin-bottom: 30px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+    th { background-color: #3b82f6; color: white; }
+    .info-section { margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>TABLA DE AMORTIZACIÓN</h1>
+  </div>
+  <div class="info-section">
+    <p><strong>Cliente:</strong> ${client?.full_name || 'N/A'}</p>
+    <p><strong>Cédula:</strong> ${client?.dni || 'N/A'}</p>
+    <p><strong>Monto del préstamo:</strong> ${formatCurrency(loanData.amount)}</p>
+    <p><strong>Tasa de interés:</strong> ${loanData.interest_rate}% mensual</p>
+    <p><strong>Plazo:</strong> ${loanData.term_months} meses</p>
+    <p><strong>Cuota mensual:</strong> ${formatCurrency(loanData.monthly_payment)}</p>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Cuota</th>
+        <th>Interés</th>
+        <th>Capital</th>
+        <th>Total</th>
+        <th>Saldo Pendiente</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${installments.map(inst => `
+        <tr>
+          <td>${inst.i}</td>
+          <td>${formatCurrency(inst.interest)}</td>
+          <td>${formatCurrency(inst.principal)}</td>
+          <td>${formatCurrency(loanData.monthly_payment)}</td>
+          <td>${formatCurrency(inst.balance)}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  <div style="margin-top: 20px; text-align: right;">
+    <p><strong>Total a pagar:</strong> ${formatCurrency(loanData.total_amount)}</p>
+    <p><strong>Total de intereses:</strong> ${formatCurrency(loanData.total_amount - loanData.amount)}</p>
+  </div>
+</body>
+</html>`;
+    
+    case 'contrato_bluetooth':
+      return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contrato Impresora Bluetooth</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
+    .header { text-align: center; margin-bottom: 30px; }
+    .content { max-width: 800px; margin: 0 auto; }
+    .section { margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <div class="header">
+      <h1>CONTRATO IMPRESORA BLUETOOTH</h1>
+    </div>
+    <div class="section">
+      <p><strong>CONTRATANTE:</strong> ${client?.full_name || 'N/A'}, Cédula: ${client?.dni || 'N/A'}</p>
+      <p><strong>CONTRATADO:</strong> ${companySettings?.company_name || 'LA EMPRESA'}</p>
+    </div>
+    <div class="section">
+      <p>Por medio del presente contrato, las partes acuerdan lo siguiente:</p>
+      <ol>
+        <li>El contratante se compromete a pagar la cantidad de ${formatCurrency(loanData.amount)} en ${loanData.term_months} cuotas mensuales.</li>
+        <li>La tasa de interés aplicable es del ${loanData.interest_rate}% mensual.</li>
+        <li>El pago se realizará mediante impresora Bluetooth según los términos acordados.</li>
+        <li>En caso de incumplimiento, se aplicarán las penalizaciones establecidas.</li>
+      </ol>
+    </div>
+    <div class="section">
+      <p>Fecha: ${formattedDate}</p>
+    </div>
+  </div>
+</body>
+</html>`;
+    
+    case 'pagare_codeudor':
+      return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pagaré Notarial con Codeudor</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
+    .header { text-align: center; margin-bottom: 30px; }
+    .content { max-width: 800px; margin: 0 auto; }
+    .section { margin-bottom: 20px; }
+    .signature-section { margin-top: 60px; display: flex; justify-content: space-between; }
+    .signature-box { width: 45%; text-align: center; border-top: 1px solid #000; padding-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <div class="header">
+      <h1>PAGARÉ NOTARIAL CON CODEUDOR</h1>
+    </div>
+    <div class="section">
+      <p>Por medio del presente documento, yo <strong>${client?.full_name || 'N/A'}</strong>, 
+      con cédula de identidad No. <strong>${client?.dni || 'N/A'}</strong>, 
+      como deudor principal, y <strong>${formData.guarantor_name || 'N/A'}</strong>, 
+      con cédula de identidad No. <strong>${formData.guarantor_dni || 'N/A'}</strong>, 
+      como codeudor, nos comprometemos solidariamente a pagar a la orden de 
+      <strong>${companySettings?.company_name || 'LA EMPRESA'}</strong>, 
+      la cantidad de <strong>${formatCurrency(loanData.amount)}</strong>.</p>
+    </div>
+    <div class="section">
+      <p><strong>Condiciones del préstamo:</strong></p>
+      <ul>
+        <li>Monto del préstamo: ${formatCurrency(loanData.amount)}</li>
+        <li>Tasa de interés: ${loanData.interest_rate}% mensual</li>
+        <li>Plazo: ${loanData.term_months} meses</li>
+        <li>Cuota mensual: ${formatCurrency(loanData.monthly_payment)}</li>
+      </ul>
+    </div>
+    <div class="signature-section">
+      <div class="signature-box">
+        <p>Firma del Deudor Principal</p>
+        <p>${client?.full_name || 'N/A'}</p>
+        <p>Cédula: ${client?.dni || 'N/A'}</p>
+      </div>
+      <div class="signature-box">
+        <p>Firma del Codeudor</p>
+        <p>${formData.guarantor_name || 'N/A'}</p>
+        <p>Cédula: ${formData.guarantor_dni || 'N/A'}</p>
+      </div>
+    </div>
+    <div style="margin-top: 40px; text-align: center;">
+      <p>Fecha: ${formattedDate}</p>
+    </div>
+  </div>
+</body>
+</html>`;
+    
+    case 'contrato_salarial':
+      return `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contrato Salarial</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
+    .header { text-align: center; margin-bottom: 30px; }
+    .content { max-width: 800px; margin: 0 auto; }
+    .section { margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <div class="header">
+      <h1>CONTRATO SALARIAL</h1>
+    </div>
+    <div class="section">
+      <p><strong>TRABAJADOR:</strong> ${client?.full_name || 'N/A'}, Cédula: ${client?.dni || 'N/A'}</p>
+      <p><strong>EMPRESA:</strong> ${companySettings?.company_name || 'LA EMPRESA'}</p>
+    </div>
+    <div class="section">
+      <p>Por medio del presente contrato salarial, se establece el siguiente acuerdo de préstamo:</p>
+      <ul>
+        <li>Monto del préstamo: ${formatCurrency(loanData.amount)}</li>
+        <li>Tasa de interés: ${loanData.interest_rate}% mensual</li>
+        <li>Plazo: ${loanData.term_months} meses</li>
+        <li>Cuota mensual: ${formatCurrency(loanData.monthly_payment)}</li>
+        <li>El pago se realizará mediante descuento salarial según lo acordado.</li>
+      </ul>
+    </div>
+    <div class="section">
+      <p>Fecha: ${formattedDate}</p>
+    </div>
+  </div>
+</body>
+</html>`;
+    
+    default:
+      return `<html><body><h1>Documento: ${docType}</h1><p>Contenido no disponible</p></body></html>`;
+  }
+};
+
 // Función para generar las cuotas originales del préstamo
 const generateOriginalInstallments = async (loan: any, formData: LoanFormData) => {
   try {
@@ -2836,24 +3146,118 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
               Cancelar
             </Button>
             <Button
-              onClick={() => {
+              onClick={async () => {
                 if (selectedDocuments.length === 0) {
                   toast.error('Debe seleccionar al menos un documento');
                   return;
                 }
                 
-                // Aquí se generarían los documentos
-                // Por ahora solo mostramos un mensaje
-                toast.success(`${selectedDocuments.length} documento(s) seleccionado(s) para generar`);
-                console.log('Documentos a generar:', selectedDocuments);
-                console.log('ID del préstamo:', createdLoanId);
+                if (!createdLoanId || !user || !companyId) {
+                  toast.error('Error: No se encontró información del préstamo');
+                  return;
+                }
                 
-                // TODO: Implementar la generación real de documentos
-                // Por ejemplo, redirigir a la página de documentos o llamar a una función de generación
-                
-                setShowDocumentSelectionDialog(false);
-                setSelectedDocuments([]);
-                onLoanCreated?.();
+                try {
+                  toast.loading('Generando documentos...', { id: 'generate-docs' });
+                  
+                  // Obtener datos completos del préstamo
+                  const { data: loanData, error: loanError } = await supabase
+                    .from('loans')
+                    .select(`
+                      *,
+                      clients:client_id (
+                        id,
+                        full_name,
+                        dni,
+                        phone,
+                        email,
+                        address
+                      )
+                    `)
+                    .eq('id', createdLoanId)
+                    .single();
+                  
+                  if (loanError || !loanData) {
+                    throw new Error('No se pudo obtener los datos del préstamo');
+                  }
+                  
+                  // Generar cada documento seleccionado
+                  const documentTypes = {
+                    'pagare_notarial': 'PAGARÉ NOTARIAL',
+                    'tabla_amortizacion': 'TABLA DE AMORTIZACIÓN',
+                    'contrato_bluetooth': 'CONTRATO IMPRESORA BLUETOOTH',
+                    'pagare_codeudor': 'PAGARÉ NOTARIAL CON CODEUDOR',
+                    'contrato_salarial': 'CONTRATO SALARIAL'
+                  };
+                  
+                  let generatedCount = 0;
+                  
+                  for (const docType of selectedDocuments) {
+                    try {
+                      // Generar contenido HTML del documento
+                      const documentContent = generateDocumentHTML(docType, loanData, form.getValues(), companySettings);
+                      
+                      // Crear un Blob con el contenido HTML
+                      const blob = new Blob([documentContent], { type: 'text/html' });
+                      const fileName = `${docType}_${createdLoanId}_${Date.now()}.html`;
+                      const filePath = `user-${companyId}/loans/${createdLoanId}/${fileName}`;
+                      
+                      // Subir a storage
+                      const { error: uploadError } = await supabase.storage
+                        .from('documents')
+                        .upload(filePath, blob, {
+                          contentType: 'text/html',
+                          upsert: false
+                        });
+                      
+                      if (uploadError) {
+                        console.error(`Error subiendo ${docType}:`, uploadError);
+                        continue;
+                      }
+                      
+                      // Guardar metadata en la base de datos
+                      const { error: insertError } = await supabase
+                        .from('documents')
+                        .insert({
+                          user_id: companyId,
+                          loan_id: createdLoanId,
+                          client_id: loanData.client_id,
+                          title: documentTypes[docType as keyof typeof documentTypes] || docType,
+                          file_name: fileName,
+                          file_url: filePath,
+                          description: `Documento generado automáticamente: ${documentTypes[docType as keyof typeof documentTypes]}`,
+                          document_type: docType,
+                          mime_type: 'text/html',
+                          file_size: blob.size,
+                          status: 'active'
+                        });
+                      
+                      if (insertError) {
+                        console.error(`Error guardando metadata de ${docType}:`, insertError);
+                        // Intentar eliminar el archivo de storage si falla la inserción
+                        await supabase.storage.from('documents').remove([filePath]);
+                        continue;
+                      }
+                      
+                      generatedCount++;
+                    } catch (error) {
+                      console.error(`Error generando ${docType}:`, error);
+                    }
+                  }
+                  
+                  if (generatedCount > 0) {
+                    toast.success(`${generatedCount} documento(s) generado(s) exitosamente`, { id: 'generate-docs' });
+                  } else {
+                    toast.error('No se pudo generar ningún documento', { id: 'generate-docs' });
+                  }
+                  
+                  setShowDocumentSelectionDialog(false);
+                  setSelectedDocuments([]);
+                  onLoanCreated?.();
+                } catch (error: any) {
+                  console.error('Error generando documentos:', error);
+                  toast.error(error.message || 'Error al generar documentos', { id: 'generate-docs' });
+                }
               }}
               disabled={selectedDocuments.length === 0}
             >
