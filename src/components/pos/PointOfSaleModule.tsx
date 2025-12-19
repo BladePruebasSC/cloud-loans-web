@@ -1034,31 +1034,6 @@ export const PointOfSaleModule = () => {
     // Guardar los datos de la venta antes de limpiar el carrito (incluyendo el cambio calculado)
     setReceiptData({ ...saleData, change });
     setShowReceiptModal(true);
-    
-    // Enviar recibo por WhatsApp si el cliente tiene teléfono
-    if (saleData.customer?.phone && insertedSale && insertedSale[0]) {
-      try {
-        // Generar recibo HTML
-        const receiptHTML = generateReceipt('A4');
-        
-        // Importar función de WhatsApp
-        const { sendReceiptViaWhatsApp } = await import('@/utils/whatsappUtils');
-        
-        // Enviar por WhatsApp
-        await sendReceiptViaWhatsApp(
-          saleData.customer.phone,
-          saleData.customer.full_name,
-          receiptHTML,
-          'sale',
-          saleData.total,
-          `recibo_venta_${saleData.customer.full_name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`,
-          companyId || undefined
-        );
-      } catch (whatsappError) {
-        console.error('Error enviando recibo por WhatsApp:', whatsappError);
-        // No mostrar error al usuario, solo loguear
-      }
-    }
           // Refrescar inventario
         await fetchData();
           // NO limpiar el carrito aquí - se limpiará cuando se cierre el modal del recibo
