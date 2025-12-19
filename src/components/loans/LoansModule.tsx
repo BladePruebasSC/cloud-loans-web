@@ -354,6 +354,8 @@ export const LoansModule = () => {
     
     const indefiniteLoans = loans.filter(loan => loan.amortization_type === 'indefinite');
     console.log('🔍 updatePendingInterestForIndefinite: Préstamos indefinidos encontrados:', indefiniteLoans.length);
+    console.log('🔍 updatePendingInterestForIndefinite: IDs de préstamos indefinidos:', indefiniteLoans.map(l => l.id));
+    console.log('🔍 updatePendingInterestForIndefinite: Todos los préstamos con amortization_type:', loans.map(l => ({ id: l.id, amortization_type: l.amortization_type })));
     
     for (const loan of indefiniteLoans) {
       console.log('🔍 updatePendingInterestForIndefinite: Calculando para préstamo', loan.id);
@@ -1238,7 +1240,19 @@ export const LoansModule = () => {
                             <div className="text-2xl font-bold text-red-700 mb-1">
                               ${formatCurrencyNumber(
                                 loan.amortization_type === 'indefinite' 
-                                  ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
+                                  ? (() => {
+                                      const baseAmount = loan.amount || 0;
+                                      const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
+                                      const total = baseAmount + pendingInterest;
+                                      console.log('🔍 Balance Pendiente para préstamo indefinido:', {
+                                        loanId: loan.id,
+                                        amount: baseAmount,
+                                        pendingInterest,
+                                        total,
+                                        amortization_type: loan.amortization_type
+                                      });
+                                      return total;
+                                    })()
                                   : loan.remaining_balance
                               )}
                             </div>
