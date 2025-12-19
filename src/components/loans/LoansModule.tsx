@@ -1238,7 +1238,7 @@ export const LoansModule = () => {
                             <div className="text-2xl font-bold text-red-700 mb-1">
                               ${formatCurrencyNumber(
                                 loan.amortization_type === 'indefinite' 
-                                  ? loan.remaining_balance + (pendingInterestForIndefinite[loan.id] || 0)
+                                  ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
                                   : loan.remaining_balance
                               )}
                             </div>
@@ -1255,7 +1255,7 @@ export const LoansModule = () => {
                               ${formatCurrencyNumber(
                                 loan.status === 'paid' 
                                   ? 0 
-                                  : (loan.remaining_balance + 
+                                  : ((loan.amortization_type === 'indefinite' ? loan.amount : loan.remaining_balance) + 
                                      (loan.amortization_type === 'indefinite' ? (pendingInterestForIndefinite[loan.id] || 0) : 0) +
                                      (dynamicLateFees[loan.id] || loan.current_late_fee || 0))
                               )}
