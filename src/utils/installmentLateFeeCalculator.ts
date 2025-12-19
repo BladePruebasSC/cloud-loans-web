@@ -208,6 +208,86 @@ export const getLateFeeBreakdownFromInstallments = async (
       });
     }
     
+    // CORRECCIÓN: Si hay un next_payment_date vencido y no hay una cuota correspondiente en el breakdown,
+    // generar dinámicamente esa cuota para calcular los días vencidos
+    if (loan.next_payment_date) {
+      const [nextYear, nextMonth, nextDay] = loan.next_payment_date.split('-').map(Number);
+      const nextPaymentDate = new Date(nextYear, nextMonth - 1, nextDay);
+      const daysSinceNextPayment = Math.floor((calculationDate.getTime() - nextPaymentDate.getTime()) / (1000 * 60 * 60 * 24));
+      
+      // Verificar si ya existe una cuota con esta fecha en el breakdown
+      const existingInstallment = breakdown.find(item => item.dueDate === loan.next_payment_date);
+      
+      // Si no existe y la fecha está vencida, generar dinámicamente la cuota
+      if (!existingInstallment && daysSinceNextPayment > 0) {
+        const maxInstallmentNumber = installments.length > 0 
+          ? Math.max(...installments.map(i => i.installment_number))
+          : 0;
+        const nextInstallmentNumber = maxInstallmentNumber + 1;
+        
+        const daysOverdueForNext = Math.max(0, daysSinceNextPayment - (loan.grace_period_days || 0));
+        
+        // Calcular el monto base para la mora
+        // Para préstamos indefinidos, usar el monthly_payment o interest_amount
+        const isIndefinite = loan.amortization_type === 'indefinite';
+        let baseAmount = 0;
+        
+        if (isIndefinite) {
+          // Para indefinidos, usar monthly_payment o interest_amount de la última cuota
+          const lastInstallment = installments[installments.length - 1];
+          baseAmount = lastInstallment?.interest_amount || lastInstallment?.total_amount || lastInstallment?.amount || loan.monthly_payment || 0;
+        } else {
+          // Para otros tipos, calcular el principal por cuota
+          const lastInstallment = installments[installments.length - 1];
+          baseAmount = lastInstallment?.principal_amount || lastInstallment?.total_amount || lastInstallment?.amount || 0;
+        }
+        
+        let lateFeeForNext = 0;
+        if (daysOverdueForNext > 0 && baseAmount > 0) {
+          switch (loan.late_fee_calculation_type) {
+            case 'daily':
+              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForNext;
+              break;
+            case 'monthly':
+              const monthsOverdue = Math.ceil(daysOverdueForNext / 30);
+              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * monthsOverdue;
+              break;
+            case 'compound':
+              lateFeeForNext = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdueForNext) - 1);
+              break;
+            default:
+              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForNext;
+          }
+          
+          if (loan.max_late_fee && loan.max_late_fee > 0) {
+            lateFeeForNext = Math.min(lateFeeForNext, loan.max_late_fee);
+          }
+          
+          lateFeeForNext = Math.round(lateFeeForNext * 100) / 100;
+        }
+        
+        // Agregar la cuota generada dinámicamente al breakdown
+        breakdown.push({
+          installment: nextInstallmentNumber,
+          dueDate: loan.next_payment_date,
+          daysOverdue: daysOverdueForNext,
+          principal: isIndefinite ? 0 : baseAmount,
+          lateFee: lateFeeForNext,
+          isPaid: false
+        });
+        
+        // Agregar la mora al total
+        totalLateFee += lateFeeForNext;
+        
+        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota generada dinámicamente para next_payment_date:`, {
+          installment: nextInstallmentNumber,
+          dueDate: loan.next_payment_date,
+          daysOverdue: daysOverdueForNext,
+          lateFee: lateFeeForNext
+        });
+      }
+    }
+    
     return { totalLateFee, breakdown };
   } catch (error) {
     console.error('Error en getLateFeeBreakdownFromInstallments:', error);
