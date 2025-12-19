@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
 import { Search, User } from 'lucide-react';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
+import { sendReceiptViaWhatsApp } from '@/utils/whatsappUtils';
 
 const paymentSchema = z.object({
   loan_id: z.string().min(1, 'Debe seleccionar un préstamo'),
@@ -61,6 +62,7 @@ interface Loan {
   client: {
     full_name: string;
     dni: string;
+    phone?: string;
   };
 }
 
@@ -93,9 +95,143 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [lateFeeBreakdown, setLateFeeBreakdown] = useState<any>(null);
   const [originalLateFeeBreakdown, setOriginalLateFeeBreakdown] = useState<any>(null);
   const [appliedLateFeePayment, setAppliedLateFeePayment] = useState<number>(0);
+  const [companySettings, setCompanySettings] = useState<any>(null);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
+
+  // Función para generar el HTML del recibo
+  const generateReceiptHTML = (loan: any, payment: any, companySettings: any): string => {
+    const client = loan.clients || loan.client;
+    const getPaymentMethodLabel = (method: string) => {
+      const methods: { [key: string]: string } = {
+        cash: 'Efectivo',
+        bank_transfer: 'Transferencia',
+        check: 'Cheque',
+        card: 'Tarjeta',
+        online: 'En línea'
+      };
+      return methods[method] || method;
+    };
+
+    return `
+      <html>
+        <head>
+          <title>RECIBO DE PAGO - ${client?.full_name || ''}</title>
+          <style>
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              line-height: 1.6;
+              color: #333;
+            }
+            .receipt-container {
+              max-width: 8.5in;
+              margin: 0 auto;
+              padding: 30px;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+            }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+          </style>
+        </head>
+        <body>
+          <div class="receipt-container">
+            <div class="header">
+              ${companySettings ? `
+                <div style="margin-bottom: 15px; text-align: center;">
+                  <div style="font-size: 18px; font-weight: bold; margin-bottom: 5px;">
+                    ${companySettings.company_name || 'LA EMPRESA'}
+                  </div>
+                  ${companySettings.address ? `<div style="font-size: 11px; margin-bottom: 2px;">${companySettings.address}</div>` : ''}
+                  ${companySettings.tax_id ? `<div style="font-size: 11px; margin-bottom: 5px;">RNC: ${companySettings.tax_id}</div>` : ''}
+                </div>
+                <hr style="border: none; border-top: 1px solid #000; margin: 10px 0;">
+              ` : ''}
+              <div class="receipt-title">RECIBO DE PAGO</div>
+              <div class="receipt-number">Recibo #${payment.id.slice(0, 8).toUpperCase()}</div>
+              <div style="margin-top: 10px; font-size: 14px;">
+                ${new Date(payment.created_at || payment.payment_date).toLocaleDateString('es-ES', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">INFORMACIÓN DEL CLIENTE</div>
+              <div class="info-row">
+                <span>Nombre: ${client?.full_name || 'N/A'}</span>
+              </div>
+              <div class="info-row">
+                <span>Cédula: ${client?.dni || 'N/A'}</span>
+              </div>
+              ${client?.phone ? `<div class="info-row"><span>Teléfono: ${client.phone}</span></div>` : ''}
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL PRÉSTAMO</div>
+              <div class="info-row">
+                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Tasa de Interés: ${loan.interest_rate}%</span>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL PAGO</div>
+              <div class="info-row">
+                <span>Fecha de Pago: ${payment.payment_date}</span>
+              </div>
+              <div class="info-row">
+                <span>Método de Pago: ${getPaymentMethodLabel(payment.payment_method)}</span>
+              </div>
+              ${payment.reference_number ? `<div class="info-row"><span>Referencia: ${payment.reference_number}</span></div>` : ''}
+            </div>
+
+            <div class="amount-section">
+              <div class="section-title">DESGLOSE DEL PAGO</div>
+              <div class="info-row">
+                <span>Pago a Principal: RD$${(payment.principal_amount || 0).toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Pago a Intereses: RD$${(payment.interest_amount || 0).toLocaleString()}</span>
+              </div>
+              ${payment.late_fee > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${payment.late_fee.toLocaleString()}</span></div>` : ''}
+              <div class="total-amount">
+                TOTAL: RD$${payment.amount.toLocaleString()}
+              </div>
+            </div>
+
+            ${payment.notes ? `
+            <div class="section">
+              <div class="section-title">NOTAS</div>
+              <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px;">
+                ${payment.notes}
+              </div>
+            </div>
+            ` : ''}
+
+            <div class="footer">
+              <p>Este documento es un comprobante oficial de pago.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+  };
 
   // Función para obtener pagos de mora previos
   const getPreviousLateFeePayments = async (loanId: string) => {
@@ -443,6 +579,34 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     }
   }, [paymentStatus.currentPaymentRemaining, selectedLoan, form]);
 
+  // Obtener datos de la empresa
+  React.useEffect(() => {
+    const fetchCompanySettings = async () => {
+      if (!companyId) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from('company_settings')
+          .select('*')
+          .eq('user_id', companyId)
+          .maybeSingle();
+        
+        if (error) {
+          console.error('Error obteniendo datos de la empresa:', error);
+          return;
+        }
+        
+        if (data) {
+          setCompanySettings(data);
+        }
+      } catch (error) {
+        console.error('Error obteniendo datos de la empresa:', error);
+      }
+    };
+    
+    fetchCompanySettings();
+  }, [companyId]);
+
   React.useEffect(() => {
     if (!preselectedLoan) {
       fetchActiveLoans();
@@ -507,7 +671,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         current_late_fee,
         clients (
           full_name,
-          dni
+          dni,
+          phone
         )
       `)
       .in('status', ['active', 'overdue'])
@@ -524,7 +689,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       ...loan,
       client: {
         full_name: (loan.clients as any)?.full_name || '',
-        dni: (loan.clients as any)?.dni || ''
+        dni: (loan.clients as any)?.dni || '',
+        phone: (loan.clients as any)?.phone || ''
       }
     }));
 
@@ -1070,6 +1236,50 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       });
       
       toast.success(successMessage);
+      
+      // Generar recibo y enviar por WhatsApp si el cliente tiene teléfono
+      if (selectedLoan.client?.phone && insertedPayment && insertedPayment[0]) {
+        try {
+          // Obtener datos completos del préstamo para el recibo
+          const { data: fullLoanData, error: loanDataError } = await supabase
+            .from('loans')
+            .select(`
+              *,
+              clients:client_id (
+                full_name,
+                dni,
+                phone,
+                address
+              )
+            `)
+            .eq('id', data.loan_id)
+            .single();
+          
+          if (!loanDataError && fullLoanData) {
+            const payment = insertedPayment[0];
+            const client = fullLoanData.clients as any;
+            
+            // Generar recibo HTML
+            const receiptHTML = generateReceiptHTML(fullLoanData, payment, companySettings);
+            
+            // Calcular monto total del pago (cuota + mora)
+            const totalPaymentAmount = payment.amount + (payment.late_fee || 0);
+            
+            // Enviar por WhatsApp
+            await sendReceiptViaWhatsApp(
+              client.phone || selectedLoan.client.phone || '',
+              client.full_name || selectedLoan.client.full_name,
+              receiptHTML,
+              'loan',
+              totalPaymentAmount,
+              `recibo_pago_${client.full_name?.replace(/\s+/g, '_')}_${new Date(payment.payment_date).toISOString().split('T')[0]}.pdf`
+            );
+          }
+        } catch (whatsappError) {
+          console.error('Error enviando recibo por WhatsApp:', whatsappError);
+          // No mostrar error al usuario, solo loguear
+        }
+      }
       
       // Recalcular automáticamente la mora después del pago usando la función correcta
       try {
