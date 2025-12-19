@@ -3241,6 +3241,10 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                       
                       console.log(`✅ Archivo subido exitosamente: ${filePath}`);
                       
+                      // Mapear el tipo de documento a un valor permitido en la base de datos
+                      // La base de datos solo permite: 'general', 'contract', 'receipt', 'identification', 'loan_document', 'invoice', 'statement', 'other'
+                      const allowedDocumentType = 'loan_document'; // Usar 'loan_document' para todos los documentos de préstamos generados
+                      
                       // Guardar metadata en la base de datos
                       const documentMetadata = {
                         user_id: companyId,
@@ -3249,8 +3253,8 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                         title: documentTypes[docType as keyof typeof documentTypes] || docType,
                         file_name: fileName,
                         file_url: filePath,
-                        description: `Documento generado automáticamente: ${documentTypes[docType as keyof typeof documentTypes]}`,
-                        document_type: docType,
+                        description: `Documento generado automáticamente: ${documentTypes[docType as keyof typeof documentTypes]} (Tipo: ${docType})`,
+                        document_type: allowedDocumentType, // Usar el tipo permitido
                         mime_type: 'text/html',
                         file_size: file.size,
                         status: 'active'
