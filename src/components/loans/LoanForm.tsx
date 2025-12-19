@@ -30,7 +30,10 @@ const generateDocumentHTML = (docType: string, loanData: any, formData: any, com
     day: 'numeric' 
   });
   
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: number | null | undefined) => {
+    if (amount === null || amount === undefined || isNaN(amount)) {
+      return 'RD$0.00';
+    }
     return new Intl.NumberFormat('es-DO', {
       style: 'currency',
       currency: 'DOP',
@@ -80,7 +83,7 @@ const generateDocumentHTML = (docType: string, loanData: any, formData: any, com
       <p>Por medio del presente documento, yo <strong>${client?.full_name || 'N/A'}</strong>, 
       con cédula de identidad No. <strong>${client?.dni || 'N/A'}</strong>, 
       me comprometo a pagar incondicionalmente a la orden de <strong>${companySettings?.company_name || 'LA EMPRESA'}</strong>, 
-      la cantidad de <strong>${formatCurrency(loanData.amount)}</strong> (${loanData.amount.toLocaleString('es-DO')} pesos dominicanos).</p>
+      la cantidad de <strong>${formatCurrency(loanData.amount)}</strong> (${(loanData.amount || 0).toLocaleString('es-DO')} pesos dominicanos).</p>
     </div>
     <div class="section">
       <p><strong>Condiciones del préstamo:</strong></p>
@@ -117,11 +120,16 @@ const generateDocumentHTML = (docType: string, loanData: any, formData: any, com
     case 'tabla_amortizacion':
       // Obtener tabla de amortización (simplificada)
       const installments = [];
-      let balance = loanData.amount;
-      const monthlyInterest = loanData.amount * (loanData.interest_rate / 100);
-      const monthlyPrincipal = loanData.monthly_payment - monthlyInterest;
+      const loanAmount = loanData.amount || 0;
+      const interestRate = loanData.interest_rate || 0;
+      const monthlyPayment = loanData.monthly_payment || 0;
+      const termMonths = loanData.term_months || 1;
       
-      for (let i = 1; i <= loanData.term_months; i++) {
+      let balance = loanAmount;
+      const monthlyInterest = loanAmount * (interestRate / 100);
+      const monthlyPrincipal = monthlyPayment - monthlyInterest;
+      
+      for (let i = 1; i <= termMonths; i++) {
         const interest = monthlyInterest;
         const principal = monthlyPrincipal;
         balance -= principal;
@@ -151,10 +159,10 @@ const generateDocumentHTML = (docType: string, loanData: any, formData: any, com
   <div class="info-section">
     <p><strong>Cliente:</strong> ${client?.full_name || 'N/A'}</p>
     <p><strong>Cédula:</strong> ${client?.dni || 'N/A'}</p>
-    <p><strong>Monto del préstamo:</strong> ${formatCurrency(loanData.amount)}</p>
-    <p><strong>Tasa de interés:</strong> ${loanData.interest_rate}% mensual</p>
-    <p><strong>Plazo:</strong> ${loanData.term_months} meses</p>
-    <p><strong>Cuota mensual:</strong> ${formatCurrency(loanData.monthly_payment)}</p>
+    <p><strong>Monto del préstamo:</strong> ${formatCurrency(loanAmount)}</p>
+    <p><strong>Tasa de interés:</strong> ${interestRate}% mensual</p>
+    <p><strong>Plazo:</strong> ${termMonths} meses</p>
+    <p><strong>Cuota mensual:</strong> ${formatCurrency(monthlyPayment)}</p>
   </div>
   <table>
     <thead>
@@ -172,15 +180,15 @@ const generateDocumentHTML = (docType: string, loanData: any, formData: any, com
           <td>${inst.i}</td>
           <td>${formatCurrency(inst.interest)}</td>
           <td>${formatCurrency(inst.principal)}</td>
-          <td>${formatCurrency(loanData.monthly_payment)}</td>
+          <td>${formatCurrency(monthlyPayment)}</td>
           <td>${formatCurrency(inst.balance)}</td>
         </tr>
       `).join('')}
     </tbody>
   </table>
   <div style="margin-top: 20px; text-align: right;">
-    <p><strong>Total a pagar:</strong> ${formatCurrency(loanData.total_amount)}</p>
-    <p><strong>Total de intereses:</strong> ${formatCurrency(loanData.total_amount - loanData.amount)}</p>
+    <p><strong>Total a pagar:</strong> ${formatCurrency(loanData.total_amount || loanAmount)}</p>
+    <p><strong>Total de intereses:</strong> ${formatCurrency((loanData.total_amount || loanAmount) - loanAmount)}</p>
   </div>
 </body>
 </html>`;
@@ -3194,61 +3202,90 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                   
                   for (const docType of selectedDocuments) {
                     try {
+                      console.log(`🔍 Generando documento: ${docType}`);
+                      
+                      // Verificar que el tipo de documento esté soportado
+                      if (!documentTypes[docType as keyof typeof documentTypes]) {
+                        console.warn(`⚠️ Tipo de documento no soportado: ${docType}`);
+                        continue;
+                      }
+                      
                       // Generar contenido HTML del documento
                       const documentContent = generateDocumentHTML(docType, loanData, form.getValues(), companySettings);
                       
-                      // Crear un Blob con el contenido HTML
-                      const blob = new Blob([documentContent], { type: 'text/html' });
+                      if (!documentContent || documentContent.trim().length === 0) {
+                        console.error(`❌ Error: No se pudo generar el contenido para ${docType}`);
+                        continue;
+                      }
+                      
+                      // Crear un File desde el contenido HTML (Supabase Storage requiere File, no Blob)
                       const fileName = `${docType}_${createdLoanId}_${Date.now()}.html`;
                       const filePath = `user-${companyId}/loans/${createdLoanId}/${fileName}`;
+                      const file = new File([documentContent], fileName, { type: 'text/html' });
+                      
+                      console.log(`📤 Subiendo archivo: ${filePath}, tamaño: ${file.size} bytes`);
                       
                       // Subir a storage
                       const { error: uploadError } = await supabase.storage
                         .from('documents')
-                        .upload(filePath, blob, {
+                        .upload(filePath, file, {
                           contentType: 'text/html',
                           upsert: false
                         });
                       
                       if (uploadError) {
-                        console.error(`Error subiendo ${docType}:`, uploadError);
+                        console.error(`❌ Error subiendo ${docType}:`, uploadError);
+                        toast.error(`Error al subir ${documentTypes[docType as keyof typeof documentTypes]}: ${uploadError.message}`, { duration: 5000 });
                         continue;
                       }
+                      
+                      console.log(`✅ Archivo subido exitosamente: ${filePath}`);
                       
                       // Guardar metadata en la base de datos
+                      const documentMetadata = {
+                        user_id: companyId,
+                        loan_id: createdLoanId,
+                        client_id: loanData.client_id,
+                        title: documentTypes[docType as keyof typeof documentTypes] || docType,
+                        file_name: fileName,
+                        file_url: filePath,
+                        description: `Documento generado automáticamente: ${documentTypes[docType as keyof typeof documentTypes]}`,
+                        document_type: docType,
+                        mime_type: 'text/html',
+                        file_size: file.size,
+                        status: 'active'
+                      };
+                      
+                      console.log(`💾 Guardando metadata:`, documentMetadata);
+                      
                       const { error: insertError } = await supabase
                         .from('documents')
-                        .insert({
-                          user_id: companyId,
-                          loan_id: createdLoanId,
-                          client_id: loanData.client_id,
-                          title: documentTypes[docType as keyof typeof documentTypes] || docType,
-                          file_name: fileName,
-                          file_url: filePath,
-                          description: `Documento generado automáticamente: ${documentTypes[docType as keyof typeof documentTypes]}`,
-                          document_type: docType,
-                          mime_type: 'text/html',
-                          file_size: blob.size,
-                          status: 'active'
-                        });
+                        .insert([documentMetadata]);
                       
                       if (insertError) {
-                        console.error(`Error guardando metadata de ${docType}:`, insertError);
+                        console.error(`❌ Error guardando metadata de ${docType}:`, insertError);
                         // Intentar eliminar el archivo de storage si falla la inserción
                         await supabase.storage.from('documents').remove([filePath]);
+                        toast.error(`Error al guardar ${documentTypes[docType as keyof typeof documentTypes]}: ${insertError.message}`, { duration: 5000 });
                         continue;
                       }
                       
+                      console.log(`✅ Documento ${docType} generado exitosamente`);
                       generatedCount++;
-                    } catch (error) {
-                      console.error(`Error generando ${docType}:`, error);
+                    } catch (error: any) {
+                      console.error(`❌ Error generando ${docType}:`, error);
+                      toast.error(`Error al generar ${documentTypes[docType as keyof typeof documentTypes] || docType}: ${error.message || 'Error desconocido'}`, { duration: 5000 });
                     }
                   }
                   
                   if (generatedCount > 0) {
-                    toast.success(`${generatedCount} documento(s) generado(s) exitosamente`, { id: 'generate-docs' });
+                    toast.success(`${generatedCount} de ${selectedDocuments.length} documento(s) generado(s) exitosamente`, { id: 'generate-docs' });
                   } else {
-                    toast.error('No se pudo generar ningún documento', { id: 'generate-docs' });
+                    const errorDetails = selectedDocuments.length > 0 
+                      ? `No se pudo generar ningún documento. Revise la consola para más detalles.`
+                      : 'No se seleccionaron documentos para generar';
+                    toast.error(errorDetails, { id: 'generate-docs', duration: 6000 });
+                    console.error('❌ Resumen de errores: Se intentaron generar', selectedDocuments.length, 'documentos pero ninguno se generó exitosamente');
                   }
                   
                   setShowDocumentSelectionDialog(false);
