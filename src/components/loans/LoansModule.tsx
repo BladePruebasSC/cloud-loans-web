@@ -141,6 +141,14 @@ export const LoansModule = () => {
         return 0;
       }
 
+      console.log('🔍 calculatePendingInterestForIndefinite: Iniciando cálculo para préstamo indefinido', {
+        loanId: loan.id,
+        amount: loan.amount,
+        interest_rate: loan.interest_rate,
+        start_date: loan.start_date,
+        next_payment_date: loan.next_payment_date
+      });
+
       // Obtener las cuotas del préstamo
       const { data: installments, error } = await supabase
         .from('installments')
@@ -148,30 +156,98 @@ export const LoansModule = () => {
         .eq('loan_id', loan.id)
         .order('installment_number', { ascending: true });
 
-      if (error || !installments) {
-        console.error('Error obteniendo cuotas para calcular interés pendiente:', error);
-        return 0;
-      }
-
       // Calcular interés por cuota para préstamos indefinidos
       const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
       
-      // Contar cuotas no pagadas
-      const unpaidInstallments = installments.filter((inst: any) => !inst.is_paid);
+      let unpaidCount = 0;
+      
+      if (error || !installments || installments.length === 0) {
+        // Si no hay cuotas en la BD, calcular dinámicamente basándose en las fechas
+        console.log('🔍 calculatePendingInterestForIndefinite: No hay cuotas en BD, calculando dinámicamente');
+        
+        if (!loan.start_date || !loan.next_payment_date) {
+          console.warn('🔍 calculatePendingInterestForIndefinite: Faltan fechas, no se puede calcular');
+          return 0;
+        }
+        
+        // Calcular cuántas cuotas deberían existir desde start_date hasta hoy
+        const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+        const startDate = new Date(startYear, startMonth - 1, startDay);
+        const currentDate = getCurrentDateInSantoDomingo();
+        
+        // Calcular meses transcurridos desde el inicio
+        const monthsElapsed = Math.max(0, 
+          (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+          (currentDate.getMonth() - startDate.getMonth())
+        );
+        
+        // Para préstamos indefinidos, todas las cuotas desde el inicio hasta hoy están pendientes
+        // (a menos que se hayan pagado)
+        unpaidCount = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
+        
+        console.log('🔍 calculatePendingInterestForIndefinite: Cálculo dinámico', {
+          startDate: loan.start_date,
+          currentDate: currentDate.toISOString().split('T')[0],
+          monthsElapsed,
+          unpaidCount
+        });
+      } else {
+        // Contar cuotas no pagadas de la BD
+        unpaidCount = installments.filter((inst: any) => !inst.is_paid).length;
+        console.log('🔍 calculatePendingInterestForIndefinite: Usando cuotas de BD', {
+          totalInstallments: installments.length,
+          unpaidCount
+        });
+      }
+      
+      // Si no hay cuotas en BD, también verificar pagos para calcular cuántas cuotas se han pagado
+      if ((!installments || installments.length === 0) && loan.start_date) {
+        // Obtener pagos para verificar cuántas cuotas de interés se han pagado
+        const { data: payments } = await supabase
+          .from('payments')
+          .select('interest_amount')
+          .eq('loan_id', loan.id);
+        
+        if (payments && payments.length > 0) {
+          // Calcular cuántas cuotas de interés se han pagado
+          const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+          const paidInstallmentsCount = Math.floor(totalInterestPaid / interestPerPayment);
+          
+          // Calcular total de cuotas desde el inicio
+          const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+          const startDate = new Date(startYear, startMonth - 1, startDay);
+          const currentDate = getCurrentDateInSantoDomingo();
+          const monthsElapsed = Math.max(0, 
+            (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+            (currentDate.getMonth() - startDate.getMonth())
+          );
+          const totalInstallments = Math.max(1, monthsElapsed + 1);
+          
+          // Cuotas pendientes = total - pagadas
+          unpaidCount = Math.max(0, totalInstallments - paidInstallmentsCount);
+          
+          console.log('🔍 calculatePendingInterestForIndefinite: Ajustado con pagos', {
+            totalInterestPaid,
+            paidInstallmentsCount,
+            totalInstallments,
+            unpaidCount
+          });
+        }
+      }
       
       // Calcular interés pendiente total
-      const totalPendingInterest = unpaidInstallments.length * interestPerPayment;
+      const totalPendingInterest = unpaidCount * interestPerPayment;
       
-      console.log('🔍 calculatePendingInterestForIndefinite:', {
+      console.log('🔍 calculatePendingInterestForIndefinite: Resultado final', {
         loanId: loan.id,
         interestPerPayment,
-        unpaidCount: unpaidInstallments.length,
+        unpaidCount,
         totalPendingInterest
       });
       
       return totalPendingInterest;
     } catch (error) {
-      console.error('Error calculando interés pendiente para préstamo indefinido:', error);
+      console.error('❌ Error calculando interés pendiente para préstamo indefinido:', error);
       return 0;
     }
   };
@@ -268,15 +344,25 @@ export const LoansModule = () => {
 
   // Función para actualizar el interés pendiente para préstamos indefinidos
   const updatePendingInterestForIndefinite = async () => {
+    console.log('🔍 updatePendingInterestForIndefinite: Iniciando actualización');
     const newPendingInterest: {[key: string]: number} = {};
     
-    for (const loan of loans) {
-      if (loan.amortization_type === 'indefinite') {
-        const pendingInterest = await calculatePendingInterestForIndefinite(loan);
-        newPendingInterest[loan.id] = pendingInterest;
-      }
+    if (!loans || loans.length === 0) {
+      console.log('🔍 updatePendingInterestForIndefinite: No hay préstamos');
+      return;
     }
     
+    const indefiniteLoans = loans.filter(loan => loan.amortization_type === 'indefinite');
+    console.log('🔍 updatePendingInterestForIndefinite: Préstamos indefinidos encontrados:', indefiniteLoans.length);
+    
+    for (const loan of indefiniteLoans) {
+      console.log('🔍 updatePendingInterestForIndefinite: Calculando para préstamo', loan.id);
+      const pendingInterest = await calculatePendingInterestForIndefinite(loan);
+      newPendingInterest[loan.id] = pendingInterest;
+      console.log('🔍 updatePendingInterestForIndefinite: Resultado para', loan.id, ':', pendingInterest);
+    }
+    
+    console.log('🔍 updatePendingInterestForIndefinite: Estado actualizado:', newPendingInterest);
     setPendingInterestForIndefinite(newPendingInterest);
   };
 
