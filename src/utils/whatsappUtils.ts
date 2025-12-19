@@ -2,6 +2,8 @@
  * Utilidades para enviar recibos por WhatsApp
  */
 
+import { toast } from 'sonner';
+
 /**
  * Formatea un número de teléfono para WhatsApp
  * Elimina espacios, guiones, paréntesis y el signo +
@@ -63,6 +65,58 @@ export const openWhatsApp = (phone: string, message: string): void => {
 };
 
 /**
+ * Envía un mensaje con documento adjunto usando WhatsApp Business API
+ */
+const sendWhatsAppMessageWithDocument = async (
+  phone: string,
+  message: string,
+  documentUrl: string,
+  fileName: string,
+  accessToken?: string,
+  phoneNumberId?: string
+): Promise<boolean> => {
+  if (!accessToken || !phoneNumberId) {
+    console.log('⚠️ WhatsApp Business API no configurada, usando método alternativo');
+    return false;
+  }
+
+  try {
+    console.log('📱 Enviando mensaje con documento usando WhatsApp Business API...');
+    
+    const response = await fetch(`https://graph.facebook.com/v18.0/${phoneNumberId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: phone,
+        type: 'document',
+        document: {
+          link: documentUrl,
+          filename: fileName,
+          caption: message
+        }
+      })
+    });
+
+    const data = await response.json();
+    
+    if (response.ok) {
+      console.log('✅ Mensaje enviado exitosamente usando WhatsApp Business API');
+      return true;
+    } else {
+      console.error('❌ Error enviando mensaje con WhatsApp Business API:', data);
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error en WhatsApp Business API:', error);
+    return false;
+  }
+};
+
+/**
  * Genera el recibo en PDF y lo descarga, luego abre WhatsApp
  */
 export const sendReceiptViaWhatsApp = async (
@@ -71,7 +125,8 @@ export const sendReceiptViaWhatsApp = async (
   receiptHTML: string,
   receiptType: 'loan' | 'sale',
   amount: number,
-  fileName?: string
+  fileName?: string,
+  companyId?: string
 ): Promise<void> => {
   console.log('📱 sendReceiptViaWhatsApp iniciado', { phone, clientName, receiptType, amount });
   
@@ -243,27 +298,96 @@ export const sendReceiptViaWhatsApp = async (
     // Limpiar iframe
     document.body.removeChild(iframe);
     
-    // Descargar el PDF
+    // Subir PDF a Supabase Storage para obtener URL pública
+    console.log('📱 Subiendo PDF a Supabase Storage...');
+    const { supabase } = await import('@/integrations/supabase/client');
+    const finalFileName = fileName || `recibo_${clientName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+    const filePath = `receipts/${Date.now()}_${finalFileName}`;
+    
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('documents')
+      .upload(filePath, pdfBlob, {
+        contentType: 'application/pdf',
+        upsert: false
+      });
+    
+    let pdfUrl: string | null = null;
+    
+    if (uploadError) {
+      console.error('❌ Error subiendo PDF a Storage:', uploadError);
+      // Continuar sin URL pública, solo descargar localmente
+    } else {
+      console.log('✅ PDF subido a Storage:', uploadData.path);
+      
+      // Obtener URL pública firmada (válida por 1 hora)
+      const { data: urlData } = await supabase.storage
+        .from('documents')
+        .createSignedUrl(filePath, 3600); // 1 hora de validez
+      
+      if (urlData) {
+        pdfUrl = urlData.signedUrl;
+        console.log('✅ URL pública del PDF obtenida:', pdfUrl);
+      }
+    }
+    
+    // Descargar el PDF localmente también
     const url = URL.createObjectURL(pdfBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = fileName || `recibo_${clientName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+    a.download = finalFileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     
-    // Generar mensaje y abrir WhatsApp
+    // Generar mensaje
     const message = generateReceiptMessage(receiptType, clientName, amount);
     console.log('📱 Mensaje generado:', message);
     
-    // Esperar un momento para que el PDF se descargue antes de abrir WhatsApp
-    console.log('📱 Esperando 500ms antes de abrir WhatsApp...');
-    setTimeout(() => {
-      console.log('📱 Abriendo WhatsApp con:', { phone: formattedPhone, message });
-      openWhatsApp(formattedPhone, message);
-      console.log('✅ WhatsApp abierto');
-    }, 500);
+    // Intentar usar WhatsApp Business API si está disponible y tenemos URL del PDF
+    if (pdfUrl && companyId) {
+      const { supabase } = await import('@/integrations/supabase/client');
+      
+      // Obtener configuración de WhatsApp Business API desde company_settings
+      const { data: companySettings } = await supabase
+        .from('company_settings')
+        .select('whatsapp_api_token, whatsapp_phone_number_id')
+        .eq('user_id', companyId)
+        .single();
+      
+      if (companySettings?.whatsapp_api_token && companySettings?.whatsapp_phone_number_id) {
+        console.log('📱 Intentando enviar usando WhatsApp Business API...');
+        const sent = await sendWhatsAppMessageWithDocument(
+          formattedPhone,
+          message,
+          pdfUrl,
+          finalFileName,
+          companySettings.whatsapp_api_token,
+          companySettings.whatsapp_phone_number_id
+        );
+        
+        if (sent) {
+          console.log('✅ Recibo enviado automáticamente por WhatsApp Business API');
+          toast.success('Recibo enviado automáticamente por WhatsApp');
+          return; // Salir si se envió exitosamente
+        }
+      }
+    }
+    
+    // Si no se pudo enviar automáticamente, abrir WhatsApp Web con el mensaje
+    console.log('📱 Abriendo WhatsApp Web con:', { phone: formattedPhone, message, pdfUrl });
+    
+    // Si tenemos URL del PDF, agregarla al mensaje
+    let messageWithUrl = message;
+    if (pdfUrl) {
+      messageWithUrl += `\n\n📎 Descarga tu recibo PDF aquí: ${pdfUrl}`;
+    }
+    
+    // Esperar un momento antes de abrir WhatsApp
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    openWhatsApp(formattedPhone, messageWithUrl);
+    console.log('✅ WhatsApp abierto');
     
   } catch (error: any) {
     console.error('❌ Error generando PDF o abriendo WhatsApp:', error);

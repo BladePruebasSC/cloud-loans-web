@@ -1321,7 +1321,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             receiptHTML,
             'loan',
             totalPaymentAmount,
-            `recibo_pago_${(client?.full_name || selectedLoan.client.full_name).replace(/\s+/g, '_')}_${new Date(payment.payment_date).toISOString().split('T')[0]}.pdf`
+            `recibo_pago_${(client?.full_name || selectedLoan.client.full_name).replace(/\s+/g, '_')}_${new Date(payment.payment_date).toISOString().split('T')[0]}.pdf`,
+            companyId || undefined
           );
           
           console.log('✅ Recibo enviado por WhatsApp exitosamente');

@@ -1051,7 +1051,8 @@ export const PointOfSaleModule = () => {
           receiptHTML,
           'sale',
           saleData.total,
-          `recibo_venta_${saleData.customer.full_name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
+          `recibo_venta_${saleData.customer.full_name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`,
+          companyId || undefined
         );
       } catch (whatsappError) {
         console.error('Error enviando recibo por WhatsApp:', whatsappError);
