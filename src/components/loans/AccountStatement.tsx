@@ -275,8 +275,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         // Solo calcular desde start_date si no están disponibles
         const firstPaymentDateStr = loanData.first_payment_date?.split('T')[0] || loanData.next_payment_date?.split('T')[0];
         let firstPaymentDateBase: Date;
-        const today = getCurrentDateInSantoDomingo();
-        const frequency = loanData.payment_frequency || 'monthly';
+          const today = getCurrentDateInSantoDomingo();
+          const frequency = loanData.payment_frequency || 'monthly';
         
         if (firstPaymentDateStr) {
           // CORRECCIÓN UTC-4: Parsear como fecha local para evitar problemas de zona horaria
@@ -292,19 +292,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
             const startDate = new Date(startYear, startMonth - 1, startDay);
             firstPaymentDateBase = new Date(startDate);
-            
-            switch (frequency) {
-              case 'daily':
+          
+          switch (frequency) {
+            case 'daily':
                 firstPaymentDateBase.setDate(startDate.getDate() + 1);
-                break;
-              case 'weekly':
+              break;
+            case 'weekly':
                 firstPaymentDateBase.setDate(startDate.getDate() + 7);
-                break;
-              case 'biweekly':
+              break;
+            case 'biweekly':
                 firstPaymentDateBase.setDate(startDate.getDate() + 14);
-                break;
-              case 'monthly':
-              default:
+              break;
+            case 'monthly':
+            default:
                 firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
                 break;
             }
@@ -334,11 +334,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               default:
                 // Usar setFullYear para preservar el día exacto
                 firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
-                break;
+              break;
             }
           }
-        }
-        
+          }
+          
         if (firstPaymentDateBase) {
           
           // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido

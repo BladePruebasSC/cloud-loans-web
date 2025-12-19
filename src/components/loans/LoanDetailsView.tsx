@@ -614,10 +614,10 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         </div>
                       </div>
                       {loan.amortization_type !== 'indefinite' && (
-                        <div>
-                          <span className="text-gray-600">Fecha final:</span>
-                          <div className="font-semibold">{new Date(loan.end_date).toLocaleDateString('es-DO')}</div>
-                        </div>
+                      <div>
+                        <span className="text-gray-600">Fecha final:</span>
+                        <div className="font-semibold">{new Date(loan.end_date).toLocaleDateString('es-DO')}</div>
+                      </div>
                       )}
                       <div>
                         <span className="text-gray-600">Fecha de creación:</span>
