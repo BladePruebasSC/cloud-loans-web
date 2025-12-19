@@ -573,6 +573,22 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         <div className="font-semibold">RD {loan.monthly_payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div>
+                        <span className="text-gray-600">Balance restante:</span>
+                        <div className="font-semibold text-orange-600">RD {loan.remaining_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      </div>
+                      <div>
+                        <span className="text-gray-600">Estado:</span>
+                        <div className="font-semibold">
+                          {loan.status === 'active' ? 'Activo' :
+                           loan.status === 'overdue' ? 'Vencido' :
+                           loan.status === 'paid' ? 'Completado' :
+                           loan.status === 'pending' ? 'Pendiente' :
+                           loan.status === 'cancelled' ? 'Cancelado' :
+                           loan.status === 'in_agreement' ? 'En Acuerdo' :
+                           loan.status}
+                        </div>
+                      </div>
+                      <div>
                         <span className="text-gray-600">Fecha inicio:</span>
                         <div className="font-semibold">{formatDateStringForSantoDomingo(loan.start_date)}</div>
                       </div>
@@ -585,7 +601,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         <div className="font-semibold">{loan.interest_rate}%</div>
                       </div>
                       <div>
-                        <span className="text-gray-600">Interés generado al día de hoy:</span>
+                        <span className="text-gray-600">Interés pagado:</span>
                         <div className="font-semibold">RD {totalInterestPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div>
@@ -614,10 +630,18 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         </div>
                       </div>
                       {loan.amortization_type !== 'indefinite' && (
-                      <div>
-                        <span className="text-gray-600">Fecha final:</span>
-                        <div className="font-semibold">{new Date(loan.end_date).toLocaleDateString('es-DO')}</div>
-                      </div>
+                      <>
+                        <div>
+                          <span className="text-gray-600">Fecha final:</span>
+                          <div className="font-semibold">{new Date(loan.end_date).toLocaleDateString('es-DO')}</div>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Cuotas pagadas:</span>
+                          <div className="font-semibold">
+                            {installments.filter((inst: any) => inst.is_paid).length} / {loan.term_months || installments.length}
+                          </div>
+                        </div>
+                      </>
                       )}
                       <div>
                         <span className="text-gray-600">Fecha de creación:</span>
@@ -630,7 +654,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                             <div className="font-semibold">{loan.late_fee_rate}%</div>
                           </div>
                           <div>
-                            <span className="text-gray-600">Tipo de cálculo:</span>
+                            <span className="text-gray-600">Período de gracia:</span>
                             <div className="font-semibold">{loan.grace_period_days} días</div>
                           </div>
                         </>
@@ -653,14 +677,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       <div className="text-sm text-gray-600">Interés pend. hoy</div>
                       <div className="text-lg font-semibold">RD {interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
-                    <div>
-                      <div className="text-sm text-gray-600">Interés pend. total</div>
-                      <div className="text-lg font-semibold">RD {interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-600">Capital pend. total</div>
-                      <div className="text-lg font-semibold">RD {loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                    </div>
+                    {effectiveLateFee > 0 && (
+                      <div>
+                        <div className="text-sm text-gray-600">Mora pendiente</div>
+                        <div className="text-lg font-semibold text-red-600">RD {effectiveLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
