@@ -488,24 +488,56 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     }
   };
 
-  // Usar total_amount de la BD directamente para evitar problemas de redondeo acumulativo
-  const totalAmount = installments.reduce((sum, inst) => {
-    const amount = (inst as any).total_amount || inst.amount || 0;
-    return sum + amount;
-  }, 0);
+  // CORRECCIÓN: Calcular totales usando valores originales sin redondear
+  // Para evitar que la suma de valores redondeados cause diferencias (ej: 13,002 vs 13,000)
+  let totalAmount = 0;
+  let totalPaid = 0;
+  
+  if (loanInfo) {
+    const isIndefinite = loanInfo.amortization_type === 'indefinite';
+    
+    if (isIndefinite) {
+      // Para préstamos indefinidos: Total = Interés por cuota × Número de cuotas
+      // Interés por cuota = (amount × interest_rate) / 100
+      const interestPerPayment = (loanInfo.amount * loanInfo.interest_rate) / 100;
+      totalAmount = interestPerPayment * installments.length;
+      
+      // Total pagado: sumar solo las cuotas pagadas usando el interés real
+      const paidInstallments = installments.filter(inst => inst.is_paid).length;
+      totalPaid = interestPerPayment * paidInstallments;
+    } else {
+      // Para préstamos con plazo definido: Total = monthly_payment × term_months
+      // Usar el monthly_payment original del préstamo (sin redondear)
+      totalAmount = (loanInfo.monthly_payment || 0) * (loanInfo.term_months || installments.length);
+      
+      // Total pagado: usar los pagos reales si están disponibles, sino calcular desde cuotas pagadas
+      if (totalPaidFromPayments > 0) {
+        totalPaid = totalPaidFromPayments;
+      } else {
+        // Calcular usando monthly_payment real × número de cuotas pagadas
+        const paidInstallments = installments.filter(inst => inst.is_paid).length;
+        totalPaid = (loanInfo.monthly_payment || 0) * paidInstallments;
+      }
+    }
+  } else {
+    // Fallback: usar valores de la BD si no hay loanInfo
+    totalAmount = installments.reduce((sum, inst) => {
+      const amount = (inst as any).total_amount || inst.amount || 0;
+      return sum + amount;
+    }, 0);
+    
+    totalPaid = totalPaidFromPayments > 0 ? totalPaidFromPayments : 
+      installments.filter(inst => inst.is_paid).reduce((sum, inst) => {
+        const amount = (inst as any).total_amount || inst.amount || 0;
+        return sum + amount;
+      }, 0);
+  }
   
   // Si el préstamo está saldado, el total pendiente debe ser 0
   const isLoanSettled = loanInfo?.status === 'paid';
   
-  // Usar el total pagado desde los pagos reales, no desde las cuotas marcadas como pagadas
-  // Esto es importante cuando se salda un préstamo (negociación) y no todas las cuotas se pagaron realmente
-  const totalPaid = totalPaidFromPayments > 0 ? totalPaidFromPayments : 
-    installments.filter(inst => inst.is_paid).reduce((sum, inst) => {
-      const amount = (inst as any).total_amount || inst.amount || 0;
-      return sum + amount;
-    }, 0);
   // Si el préstamo está saldado, el total pendiente es 0
-  const totalPending = isLoanSettled ? 0 : Math.round((totalAmount - totalPaid) * 100) / 100;
+  const totalPending = isLoanSettled ? 0 : totalAmount - totalPaid;
   const paidCount = installments.filter(inst => inst.is_paid).length;
   const pendingCount = installments.length - paidCount;
 
