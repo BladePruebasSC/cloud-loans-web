@@ -142,7 +142,9 @@ export const getLateFeeBreakdownFromInstallments = async (
         lateFee = 0;
       } else {
         // Calcular días de atraso desde la fecha de vencimiento hasta hoy
-        const dueDate = new Date(installment.due_date);
+        // Parsear la fecha como fecha local para evitar problemas de zona horaria
+        const [year, month, day] = installment.due_date.split('-').map(Number);
+        const dueDate = new Date(year, month - 1, day); // month es 0-indexado
         const daysSinceDue = Math.floor((calculationDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
         daysOverdue = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
         
