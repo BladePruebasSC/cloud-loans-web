@@ -79,6 +79,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           first_payment_date,
           payment_frequency,
           amortization_type,
+          total_amount,
           clients:client_id (
             full_name,
             dni
@@ -506,17 +507,33 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       const paidInstallments = installments.filter(inst => inst.is_paid).length;
       totalPaid = interestPerPayment * paidInstallments;
     } else {
-      // Para préstamos con plazo definido: Total = monthly_payment × term_months
-      // Usar el monthly_payment original del préstamo (sin redondear)
-      totalAmount = (loanInfo.monthly_payment || 0) * (loanInfo.term_months || installments.length);
+      // Para préstamos con plazo definido: usar total_amount del préstamo si está disponible
+      // Si no, calcular usando la fórmula original sin redondear
+      if ((loanInfo as any).total_amount && (loanInfo as any).total_amount > 0) {
+        // Usar total_amount directamente del préstamo (valor real sin redondear)
+        totalAmount = (loanInfo as any).total_amount;
+      } else {
+        // Calcular usando la fórmula original: amount + (amount × interest_rate × term_months) / 100
+        const totalInterest = (loanInfo.amount * loanInfo.interest_rate * (loanInfo.term_months || installments.length)) / 100;
+        totalAmount = loanInfo.amount + totalInterest;
+      }
       
       // Total pagado: usar los pagos reales si están disponibles, sino calcular desde cuotas pagadas
       if (totalPaidFromPayments > 0) {
         totalPaid = totalPaidFromPayments;
       } else {
-        // Calcular usando monthly_payment real × número de cuotas pagadas
+        // Calcular usando el monto real por cuota (sin redondear) × número de cuotas pagadas
         const paidInstallments = installments.filter(inst => inst.is_paid).length;
-        totalPaid = (loanInfo.monthly_payment || 0) * paidInstallments;
+        if ((loanInfo as any).total_amount && (loanInfo as any).total_amount > 0) {
+          // Usar total_amount / term_months para obtener el monto real por cuota
+          const realAmountPerPayment = (loanInfo as any).total_amount / (loanInfo.term_months || installments.length);
+          totalPaid = realAmountPerPayment * paidInstallments;
+        } else {
+          // Fallback: calcular usando la fórmula
+          const totalInterest = (loanInfo.amount * loanInfo.interest_rate * (loanInfo.term_months || installments.length)) / 100;
+          const realAmountPerPayment = (loanInfo.amount + totalInterest) / (loanInfo.term_months || installments.length);
+          totalPaid = realAmountPerPayment * paidInstallments;
+        }
       }
     }
   } else {
