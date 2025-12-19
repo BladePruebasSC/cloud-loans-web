@@ -20,8 +20,11 @@ import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDo
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 
-// Función para generar el HTML de un documento
-const generateDocumentHTML = (docType: string, loanData: any, formData: any, companySettings: any): string => {
+// Función para generar el PDF de un documento
+const generateDocumentPDF = async (docType: string, loanData: any, formData: any, companySettings: any): Promise<Blob> => {
+  const { default: jsPDF } = await import('jspdf');
+  const { default: autoTable } = await import('jspdf-autotable');
+  
   const client = loanData.clients as any;
   const today = new Date();
   const formattedDate = today.toLocaleDateString('es-DO', { 
@@ -56,75 +59,97 @@ const generateDocumentHTML = (docType: string, loanData: any, formData: any, com
     }
   };
   
+  // Crear documento PDF
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 15;
+  let yPos = margin;
+  
+  // Función auxiliar para agregar texto con salto de línea automático
+  const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
+    doc.setFontSize(fontSize);
+    doc.setFont('helvetica', fontStyle);
+    const lines = doc.splitTextToSize(text, maxWidth);
+    doc.text(lines, x, y);
+    return y + (lines.length * (fontSize * 0.4));
+  };
+  
   switch (docType) {
     case 'pagare_notarial':
-      return `
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pagaré Notarial</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
-    .header { text-align: center; margin-bottom: 30px; }
-    .content { max-width: 800px; margin: 0 auto; }
-    .section { margin-bottom: 20px; }
-    .signature-section { margin-top: 60px; display: flex; justify-content: space-between; }
-    .signature-box { width: 45%; text-align: center; border-top: 1px solid #000; padding-top: 10px; }
-  </style>
-</head>
-<body>
-  <div class="content">
-    <div class="header">
-      <h1>PAGARÉ NOTARIAL</h1>
-    </div>
-    <div class="section">
-      <p>Por medio del presente documento, yo <strong>${client?.full_name || 'N/A'}</strong>, 
-      con cédula de identidad No. <strong>${client?.dni || 'N/A'}</strong>, 
-      me comprometo a pagar incondicionalmente a la orden de <strong>${companySettings?.company_name || 'LA EMPRESA'}</strong>, 
-      la cantidad de <strong>${formatCurrency(loanData.amount)}</strong> (${(loanData.amount || 0).toLocaleString('es-DO')} pesos dominicanos).</p>
-    </div>
-    <div class="section">
-      <p><strong>Condiciones del préstamo:</strong></p>
-      <ul>
-        <li>Monto del préstamo: ${formatCurrency(loanData.amount)}</li>
-        <li>Tasa de interés: ${loanData.interest_rate}% mensual</li>
-        <li>Plazo: ${loanData.term_months} meses</li>
-        <li>Cuota mensual: ${formatCurrency(loanData.monthly_payment)}</li>
-        <li>Fecha de inicio: ${formatDate(loanData.start_date)}</li>
-        <li>Primera fecha de pago: ${formatDate(loanData.first_payment_date)}</li>
-      </ul>
-    </div>
-    <div class="section">
-      <p>El pago se realizará en ${loanData.term_months} cuotas mensuales de ${formatCurrency(loanData.monthly_payment)} cada una, 
-      comenzando el ${formatDate(loanData.first_payment_date)}.</p>
-    </div>
-    <div class="section">
-      <p>En caso de mora, se aplicará una tasa de mora del ${loanData.late_fee_rate || 0}% ${loanData.late_fee_calculation_type === 'daily' ? 'diario' : 'mensual'}.</p>
-    </div>
-    <div class="signature-section">
-      <div class="signature-box">
-        <p>Firma del Deudor</p>
-        <p>${client?.full_name || 'N/A'}</p>
-        <p>Cédula: ${client?.dni || 'N/A'}</p>
-      </div>
-      <div class="signature-box">
-        <p>Fecha: ${formattedDate}</p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
+      // Título
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PAGARÉ NOTARIAL', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      // Texto principal
+      const pagareText = `Por medio del presente documento, yo ${client?.full_name || 'N/A'}, con cédula de identidad No. ${client?.dni || 'N/A'}, me comprometo a pagar incondicionalmente a la orden de ${companySettings?.company_name || 'LA EMPRESA'}, la cantidad de ${formatCurrency(loanData.amount)} (${(loanData.amount || 0).toLocaleString('es-DO')} pesos dominicanos).`;
+      yPos = addText(pagareText, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      
+      // Condiciones del préstamo
+      doc.setFont('helvetica', 'bold');
+      yPos = addText('Condiciones del préstamo:', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 5;
+      doc.setFont('helvetica', 'normal');
+      yPos = addText(`• Monto del préstamo: ${formatCurrency(loanData.amount)}`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Tasa de interés: ${loanData.interest_rate}% mensual`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Plazo: ${loanData.term_months} meses`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Cuota mensual: ${formatCurrency(loanData.monthly_payment)}`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Fecha de inicio: ${formatDate(loanData.start_date)}`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Primera fecha de pago: ${formatDate(loanData.first_payment_date)}`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos += 10;
+      
+      // Información de pago
+      const paymentText = `El pago se realizará en ${loanData.term_months} cuotas mensuales de ${formatCurrency(loanData.monthly_payment)} cada una, comenzando el ${formatDate(loanData.first_payment_date)}.`;
+      yPos = addText(paymentText, margin, yPos, pageWidth - (margin * 2), 10);
+      yPos += 10;
+      
+      // Información de mora
+      const lateFeeText = `En caso de mora, se aplicará una tasa de mora del ${loanData.late_fee_rate || 0}% ${loanData.late_fee_calculation_type === 'daily' ? 'diario' : 'mensual'}.`;
+      yPos = addText(lateFeeText, margin, yPos, pageWidth - (margin * 2), 10);
+      yPos += 20;
+      
+      // Firmas
+      const signatureY = doc.internal.pageSize.getHeight() - 40;
+      doc.line(margin, signatureY, margin + 80, signatureY);
+      doc.text('Firma del Deudor', margin, signatureY + 5);
+      doc.text(`${client?.full_name || 'N/A'}`, margin, signatureY + 10);
+      doc.text(`Cédula: ${client?.dni || 'N/A'}`, margin, signatureY + 15);
+      
+      doc.line(pageWidth - margin - 80, signatureY, pageWidth - margin, signatureY);
+      doc.text('Fecha', pageWidth - margin - 80, signatureY + 5);
+      doc.text(formattedDate, pageWidth - margin - 80, signatureY + 10);
+      
+      break;
     
     case 'tabla_amortizacion':
-      // Obtener tabla de amortización (simplificada)
-      const installments = [];
+      // Título
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('TABLA DE AMORTIZACIÓN', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      // Información del cliente
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      yPos = addText(`Cliente: ${client?.full_name || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Cédula: ${client?.dni || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 5;
+      
       const loanAmount = loanData.amount || 0;
       const interestRate = loanData.interest_rate || 0;
       const monthlyPayment = loanData.monthly_payment || 0;
       const termMonths = loanData.term_months || 1;
       
+      yPos = addText(`Monto del préstamo: ${formatCurrency(loanAmount)}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Tasa de interés: ${interestRate}% mensual`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Plazo: ${termMonths} meses`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Cuota mensual: ${formatCurrency(monthlyPayment)}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      
+      // Calcular tabla de amortización
+      const installments = [];
       let balance = loanAmount;
       const monthlyInterest = loanAmount * (interestRate / 100);
       const monthlyPrincipal = monthlyPayment - monthlyInterest;
@@ -133,209 +158,233 @@ const generateDocumentHTML = (docType: string, loanData: any, formData: any, com
         const interest = monthlyInterest;
         const principal = monthlyPrincipal;
         balance -= principal;
-        installments.push({ i, interest, principal, balance: Math.max(0, balance) });
+        installments.push({ 
+          i, 
+          interest, 
+          principal, 
+          balance: Math.max(0, balance),
+          total: monthlyPayment
+        });
       }
       
-      return `
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tabla de Amortización</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 40px; }
-    .header { text-align: center; margin-bottom: 30px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-    th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
-    th { background-color: #3b82f6; color: white; }
-    .info-section { margin-bottom: 20px; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>TABLA DE AMORTIZACIÓN</h1>
-  </div>
-  <div class="info-section">
-    <p><strong>Cliente:</strong> ${client?.full_name || 'N/A'}</p>
-    <p><strong>Cédula:</strong> ${client?.dni || 'N/A'}</p>
-    <p><strong>Monto del préstamo:</strong> ${formatCurrency(loanAmount)}</p>
-    <p><strong>Tasa de interés:</strong> ${interestRate}% mensual</p>
-    <p><strong>Plazo:</strong> ${termMonths} meses</p>
-    <p><strong>Cuota mensual:</strong> ${formatCurrency(monthlyPayment)}</p>
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th>Cuota</th>
-        <th>Interés</th>
-        <th>Capital</th>
-        <th>Total</th>
-        <th>Saldo Pendiente</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${installments.map(inst => `
-        <tr>
-          <td>${inst.i}</td>
-          <td>${formatCurrency(inst.interest)}</td>
-          <td>${formatCurrency(inst.principal)}</td>
-          <td>${formatCurrency(monthlyPayment)}</td>
-          <td>${formatCurrency(inst.balance)}</td>
-        </tr>
-      `).join('')}
-    </tbody>
-  </table>
-  <div style="margin-top: 20px; text-align: right;">
-    <p><strong>Total a pagar:</strong> ${formatCurrency(loanData.total_amount || loanAmount)}</p>
-    <p><strong>Total de intereses:</strong> ${formatCurrency((loanData.total_amount || loanAmount) - loanAmount)}</p>
-  </div>
-</body>
-</html>`;
+      // Crear tabla usando autoTable
+      autoTable(doc, {
+        startY: yPos,
+        head: [['Cuota', 'Interés', 'Capital', 'Total', 'Saldo Pendiente']],
+        body: installments.map(inst => [
+          inst.i.toString(),
+          formatCurrency(inst.interest),
+          formatCurrency(inst.principal),
+          formatCurrency(inst.total),
+          formatCurrency(inst.balance)
+        ]),
+        theme: 'striped',
+        headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' },
+        margin: { left: margin, right: margin }
+      });
+      
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+      
+      // Totales
+      doc.setFont('helvetica', 'bold');
+      yPos = addText(`Total a pagar: ${formatCurrency(loanData.total_amount || loanAmount)}`, pageWidth - margin - 60, yPos, 60, 11, 'bold');
+      yPos = addText(`Total de intereses: ${formatCurrency((loanData.total_amount || loanAmount) - loanAmount)}`, pageWidth - margin - 60, yPos, 60, 11, 'bold');
+      
+      break;
     
     case 'contrato_bluetooth':
-      return `
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Contrato Impresora Bluetooth</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
-    .header { text-align: center; margin-bottom: 30px; }
-    .content { max-width: 800px; margin: 0 auto; }
-    .section { margin-bottom: 20px; }
-  </style>
-</head>
-<body>
-  <div class="content">
-    <div class="header">
-      <h1>CONTRATO IMPRESORA BLUETOOTH</h1>
-    </div>
-    <div class="section">
-      <p><strong>CONTRATANTE:</strong> ${client?.full_name || 'N/A'}, Cédula: ${client?.dni || 'N/A'}</p>
-      <p><strong>CONTRATADO:</strong> ${companySettings?.company_name || 'LA EMPRESA'}</p>
-    </div>
-    <div class="section">
-      <p>Por medio del presente contrato, las partes acuerdan lo siguiente:</p>
-      <ol>
-        <li>El contratante se compromete a pagar la cantidad de ${formatCurrency(loanData.amount)} en ${loanData.term_months} cuotas mensuales.</li>
-        <li>La tasa de interés aplicable es del ${loanData.interest_rate}% mensual.</li>
-        <li>El pago se realizará mediante impresora Bluetooth según los términos acordados.</li>
-        <li>En caso de incumplimiento, se aplicarán las penalizaciones establecidas.</li>
-      </ol>
-    </div>
-    <div class="section">
-      <p>Fecha: ${formattedDate}</p>
-    </div>
-  </div>
-</body>
-</html>`;
+      // Título
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('CONTRATO IMPRESORA BLUETOOTH', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      // Partes del contrato
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      yPos = addText(`CONTRATANTE: ${client?.full_name || 'N/A'}, Cédula: ${client?.dni || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11, 'bold');
+      yPos = addText(`CONTRATADO: ${companySettings?.company_name || 'LA EMPRESA'}`, margin, yPos, pageWidth - (margin * 2), 11, 'bold');
+      yPos += 10;
+      
+      // Texto del contrato
+      doc.setFont('helvetica', 'normal');
+      yPos = addText('Por medio del presente contrato, las partes acuerdan lo siguiente:', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 5;
+      
+      yPos = addText(`1. El contratante se compromete a pagar la cantidad de ${formatCurrency(loanData.amount)} en ${loanData.term_months} cuotas mensuales.`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`2. La tasa de interés aplicable es del ${loanData.interest_rate}% mensual.`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText('3. El pago se realizará mediante impresora Bluetooth según los términos acordados.', margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText('4. En caso de incumplimiento, se aplicarán las penalizaciones establecidas.', margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos += 15;
+      
+      // Fecha
+      yPos = addText(`Fecha: ${formattedDate}`, margin, yPos, pageWidth - (margin * 2), 11);
+      
+      break;
     
     case 'pagare_codeudor':
-      return `
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pagaré Notarial con Codeudor</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
-    .header { text-align: center; margin-bottom: 30px; }
-    .content { max-width: 800px; margin: 0 auto; }
-    .section { margin-bottom: 20px; }
-    .signature-section { margin-top: 60px; display: flex; justify-content: space-between; }
-    .signature-box { width: 45%; text-align: center; border-top: 1px solid #000; padding-top: 10px; }
-  </style>
-</head>
-<body>
-  <div class="content">
-    <div class="header">
-      <h1>PAGARÉ NOTARIAL CON CODEUDOR</h1>
-    </div>
-    <div class="section">
-      <p>Por medio del presente documento, yo <strong>${client?.full_name || 'N/A'}</strong>, 
-      con cédula de identidad No. <strong>${client?.dni || 'N/A'}</strong>, 
-      como deudor principal, y <strong>${formData.guarantor_name || 'N/A'}</strong>, 
-      con cédula de identidad No. <strong>${formData.guarantor_dni || 'N/A'}</strong>, 
-      como codeudor, nos comprometemos solidariamente a pagar a la orden de 
-      <strong>${companySettings?.company_name || 'LA EMPRESA'}</strong>, 
-      la cantidad de <strong>${formatCurrency(loanData.amount)}</strong>.</p>
-    </div>
-    <div class="section">
-      <p><strong>Condiciones del préstamo:</strong></p>
-      <ul>
-        <li>Monto del préstamo: ${formatCurrency(loanData.amount)}</li>
-        <li>Tasa de interés: ${loanData.interest_rate}% mensual</li>
-        <li>Plazo: ${loanData.term_months} meses</li>
-        <li>Cuota mensual: ${formatCurrency(loanData.monthly_payment)}</li>
-      </ul>
-    </div>
-    <div class="signature-section">
-      <div class="signature-box">
-        <p>Firma del Deudor Principal</p>
-        <p>${client?.full_name || 'N/A'}</p>
-        <p>Cédula: ${client?.dni || 'N/A'}</p>
-      </div>
-      <div class="signature-box">
-        <p>Firma del Codeudor</p>
-        <p>${formData.guarantor_name || 'N/A'}</p>
-        <p>Cédula: ${formData.guarantor_dni || 'N/A'}</p>
-      </div>
-    </div>
-    <div style="margin-top: 40px; text-align: center;">
-      <p>Fecha: ${formattedDate}</p>
-    </div>
-  </div>
-</body>
-</html>`;
+      // Título
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PAGARÉ NOTARIAL CON CODEUDOR', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      // Texto principal
+      const pagareCodeudorText = `Por medio del presente documento, yo ${client?.full_name || 'N/A'}, con cédula de identidad No. ${client?.dni || 'N/A'}, como deudor principal, y ${formData.guarantor_name || 'N/A'}, con cédula de identidad No. ${formData.guarantor_dni || 'N/A'}, como codeudor, nos comprometemos solidariamente a pagar a la orden de ${companySettings?.company_name || 'LA EMPRESA'}, la cantidad de ${formatCurrency(loanData.amount)}.`;
+      yPos = addText(pagareCodeudorText, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      
+      // Condiciones del préstamo
+      doc.setFont('helvetica', 'bold');
+      yPos = addText('Condiciones del préstamo:', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 5;
+      doc.setFont('helvetica', 'normal');
+      yPos = addText(`• Monto del préstamo: ${formatCurrency(loanData.amount)}`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Tasa de interés: ${loanData.interest_rate}% mensual`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Plazo: ${loanData.term_months} meses`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Cuota mensual: ${formatCurrency(loanData.monthly_payment)}`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos += 20;
+      
+      // Firmas
+      const signatureYCodeudor = doc.internal.pageSize.getHeight() - 50;
+      doc.line(margin, signatureYCodeudor, margin + 80, signatureYCodeudor);
+      doc.text('Firma del Deudor Principal', margin, signatureYCodeudor + 5);
+      doc.text(`${client?.full_name || 'N/A'}`, margin, signatureYCodeudor + 10);
+      doc.text(`Cédula: ${client?.dni || 'N/A'}`, margin, signatureYCodeudor + 15);
+      
+      doc.line(pageWidth - margin - 80, signatureYCodeudor, pageWidth - margin, signatureYCodeudor);
+      doc.text('Firma del Codeudor', pageWidth - margin - 80, signatureYCodeudor + 5);
+      doc.text(`${formData.guarantor_name || 'N/A'}`, pageWidth - margin - 80, signatureYCodeudor + 10);
+      doc.text(`Cédula: ${formData.guarantor_dni || 'N/A'}`, pageWidth - margin - 80, signatureYCodeudor + 15);
+      
+      yPos = signatureYCodeudor + 25;
+      doc.text(`Fecha: ${formattedDate}`, pageWidth / 2, yPos, { align: 'center' });
+      
+      break;
     
     case 'contrato_salarial':
-      return `
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Contrato Salarial</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 40px; line-height: 1.6; }
-    .header { text-align: center; margin-bottom: 30px; }
-    .content { max-width: 800px; margin: 0 auto; }
-    .section { margin-bottom: 20px; }
-  </style>
-</head>
-<body>
-  <div class="content">
-    <div class="header">
-      <h1>CONTRATO SALARIAL</h1>
-    </div>
-    <div class="section">
-      <p><strong>TRABAJADOR:</strong> ${client?.full_name || 'N/A'}, Cédula: ${client?.dni || 'N/A'}</p>
-      <p><strong>EMPRESA:</strong> ${companySettings?.company_name || 'LA EMPRESA'}</p>
-    </div>
-    <div class="section">
-      <p>Por medio del presente contrato salarial, se establece el siguiente acuerdo de préstamo:</p>
-      <ul>
-        <li>Monto del préstamo: ${formatCurrency(loanData.amount)}</li>
-        <li>Tasa de interés: ${loanData.interest_rate}% mensual</li>
-        <li>Plazo: ${loanData.term_months} meses</li>
-        <li>Cuota mensual: ${formatCurrency(loanData.monthly_payment)}</li>
-        <li>El pago se realizará mediante descuento salarial según lo acordado.</li>
-      </ul>
-    </div>
-    <div class="section">
-      <p>Fecha: ${formattedDate}</p>
-    </div>
-  </div>
-</body>
-</html>`;
+      // Título
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('CONTRATO SALARIAL', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      // Partes del contrato
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      yPos = addText(`TRABAJADOR: ${client?.full_name || 'N/A'}, Cédula: ${client?.dni || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11, 'bold');
+      yPos = addText(`EMPRESA: ${companySettings?.company_name || 'LA EMPRESA'}`, margin, yPos, pageWidth - (margin * 2), 11, 'bold');
+      yPos += 10;
+      
+      // Texto del contrato
+      doc.setFont('helvetica', 'normal');
+      yPos = addText('Por medio del presente contrato salarial, se establece el siguiente acuerdo de préstamo:', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 5;
+      
+      yPos = addText(`• Monto del préstamo: ${formatCurrency(loanData.amount)}`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Tasa de interés: ${loanData.interest_rate}% mensual`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Plazo: ${loanData.term_months} meses`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText(`• Cuota mensual: ${formatCurrency(loanData.monthly_payment)}`, margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos = addText('• El pago se realizará mediante descuento salarial según lo acordado.', margin + 5, yPos, pageWidth - (margin * 2), 10);
+      yPos += 15;
+      
+      // Fecha
+      yPos = addText(`Fecha: ${formattedDate}`, margin, yPos, pageWidth - (margin * 2), 11);
+      
+      break;
+    
+    case 'carta_intimacion':
+      // Título
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('CARTA DE INTIMACIÓN', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      // Información del cliente
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      yPos = addText(`Señor(a): ${client?.full_name || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Cédula: ${client?.dni || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      
+      // Cuerpo de la carta
+      const cartaIntimacionText = `Por medio de la presente, le informamos que su préstamo por un monto de ${formatCurrency(loanData.amount)} se encuentra en mora. Le solicitamos ponerse al día con sus pagos pendientes.`;
+      yPos = addText(cartaIntimacionText, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      
+      yPos = addText(`Saldo pendiente: ${formatCurrency(loanData.remaining_balance || loanData.amount)}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 15;
+      
+      yPos = addText('Atentamente,', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 5;
+      yPos = addText(companySettings?.company_name || 'LA EMPRESA', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      yPos = addText(`Fecha: ${formattedDate}`, margin, yPos, pageWidth - (margin * 2), 11);
+      
+      break;
+    
+    case 'carta_saldo':
+      // Título
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('CARTA DE SALDO', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      // Información del cliente
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      yPos = addText(`Señor(a): ${client?.full_name || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Cédula: ${client?.dni || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      
+      // Información del préstamo
+      doc.setFont('helvetica', 'bold');
+      yPos = addText('Estado de su préstamo:', margin, yPos, pageWidth - (margin * 2), 11, 'bold');
+      yPos += 5;
+      doc.setFont('helvetica', 'normal');
+      yPos = addText(`Monto original: ${formatCurrency(loanData.amount)}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Saldo pendiente: ${formatCurrency(loanData.remaining_balance || loanData.amount)}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Cuota mensual: ${formatCurrency(loanData.monthly_payment)}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 15;
+      
+      yPos = addText('Atentamente,', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 5;
+      yPos = addText(companySettings?.company_name || 'LA EMPRESA', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      yPos = addText(`Fecha: ${formattedDate}`, margin, yPos, pageWidth - (margin * 2), 11);
+      
+      break;
+    
+    case 'prueba_documento':
+      // Título
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PRUEBA DE DOCUMENTO', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      yPos = addText('Este es un documento de prueba para verificar la generación de PDFs.', margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      yPos = addText(`Cliente: ${client?.full_name || 'N/A'}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos = addText(`Préstamo: ${formatCurrency(loanData.amount)}`, margin, yPos, pageWidth - (margin * 2), 11);
+      yPos += 10;
+      yPos = addText(`Fecha: ${formattedDate}`, margin, yPos, pageWidth - (margin * 2), 11);
+      
+      break;
     
     default:
-      return `<html><body><h1>Documento: ${docType}</h1><p>Contenido no disponible</p></body></html>`;
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Documento: ${docType}`, pageWidth / 2, yPos, { align: 'center' });
+      yPos += 10;
+      doc.setFont('helvetica', 'normal');
+      doc.text('Contenido no disponible', pageWidth / 2, yPos, { align: 'center' });
   }
+  
+  // Convertir PDF a Blob
+  const pdfBlob = doc.output('blob');
+  return pdfBlob;
 };
 
 // Función para generar las cuotas originales del préstamo
@@ -3190,12 +3239,15 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                   }
                   
                   // Generar cada documento seleccionado
-                  const documentTypes = {
+                  const documentTypes: { [key: string]: string } = {
                     'pagare_notarial': 'PAGARÉ NOTARIAL',
                     'tabla_amortizacion': 'TABLA DE AMORTIZACIÓN',
                     'contrato_bluetooth': 'CONTRATO IMPRESORA BLUETOOTH',
                     'pagare_codeudor': 'PAGARÉ NOTARIAL CON CODEUDOR',
-                    'contrato_salarial': 'CONTRATO SALARIAL'
+                    'contrato_salarial': 'CONTRATO SALARIAL',
+                    'carta_intimacion': 'CARTA DE INTIMACIÓN',
+                    'carta_saldo': 'CARTA DE SALDO',
+                    'prueba_documento': 'PRUEBA DE DOCUMENTO'
                   };
                   
                   let generatedCount = 0;
@@ -3210,18 +3262,18 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                         continue;
                       }
                       
-                      // Generar contenido HTML del documento
-                      const documentContent = generateDocumentHTML(docType, loanData, form.getValues(), companySettings);
+                      // Generar PDF del documento
+                      const pdfBlob = await generateDocumentPDF(docType, loanData, form.getValues(), companySettings);
                       
-                      if (!documentContent || documentContent.trim().length === 0) {
-                        console.error(`❌ Error: No se pudo generar el contenido para ${docType}`);
+                      if (!pdfBlob || pdfBlob.size === 0) {
+                        console.error(`❌ Error: No se pudo generar el PDF para ${docType}`);
                         continue;
                       }
                       
-                      // Crear un File desde el contenido HTML (Supabase Storage requiere File, no Blob)
-                      const fileName = `${docType}_${createdLoanId}_${Date.now()}.html`;
+                      // Crear un File desde el PDF Blob
+                      const fileName = `${docType}_${createdLoanId}_${Date.now()}.pdf`;
                       const filePath = `user-${companyId}/loans/${createdLoanId}/${fileName}`;
-                      const file = new File([documentContent], fileName, { type: 'text/html' });
+                      const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
                       
                       console.log(`📤 Subiendo archivo: ${filePath}, tamaño: ${file.size} bytes`);
                       
@@ -3229,7 +3281,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                       const { error: uploadError } = await supabase.storage
                         .from('documents')
                         .upload(filePath, file, {
-                          contentType: 'text/html',
+                          contentType: 'application/pdf',
                           upsert: false
                         });
                       
@@ -3255,7 +3307,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                         file_url: filePath,
                         description: `Documento generado automáticamente: ${documentTypes[docType as keyof typeof documentTypes]} (Tipo: ${docType})`,
                         document_type: allowedDocumentType, // Usar el tipo permitido
-                        mime_type: 'text/html',
+                        mime_type: 'application/pdf',
                         file_size: file.size,
                         status: 'active'
                       };
