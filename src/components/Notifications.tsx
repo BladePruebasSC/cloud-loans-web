@@ -89,10 +89,16 @@ const Notifications: React.FC = () => {
         `)
         .eq('status', 'active')
         .neq('status', 'deleted')
+        .neq('status', 'paid')
         .lt('next_payment_date', today.toISOString().split('T')[0]);
 
       if (!overdueError && overdueLoans) {
         overdueLoans.forEach(loan => {
+          // Excluir préstamos completados (remaining_balance === 0)
+          if (loan.remaining_balance === 0 || loan.remaining_balance === null) {
+            return;
+          }
+          
           const daysOverdue = Math.floor((today.getTime() - new Date(loan.next_payment_date).getTime()) / (1000 * 60 * 60 * 24));
           
           // Mensaje más específico según los días vencidos
@@ -131,15 +137,22 @@ const Notifications: React.FC = () => {
           client_id,
           next_payment_date,
           monthly_payment,
+          remaining_balance,
           clients!inner(full_name)
         `)
         .eq('status', 'active')
         .neq('status', 'deleted')
+        .neq('status', 'paid')
         .gte('next_payment_date', today.toISOString().split('T')[0])
         .lte('next_payment_date', nextWeek.toISOString().split('T')[0]);
 
       if (!upcomingError && upcomingLoans) {
         upcomingLoans.forEach(loan => {
+          // Excluir préstamos completados (remaining_balance === 0)
+          if (loan.remaining_balance === 0 || loan.remaining_balance === null) {
+            return;
+          }
+          
           const paymentDate = new Date(loan.next_payment_date);
           const daysUntilDue = Math.floor((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
           
@@ -203,9 +216,9 @@ const Notifications: React.FC = () => {
 
       if (!followUpError && upcomingFollowUps) {
         upcomingFollowUps.forEach(followUp => {
-          // Excluir seguimientos de préstamos eliminados
+          // Excluir seguimientos de préstamos eliminados o completados
           const loan = followUp.loans as any;
-          if (loan?.status === 'deleted') {
+          if (loan?.status === 'deleted' || loan?.status === 'paid') {
             return;
           }
           
@@ -253,11 +266,14 @@ const Notifications: React.FC = () => {
         `)
         .eq('loan_officer_id', companyId as string)
         .neq('status', 'deleted')
+        .neq('status', 'paid')
         .eq('late_fee_enabled', true)
         .gt('current_late_fee', 0);
 
       if (!lateFeeError && lateFeeLoans) {
         lateFeeLoans.forEach(loan => {
+          // Excluir préstamos completados - el filtro de status 'paid' ya los excluye, pero agregamos validación adicional
+          
           const today = new Date();
           const nextPayment = new Date(loan.next_payment_date);
           const daysOverdue = Math.max(0, Math.floor((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0));
