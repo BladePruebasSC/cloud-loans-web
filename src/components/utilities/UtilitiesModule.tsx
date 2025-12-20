@@ -27,7 +27,10 @@ import {
   Trash2,
   Printer,
   Download,
-  Eye
+  Eye,
+  FileEdit,
+  Upload,
+  Save
 } from 'lucide-react';
 
 interface Expense {
@@ -116,6 +119,14 @@ const UtilitiesModule = () => {
     category: '',
     expense_date: new Date().toISOString().split('T')[0]
   });
+
+  // Templates state
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<any | null>(null);
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+  const [templateContent, setTemplateContent] = useState<string>('');
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -1214,6 +1225,339 @@ const UtilitiesModule = () => {
     }
   }, [currency.amount, currency.fromCurrency, currency.toCurrency, showCurrencyConverter]);
 
+  // Funciones para manejar plantillas
+  const handleEditTemplate = async (templateId: string) => {
+    try {
+      setLoadingTemplates(true);
+      // Intentar obtener la plantilla desde company_settings (almacenada como JSON)
+      const { data: settings, error: settingsError } = await supabase
+        .from('company_settings')
+        .select('document_templates')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      if (settingsError && settingsError.code !== 'PGRST116') {
+        console.error('Error fetching settings:', settingsError);
+      }
+
+      const templatesData = settings?.document_templates || {};
+      const template = templatesData[templateId];
+
+      if (template) {
+        setEditingTemplate({
+          template_type: templateId,
+          content: template.content || '',
+          is_custom: template.is_custom || false,
+          file_path: template.file_path || null
+        });
+        setTemplateContent(template.content || '');
+      } else {
+        setEditingTemplate({
+          template_type: templateId,
+          content: '',
+          is_custom: false
+        });
+        setTemplateContent('');
+      }
+
+      setSelectedTemplate(templateId);
+      setShowTemplateEditor(true);
+    } catch (error) {
+      console.error('Error:', error);
+      toast.error('Error al cargar la plantilla');
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
+  const handleViewTemplate = async (templateId: string) => {
+    // Generar un PDF de ejemplo para visualizar usando la función real de generación
+    try {
+      // Obtener datos de ejemplo y configuración de la empresa
+      const { data: companySettings } = await supabase
+        .from('company_settings')
+        .select('*')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const exampleLoanData = {
+        id: 'example-loan-id',
+        amount: 10000,
+        interest_rate: 5,
+        term_months: 6,
+        monthly_payment: 2167,
+        start_date: new Date().toISOString().split('T')[0],
+        next_payment_date: new Date().toISOString().split('T')[0],
+        clients: {
+          full_name: 'Ejemplo Cliente',
+          dni: '000-0000000-0',
+          phone: '000-000-0000',
+          address: 'Dirección de Ejemplo'
+        }
+      };
+
+      const exampleFormData = {
+        amount: 10000,
+        interest_rate: 5,
+        term_months: 6
+      };
+
+      // Importar dinámicamente la función de generación desde LoanForm
+      // Por ahora, usaremos jsPDF directamente
+      const { default: jsPDF } = await import('jspdf');
+      const { default: autoTable } = await import('jspdf-autotable');
+      
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 20;
+      let yPos = 30;
+
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('VISTA PREVIA DE PLANTILLA', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Tipo: ${templateId.toUpperCase().replace(/_/g, ' ')}`, margin, yPos);
+      yPos += 10;
+      doc.text('Cliente: Ejemplo Cliente', margin, yPos);
+      yPos += 7;
+      doc.text('Monto: RD$10,000.00', margin, yPos);
+      yPos += 7;
+      doc.text('Esta es una vista previa de la plantilla con datos de ejemplo', margin, yPos);
+      
+      const pdfBlob = doc.output('blob');
+      const url = URL.createObjectURL(pdfBlob);
+      window.open(url, '_blank');
+    } catch (error) {
+      console.error('Error generating preview:', error);
+      toast.error('Error al generar la vista previa');
+    }
+  };
+
+  const handlePrintTemplate = async (templateId: string) => {
+    try {
+      const { default: jsPDF } = await import('jspdf');
+      
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 20;
+      let yPos = 30;
+
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('EJEMPLO DE PLANTILLA - FORMATO A4', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Tipo de Documento: ${templateId.toUpperCase().replace(/_/g, ' ')}`, margin, yPos);
+      yPos += 10;
+      doc.text('Cliente: Ejemplo Cliente', margin, yPos);
+      yPos += 7;
+      doc.text('Cédula: 000-0000000-0', margin, yPos);
+      yPos += 7;
+      doc.text('Monto del Préstamo: RD$10,000.00', margin, yPos);
+      yPos += 7;
+      doc.text('Tasa de Interés: 5% mensual', margin, yPos);
+      yPos += 7;
+      doc.text('Plazo: 6 meses', margin, yPos);
+      yPos += 10;
+      doc.text('Este es un ejemplo de impresión en formato A4 para verificar el diseño de la plantilla.', margin, yPos);
+      
+      doc.autoPrint();
+      const pdfBlob = doc.output('blob');
+      const url = URL.createObjectURL(pdfBlob);
+      const printWindow = window.open(url, '_blank');
+      if (printWindow) {
+        printWindow.onload = () => {
+          setTimeout(() => {
+            printWindow.print();
+          }, 250);
+        };
+      }
+    } catch (error) {
+      console.error('Error printing template:', error);
+      toast.error('Error al imprimir la plantilla');
+    }
+  };
+
+  const handleDownloadTemplate = async (templateId: string) => {
+    try {
+      const { default: jsPDF } = await import('jspdf');
+      
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 20;
+      let yPos = 30;
+
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('PLANTILLA DE DOCUMENTO', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Tipo: ${templateId.toUpperCase().replace(/_/g, ' ')}`, margin, yPos);
+      yPos += 10;
+      doc.text('Esta es la plantilla del documento en formato PDF', margin, yPos);
+      
+      doc.save(`${templateId}_plantilla.pdf`);
+      toast.success('Plantilla descargada exitosamente');
+    } catch (error) {
+      console.error('Error downloading template:', error);
+      toast.error('Error al descargar la plantilla');
+    }
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!selectedTemplate || !editingTemplate) return;
+
+    try {
+      setLoadingTemplates(true);
+      
+      // Obtener configuración actual
+      const { data: currentSettings, error: fetchError } = await supabase
+        .from('company_settings')
+        .select('id, document_templates')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const templatesData = currentSettings?.document_templates || {};
+      templatesData[selectedTemplate] = {
+        content: templateContent,
+        is_custom: true,
+        updated_at: new Date().toISOString()
+      };
+
+      if (currentSettings) {
+        // Actualizar configuración existente
+        const { error } = await supabase
+          .from('company_settings')
+          .update({
+            document_templates: templatesData,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', currentSettings.id);
+
+        if (error) throw error;
+      } else {
+        // Crear nueva configuración
+        const { error } = await supabase
+          .from('company_settings')
+          .insert([{
+            user_id: companyId,
+            document_templates: templatesData,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }]);
+
+        if (error) throw error;
+      }
+
+      toast.success('Plantilla guardada exitosamente');
+      setShowTemplateEditor(false);
+      setEditingTemplate(null);
+      setTemplateContent('');
+      setSelectedTemplate(null);
+    } catch (error) {
+      console.error('Error saving template:', error);
+      toast.error('Error al guardar la plantilla');
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
+  const handleUploadTemplate = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedTemplate) return;
+
+    if (file.type !== 'application/pdf') {
+      toast.error('Solo se permiten archivos PDF');
+      return;
+    }
+
+    try {
+      setLoadingTemplates(true);
+      
+      // Guardar el archivo en storage
+      const fileName = `${selectedTemplate}_${Date.now()}.pdf`;
+      const filePath = `templates/${companyId}/${fileName}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, file, {
+          contentType: 'application/pdf',
+          upsert: true
+        });
+
+      if (uploadError) throw uploadError;
+
+      // Obtener URL pública
+      const { data: urlData } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath);
+
+      // Guardar referencia en company_settings
+      const { data: currentSettings } = await supabase
+        .from('company_settings')
+        .select('id, document_templates')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const templatesData = currentSettings?.document_templates || {};
+      templatesData[selectedTemplate] = {
+        content: urlData.publicUrl,
+        file_path: filePath,
+        is_custom: true,
+        updated_at: new Date().toISOString()
+      };
+
+      if (currentSettings) {
+        const { error } = await supabase
+          .from('company_settings')
+          .update({
+            document_templates: templatesData,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', currentSettings.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('company_settings')
+          .insert([{
+            user_id: companyId,
+            document_templates: templatesData,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }]);
+        if (error) throw error;
+      }
+
+      toast.success('Plantilla subida exitosamente');
+      setShowTemplateEditor(false);
+      setEditingTemplate(null);
+      setTemplateContent('');
+      setSelectedTemplate(null);
+    } catch (error) {
+      console.error('Error uploading template:', error);
+      toast.error('Error al subir la plantilla');
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
       <div className="flex items-center justify-between">
@@ -1221,10 +1565,11 @@ const UtilitiesModule = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 gap-1 sm:gap-2">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 gap-1 sm:gap-2">
           <TabsTrigger value="calculadora" className="text-xs sm:text-sm">Calculadora</TabsTrigger>
           <TabsTrigger value="gastos" className="text-xs sm:text-sm">Gastos</TabsTrigger>
           <TabsTrigger value="reportes" className="text-xs sm:text-sm">Reportes</TabsTrigger>
+          <TabsTrigger value="plantillas" className="text-xs sm:text-sm">Plantillas</TabsTrigger>
           <TabsTrigger value="configuracion" className="text-xs sm:text-sm">Configuración</TabsTrigger>
         </TabsList>
 
@@ -1642,6 +1987,82 @@ const UtilitiesModule = () => {
                   </table>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="plantillas" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <FileEdit className="h-5 w-5 mr-2" />
+                Plantillas de Documentos
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-600 mb-4">
+                Gestiona las plantillas de documentos que se utilizan al crear préstamos. 
+                Puedes editar, subir, visualizar, imprimir y descargar cada plantilla.
+              </p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[
+                  { id: 'pagare_notarial', label: 'PAGARÉ NOTARIAL', icon: FileText },
+                  { id: 'tabla_amortizacion', label: 'TABLA DE AMORTIZACIÓN', icon: FileText },
+                  { id: 'contrato_bluetooth', label: 'CONTRATO IMPRESORA BLUETOOTH', icon: FileText },
+                  { id: 'pagare_codeudor', label: 'PAGARÉ NOTARIAL CON CODEUDOR', icon: FileText },
+                  { id: 'contrato_salarial', label: 'CONTRATO SALARIAL', icon: FileText },
+                  { id: 'carta_intimacion', label: 'CARTA DE INTIMACIÓN', icon: FileText },
+                  { id: 'carta_saldo', label: 'CARTA DE SALDO', icon: FileText },
+                  { id: 'prueba_documento', label: 'PRUEBA DE DOCUMENTO', icon: FileText },
+                ].map((template) => {
+                  const Icon = template.icon;
+                  return (
+                    <Card key={template.id} className="hover:shadow-md transition-shadow">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <Icon className="h-5 w-5 text-blue-600" />
+                            <h3 className="font-semibold text-sm">{template.label}</h3>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleEditTemplate(template.id)}
+                            className="flex-1"
+                          >
+                            <Edit className="h-4 w-4 mr-1" />
+                            Editar
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleViewTemplate(template.id)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handlePrintTemplate(template.id)}
+                          >
+                            <Printer className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDownloadTemplate(template.id)}
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -2195,6 +2616,91 @@ const UtilitiesModule = () => {
               </Button>
               <Button onClick={convertCurrency}>
                 Convertir
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Template Editor Dialog */}
+      <Dialog open={showTemplateEditor} onOpenChange={setShowTemplateEditor}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileEdit className="h-5 w-5" />
+              Editar Plantilla: {selectedTemplate?.toUpperCase().replace(/_/g, ' ')}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'application/pdf';
+                  input.onchange = handleUploadTemplate;
+                  input.click();
+                }}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Subir PDF
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleViewTemplate(selectedTemplate || '')}
+              >
+                <Eye className="h-4 w-4 mr-2" />
+                Visualizar
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => handlePrintTemplate(selectedTemplate || '')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Imprimir Ejemplo (A4)
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleDownloadTemplate(selectedTemplate || '')}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Descargar PDF
+              </Button>
+            </div>
+
+            <div>
+              <Label htmlFor="template-content">Contenido de la Plantilla</Label>
+              <Textarea
+                id="template-content"
+                value={templateContent}
+                onChange={(e) => setTemplateContent(e.target.value)}
+                placeholder="Edita el contenido de la plantilla aquí..."
+                className="min-h-[400px] font-mono text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                Puedes usar variables como {'{'}cliente_nombre{'}'}, {'{'}monto{'}'}, {'{'}fecha{'}'}, etc.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowTemplateEditor(false);
+                  setEditingTemplate(null);
+                  setTemplateContent('');
+                  setSelectedTemplate(null);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleSaveTemplate}
+                disabled={loadingTemplates}
+              >
+                <Save className="h-4 w-4 mr-2" />
+                {loadingTemplates ? 'Guardando...' : 'Guardar Plantilla'}
               </Button>
             </div>
           </div>
