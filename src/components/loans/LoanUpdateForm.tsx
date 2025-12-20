@@ -15,6 +15,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
+import { getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { 
   Edit, 
   DollarSign, 
@@ -174,6 +175,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     lateFeePending: 0,
     totalToSettle: 0
   });
+  const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
   const { user, companyId } = useAuth();
 
   const form = useForm<UpdateFormData>({
@@ -338,6 +340,95 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     }
   }, [isOpen, loan.id, loan.amount, loan.remaining_balance, installments, currentLateFee, updateType]);
 
+  // Calcular interés pendiente para préstamos indefinidos
+  useEffect(() => {
+    if (isOpen && loan.id && loan.amortization_type === 'indefinite') {
+      calculatePendingInterestForIndefinite();
+    } else {
+      setPendingInterestForIndefinite(0);
+    }
+  }, [isOpen, loan.id, loan.amortization_type, loan.start_date, installments]);
+
+  // Función para calcular el interés pendiente total para préstamos indefinidos
+  const calculatePendingInterestForIndefinite = async () => {
+    if (!loan || loan.amortization_type !== 'indefinite') {
+      setPendingInterestForIndefinite(0);
+      return;
+    }
+
+    try {
+      if (!loan.start_date) {
+        console.warn('🔍 LoanUpdateForm - calculatePendingInterestForIndefinite: Falta start_date, no se puede calcular');
+        setPendingInterestForIndefinite(0);
+        return;
+      }
+
+      // Calcular interés por cuota para préstamos indefinidos
+      const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+
+      // Calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
+      const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+      const startDate = new Date(startYear, startMonth - 1, startDay);
+      const currentDate = getCurrentDateInSantoDomingo();
+
+      // Calcular meses transcurridos desde el inicio
+      const monthsElapsed = Math.max(0, 
+        (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+        (currentDate.getMonth() - startDate.getMonth())
+      );
+
+      // Total de cuotas que deberían existir desde el inicio hasta hoy
+      const totalExpectedInstallments = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
+
+      console.log('🔍 LoanUpdateForm - calculatePendingInterestForIndefinite: Cálculo dinámico', {
+        loanId: loan.id,
+        startDate: loan.start_date,
+        currentDate: currentDate.toISOString().split('T')[0],
+        monthsElapsed,
+        totalExpectedInstallments
+      });
+
+      // Calcular cuántas cuotas se han pagado desde los pagos
+      let paidCount = 0;
+      if (loan.id) {
+        const { data: payments, error: paymentsError } = await supabase
+          .from('payments')
+          .select('interest_amount')
+          .eq('loan_id', loan.id);
+
+        if (!paymentsError && payments && payments.length > 0) {
+          const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+          paidCount = Math.floor(totalInterestPaid / interestPerPayment);
+
+          console.log('🔍 LoanUpdateForm - calculatePendingInterestForIndefinite: Cuotas pagadas desde pagos', {
+            totalInterestPaid,
+            paidFromPayments: paidCount
+          });
+        }
+      }
+
+      // Cuotas pendientes = total esperadas - pagadas
+      const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
+
+      // Calcular interés pendiente total
+      const totalPendingInterest = unpaidCount * interestPerPayment;
+
+      console.log('🔍 LoanUpdateForm - calculatePendingInterestForIndefinite: Resumen final', {
+        loanId: loan.id,
+        totalExpectedInstallments,
+        paidCount,
+        unpaidCount,
+        interestPerPayment,
+        totalPendingInterest
+      });
+
+      setPendingInterestForIndefinite(totalPendingInterest);
+    } catch (error) {
+      console.error('❌ Error calculando interés pendiente para préstamo indefinido en LoanUpdateForm:', error);
+      setPendingInterestForIndefinite(0);
+    }
+  };
+
   // Obtener la mora actual del préstamo cuando se abre el formulario
   // Calcular la mora basándose en las cuotas reales, no solo leer de la BD
   useEffect(() => {
@@ -456,7 +547,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     if (updateType !== 'payment_agreement') {
       calculateUpdatedValues();
     }
-  }, [watchedValues]);
+  }, [watchedValues, pendingInterestForIndefinite]);
 
   // Resetear el campo de razón cuando cambia el tipo de actualización
   useEffect(() => {
@@ -544,7 +635,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const calculateUpdatedValues = () => {
     const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType, settleCapital, settleInterest, settleLateFee] = watchedValues;
     
-    let newBalance = loan.remaining_balance;
+    // Calcular el balance actual correcto (incluyendo intereses pendientes para indefinidos)
+    const currentBalance = loan.amortization_type === 'indefinite' 
+      ? loan.amount + pendingInterestForIndefinite
+      : loan.remaining_balance;
+    
+    let newBalance = currentBalance;
     let newPayment = loan.monthly_payment;
     let newEndDate = '';
     let interestAmount = 0;
@@ -554,7 +650,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       case 'add_charge':
         if (amount) {
           // Agregar el monto del cargo al balance
-          newBalance = loan.remaining_balance + amount;
+          newBalance = currentBalance + amount;
           principalAmount = amount;
         }
         break;
@@ -563,7 +659,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         if (additionalMonths) {
           // Calcular meses restantes actuales
           const totalPayments = loan.term_months;
-          const paidPayments = Math.floor((loan.amount - loan.remaining_balance) / loan.monthly_payment);
+          const paidPayments = Math.floor((loan.amount - currentBalance) / loan.monthly_payment);
           const currentRemainingMonths = Math.max(1, totalPayments - paidPayments);
           const newTotalMonths = currentRemainingMonths + additionalMonths;
           const newTotalPayments = totalPayments + additionalMonths;
@@ -575,7 +671,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           
           // Calcular nuevo balance: el balance actual + las cuotas adicionales
           const additionalBalance = newPayment * additionalMonths;
-          newBalance = loan.remaining_balance + additionalBalance;
+          newBalance = currentBalance + additionalBalance;
           
           // Calcular nueva fecha de fin
           const currentEndDate = new Date(loan.next_payment_date);
@@ -588,7 +684,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         // Calcular nuevo balance restando los montos pagados
         const capitalPaid = settleCapital || 0;
         const interestPaid = settleInterest || 0;
-        newBalance = Math.max(0, loan.remaining_balance - capitalPaid - interestPaid);
+        newBalance = Math.max(0, currentBalance - capitalPaid - interestPaid);
         principalAmount = capitalPaid;
         interestAmount = interestPaid;
         break;
@@ -2248,7 +2344,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">Balance Actual:</span>
-                      <span className="font-semibold">${loan.remaining_balance.toLocaleString()}</span>
+                      <span className="font-semibold">${(
+                        loan.amortization_type === 'indefinite' 
+                          ? loan.amount + pendingInterestForIndefinite
+                          : loan.remaining_balance
+                      ).toLocaleString()}</span>
                     </div>
                     
                     {form.watch('update_type') === 'add_charge' && form.watch('amount') && (
