@@ -20,7 +20,14 @@ import {
   FolderOpen,
   Download,
   Trash2,
-  Eye
+  Eye,
+  Phone,
+  Mail,
+  MessageSquare,
+  MapPin,
+  FileCheck,
+  Clock,
+  Edit
 } from 'lucide-react';
 import { LoanHistoryView } from './LoanHistoryView';
 import { AccountStatement } from './AccountStatement';
@@ -84,6 +91,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [selectedAgreement, setSelectedAgreement] = useState<any>(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [loanHistoryNotes, setLoanHistoryNotes] = useState<any[]>([]);
+  const [trackingRecords, setTrackingRecords] = useState<any[]>([]);
+  const [loadingTracking, setLoadingTracking] = useState(false);
   const [showDocuments, setShowDocuments] = useState(false);
   const [documents, setDocuments] = useState<any[]>([]);
   const [previewDocument, setPreviewDocument] = useState<any | null>(null);
@@ -111,6 +120,13 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       fetchDocuments();
     }
   }, [isOpen, loanId]);
+
+  // Cargar registros de seguimiento cuando se abre el modal de notas
+  useEffect(() => {
+    if (showNotes && loanId) {
+      fetchTrackingRecords();
+    }
+  }, [showNotes, loanId]);
 
   // Calcular interés pendiente para préstamos indefinidos
   useEffect(() => {
@@ -314,6 +330,26 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     } catch (error) {
       console.error('Error fetching loan history notes:', error);
       setLoanHistoryNotes([]);
+    }
+  };
+
+  const fetchTrackingRecords = async () => {
+    try {
+      setLoadingTracking(true);
+      const { data, error } = await supabase
+        .from('collection_tracking')
+        .select('*')
+        .eq('loan_id', loanId)
+        .order('contact_date', { ascending: false })
+        .order('contact_time', { ascending: false });
+
+      if (error) throw error;
+      setTrackingRecords(data || []);
+    } catch (error) {
+      console.error('Error fetching tracking records:', error);
+      toast.error('Error al cargar el historial de seguimiento');
+    } finally {
+      setLoadingTracking(false);
     }
   };
 
@@ -1020,62 +1056,109 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       {/* Modal de Notas de Seguimiento */}
       {showNotes && (
         <Dialog open={showNotes} onOpenChange={setShowNotes}>
-          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Notas de Seguimiento</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5" />
+                Notas de Seguimiento
+              </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
-              {loanHistoryNotes.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <StickyNote className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No hay notas de seguimiento para este préstamo</p>
+              {loadingTracking ? (
+                <div className="text-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mx-auto"></div>
+                  <p className="text-gray-600 mt-4 font-medium">Cargando historial...</p>
+                </div>
+              ) : trackingRecords.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Clock className="h-10 w-10 text-gray-400" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-gray-700 mb-2">Sin seguimientos</h3>
+                  <p className="text-gray-500">No hay registros de seguimiento para este préstamo</p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {loanHistoryNotes.map((note) => (
-                    <Card key={note.id}>
-                      <CardContent className="p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline">
-                              {note.change_type === 'payment' ? 'Pago' :
-                               note.change_type === 'partial_payment' ? 'Pago Parcial' :
-                               note.change_type === 'interest_adjustment' ? 'Ajuste de Interés' :
-                               note.change_type === 'term_extension' ? 'Extensión de Plazo' :
-                               note.change_type === 'balance_adjustment' ? 'Ajuste de Balance' :
-                               note.change_type === 'rate_change' ? 'Cambio de Tasa' :
-                               note.change_type === 'status_change' ? 'Cambio de Estado' :
-                               note.change_type}
-                            </Badge>
+                <div className="space-y-4">
+                  {trackingRecords.map((record) => {
+                    const contactTypeIcons: Record<string, any> = {
+                      phone: Phone,
+                      email: Mail,
+                      sms: MessageSquare,
+                      visit: MapPin,
+                      letter: FileText,
+                      other: StickyNote
+                    };
+                    const contactTypeLabels: Record<string, string> = {
+                      phone: 'Llamada Telefónica',
+                      email: 'Correo Electrónico',
+                      sms: 'Mensaje de Texto',
+                      visit: 'Visita Personal',
+                      letter: 'Carta',
+                      other: 'Otro'
+                    };
+                    const contactTypeColors: Record<string, string> = {
+                      phone: 'bg-blue-100 text-blue-800',
+                      email: 'bg-green-100 text-green-800',
+                      sms: 'bg-purple-100 text-purple-800',
+                      visit: 'bg-orange-100 text-orange-800',
+                      letter: 'bg-gray-100 text-gray-800',
+                      other: 'bg-yellow-100 text-yellow-800'
+                    };
+                    
+                    const Icon = contactTypeIcons[record.contact_type] || StickyNote;
+                    const colorClass = contactTypeColors[record.contact_type] || 'bg-gray-100 text-gray-800';
+                    
+                    return (
+                      <div key={record.id} className="bg-white border border-gray-200 rounded-xl p-6 hover:shadow-md transition-all duration-200">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                          <div className="flex-1">
+                            {/* Header del registro */}
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
+                                  <Icon className="h-5 w-5 text-gray-600" />
+                                </div>
+                                <Badge className={`${colorClass} px-3 py-1 text-sm font-semibold`}>
+                                  {contactTypeLabels[record.contact_type] || 'Otro'}
+                                </Badge>
+                              </div>
+                              <div className="text-sm text-gray-500 font-medium">
+                                {new Date(record.contact_date).toLocaleDateString('es-DO')} a las {record.contact_time}
+                              </div>
+                            </div>
+
+                            {/* Contenido del registro */}
+                            <div className="space-y-4">
+                              {record.client_response && (
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                  <p className="text-sm font-semibold text-blue-800 mb-2">Respuesta del Cliente:</p>
+                                  <p className="text-sm text-blue-700 leading-relaxed">{record.client_response}</p>
+                                </div>
+                              )}
+
+                              {record.additional_notes && (
+                                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                                  <p className="text-sm font-semibold text-gray-800 mb-2">Notas Adicionales:</p>
+                                  <p className="text-sm text-gray-700 leading-relaxed">{record.additional_notes}</p>
+                                </div>
+                              )}
+
+                              {record.next_contact_date && (
+                                <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                                  <div className="flex items-center gap-2">
+                                    <Calendar className="h-4 w-4 text-orange-600" />
+                                    <span className="text-sm font-semibold text-orange-800">
+                                      Próximo contacto: {new Date(record.next_contact_date).toLocaleDateString('es-DO')}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <span className="text-sm text-gray-500">
-                            {new Date(note.created_at).toLocaleDateString('es-DO', {
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </span>
                         </div>
-                        {note.description && (
-                          <div className="mt-2">
-                            <p className="text-sm text-gray-700 whitespace-pre-wrap">{note.description}</p>
-                          </div>
-                        )}
-                        {(note.old_value || note.new_value) && (
-                          <div className="mt-2 text-xs text-gray-500">
-                            {note.old_value && (
-                              <div>Valor anterior: {note.old_value}</div>
-                            )}
-                            {note.new_value && (
-                              <div>Valor nuevo: {note.new_value}</div>
-                            )}
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
