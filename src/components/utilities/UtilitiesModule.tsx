@@ -1240,7 +1240,13 @@ const UtilitiesModule = () => {
   // Inicializar el editor cuando se abre el modal
   useEffect(() => {
     if (showTemplateEditor && editorRef && templateContent) {
-      editorRef.innerHTML = templateContent.replace(/\n/g, '<br>');
+      // Si el contenido es texto plano (sin HTML), convertirlo a HTML
+      if (!templateContent.includes('<') || !templateContent.includes('>')) {
+        editorRef.innerHTML = templateContent.replace(/\n/g, '<br>');
+      } else {
+        // Si ya es HTML, usarlo directamente
+        editorRef.innerHTML = templateContent;
+      }
     }
   }, [showTemplateEditor, editorRef, templateContent]);
 
@@ -1419,6 +1425,44 @@ Fecha: {fecha_actual}`
     }
   };
 
+  // Función para limpiar HTML y convertir a texto plano preservando estructura
+  const cleanHtmlToText = (html: string): string => {
+    // Crear un elemento temporal para parsear el HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = html;
+    
+    // Función recursiva para extraer texto preservando saltos de línea
+    const extractText = (node: Node): string => {
+      let text = '';
+      
+      if (node.nodeType === Node.TEXT_NODE) {
+        text = node.textContent || '';
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const element = node as HTMLElement;
+        const tagName = element.tagName.toLowerCase();
+        
+        // Agregar salto de línea para ciertos elementos
+        if (['div', 'p', 'br'].includes(tagName)) {
+          text += '\n';
+        }
+        
+        // Procesar hijos
+        for (let i = 0; i < node.childNodes.length; i++) {
+          text += extractText(node.childNodes[i]);
+        }
+        
+        // Agregar salto de línea después de ciertos elementos
+        if (['div', 'p'].includes(tagName)) {
+          text += '\n';
+        }
+      }
+      
+      return text;
+    };
+    
+    return extractText(tempDiv).trim();
+  };
+
   // Función para reemplazar variables en el contenido de la plantilla
   const replaceTemplateVariables = (content: string, templateId: string): string => {
     const today = new Date();
@@ -1463,7 +1507,13 @@ Fecha: {fecha_actual}`
       '{monto_original}': formatCurrency(10000)
     };
 
-    let processedContent = content;
+    // Si el contenido contiene HTML, limpiarlo primero
+    let textContent = content;
+    if (content.includes('<') && content.includes('>')) {
+      textContent = cleanHtmlToText(content);
+    }
+    
+    let processedContent = textContent;
     
     // Reemplazar todas las variables
     Object.keys(exampleData).forEach(key => {
@@ -3293,7 +3343,13 @@ Fecha: {fecha_actual}`
                     setEditorRef(el);
                     // Inicializar contenido cuando se monta
                     if (templateContent && el.innerHTML === '') {
-                      el.innerHTML = templateContent.replace(/\n/g, '<br>');
+                      // Si el contenido es texto plano (sin HTML), convertirlo a HTML
+                      if (!templateContent.includes('<') || !templateContent.includes('>')) {
+                        el.innerHTML = templateContent.replace(/\n/g, '<br>');
+                      } else {
+                        // Si ya es HTML, usarlo directamente
+                        el.innerHTML = templateContent;
+                      }
                     }
                   }
                 }}
@@ -3301,16 +3357,8 @@ Fecha: {fecha_actual}`
                 suppressContentEditableWarning
                 onInput={(e) => {
                   const html = (e.currentTarget as HTMLElement).innerHTML;
-                  // Convertir HTML a texto plano preservando saltos de línea
-                  const text = html
-                    .replace(/<br\s*\/?>/gi, '\n')
-                    .replace(/<\/div>/gi, '\n')
-                    .replace(/<div>/gi, '')
-                    .replace(/<\/p>/gi, '\n')
-                    .replace(/<p>/gi, '')
-                    .replace(/&nbsp;/g, ' ')
-                    .trim();
-                  setTemplateContent(text);
+                  // Guardar el HTML completo para preservar el formato
+                  setTemplateContent(html);
                 }}
                 className="border border-t-0 border-gray-300 rounded-b-lg p-4 min-h-[400px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 style={{
