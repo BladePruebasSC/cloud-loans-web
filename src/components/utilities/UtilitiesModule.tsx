@@ -1395,62 +1395,145 @@ Fecha: {fecha_actual}`
     }
   };
 
+  // Función para reemplazar variables en el contenido de la plantilla
+  const replaceTemplateVariables = (content: string, templateId: string): string => {
+    const today = new Date();
+    const formattedDate = today.toLocaleDateString('es-DO', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    const formatCurrency = (amount: number) => {
+      return new Intl.NumberFormat('es-DO', {
+        style: 'currency',
+        currency: 'DOP',
+        minimumFractionDigits: 2
+      }).format(amount);
+    };
+
+    // Datos de ejemplo
+    const exampleData: { [key: string]: string } = {
+      '{cliente_nombre}': 'Ejemplo Cliente',
+      '{cliente_dni}': '000-0000000-0',
+      '{empresa_nombre}': 'LA EMPRESA',
+      '{monto}': formatCurrency(10000),
+      '{monto_numeros}': '10,000',
+      '{tasa_interes}': '5',
+      '{plazo}': '6',
+      '{cuota_mensual}': formatCurrency(2167),
+      '{fecha_inicio}': formattedDate,
+      '{primera_fecha_pago}': formattedDate,
+      '{tasa_mora}': '2',
+      '{tipo_mora}': 'mensual',
+      '{fecha_actual}': formattedDate,
+      '{codeudor_nombre}': 'Ejemplo Codeudor',
+      '{codeudor_dni}': '000-0000000-1',
+      '{descuento_salarial}': '10',
+      '{numero_prestamo}': 'PREST-001',
+      '{saldo_pendiente}': formatCurrency(8500),
+      '{intereses_pendientes}': formatCurrency(500),
+      '{mora_pendiente}': formatCurrency(100),
+      '{total_pagar}': formatCurrency(9100),
+      '{fecha_limite}': formattedDate,
+      '{monto_original}': formatCurrency(10000)
+    };
+
+    let processedContent = content;
+    
+    // Reemplazar todas las variables
+    Object.keys(exampleData).forEach(key => {
+      const regex = new RegExp(key.replace(/[{}]/g, '\\$&'), 'g');
+      processedContent = processedContent.replace(regex, exampleData[key]);
+    });
+
+    return processedContent;
+  };
+
   const handleViewTemplate = async (templateId: string) => {
-    // Generar un PDF de ejemplo para visualizar usando la función real de generación
     try {
-      // Obtener datos de ejemplo y configuración de la empresa
-      const { data: companySettings } = await supabase
+      // Obtener el contenido de la plantilla guardada
+      const { data: settings } = await supabase
         .from('company_settings')
-        .select('*')
+        .select('document_templates, company_name')
         .eq('user_id', companyId)
         .maybeSingle();
 
-      const exampleLoanData = {
-        id: 'example-loan-id',
-        amount: 10000,
-        interest_rate: 5,
-        term_months: 6,
-        monthly_payment: 2167,
-        start_date: new Date().toISOString().split('T')[0],
-        next_payment_date: new Date().toISOString().split('T')[0],
-        clients: {
-          full_name: 'Ejemplo Cliente',
-          dni: '000-0000000-0',
-          phone: '000-000-0000',
-          address: 'Dirección de Ejemplo'
-        }
-      };
-
-      const exampleFormData = {
-        amount: 10000,
-        interest_rate: 5,
-        term_months: 6
-      };
-
-      // Importar dinámicamente la función de generación desde LoanForm
-      // Por ahora, usaremos jsPDF directamente
-      const { default: jsPDF } = await import('jspdf');
-      const { default: autoTable } = await import('jspdf-autotable');
+      const templatesData = settings?.document_templates || {};
+      const template = templatesData[templateId];
       
-      const doc = new jsPDF();
+      // Obtener el contenido (personalizado o por defecto)
+      let templateContent = '';
+      if (template && template.content) {
+        templateContent = template.content;
+      } else {
+        templateContent = getDefaultTemplateContent(templateId);
+      }
+
+      // Reemplazar variables con datos de ejemplo
+      const processedContent = replaceTemplateVariables(templateContent, templateId);
+
+      // Generar PDF con el contenido procesado
+      const { default: jsPDF } = await import('jspdf');
+      
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
       const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 20;
-      let yPos = 30;
+      let yPos = margin;
 
-      doc.setFontSize(18);
-      doc.setFont('helvetica', 'bold');
-      doc.text('VISTA PREVIA DE PLANTILLA', pageWidth / 2, yPos, { align: 'center' });
-      yPos += 15;
+      // Función auxiliar para agregar texto con salto de línea automático
+      const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
+        doc.setFontSize(fontSize);
+        doc.setFont('helvetica', fontStyle);
+        const lines = doc.splitTextToSize(text, maxWidth);
+        
+        // Verificar si necesitamos una nueva página
+        const lineHeight = fontSize * 0.4;
+        const neededHeight = lines.length * lineHeight;
+        
+        if (y + neededHeight > pageHeight - margin) {
+          doc.addPage();
+          return margin;
+        }
+        
+        doc.text(lines, x, y);
+        return y + (lines.length * lineHeight);
+      };
 
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Tipo: ${templateId.toUpperCase().replace(/_/g, ' ')}`, margin, yPos);
-      yPos += 10;
-      doc.text('Cliente: Ejemplo Cliente', margin, yPos);
-      yPos += 7;
-      doc.text('Monto: RD$10,000.00', margin, yPos);
-      yPos += 7;
-      doc.text('Esta es una vista previa de la plantilla con datos de ejemplo', margin, yPos);
+      // Dividir el contenido en líneas y procesarlas
+      const lines = processedContent.split('\n');
+      
+      for (const line of lines) {
+        if (line.trim() === '') {
+          yPos += 5; // Espacio en blanco
+          continue;
+        }
+
+        // Detectar títulos (líneas en mayúsculas o con formato especial)
+        if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
+          yPos += 5; // Espacio antes del título
+          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
+          yPos += 5; // Espacio después del título
+        } else if (line.trim().startsWith('•')) {
+          // Lista con viñetas
+          yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
+        } else {
+          // Texto normal
+          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
+        }
+
+        // Verificar si necesitamos una nueva página
+        if (yPos > pageHeight - margin - 20) {
+          doc.addPage();
+          yPos = margin;
+        }
+      }
       
       const pdfBlob = doc.output('blob');
       const url = URL.createObjectURL(pdfBlob);
@@ -1463,6 +1546,28 @@ Fecha: {fecha_actual}`
 
   const handlePrintTemplate = async (templateId: string) => {
     try {
+      // Obtener el contenido de la plantilla guardada
+      const { data: settings } = await supabase
+        .from('company_settings')
+        .select('document_templates')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const templatesData = settings?.document_templates || {};
+      const template = templatesData[templateId];
+      
+      // Obtener el contenido (personalizado o por defecto)
+      let templateContent = '';
+      if (template && template.content) {
+        templateContent = template.content;
+      } else {
+        templateContent = getDefaultTemplateContent(templateId);
+      }
+
+      // Reemplazar variables con datos de ejemplo
+      const processedContent = replaceTemplateVariables(templateContent, templateId);
+
+      // Generar PDF con el contenido procesado
       const { default: jsPDF } = await import('jspdf');
       
       const doc = new jsPDF({
@@ -1472,29 +1577,49 @@ Fecha: {fecha_actual}`
       });
       
       const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 20;
-      let yPos = 30;
+      let yPos = margin;
 
-      doc.setFontSize(18);
-      doc.setFont('helvetica', 'bold');
-      doc.text('EJEMPLO DE PLANTILLA - FORMATO A4', pageWidth / 2, yPos, { align: 'center' });
-      yPos += 15;
+      // Función auxiliar para agregar texto con salto de línea automático
+      const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
+        doc.setFontSize(fontSize);
+        doc.setFont('helvetica', fontStyle);
+        const lines = doc.splitTextToSize(text, maxWidth);
+        
+        if (y + (lines.length * fontSize * 0.4) > pageHeight - margin) {
+          doc.addPage();
+          return margin;
+        }
+        
+        doc.text(lines, x, y);
+        return y + (lines.length * fontSize * 0.4);
+      };
 
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Tipo de Documento: ${templateId.toUpperCase().replace(/_/g, ' ')}`, margin, yPos);
-      yPos += 10;
-      doc.text('Cliente: Ejemplo Cliente', margin, yPos);
-      yPos += 7;
-      doc.text('Cédula: 000-0000000-0', margin, yPos);
-      yPos += 7;
-      doc.text('Monto del Préstamo: RD$10,000.00', margin, yPos);
-      yPos += 7;
-      doc.text('Tasa de Interés: 5% mensual', margin, yPos);
-      yPos += 7;
-      doc.text('Plazo: 6 meses', margin, yPos);
-      yPos += 10;
-      doc.text('Este es un ejemplo de impresión en formato A4 para verificar el diseño de la plantilla.', margin, yPos);
+      // Dividir el contenido en líneas y procesarlas
+      const lines = processedContent.split('\n');
+      
+      for (const line of lines) {
+        if (line.trim() === '') {
+          yPos += 5;
+          continue;
+        }
+
+        if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
+          yPos += 5;
+          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
+          yPos += 5;
+        } else if (line.trim().startsWith('•')) {
+          yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
+        } else {
+          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
+        }
+
+        if (yPos > pageHeight - margin - 20) {
+          doc.addPage();
+          yPos = margin;
+        }
+      }
       
       doc.autoPrint();
       const pdfBlob = doc.output('blob');
@@ -1515,6 +1640,28 @@ Fecha: {fecha_actual}`
 
   const handleDownloadTemplate = async (templateId: string) => {
     try {
+      // Obtener el contenido de la plantilla guardada
+      const { data: settings } = await supabase
+        .from('company_settings')
+        .select('document_templates')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const templatesData = settings?.document_templates || {};
+      const template = templatesData[templateId];
+      
+      // Obtener el contenido (personalizado o por defecto)
+      let templateContent = '';
+      if (template && template.content) {
+        templateContent = template.content;
+      } else {
+        templateContent = getDefaultTemplateContent(templateId);
+      }
+
+      // Reemplazar variables con datos de ejemplo
+      const processedContent = replaceTemplateVariables(templateContent, templateId);
+
+      // Generar PDF con el contenido procesado
       const { default: jsPDF } = await import('jspdf');
       
       const doc = new jsPDF({
@@ -1524,19 +1671,49 @@ Fecha: {fecha_actual}`
       });
       
       const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 20;
-      let yPos = 30;
+      let yPos = margin;
 
-      doc.setFontSize(18);
-      doc.setFont('helvetica', 'bold');
-      doc.text('PLANTILLA DE DOCUMENTO', pageWidth / 2, yPos, { align: 'center' });
-      yPos += 15;
+      // Función auxiliar para agregar texto con salto de línea automático
+      const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
+        doc.setFontSize(fontSize);
+        doc.setFont('helvetica', fontStyle);
+        const lines = doc.splitTextToSize(text, maxWidth);
+        
+        if (y + (lines.length * fontSize * 0.4) > pageHeight - margin) {
+          doc.addPage();
+          return margin;
+        }
+        
+        doc.text(lines, x, y);
+        return y + (lines.length * fontSize * 0.4);
+      };
 
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'normal');
-      doc.text(`Tipo: ${templateId.toUpperCase().replace(/_/g, ' ')}`, margin, yPos);
-      yPos += 10;
-      doc.text('Esta es la plantilla del documento en formato PDF', margin, yPos);
+      // Dividir el contenido en líneas y procesarlas
+      const lines = processedContent.split('\n');
+      
+      for (const line of lines) {
+        if (line.trim() === '') {
+          yPos += 5;
+          continue;
+        }
+
+        if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
+          yPos += 5;
+          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
+          yPos += 5;
+        } else if (line.trim().startsWith('•')) {
+          yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
+        } else {
+          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
+        }
+
+        if (yPos > pageHeight - margin - 20) {
+          doc.addPage();
+          yPos = margin;
+        }
+      }
       
       doc.save(`${templateId}_plantilla.pdf`);
       toast.success('Plantilla descargada exitosamente');
@@ -2764,7 +2941,10 @@ Fecha: {fecha_actual}`
                   const input = document.createElement('input');
                   input.type = 'file';
                   input.accept = 'application/pdf';
-                  input.onchange = handleUploadTemplate;
+                  input.onchange = (e) => {
+                    const event = e as unknown as React.ChangeEvent<HTMLInputElement>;
+                    handleUploadTemplate(event);
+                  };
                   input.click();
                 }}
               >
