@@ -95,6 +95,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [originalLateFeeBreakdown, setOriginalLateFeeBreakdown] = useState<any>(null);
   const [appliedLateFeePayment, setAppliedLateFeePayment] = useState<number>(0);
   const [companySettings, setCompanySettings] = useState<any>(null);
+  const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
@@ -650,6 +651,95 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     }
   }, [form.watch('late_fee_amount'), originalLateFeeBreakdown, selectedLoan]);
 
+  // Calcular interés pendiente para préstamos indefinidos
+  React.useEffect(() => {
+    if (selectedLoan && selectedLoan.amortization_type === 'indefinite') {
+      calculatePendingInterestForIndefinite();
+    } else {
+      setPendingInterestForIndefinite(0);
+    }
+  }, [selectedLoan]);
+
+  // Función para calcular el interés pendiente total para préstamos indefinidos
+  const calculatePendingInterestForIndefinite = async () => {
+    if (!selectedLoan || selectedLoan.amortization_type !== 'indefinite') {
+      setPendingInterestForIndefinite(0);
+      return;
+    }
+
+    try {
+      if (!selectedLoan.start_date) {
+        console.warn('🔍 PaymentForm - calculatePendingInterestForIndefinite: Falta start_date, no se puede calcular');
+        setPendingInterestForIndefinite(0);
+        return;
+      }
+
+      // Calcular interés por cuota para préstamos indefinidos
+      const interestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
+
+      // Calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
+      const [startYear, startMonth, startDay] = selectedLoan.start_date.split('-').map(Number);
+      const startDate = new Date(startYear, startMonth - 1, startDay);
+      const currentDate = getCurrentDateInSantoDomingo();
+
+      // Calcular meses transcurridos desde el inicio
+      const monthsElapsed = Math.max(0, 
+        (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+        (currentDate.getMonth() - startDate.getMonth())
+      );
+
+      // Total de cuotas que deberían existir desde el inicio hasta hoy
+      const totalExpectedInstallments = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
+
+      console.log('🔍 PaymentForm - calculatePendingInterestForIndefinite: Cálculo dinámico', {
+        loanId: selectedLoan.id,
+        startDate: selectedLoan.start_date,
+        currentDate: currentDate.toISOString().split('T')[0],
+        monthsElapsed,
+        totalExpectedInstallments
+      });
+
+      // Calcular cuántas cuotas se han pagado desde los pagos
+      let paidCount = 0;
+      if (selectedLoan.id) {
+        const { data: payments, error: paymentsError } = await supabase
+          .from('payments')
+          .select('interest_amount')
+          .eq('loan_id', selectedLoan.id);
+
+        if (!paymentsError && payments && payments.length > 0) {
+          const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+          paidCount = Math.floor(totalInterestPaid / interestPerPayment);
+
+          console.log('🔍 PaymentForm - calculatePendingInterestForIndefinite: Cuotas pagadas desde pagos', {
+            totalInterestPaid,
+            paidFromPayments: paidCount
+          });
+        }
+      }
+
+      // Cuotas pendientes = total esperadas - pagadas
+      const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
+
+      // Calcular interés pendiente total
+      const totalPendingInterest = unpaidCount * interestPerPayment;
+
+      console.log('🔍 PaymentForm - calculatePendingInterestForIndefinite: Resumen final', {
+        loanId: selectedLoan.id,
+        totalExpectedInstallments,
+        paidCount,
+        unpaidCount,
+        interestPerPayment,
+        totalPendingInterest
+      });
+
+      setPendingInterestForIndefinite(totalPendingInterest);
+    } catch (error) {
+      console.error('❌ Error calculando interés pendiente para préstamo indefinido en PaymentForm:', error);
+      setPendingInterestForIndefinite(0);
+    }
+  };
+
   const fetchActiveLoans = async () => {
     if (!user || !companyId) return;
 
@@ -668,6 +758,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         max_late_fee,
         late_fee_calculation_type,
         current_late_fee,
+        amortization_type,
+        start_date,
         clients (
           full_name,
           dni,
@@ -815,7 +907,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     try {
       // Validaciones antes de procesar el pago
       const monthlyPayment = selectedLoan.monthly_payment;
-      const remainingBalance = selectedLoan.remaining_balance;
+      // Calcular el balance restante correcto (incluyendo intereses pendientes para indefinidos)
+      const remainingBalance = selectedLoan.amortization_type === 'indefinite' 
+        ? selectedLoan.amount + pendingInterestForIndefinite
+        : selectedLoan.remaining_balance;
       const currentPaymentRemaining = paymentStatus.currentPaymentRemaining;
       const interestRate = selectedLoan.interest_rate; // Tasa de interés mensual [[memory:6311805]]
       
@@ -1371,7 +1466,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                             <div>
                               <span className="font-medium text-gray-600">Balance Restante:</span>
                               <div className="text-lg font-bold text-green-600">
-                                ${formatCurrencyNumber(selectedLoan.remaining_balance)}
+                                ${formatCurrencyNumber(
+                                  selectedLoan.amortization_type === 'indefinite' 
+                                    ? selectedLoan.amount + pendingInterestForIndefinite
+                                    : selectedLoan.remaining_balance
+                                )}
                               </div>
                             </div>
                             <div>
@@ -1649,7 +1748,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Balance Pendiente:</span>
                     <span className="font-bold text-red-600">
-                      ${formatCurrencyNumber(selectedLoan.remaining_balance)}
+                      ${formatCurrencyNumber(
+                        selectedLoan.amortization_type === 'indefinite' 
+                          ? selectedLoan.amount + pendingInterestForIndefinite
+                          : selectedLoan.remaining_balance
+                      )}
                     </span>
                   </div>
                   <div className="flex justify-between">
