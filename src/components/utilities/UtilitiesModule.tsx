@@ -1240,13 +1240,7 @@ const UtilitiesModule = () => {
   // Inicializar el editor cuando se abre el modal
   useEffect(() => {
     if (showTemplateEditor && editorRef && templateContent) {
-      // Si el contenido es texto plano (sin HTML), convertirlo a HTML
-      if (!templateContent.includes('<') || !templateContent.includes('>')) {
-        editorRef.innerHTML = templateContent.replace(/\n/g, '<br>');
-      } else {
-        // Si ya es HTML, usarlo directamente
-        editorRef.innerHTML = templateContent;
-      }
+      editorRef.innerHTML = templateContent.replace(/\n/g, '<br>');
     }
   }, [showTemplateEditor, editorRef, templateContent]);
 
@@ -1395,7 +1389,13 @@ Fecha: {fecha_actual}`
       
       let contentToUse = '';
       if (template && template.content) {
-        contentToUse = template.content;
+        // Si el contenido tiene HTML, usarlo directamente
+        if (template.content.includes('<') && template.content.includes('>')) {
+          contentToUse = template.content;
+        } else {
+          // Si es texto plano, convertirlo a HTML básico
+          contentToUse = template.content.replace(/\n/g, '<br>');
+        }
         setEditingTemplate({
           template_type: templateId,
           content: template.content,
@@ -1403,7 +1403,8 @@ Fecha: {fecha_actual}`
           file_path: template.file_path || null
         });
       } else {
-        contentToUse = defaultContent;
+        // Contenido por defecto como texto plano, convertir a HTML
+        contentToUse = defaultContent.replace(/\n/g, '<br>');
         setEditingTemplate({
           template_type: templateId,
           content: defaultContent,
@@ -1423,44 +1424,6 @@ Fecha: {fecha_actual}`
     } finally {
       setLoadingTemplates(false);
     }
-  };
-
-  // Función para limpiar HTML y convertir a texto plano preservando estructura
-  const cleanHtmlToText = (html: string): string => {
-    // Crear un elemento temporal para parsear el HTML
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = html;
-    
-    // Función recursiva para extraer texto preservando saltos de línea
-    const extractText = (node: Node): string => {
-      let text = '';
-      
-      if (node.nodeType === Node.TEXT_NODE) {
-        text = node.textContent || '';
-      } else if (node.nodeType === Node.ELEMENT_NODE) {
-        const element = node as HTMLElement;
-        const tagName = element.tagName.toLowerCase();
-        
-        // Agregar salto de línea para ciertos elementos
-        if (['div', 'p', 'br'].includes(tagName)) {
-          text += '\n';
-        }
-        
-        // Procesar hijos
-        for (let i = 0; i < node.childNodes.length; i++) {
-          text += extractText(node.childNodes[i]);
-        }
-        
-        // Agregar salto de línea después de ciertos elementos
-        if (['div', 'p'].includes(tagName)) {
-          text += '\n';
-        }
-      }
-      
-      return text;
-    };
-    
-    return extractText(tempDiv).trim();
   };
 
   // Función para reemplazar variables en el contenido de la plantilla
@@ -1507,21 +1470,176 @@ Fecha: {fecha_actual}`
       '{monto_original}': formatCurrency(10000)
     };
 
-    // Si el contenido contiene HTML, limpiarlo primero
-    let textContent = content;
-    if (content.includes('<') && content.includes('>')) {
-      textContent = cleanHtmlToText(content);
-    }
+    let processedContent = content;
     
-    let processedContent = textContent;
-    
-    // Reemplazar todas las variables
+    // Reemplazar todas las variables (funciona tanto en HTML como en texto plano)
     Object.keys(exampleData).forEach(key => {
       const regex = new RegExp(key.replace(/[{}]/g, '\\$&'), 'g');
       processedContent = processedContent.replace(regex, exampleData[key]);
     });
 
     return processedContent;
+  };
+
+  // Función para parsear HTML y renderizar en PDF
+  const renderHtmlToPdf = (doc: any, htmlContent: string, startY: number, margin: number, pageWidth: number, pageHeight: number) => {
+    // Crear un elemento temporal para parsear el HTML
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = htmlContent;
+    
+    let yPos = startY;
+    const baseLineHeight = 5; // Altura de línea base en mm
+    
+    // Función para obtener estilos de un elemento
+    const getStyles = (element: HTMLElement, parentStyles?: any) => {
+      const styles: any = {
+        fontSize: parentStyles?.fontSize || 11,
+        fontStyle: parentStyles?.fontStyle || 'normal',
+        fontFamily: parentStyles?.fontFamily || 'helvetica',
+        color: parentStyles?.color || '#000000',
+        textAlign: parentStyles?.textAlign || 'left',
+        fontWeight: parentStyles?.fontWeight || 'normal',
+        underline: parentStyles?.underline || false
+      };
+      
+      // Obtener estilos inline
+      const style = element.style;
+      if (style.fontSize) {
+        const fontSizeMatch = style.fontSize.match(/(\d+)/);
+        if (fontSizeMatch) {
+          styles.fontSize = parseInt(fontSizeMatch[1]);
+        }
+      }
+      if (style.fontFamily) {
+        const fontFamily = style.fontFamily.toLowerCase();
+        if (fontFamily.includes('times')) styles.fontFamily = 'times';
+        else if (fontFamily.includes('courier')) styles.fontFamily = 'courier';
+        else styles.fontFamily = 'helvetica';
+      }
+      if (style.color) {
+        styles.color = style.color;
+      }
+      if (style.textAlign) {
+        styles.textAlign = style.textAlign;
+      }
+      if (style.fontWeight === 'bold' || element.tagName === 'B' || element.tagName === 'STRONG') {
+        styles.fontStyle = 'bold';
+      }
+      if (element.tagName === 'I' || element.tagName === 'EM') {
+        styles.fontStyle = styles.fontStyle === 'bold' ? 'bolditalic' : 'italic';
+      }
+      if (element.tagName === 'U') {
+        styles.underline = true;
+      }
+      
+      return styles;
+    };
+    
+    // Función recursiva para procesar nodos
+    const processNode = (node: Node, currentStyles: any, x: number, isBlockElement: boolean = false): number => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent || '';
+        if (text.trim()) {
+          const lineHeight = (currentStyles.fontSize * 0.4);
+          
+          // Verificar si necesitamos una nueva página
+          if (yPos + lineHeight > pageHeight - margin) {
+            doc.addPage();
+            yPos = margin;
+          }
+          
+          // Aplicar estilos
+          doc.setFontSize(currentStyles.fontSize);
+          const fontStyle = currentStyles.fontStyle === 'bold' ? 'bold' : 
+                           currentStyles.fontStyle === 'italic' ? 'italic' : 
+                           currentStyles.fontStyle === 'bolditalic' ? 'bolditalic' : 'normal';
+          doc.setFont(currentStyles.fontFamily, fontStyle);
+          
+          // Dividir texto si es muy largo
+          const maxWidth = pageWidth - (margin * 2);
+          const lines = doc.splitTextToSize(text, maxWidth);
+          
+          lines.forEach((line: string) => {
+            if (yPos + lineHeight > pageHeight - margin) {
+              doc.addPage();
+              yPos = margin;
+            }
+            
+            // Calcular posición X según alineación
+            let textX = x;
+            const textWidth = doc.getTextWidth(line);
+            
+            if (currentStyles.textAlign === 'center') {
+              textX = pageWidth / 2;
+              doc.text(line, textX, yPos, { align: 'center' });
+            } else if (currentStyles.textAlign === 'right') {
+              textX = pageWidth - margin;
+              doc.text(line, textX, yPos, { align: 'right' });
+            } else {
+              doc.text(line, textX, yPos);
+            }
+            
+            // Dibujar subrayado si es necesario
+            if (currentStyles.underline) {
+              const lineY = yPos + 1;
+              const startX = currentStyles.textAlign === 'center' ? textX - (textWidth / 2) :
+                            currentStyles.textAlign === 'right' ? textX - textWidth : textX;
+              doc.line(startX, lineY, startX + textWidth, lineY);
+            }
+            
+            yPos += lineHeight;
+          });
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const element = node as HTMLElement;
+        const tagName = element.tagName.toLowerCase();
+        
+        // Obtener estilos del elemento
+        const elementStyles = getStyles(element, currentStyles);
+        
+        // Procesar elementos de bloque
+        if (tagName === 'div' || tagName === 'p') {
+          // Si el div tiene alineación, aplicarla a todos los hijos
+          if (element.style.textAlign) {
+            elementStyles.textAlign = element.style.textAlign;
+          }
+          
+          // Procesar hijos
+          for (let i = 0; i < element.childNodes.length; i++) {
+            yPos = processNode(element.childNodes[i], elementStyles, margin, true);
+          }
+          
+          // Salto de línea después de elementos de bloque
+          yPos += baseLineHeight;
+        } else if (tagName === 'br') {
+          yPos += baseLineHeight;
+        } else {
+          // Elementos inline (span, b, i, u, etc.)
+          for (let i = 0; i < element.childNodes.length; i++) {
+            yPos = processNode(element.childNodes[i], elementStyles, isBlockElement ? margin : x, isBlockElement);
+          }
+        }
+      }
+      
+      return yPos;
+    };
+    
+    // Procesar todos los nodos
+    const defaultStyles = {
+      fontSize: 11,
+      fontStyle: 'normal',
+      fontFamily: 'helvetica',
+      color: '#000000',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      underline: false
+    };
+    
+    for (let i = 0; i < tempDiv.childNodes.length; i++) {
+      yPos = processNode(tempDiv.childNodes[i], defaultStyles, margin, true);
+    }
+    
+    return yPos;
   };
 
   const handleViewTemplate = async (templateId: string) => {
@@ -1541,11 +1659,12 @@ Fecha: {fecha_actual}`
       if (template && template.content) {
         templateContent = template.content;
       } else {
-        templateContent = getDefaultTemplateContent(templateId);
+        // Si no hay contenido personalizado, usar el por defecto y convertirlo a HTML básico
+        templateContent = getDefaultTemplateContent(templateId).replace(/\n/g, '<br>');
       }
 
-      // Reemplazar variables con datos de ejemplo
-      const processedContent = replaceTemplateVariables(templateContent, templateId);
+      // Reemplazar variables con datos de ejemplo (funciona tanto en HTML como en texto plano)
+      let processedContent = replaceTemplateVariables(templateContent, templateId);
 
       // Generar PDF con el contenido procesado
       const { default: jsPDF } = await import('jspdf');
@@ -1561,51 +1680,50 @@ Fecha: {fecha_actual}`
       const margin = 20;
       let yPos = margin;
 
-      // Función auxiliar para agregar texto con salto de línea automático
-      const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
-        doc.setFontSize(fontSize);
-        doc.setFont('helvetica', fontStyle);
-        const lines = doc.splitTextToSize(text, maxWidth);
-        
-        // Verificar si necesitamos una nueva página
-        const lineHeight = fontSize * 0.4;
-        const neededHeight = lines.length * lineHeight;
-        
-        if (y + neededHeight > pageHeight - margin) {
-          doc.addPage();
-          return margin;
-        }
-        
-        doc.text(lines, x, y);
-        return y + (lines.length * lineHeight);
-      };
+      // Si el contenido tiene HTML, renderizarlo con estilos
+      if (processedContent.includes('<') && processedContent.includes('>')) {
+        yPos = renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
+      } else {
+        // Si es texto plano, procesarlo línea por línea
+        const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
+          doc.setFontSize(fontSize);
+          doc.setFont('helvetica', fontStyle);
+          const lines = doc.splitTextToSize(text, maxWidth);
+          
+          const lineHeight = fontSize * 0.4;
+          const neededHeight = lines.length * lineHeight;
+          
+          if (y + neededHeight > pageHeight - margin) {
+            doc.addPage();
+            return margin;
+          }
+          
+          doc.text(lines, x, y);
+          return y + neededHeight;
+        };
 
-      // Dividir el contenido en líneas y procesarlas
-      const lines = processedContent.split('\n');
-      
-      for (const line of lines) {
-        if (line.trim() === '') {
-          yPos += 5; // Espacio en blanco
-          continue;
-        }
+        const lines = processedContent.split('\n');
+        
+        for (const line of lines) {
+          if (line.trim() === '') {
+            yPos += 5;
+            continue;
+          }
 
-        // Detectar títulos (líneas en mayúsculas o con formato especial)
-        if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
-          yPos += 5; // Espacio antes del título
-          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
-          yPos += 5; // Espacio después del título
-        } else if (line.trim().startsWith('•')) {
-          // Lista con viñetas
-          yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
-        } else {
-          // Texto normal
-          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
-        }
+          if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
+            yPos += 5;
+            yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
+            yPos += 5;
+          } else if (line.trim().startsWith('•')) {
+            yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
+          } else {
+            yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
+          }
 
-        // Verificar si necesitamos una nueva página
-        if (yPos > pageHeight - margin - 20) {
-          doc.addPage();
-          yPos = margin;
+          if (yPos > pageHeight - margin - 20) {
+            doc.addPage();
+            yPos = margin;
+          }
         }
       }
       
@@ -1635,11 +1753,12 @@ Fecha: {fecha_actual}`
       if (template && template.content) {
         templateContent = template.content;
       } else {
-        templateContent = getDefaultTemplateContent(templateId);
+        // Si no hay contenido personalizado, usar el por defecto y convertirlo a HTML básico
+        templateContent = getDefaultTemplateContent(templateId).replace(/\n/g, '<br>');
       }
 
-      // Reemplazar variables con datos de ejemplo
-      const processedContent = replaceTemplateVariables(templateContent, templateId);
+      // Reemplazar variables con datos de ejemplo (funciona tanto en HTML como en texto plano)
+      let processedContent = replaceTemplateVariables(templateContent, templateId);
 
       // Generar PDF con el contenido procesado
       const { default: jsPDF } = await import('jspdf');
@@ -1655,43 +1774,47 @@ Fecha: {fecha_actual}`
       const margin = 20;
       let yPos = margin;
 
-      // Función auxiliar para agregar texto con salto de línea automático
-      const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
-        doc.setFontSize(fontSize);
-        doc.setFont('helvetica', fontStyle);
-        const lines = doc.splitTextToSize(text, maxWidth);
+      // Si el contenido tiene HTML, renderizarlo con estilos
+      if (processedContent.includes('<') && processedContent.includes('>')) {
+        yPos = renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
+      } else {
+        // Si es texto plano, procesarlo línea por línea
+        const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
+          doc.setFontSize(fontSize);
+          doc.setFont('helvetica', fontStyle);
+          const lines = doc.splitTextToSize(text, maxWidth);
+          
+          if (y + (lines.length * fontSize * 0.4) > pageHeight - margin) {
+            doc.addPage();
+            return margin;
+          }
+          
+          doc.text(lines, x, y);
+          return y + (lines.length * fontSize * 0.4);
+        };
+
+        const lines = processedContent.split('\n');
         
-        if (y + (lines.length * fontSize * 0.4) > pageHeight - margin) {
-          doc.addPage();
-          return margin;
-        }
-        
-        doc.text(lines, x, y);
-        return y + (lines.length * fontSize * 0.4);
-      };
+        for (const line of lines) {
+          if (line.trim() === '') {
+            yPos += 5;
+            continue;
+          }
 
-      // Dividir el contenido en líneas y procesarlas
-      const lines = processedContent.split('\n');
-      
-      for (const line of lines) {
-        if (line.trim() === '') {
-          yPos += 5;
-          continue;
-        }
+          if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
+            yPos += 5;
+            yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
+            yPos += 5;
+          } else if (line.trim().startsWith('•')) {
+            yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
+          } else {
+            yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
+          }
 
-        if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
-          yPos += 5;
-          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
-          yPos += 5;
-        } else if (line.trim().startsWith('•')) {
-          yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
-        } else {
-          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
-        }
-
-        if (yPos > pageHeight - margin - 20) {
-          doc.addPage();
-          yPos = margin;
+          if (yPos > pageHeight - margin - 20) {
+            doc.addPage();
+            yPos = margin;
+          }
         }
       }
       
@@ -1729,11 +1852,12 @@ Fecha: {fecha_actual}`
       if (template && template.content) {
         templateContent = template.content;
       } else {
-        templateContent = getDefaultTemplateContent(templateId);
+        // Si no hay contenido personalizado, usar el por defecto y convertirlo a HTML básico
+        templateContent = getDefaultTemplateContent(templateId).replace(/\n/g, '<br>');
       }
 
-      // Reemplazar variables con datos de ejemplo
-      const processedContent = replaceTemplateVariables(templateContent, templateId);
+      // Reemplazar variables con datos de ejemplo (funciona tanto en HTML como en texto plano)
+      let processedContent = replaceTemplateVariables(templateContent, templateId);
 
       // Generar PDF con el contenido procesado
       const { default: jsPDF } = await import('jspdf');
@@ -1749,43 +1873,47 @@ Fecha: {fecha_actual}`
       const margin = 20;
       let yPos = margin;
 
-      // Función auxiliar para agregar texto con salto de línea automático
-      const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
-        doc.setFontSize(fontSize);
-        doc.setFont('helvetica', fontStyle);
-        const lines = doc.splitTextToSize(text, maxWidth);
+      // Si el contenido tiene HTML, renderizarlo con estilos
+      if (processedContent.includes('<') && processedContent.includes('>')) {
+        yPos = renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
+      } else {
+        // Si es texto plano, procesarlo línea por línea
+        const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
+          doc.setFontSize(fontSize);
+          doc.setFont('helvetica', fontStyle);
+          const lines = doc.splitTextToSize(text, maxWidth);
+          
+          if (y + (lines.length * fontSize * 0.4) > pageHeight - margin) {
+            doc.addPage();
+            return margin;
+          }
+          
+          doc.text(lines, x, y);
+          return y + (lines.length * fontSize * 0.4);
+        };
+
+        const lines = processedContent.split('\n');
         
-        if (y + (lines.length * fontSize * 0.4) > pageHeight - margin) {
-          doc.addPage();
-          return margin;
-        }
-        
-        doc.text(lines, x, y);
-        return y + (lines.length * fontSize * 0.4);
-      };
+        for (const line of lines) {
+          if (line.trim() === '') {
+            yPos += 5;
+            continue;
+          }
 
-      // Dividir el contenido en líneas y procesarlas
-      const lines = processedContent.split('\n');
-      
-      for (const line of lines) {
-        if (line.trim() === '') {
-          yPos += 5;
-          continue;
-        }
+          if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
+            yPos += 5;
+            yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
+            yPos += 5;
+          } else if (line.trim().startsWith('•')) {
+            yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
+          } else {
+            yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
+          }
 
-        if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
-          yPos += 5;
-          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
-          yPos += 5;
-        } else if (line.trim().startsWith('•')) {
-          yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
-        } else {
-          yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
-        }
-
-        if (yPos > pageHeight - margin - 20) {
-          doc.addPage();
-          yPos = margin;
+          if (yPos > pageHeight - margin - 20) {
+            doc.addPage();
+            yPos = margin;
+          }
         }
       }
       
@@ -1798,10 +1926,13 @@ Fecha: {fecha_actual}`
   };
 
   const handleSaveTemplate = async () => {
-    if (!selectedTemplate || !editingTemplate) return;
+    if (!selectedTemplate || !editingTemplate || !editorRef) return;
 
     try {
       setLoadingTemplates(true);
+      
+      // Obtener el HTML completo del editor
+      const htmlContent = editorRef.innerHTML;
       
       // Obtener configuración actual
       const { data: currentSettings, error: fetchError } = await supabase
@@ -1812,7 +1943,7 @@ Fecha: {fecha_actual}`
 
       const templatesData = currentSettings?.document_templates || {};
       templatesData[selectedTemplate] = {
-        content: templateContent,
+        content: htmlContent, // Guardar el HTML completo
         is_custom: true,
         updated_at: new Date().toISOString()
       };
@@ -3343,13 +3474,7 @@ Fecha: {fecha_actual}`
                     setEditorRef(el);
                     // Inicializar contenido cuando se monta
                     if (templateContent && el.innerHTML === '') {
-                      // Si el contenido es texto plano (sin HTML), convertirlo a HTML
-                      if (!templateContent.includes('<') || !templateContent.includes('>')) {
-                        el.innerHTML = templateContent.replace(/\n/g, '<br>');
-                      } else {
-                        // Si ya es HTML, usarlo directamente
-                        el.innerHTML = templateContent;
-                      }
+                      el.innerHTML = templateContent.replace(/\n/g, '<br>');
                     }
                   }
                 }}
