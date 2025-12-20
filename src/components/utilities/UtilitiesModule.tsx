@@ -30,7 +30,15 @@ import {
   Eye,
   FileEdit,
   Upload,
-  Save
+  Save,
+  Bold,
+  Italic,
+  Underline,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Type,
+  Palette
 } from 'lucide-react';
 
 interface Expense {
@@ -127,6 +135,10 @@ const UtilitiesModule = () => {
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
   const [templateContent, setTemplateContent] = useState<string>('');
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [editorRef, setEditorRef] = useState<HTMLDivElement | null>(null);
+  const [fontSize, setFontSize] = useState<string>('11');
+  const [fontFamily, setFontFamily] = useState<string>('helvetica');
+  const [textColor, setTextColor] = useState<string>('#000000');
 
   useEffect(() => {
     if (user) {
@@ -1225,6 +1237,13 @@ const UtilitiesModule = () => {
     }
   }, [currency.amount, currency.fromCurrency, currency.toCurrency, showCurrencyConverter]);
 
+  // Inicializar el editor cuando se abre el modal
+  useEffect(() => {
+    if (showTemplateEditor && editorRef && templateContent) {
+      editorRef.innerHTML = templateContent.replace(/\n/g, '<br>');
+    }
+  }, [showTemplateEditor, editorRef, templateContent]);
+
   // Función para obtener el contenido por defecto de cada plantilla
   const getDefaultTemplateContent = (templateId: string): string => {
     const templates: { [key: string]: string } = {
@@ -1368,22 +1387,27 @@ Fecha: {fecha_actual}`
       // Si existe una plantilla personalizada, usarla; si no, usar la por defecto
       const defaultContent = getDefaultTemplateContent(templateId);
       
+      let contentToUse = '';
       if (template && template.content) {
+        contentToUse = template.content;
         setEditingTemplate({
           template_type: templateId,
           content: template.content,
           is_custom: template.is_custom || false,
           file_path: template.file_path || null
         });
-        setTemplateContent(template.content);
       } else {
+        contentToUse = defaultContent;
         setEditingTemplate({
           template_type: templateId,
           content: defaultContent,
           is_custom: false
         });
-        setTemplateContent(defaultContent);
       }
+      
+      setTemplateContent(contentToUse);
+      
+      // El contenido se inicializará cuando el editor se monte
 
       setSelectedTemplate(templateId);
       setShowTemplateEditor(true);
@@ -2926,7 +2950,7 @@ Fecha: {fecha_actual}`
 
       {/* Template Editor Dialog */}
       <Dialog open={showTemplateEditor} onOpenChange={setShowTemplateEditor}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileEdit className="h-5 w-5" />
@@ -2934,23 +2958,7 @@ Fecha: {fecha_actual}`
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 mt-4">
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  const input = document.createElement('input');
-                  input.type = 'file';
-                  input.accept = 'application/pdf';
-                  input.onchange = (e) => {
-                    const event = e as unknown as React.ChangeEvent<HTMLInputElement>;
-                    handleUploadTemplate(event);
-                  };
-                  input.click();
-                }}
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                Subir PDF
-              </Button>
+            <div className="flex gap-2 flex-wrap">
               <Button
                 variant="outline"
                 onClick={() => handleViewTemplate(selectedTemplate || '')}
@@ -2976,13 +2984,172 @@ Fecha: {fecha_actual}`
 
             <div>
               <Label htmlFor="template-content">Contenido de la Plantilla</Label>
-              <Textarea
-                id="template-content"
-                value={templateContent}
-                onChange={(e) => setTemplateContent(e.target.value)}
-                placeholder="Edita el contenido de la plantilla aquí..."
-                className="min-h-[400px] font-mono text-sm"
+              
+              {/* Barra de herramientas del editor */}
+              <div className="border border-gray-300 rounded-t-lg p-2 bg-gray-50 flex flex-wrap items-center gap-2">
+                {/* Tipo de letra */}
+                <div className="flex items-center gap-1">
+                  <Type className="h-4 w-4 text-gray-600" />
+                  <Select value={fontFamily} onValueChange={(value) => {
+                    setFontFamily(value);
+                    document.execCommand('fontName', false, value);
+                  }}>
+                    <SelectTrigger className="w-[120px] h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="helvetica">Helvetica</SelectItem>
+                      <SelectItem value="times">Times</SelectItem>
+                      <SelectItem value="courier">Courier</SelectItem>
+                      <SelectItem value="arial">Arial</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Tamaño de letra */}
+                <div className="flex items-center gap-1">
+                  <Select value={fontSize} onValueChange={(value) => {
+                    setFontSize(value);
+                    document.execCommand('fontSize', false, value);
+                  }}>
+                    <SelectTrigger className="w-[80px] h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="8">8px</SelectItem>
+                      <SelectItem value="10">10px</SelectItem>
+                      <SelectItem value="11">11px</SelectItem>
+                      <SelectItem value="12">12px</SelectItem>
+                      <SelectItem value="14">14px</SelectItem>
+                      <SelectItem value="16">16px</SelectItem>
+                      <SelectItem value="18">18px</SelectItem>
+                      <SelectItem value="20">20px</SelectItem>
+                      <SelectItem value="24">24px</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="w-px h-6 bg-gray-300" />
+
+                {/* Negrita, Cursiva, Subrayado */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => document.execCommand('bold', false)}
+                  title="Negrita"
+                >
+                  <Bold className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => document.execCommand('italic', false)}
+                  title="Cursiva"
+                >
+                  <Italic className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => document.execCommand('underline', false)}
+                  title="Subrayado"
+                >
+                  <Underline className="h-4 w-4" />
+                </Button>
+
+                <div className="w-px h-6 bg-gray-300" />
+
+                {/* Color de texto */}
+                <div className="flex items-center gap-1">
+                  <Palette className="h-4 w-4 text-gray-600" />
+                  <input
+                    type="color"
+                    value={textColor}
+                    onChange={(e) => {
+                      setTextColor(e.target.value);
+                      document.execCommand('foreColor', false, e.target.value);
+                    }}
+                    className="w-8 h-8 rounded border border-gray-300 cursor-pointer"
+                    title="Color de texto"
+                  />
+                </div>
+
+                <div className="w-px h-6 bg-gray-300" />
+
+                {/* Alineación */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => document.execCommand('justifyLeft', false)}
+                  title="Alinear izquierda"
+                >
+                  <AlignLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => document.execCommand('justifyCenter', false)}
+                  title="Centrar"
+                >
+                  <AlignCenter className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => document.execCommand('justifyRight', false)}
+                  title="Alinear derecha"
+                >
+                  <AlignRight className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Editor de contenido enriquecido */}
+              <div
+                key={`editor-${selectedTemplate}`}
+                ref={(el) => {
+                  if (el) {
+                    setEditorRef(el);
+                    // Inicializar contenido cuando se monta
+                    if (templateContent && el.innerHTML === '') {
+                      el.innerHTML = templateContent.replace(/\n/g, '<br>');
+                    }
+                  }
+                }}
+                contentEditable
+                suppressContentEditableWarning
+                onInput={(e) => {
+                  const html = (e.currentTarget as HTMLElement).innerHTML;
+                  // Convertir HTML a texto plano preservando saltos de línea
+                  const text = html
+                    .replace(/<br\s*\/?>/gi, '\n')
+                    .replace(/<\/div>/gi, '\n')
+                    .replace(/<div>/gi, '')
+                    .replace(/<\/p>/gi, '\n')
+                    .replace(/<p>/gi, '')
+                    .replace(/&nbsp;/g, ' ')
+                    .trim();
+                  setTemplateContent(text);
+                }}
+                className="border border-t-0 border-gray-300 rounded-b-lg p-4 min-h-[400px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                style={{
+                  fontFamily: fontFamily === 'helvetica' ? 'Arial, sans-serif' : fontFamily === 'times' ? 'Times New Roman, serif' : fontFamily === 'courier' ? 'Courier New, monospace' : 'Arial, sans-serif',
+                  fontSize: `${fontSize}px`,
+                  color: textColor
+                }}
               />
+
               <p className="text-xs text-gray-500 mt-2">
                 Puedes usar variables como {'{'}cliente_nombre{'}'}, {'{'}monto{'}'}, {'{'}fecha{'}'}, etc.
               </p>
@@ -2996,6 +3163,9 @@ Fecha: {fecha_actual}`
                   setEditingTemplate(null);
                   setTemplateContent('');
                   setSelectedTemplate(null);
+                  if (editorRef) {
+                    editorRef.innerHTML = '';
+                  }
                 }}
               >
                 Cancelar
