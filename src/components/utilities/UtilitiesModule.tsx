@@ -1225,6 +1225,128 @@ const UtilitiesModule = () => {
     }
   }, [currency.amount, currency.fromCurrency, currency.toCurrency, showCurrencyConverter]);
 
+  // Función para obtener el contenido por defecto de cada plantilla
+  const getDefaultTemplateContent = (templateId: string): string => {
+    const templates: { [key: string]: string } = {
+      'pagare_notarial': `PAGARÉ NOTARIAL
+
+Por medio del presente documento, yo {cliente_nombre}, con cédula de identidad No. {cliente_dni}, me comprometo a pagar incondicionalmente a la orden de {empresa_nombre}, la cantidad de {monto} ({monto_numeros} pesos dominicanos).
+
+Condiciones del préstamo:
+• Monto del préstamo: {monto}
+• Tasa de interés: {tasa_interes}% mensual
+• Plazo: {plazo} meses
+• Cuota mensual: {cuota_mensual}
+• Fecha de inicio: {fecha_inicio}
+• Primera fecha de pago: {primera_fecha_pago}
+
+El pago se realizará en {plazo} cuotas mensuales de {cuota_mensual} cada una, comenzando el {primera_fecha_pago}.
+
+En caso de mora, se aplicará una tasa de mora del {tasa_mora}% {tipo_mora}.
+
+Firma del Deudor: {cliente_nombre}
+Cédula: {cliente_dni}
+Fecha: {fecha_actual}`,
+
+      'tabla_amortizacion': `TABLA DE AMORTIZACIÓN
+
+Cliente: {cliente_nombre}
+Cédula: {cliente_dni}
+Monto del Préstamo: {monto}
+Tasa de Interés: {tasa_interes}% mensual
+Plazo: {plazo} meses
+Cuota Mensual: {cuota_mensual}
+
+Tabla de Amortización:
+[La tabla se generará automáticamente con las cuotas]`,
+
+      'contrato_bluetooth': `CONTRATO IMPRESORA BLUETOOTH
+
+Por medio del presente contrato, {cliente_nombre}, con cédula {cliente_dni}, acuerda con {empresa_nombre} el uso de una impresora Bluetooth para la gestión de documentos relacionados con el préstamo.
+
+Condiciones:
+• El cliente se compromete a mantener la impresora en buen estado
+• La impresora será utilizada exclusivamente para documentos del préstamo
+• Cualquier daño será responsabilidad del cliente
+
+Firma del Cliente: {cliente_nombre}
+Fecha: {fecha_actual}`,
+
+      'pagare_codeudor': `PAGARÉ NOTARIAL CON CODEUDOR
+
+Por medio del presente documento, yo {cliente_nombre}, con cédula de identidad No. {cliente_dni}, como deudor principal, y {codeudor_nombre}, con cédula de identidad No. {codeudor_dni}, como codeudor, nos comprometemos solidariamente a pagar a la orden de {empresa_nombre}, la cantidad de {monto}.
+
+Condiciones del préstamo:
+• Monto del préstamo: {monto}
+• Tasa de interés: {tasa_interes}% mensual
+• Plazo: {plazo} meses
+
+Firma del Deudor Principal: {cliente_nombre}
+Cédula: {cliente_dni}
+
+Firma del Codeudor: {codeudor_nombre}
+Cédula: {codeudor_dni}
+Fecha: {fecha_actual}`,
+
+      'contrato_salarial': `CONTRATO SALARIAL
+
+Por medio del presente contrato, {cliente_nombre}, con cédula {cliente_dni}, acuerda con {empresa_nombre} un préstamo con descuento salarial.
+
+Condiciones:
+• Monto del préstamo: {monto}
+• Tasa de interés: {tasa_interes}% mensual
+• Plazo: {plazo} meses
+• Descuento salarial: {descuento_salarial}%
+
+El cliente autoriza el descuento del monto de la cuota directamente de su salario.
+
+Firma del Cliente: {cliente_nombre}
+Cédula: {cliente_dni}
+Fecha: {fecha_actual}`,
+
+      'carta_intimacion': `CARTA DE INTIMACIÓN
+
+Estimado/a {cliente_nombre},
+
+Por medio de la presente, le informamos que su préstamo con número {numero_prestamo} presenta un saldo pendiente de {saldo_pendiente}.
+
+Le solicitamos que se comunique con nosotros a la brevedad posible para regularizar su situación.
+
+Fecha límite: {fecha_limite}
+
+Atentamente,
+{empresa_nombre}
+Fecha: {fecha_actual}`,
+
+      'carta_saldo': `CARTA DE SALDO
+
+Estimado/a {cliente_nombre},
+
+Por medio de la presente, le informamos el estado actual de su préstamo:
+
+Número de Préstamo: {numero_prestamo}
+Monto Original: {monto_original}
+Saldo Pendiente: {saldo_pendiente}
+Intereses Pendientes: {intereses_pendientes}
+Mora Pendiente: {mora_pendiente}
+Total a Pagar: {total_pagar}
+
+Atentamente,
+{empresa_nombre}
+Fecha: {fecha_actual}`,
+
+      'prueba_documento': `PRUEBA DE DOCUMENTO
+
+Este es un documento de prueba para verificar la generación de documentos.
+
+Cliente: {cliente_nombre}
+Monto: {monto}
+Fecha: {fecha_actual}`
+    };
+
+    return templates[templateId] || '';
+  };
+
   // Funciones para manejar plantillas
   const handleEditTemplate = async (templateId: string) => {
     try {
@@ -1243,21 +1365,24 @@ const UtilitiesModule = () => {
       const templatesData = settings?.document_templates || {};
       const template = templatesData[templateId];
 
-      if (template) {
+      // Si existe una plantilla personalizada, usarla; si no, usar la por defecto
+      const defaultContent = getDefaultTemplateContent(templateId);
+      
+      if (template && template.content) {
         setEditingTemplate({
           template_type: templateId,
-          content: template.content || '',
+          content: template.content,
           is_custom: template.is_custom || false,
           file_path: template.file_path || null
         });
-        setTemplateContent(template.content || '');
+        setTemplateContent(template.content);
       } else {
         setEditingTemplate({
           template_type: templateId,
-          content: '',
+          content: defaultContent,
           is_custom: false
         });
-        setTemplateContent('');
+        setTemplateContent(defaultContent);
       }
 
       setSelectedTemplate(templateId);
