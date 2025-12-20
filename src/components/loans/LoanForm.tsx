@@ -21,7 +21,44 @@ import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 
 // Función para generar el PDF de un documento
-const generateDocumentPDF = async (docType: string, loanData: any, formData: any, companySettings: any): Promise<Blob> => {
+const generateDocumentPDF = async (docType: string, loanData: any, formData: any, companySettings: any, companyId?: string): Promise<Blob> => {
+  // Verificar si existe una plantilla personalizada
+  if (companyId && companySettings?.document_templates) {
+    const templates = companySettings.document_templates;
+    const customTemplate = templates[docType];
+    
+    if (customTemplate && customTemplate.is_custom) {
+      // Si hay un archivo PDF subido, usarlo directamente
+      if (customTemplate.file_path || customTemplate.content) {
+        try {
+          const { supabase: supabaseClient } = await import('@/integrations/supabase/client');
+          
+          // Si es una URL, descargar el PDF
+          if (customTemplate.content && customTemplate.content.startsWith('http')) {
+            const response = await fetch(customTemplate.content);
+            const blob = await response.blob();
+            return blob;
+          }
+          
+          // Si es un file_path, descargar desde storage
+          if (customTemplate.file_path) {
+            const { data, error } = await supabaseClient.storage
+              .from('documents')
+              .download(customTemplate.file_path);
+            
+            if (!error && data) {
+              return data;
+            }
+          }
+        } catch (error) {
+          console.error('Error loading custom template, using default:', error);
+          // Continuar con la plantilla por defecto
+        }
+      }
+    }
+  }
+  
+  // Usar plantilla por defecto
   const { default: jsPDF } = await import('jspdf');
   const { default: autoTable } = await import('jspdf-autotable');
   
@@ -3262,8 +3299,8 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                         continue;
                       }
                       
-                      // Generar PDF del documento
-                      const pdfBlob = await generateDocumentPDF(docType, loanData, form.getValues(), companySettings);
+                      // Generar PDF del documento (pasar companyId para verificar plantillas personalizadas)
+                      const pdfBlob = await generateDocumentPDF(docType, loanData, form.getValues(), companySettings, companyId);
                       
                       if (!pdfBlob || pdfBlob.size === 0) {
                         console.error(`❌ Error: No se pudo generar el PDF para ${docType}`);
