@@ -242,49 +242,87 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           let capitalPending = 0;
           let interestPending = 0;
           
-          // Sumar el capital e interés de todas las cuotas
-          const totalCapitalFromInstallments = installments.reduce((sum, inst) => sum + (inst.principal_amount || 0), 0);
-          const totalInterestFromInstallments = installments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
-          
-          // Calcular cuánto capital e interés se han pagado desde los pagos
-          const totalPaidCapital = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
-          const totalPaidInterest = payments?.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0) || 0;
-          
-          console.log('🔍 Capital total de cuotas:', totalCapitalFromInstallments);
-          console.log('🔍 Interés total de cuotas:', totalInterestFromInstallments);
-          console.log('🔍 Capital pagado:', totalPaidCapital);
-          console.log('🔍 Interés pagado:', totalPaidInterest);
-          console.log('🔍 Remaining balance:', loan.remaining_balance);
-          
-          if (unpaidInstallments.length > 0) {
-            // Si hay cuotas no pagadas, calcular desde ellas directamente
-            capitalPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.principal_amount || 0), 0);
-            interestPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
-          } else {
-            // Si todas las cuotas están marcadas como pagadas pero hay remaining_balance,
-            // calcular desde el total de cuotas menos lo pagado
-            capitalPending = Math.max(0, totalCapitalFromInstallments - totalPaidCapital);
-            interestPending = Math.max(0, totalInterestFromInstallments - totalPaidInterest);
+          // Para préstamos indefinidos, el capital pendiente es siempre el monto original
+          if (loan.amortization_type === 'indefinite') {
+            capitalPending = loan.amount;
             
-            // Si el remaining_balance no coincide con capital + interés pendientes,
-            // usar el remaining_balance como fuente de verdad y distribuir proporcionalmente
-            const calculatedTotal = capitalPending + interestPending;
-            if (Math.abs(calculatedTotal - loan.remaining_balance) > 0.01 && calculatedTotal > 0) {
-              // Ajustar proporcionalmente para que coincida con remaining_balance
-              const ratio = loan.remaining_balance / calculatedTotal;
-              capitalPending = Math.round(capitalPending * ratio * 100) / 100;
-              interestPending = Math.round(interestPending * ratio * 100) / 100;
-            } else if (calculatedTotal === 0 && loan.remaining_balance > 0) {
-              // Si no hay cuotas o el cálculo da 0 pero hay remaining_balance,
-              // asumir que todo el remaining_balance es interés (ya que el capital debería estar pagado)
-              capitalPending = 0;
-              interestPending = loan.remaining_balance;
+            // Calcular interés pendiente usando el cálculo dinámico
+            const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+            
+            // Calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
+            if (loan.start_date) {
+              const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+              const startDate = new Date(startYear, startMonth - 1, startDay);
+              const currentDate = getCurrentDateInSantoDomingo();
+              
+              const monthsElapsed = Math.max(0, 
+                (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+                (currentDate.getMonth() - startDate.getMonth())
+              );
+              
+              const totalExpectedInstallments = Math.max(1, monthsElapsed + 1);
+              
+              // Calcular cuántas cuotas se han pagado desde los pagos
+              let paidCount = 0;
+              if (payments && payments.length > 0) {
+                const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+                paidCount = Math.floor(totalInterestPaid / interestPerPayment);
+              }
+              
+              const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
+              interestPending = unpaidCount * interestPerPayment;
+            } else {
+              // Si no hay start_date, usar el cálculo basado en cuotas
+              const totalInterestFromInstallments = installments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+              const totalPaidInterest = payments?.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0) || 0;
+              interestPending = Math.max(0, totalInterestFromInstallments - totalPaidInterest);
             }
+          } else {
+            // Para préstamos con plazo fijo, usar la lógica original
+            // Sumar el capital e interés de todas las cuotas
+            const totalCapitalFromInstallments = installments.reduce((sum, inst) => sum + (inst.principal_amount || 0), 0);
+            const totalInterestFromInstallments = installments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
             
-            // Asegurar que el capital pendiente no exceda el monto original
-            if (capitalPending > loan.amount) {
-              interestPending += (capitalPending - loan.amount);
-              capitalPending = loan.amount;
+            // Calcular cuánto capital e interés se han pagado desde los pagos
+            const totalPaidCapital = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
+            const totalPaidInterest = payments?.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0) || 0;
+            
+            console.log('🔍 Capital total de cuotas:', totalCapitalFromInstallments);
+            console.log('🔍 Interés total de cuotas:', totalInterestFromInstallments);
+            console.log('🔍 Capital pagado:', totalPaidCapital);
+            console.log('🔍 Interés pagado:', totalPaidInterest);
+            console.log('🔍 Remaining balance:', loan.remaining_balance);
+            
+            if (unpaidInstallments.length > 0) {
+              // Si hay cuotas no pagadas, calcular desde ellas directamente
+              capitalPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.principal_amount || 0), 0);
+              interestPending = unpaidInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+            } else {
+              // Si todas las cuotas están marcadas como pagadas pero hay remaining_balance,
+              // calcular desde el total de cuotas menos lo pagado
+              capitalPending = Math.max(0, totalCapitalFromInstallments - totalPaidCapital);
+              interestPending = Math.max(0, totalInterestFromInstallments - totalPaidInterest);
+              
+              // Si el remaining_balance no coincide con capital + interés pendientes,
+              // usar el remaining_balance como fuente de verdad y distribuir proporcionalmente
+              const calculatedTotal = capitalPending + interestPending;
+              if (Math.abs(calculatedTotal - loan.remaining_balance) > 0.01 && calculatedTotal > 0) {
+                // Ajustar proporcionalmente para que coincida con remaining_balance
+                const ratio = loan.remaining_balance / calculatedTotal;
+                capitalPending = Math.round(capitalPending * ratio * 100) / 100;
+                interestPending = Math.round(interestPending * ratio * 100) / 100;
+              } else if (calculatedTotal === 0 && loan.remaining_balance > 0) {
+                // Si no hay cuotas o el cálculo da 0 pero hay remaining_balance,
+                // asumir que todo el remaining_balance es interés (ya que el capital debería estar pagado)
+                capitalPending = 0;
+                interestPending = loan.remaining_balance;
+              }
+              
+              // Asegurar que el capital pendiente no exceda el monto original
+              if (capitalPending > loan.amount) {
+                interestPending += (capitalPending - loan.amount);
+                capitalPending = loan.amount;
+              }
             }
           }
 
