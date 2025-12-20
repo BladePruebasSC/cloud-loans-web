@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { 
@@ -109,6 +110,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const navigate = useNavigate();
   const { user, companyId } = useAuth();
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
+  
+  // Estados para generar documentos
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [availableDocuments, setAvailableDocuments] = useState<string[]>([]);
+  const [selectedDocumentsToGenerate, setSelectedDocumentsToGenerate] = useState<string[]>([]);
+  const [generatingDocuments, setGeneratingDocuments] = useState(false);
 
   useEffect(() => {
     if (isOpen && loanId) {
@@ -370,6 +377,200 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     } catch (error) {
       console.error('Error fetching documents:', error);
       setDocuments([]);
+    }
+  };
+
+  // Tipos de documentos disponibles
+  const documentTypes: { [key: string]: string } = {
+    'pagare_notarial': 'PAGARÉ NOTARIAL',
+    'tabla_amortizacion': 'TABLA DE AMORTIZACIÓN',
+    'contrato_bluetooth': 'CONTRATO IMPRESORA BLUETOOTH',
+    'pagare_codeudor': 'PAGARÉ NOTARIAL CON CODEUDOR',
+    'contrato_salarial': 'CONTRATO SALARIAL',
+    'carta_intimacion': 'CARTA DE INTIMACIÓN',
+    'carta_saldo': 'CARTA DE SALDO',
+    'prueba_documento': 'PRUEBA DE DOCUMENTO'
+  };
+
+  // Verificar qué documentos ya están generados para este préstamo
+  const checkAvailableDocuments = async () => {
+    if (!loanId) return;
+    
+    try {
+      const { data: existingDocs, error } = await supabase
+        .from('documents')
+        .select('description')
+        .eq('loan_id', loanId)
+        .eq('document_type', 'loan_document');
+
+      if (error) throw error;
+
+      // Extraer los tipos de documentos ya generados desde la descripción
+      const generatedTypes = new Set<string>();
+      existingDocs?.forEach(doc => {
+        if (doc.description) {
+          const match = doc.description.match(/Tipo: (\w+)/);
+          if (match) {
+            generatedTypes.add(match[1]);
+          }
+        }
+      });
+
+      // Filtrar documentos disponibles (los que no están generados)
+      const available = Object.keys(documentTypes).filter(
+        docType => !generatedTypes.has(docType)
+      );
+      
+      setAvailableDocuments(available);
+      setSelectedDocumentsToGenerate([]);
+    } catch (error: any) {
+      console.error('Error checking available documents:', error);
+      toast.error('Error al verificar documentos disponibles');
+      setAvailableDocuments([]);
+    }
+  };
+
+  // Generar documentos seleccionados
+  const handleGenerateDocuments = async () => {
+    if (!loan || selectedDocumentsToGenerate.length === 0) {
+      toast.error('Selecciona al menos un documento');
+      return;
+    }
+
+    if (!companyId || !user) {
+      toast.error('Debes iniciar sesión para generar documentos');
+      return;
+    }
+
+    try {
+      setGeneratingDocuments(true);
+      toast.loading('Generando documentos...', { id: 'generate-docs' });
+
+      // Obtener datos completos del préstamo
+      const { data: loanData, error: loanError } = await supabase
+        .from('loans')
+        .select(`
+          *,
+          clients:client_id (
+            id,
+            full_name,
+            dni,
+            phone,
+            email,
+            address
+          )
+        `)
+        .eq('id', loanId)
+        .single();
+
+      if (loanError || !loanData) {
+        throw new Error('No se pudo obtener los datos del préstamo');
+      }
+
+      // Obtener configuración de la empresa
+      const { data: companySettingsData } = await supabase
+        .from('company_settings')
+        .select('*')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const companySettings = companySettingsData || {};
+
+      // Importar la función de generación de documentos
+      const { generateDocumentPDF } = await import('@/components/loans/LoanForm');
+      
+      let generatedCount = 0;
+      let failedCount = 0;
+
+      for (const docType of selectedDocumentsToGenerate) {
+        try {
+          console.log(`🔍 Generando documento: ${docType}`);
+
+          // Generar PDF del documento
+          const pdfBlob = await generateDocumentPDF(
+            docType, 
+            loanData, 
+            {}, 
+            companySettings, 
+            companyId
+          );
+
+          if (!pdfBlob || pdfBlob.size === 0) {
+            console.error(`❌ Error: No se pudo generar el PDF para ${docType}`);
+            failedCount++;
+            continue;
+          }
+
+          // Crear un File desde el PDF Blob
+          const fileName = `${docType}_${loanId}_${Date.now()}.pdf`;
+          const filePath = `user-${companyId}/loans/${loanId}/${fileName}`;
+          const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+          // Subir a storage
+          const { error: uploadError } = await supabase.storage
+            .from('documents')
+            .upload(filePath, file, {
+              contentType: 'application/pdf',
+              upsert: false
+            });
+
+          if (uploadError) {
+            console.error(`❌ Error subiendo ${docType}:`, uploadError);
+            failedCount++;
+            continue;
+          }
+
+          // Guardar metadata en la base de datos
+          const documentMetadata = {
+            user_id: companyId,
+            loan_id: loanId,
+            client_id: loanData.client_id,
+            title: documentTypes[docType] || docType,
+            file_name: fileName,
+            file_url: filePath,
+            description: `Documento generado automáticamente: ${documentTypes[docType]} (Tipo: ${docType})`,
+            document_type: 'loan_document',
+            mime_type: 'application/pdf',
+            file_size: file.size,
+            status: 'active'
+          };
+
+          const { error: insertError } = await supabase
+            .from('documents')
+            .insert(documentMetadata);
+
+          if (insertError) {
+            console.error(`❌ Error guardando metadata para ${docType}:`, insertError);
+            failedCount++;
+            continue;
+          }
+
+          generatedCount++;
+        } catch (error: any) {
+          console.error(`❌ Error generando ${docType}:`, error);
+          failedCount++;
+        }
+      }
+
+      if (generatedCount > 0) {
+        toast.success(`${generatedCount} documento(s) generado(s) exitosamente`, { id: 'generate-docs' });
+      }
+      if (failedCount > 0) {
+        toast.error(`${failedCount} documento(s) fallaron al generarse`, { id: 'generate-docs' });
+      }
+      if (generatedCount === 0 && failedCount === 0) {
+        toast.error('No se pudo generar ningún documento', { id: 'generate-docs' });
+      }
+
+      // Recargar documentos y cerrar modal
+      fetchDocuments();
+      setShowGenerateDialog(false);
+      setSelectedDocumentsToGenerate([]);
+    } catch (error: any) {
+      console.error('Error generando documentos:', error);
+      toast.error(error.message || 'Error al generar documentos', { id: 'generate-docs' });
+    } finally {
+      setGeneratingDocuments(false);
     }
   };
 
@@ -1289,10 +1490,22 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
             <DialogHeader>
               <DialogTitle className="flex items-center justify-between">
                 <span>Documentos del Préstamo</span>
-                <Button onClick={() => setShowUploadDocument(true)}>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Subir Documento
-                </Button>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline"
+                    onClick={() => {
+                      setShowGenerateDialog(true);
+                      checkAvailableDocuments();
+                    }}
+                  >
+                    <FileCheck className="h-4 w-4 mr-2" />
+                    Generar Documentos
+                  </Button>
+                  <Button onClick={() => setShowUploadDocument(true)}>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Subir Documento
+                  </Button>
+                </div>
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
@@ -1463,6 +1676,71 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Modal de Generar Documentos */}
+      <Dialog open={showGenerateDialog} onOpenChange={setShowGenerateDialog}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Generar Documentos</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Lista de documentos disponibles */}
+            <div>
+              <Label>Documentos Disponibles</Label>
+              {availableDocuments.length === 0 ? (
+                <div className="mt-2 p-4 text-center text-gray-500 bg-gray-50 rounded-md">
+                  <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p>Todos los documentos para este préstamo ya han sido generados</p>
+                </div>
+              ) : (
+                <div className="mt-2 space-y-2 max-h-60 overflow-y-auto border rounded-md p-4">
+                  {availableDocuments.map((docType) => (
+                    <div key={docType} className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded">
+                      <Checkbox
+                        id={docType}
+                        checked={selectedDocumentsToGenerate.includes(docType)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setSelectedDocumentsToGenerate([...selectedDocumentsToGenerate, docType]);
+                          } else {
+                            setSelectedDocumentsToGenerate(selectedDocumentsToGenerate.filter(d => d !== docType));
+                          }
+                        }}
+                      />
+                      <Label 
+                        htmlFor={docType} 
+                        className="flex-1 cursor-pointer font-normal"
+                      >
+                        {documentTypes[docType] || docType}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setShowGenerateDialog(false);
+                  setAvailableDocuments([]);
+                  setSelectedDocumentsToGenerate([]);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={handleGenerateDocuments}
+                disabled={selectedDocumentsToGenerate.length === 0 || generatingDocuments}
+              >
+                <FileCheck className="h-4 w-4 mr-2" />
+                {generatingDocuments ? 'Generando...' : `Generar ${selectedDocumentsToGenerate.length} Documento(s)`}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Modal de Previsualización de Documento */}
       <Dialog open={!!previewDocument} onOpenChange={(open) => !open && closePreview()}>

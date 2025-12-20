@@ -20,40 +20,344 @@ import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDo
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 
+// Función para reemplazar variables en la plantilla con datos del préstamo
+const replaceTemplateVariablesForLoan = (content: string, loanData: any, companySettings: any): string => {
+  const client = loanData.clients as any;
+  const today = new Date();
+  const formattedDate = today.toLocaleDateString('es-DO', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  
+  const formatCurrency = (amount: number | null | undefined) => {
+    if (amount === null || amount === undefined || isNaN(amount)) {
+      return 'RD$0.00';
+    }
+    return new Intl.NumberFormat('es-DO', {
+      style: 'currency',
+      currency: 'DOP',
+      minimumFractionDigits: 2
+    }).format(amount);
+  };
+  
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return 'N/A';
+    try {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const date = new Date(year, month - 1, day);
+      return date.toLocaleDateString('es-DO', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Datos del préstamo
+  const templateData: { [key: string]: string } = {
+    '{cliente_nombre}': client?.full_name || 'N/A',
+    '{cliente_dni}': client?.dni || 'N/A',
+    '{empresa_nombre}': companySettings?.company_name || 'LA EMPRESA',
+    '{monto}': formatCurrency(loanData.amount),
+    '{monto_numeros}': (loanData.amount || 0).toLocaleString('es-DO'),
+    '{tasa_interes}': String(loanData.interest_rate || 0),
+    '{plazo}': String(loanData.term_months || 0),
+    '{cuota_mensual}': formatCurrency(loanData.monthly_payment),
+    '{fecha_inicio}': formatDate(loanData.start_date),
+    '{primera_fecha_pago}': formatDate(loanData.first_payment_date),
+    '{tasa_mora}': String(loanData.late_fee_rate || 0),
+    '{tipo_mora}': loanData.late_fee_calculation_type === 'daily' ? 'diario' : 'mensual',
+    '{fecha_actual}': formattedDate,
+    '{codeudor_nombre}': loanData.guarantees?.[0]?.full_name || 'N/A',
+    '{codeudor_dni}': loanData.guarantees?.[0]?.dni || 'N/A',
+    '{descuento_salarial}': String(loanData.salary_deduction_percentage || 0),
+    '{numero_prestamo}': loanData.id?.slice(0, 8).toUpperCase() || 'N/A',
+    '{saldo_pendiente}': formatCurrency(loanData.remaining_balance || loanData.amount),
+    '{intereses_pendientes}': formatCurrency(0), // Calcular si es necesario
+    '{mora_pendiente}': formatCurrency(loanData.current_late_fee || 0),
+    '{total_pagar}': formatCurrency((loanData.remaining_balance || loanData.amount) + (loanData.current_late_fee || 0)),
+    '{fecha_limite}': formatDate(loanData.next_payment_date),
+    '{monto_original}': formatCurrency(loanData.amount)
+  };
+
+  let processedContent = content;
+  
+  // Reemplazar todas las variables (funciona tanto en HTML como en texto plano)
+  Object.keys(templateData).forEach(key => {
+    const regex = new RegExp(key.replace(/[{}]/g, '\\$&'), 'g');
+    processedContent = processedContent.replace(regex, templateData[key]);
+  });
+
+  return processedContent;
+};
+
+// Función para renderizar HTML a PDF
+const renderHtmlToPdf = (doc: any, htmlContent: string, startY: number, margin: number, pageWidth: number, pageHeight: number) => {
+  // Crear un elemento temporal para parsear el HTML
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = htmlContent;
+  
+  let yPos = startY;
+  const baseLineHeight = 5; // Altura de línea base en mm
+  
+  // Función para obtener estilos de un elemento
+  const getStyles = (element: HTMLElement, parentStyles?: any) => {
+    const styles: any = {
+      fontSize: parentStyles?.fontSize || 11,
+      fontStyle: parentStyles?.fontStyle || 'normal',
+      fontFamily: parentStyles?.fontFamily || 'helvetica',
+      color: parentStyles?.color || '#000000',
+      textAlign: parentStyles?.textAlign || 'left',
+      fontWeight: parentStyles?.fontWeight || 'normal',
+      underline: parentStyles?.underline || false
+    };
+    
+    // Obtener estilos inline
+    const style = element.style;
+    if (style.fontSize) {
+      const fontSizeMatch = style.fontSize.match(/(\d+)/);
+      if (fontSizeMatch) {
+        styles.fontSize = parseInt(fontSizeMatch[1]);
+      }
+    }
+    if (style.fontFamily) {
+      const fontFamily = style.fontFamily.toLowerCase();
+      if (fontFamily.includes('times')) styles.fontFamily = 'times';
+      else if (fontFamily.includes('courier')) styles.fontFamily = 'courier';
+      else styles.fontFamily = 'helvetica';
+    }
+    if (style.color) {
+      styles.color = style.color;
+    }
+    if (style.textAlign) {
+      styles.textAlign = style.textAlign;
+    }
+    if (style.fontWeight === 'bold' || element.tagName === 'B' || element.tagName === 'STRONG') {
+      styles.fontStyle = 'bold';
+    }
+    if (element.tagName === 'I' || element.tagName === 'EM') {
+      styles.fontStyle = styles.fontStyle === 'bold' ? 'bolditalic' : 'italic';
+    }
+    if (element.tagName === 'U') {
+      styles.underline = true;
+    }
+    
+    return styles;
+  };
+  
+  // Función recursiva para procesar nodos
+  const processNode = (node: Node, currentStyles: any, x: number, isBlockElement: boolean = false): number => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || '';
+      if (text.trim()) {
+        const lineHeight = (currentStyles.fontSize * 0.4);
+        
+        // Verificar si necesitamos una nueva página
+        if (yPos + lineHeight > pageHeight - margin) {
+          doc.addPage();
+          yPos = margin;
+        }
+        
+        // Aplicar estilos
+        doc.setFontSize(currentStyles.fontSize);
+        const fontStyle = currentStyles.fontStyle === 'bold' ? 'bold' : 
+                         currentStyles.fontStyle === 'italic' ? 'italic' : 
+                         currentStyles.fontStyle === 'bolditalic' ? 'bolditalic' : 'normal';
+        doc.setFont(currentStyles.fontFamily, fontStyle);
+        
+        // Dividir texto si es muy largo
+        const maxWidth = pageWidth - (margin * 2);
+        const lines = doc.splitTextToSize(text, maxWidth);
+        
+        lines.forEach((line: string) => {
+          if (yPos + lineHeight > pageHeight - margin) {
+            doc.addPage();
+            yPos = margin;
+          }
+          
+          // Calcular posición X según alineación
+          let textX = x;
+          const textWidth = doc.getTextWidth(line);
+          
+          if (currentStyles.textAlign === 'center') {
+            textX = pageWidth / 2;
+            doc.text(line, textX, yPos, { align: 'center' });
+          } else if (currentStyles.textAlign === 'right') {
+            textX = pageWidth - margin;
+            doc.text(line, textX, yPos, { align: 'right' });
+          } else {
+            doc.text(line, textX, yPos);
+          }
+          
+          // Dibujar subrayado si es necesario
+          if (currentStyles.underline) {
+            const lineY = yPos + 1;
+            const startX = currentStyles.textAlign === 'center' ? textX - (textWidth / 2) :
+                          currentStyles.textAlign === 'right' ? textX - textWidth : textX;
+            doc.line(startX, lineY, startX + textWidth, lineY);
+          }
+          
+          yPos += lineHeight;
+        });
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const element = node as HTMLElement;
+      const tagName = element.tagName.toLowerCase();
+      
+      // Obtener estilos del elemento
+      const elementStyles = getStyles(element, currentStyles);
+      
+      // Procesar elementos de bloque
+      if (tagName === 'div' || tagName === 'p') {
+        // Si el div tiene alineación, aplicarla a todos los hijos
+        if (element.style.textAlign) {
+          elementStyles.textAlign = element.style.textAlign;
+        }
+        
+        // Procesar hijos
+        for (let i = 0; i < element.childNodes.length; i++) {
+          yPos = processNode(element.childNodes[i], elementStyles, margin, true);
+        }
+        
+        // Salto de línea después de elementos de bloque
+        yPos += baseLineHeight;
+      } else if (tagName === 'br') {
+        yPos += baseLineHeight;
+      } else {
+        // Elementos inline (span, b, i, u, etc.)
+        for (let i = 0; i < element.childNodes.length; i++) {
+          yPos = processNode(element.childNodes[i], elementStyles, isBlockElement ? margin : x, isBlockElement);
+        }
+      }
+    }
+    
+    return yPos;
+  };
+  
+  // Procesar todos los nodos
+  const defaultStyles = {
+    fontSize: 11,
+    fontStyle: 'normal',
+    fontFamily: 'helvetica',
+    color: '#000000',
+    textAlign: 'left',
+    fontWeight: 'normal',
+    underline: false
+  };
+  
+  for (let i = 0; i < tempDiv.childNodes.length; i++) {
+    yPos = processNode(tempDiv.childNodes[i], defaultStyles, margin, true);
+  }
+  
+  return yPos;
+};
+
 // Función para generar el PDF de un documento
-const generateDocumentPDF = async (docType: string, loanData: any, formData: any, companySettings: any, companyId?: string): Promise<Blob> => {
+export const generateDocumentPDF = async (docType: string, loanData: any, formData: any, companySettings: any, companyId?: string): Promise<Blob> => {
   // Verificar si existe una plantilla personalizada
   if (companyId && companySettings?.document_templates) {
     const templates = companySettings.document_templates;
     const customTemplate = templates[docType];
     
     if (customTemplate && customTemplate.is_custom) {
-      // Si hay un archivo PDF subido, usarlo directamente
-      if (customTemplate.file_path || customTemplate.content) {
-        try {
-          const { supabase: supabaseClient } = await import('@/integrations/supabase/client');
+      try {
+        const { supabase: supabaseClient } = await import('@/integrations/supabase/client');
+        
+        // Si hay un archivo PDF subido, usarlo directamente
+        if (customTemplate.file_path) {
+          const { data, error } = await supabaseClient.storage
+            .from('documents')
+            .download(customTemplate.file_path);
           
+          if (!error && data) {
+            return data;
+          }
+        }
+        
+        // Si hay contenido HTML/texto, procesarlo y generar PDF
+        if (customTemplate.content) {
           // Si es una URL, descargar el PDF
-          if (customTemplate.content && customTemplate.content.startsWith('http')) {
+          if (customTemplate.content.startsWith('http')) {
             const response = await fetch(customTemplate.content);
             const blob = await response.blob();
             return blob;
           }
           
-          // Si es un file_path, descargar desde storage
-          if (customTemplate.file_path) {
-            const { data, error } = await supabaseClient.storage
-              .from('documents')
-              .download(customTemplate.file_path);
+          // Procesar el contenido de la plantilla con los datos del préstamo
+          const processedContent = replaceTemplateVariablesForLoan(
+            customTemplate.content,
+            loanData,
+            companySettings
+          );
+          
+          // Generar PDF desde el contenido HTML/texto
+          const { default: jsPDF } = await import('jspdf');
+          const doc = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+          });
+          
+          const pageWidth = doc.internal.pageSize.getWidth();
+          const pageHeight = doc.internal.pageSize.getHeight();
+          const margin = 20;
+          let yPos = margin;
+          
+          // Si el contenido tiene HTML, renderizarlo con estilos
+          if (processedContent.includes('<') && processedContent.includes('>')) {
+            yPos = renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
+          } else {
+            // Si es texto plano, procesarlo línea por línea
+            const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
+              doc.setFontSize(fontSize);
+              doc.setFont('helvetica', fontStyle);
+              const lines = doc.splitTextToSize(text, maxWidth);
+              
+              const lineHeight = fontSize * 0.4;
+              const neededHeight = lines.length * lineHeight;
+              
+              if (y + neededHeight > pageHeight - margin) {
+                doc.addPage();
+                return margin;
+              }
+              
+              doc.text(lines, x, y);
+              return y + neededHeight;
+            };
+
+            const lines = processedContent.split('\n');
             
-            if (!error && data) {
-              return data;
+            for (const line of lines) {
+              if (line.trim() === '') {
+                yPos += 5;
+                continue;
+              }
+
+              if (line === line.toUpperCase() && line.length > 0 && !line.includes('{')) {
+                yPos += 5;
+                yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 16, 'bold');
+                yPos += 5;
+              } else if (line.trim().startsWith('•')) {
+                yPos = addText(line, margin + 5, yPos, pageWidth - (margin * 2) - 5, 10, 'normal');
+              } else {
+                yPos = addText(line, margin, yPos, pageWidth - (margin * 2), 11, 'normal');
+              }
+
+              if (yPos > pageHeight - margin - 20) {
+                doc.addPage();
+                yPos = margin;
+              }
             }
           }
-        } catch (error) {
-          console.error('Error loading custom template, using default:', error);
-          // Continuar con la plantilla por defecto
+          
+          return doc.output('blob');
         }
+      } catch (error) {
+        console.error('Error loading custom template, using default:', error);
+        // Continuar con la plantilla por defecto
       }
     }
   }

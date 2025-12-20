@@ -18,11 +18,13 @@ import {
   Eye,
   Trash2,
   X,
-  User
+  User,
+  FileCheck
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface Document {
   id: string;
@@ -73,6 +75,16 @@ export const DocumentsModule = () => {
   const [showLoanDropdown, setShowLoanDropdown] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<Document | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  
+  // Estados para generar documentos
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [selectedLoanForGeneration, setSelectedLoanForGeneration] = useState<Loan | null>(null);
+  const [loanSearchForGeneration, setLoanSearchForGeneration] = useState('');
+  const [filteredLoansForGeneration, setFilteredLoansForGeneration] = useState<Loan[]>([]);
+  const [showLoanDropdownForGeneration, setShowLoanDropdownForGeneration] = useState(false);
+  const [availableDocuments, setAvailableDocuments] = useState<string[]>([]);
+  const [selectedDocumentsToGenerate, setSelectedDocumentsToGenerate] = useState<string[]>([]);
+  const [generatingDocuments, setGeneratingDocuments] = useState(false);
 
   useEffect(() => {
     if (companyId) {
@@ -87,6 +99,12 @@ export const DocumentsModule = () => {
       setDocuments([]);
     }
   }, [companyId, activeTab, selectedLoan]);
+
+  useEffect(() => {
+    if (showGenerateDialog) {
+      setFilteredLoansForGeneration(loans);
+    }
+  }, [showGenerateDialog, loans]);
 
   const fetchLoans = async () => {
     if (!companyId) return;
@@ -109,8 +127,13 @@ export const DocumentsModule = () => {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setLoans(data || []);
-      setFilteredLoans(data || []);
+      // Asegurar que clients sea un objeto único, no un array
+      const processedLoans = (data || []).map((loan: any) => ({
+        ...loan,
+        clients: Array.isArray(loan.clients) ? loan.clients[0] : loan.clients
+      }));
+      setLoans(processedLoans);
+      setFilteredLoans(processedLoans);
     } catch (error: any) {
       console.error('Error fetching loans:', error);
       toast.error('Error al cargar préstamos');
@@ -365,6 +388,230 @@ export const DocumentsModule = () => {
     (doc.file_name && doc.file_name.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
+  // Tipos de documentos disponibles
+  const documentTypes: { [key: string]: string } = {
+    'pagare_notarial': 'PAGARÉ NOTARIAL',
+    'tabla_amortizacion': 'TABLA DE AMORTIZACIÓN',
+    'contrato_bluetooth': 'CONTRATO IMPRESORA BLUETOOTH',
+    'pagare_codeudor': 'PAGARÉ NOTARIAL CON CODEUDOR',
+    'contrato_salarial': 'CONTRATO SALARIAL',
+    'carta_intimacion': 'CARTA DE INTIMACIÓN',
+    'carta_saldo': 'CARTA DE SALDO',
+    'prueba_documento': 'PRUEBA DE DOCUMENTO'
+  };
+
+  // Verificar qué documentos ya están generados para un préstamo
+  const checkAvailableDocuments = async (loanId: string) => {
+    try {
+      const { data: existingDocs, error } = await supabase
+        .from('documents')
+        .select('description')
+        .eq('loan_id', loanId)
+        .eq('document_type', 'loan_document');
+
+      if (error) throw error;
+
+      // Extraer los tipos de documentos ya generados desde la descripción
+      const generatedTypes = new Set<string>();
+      existingDocs?.forEach(doc => {
+        if (doc.description) {
+          const match = doc.description.match(/Tipo: (\w+)/);
+          if (match) {
+            generatedTypes.add(match[1]);
+          }
+        }
+      });
+
+      // Filtrar documentos disponibles (los que no están generados)
+      const available = Object.keys(documentTypes).filter(
+        docType => !generatedTypes.has(docType)
+      );
+      
+      setAvailableDocuments(available);
+      setSelectedDocumentsToGenerate([]);
+    } catch (error: any) {
+      console.error('Error checking available documents:', error);
+      toast.error('Error al verificar documentos disponibles');
+      setAvailableDocuments([]);
+    }
+  };
+
+  // Manejar búsqueda de préstamo para generación
+  const handleLoanSearchForGeneration = (searchTerm: string) => {
+    setLoanSearchForGeneration(searchTerm);
+    if (searchTerm.length === 0) {
+      setFilteredLoansForGeneration(loans);
+      setShowLoanDropdownForGeneration(false);
+      return;
+    }
+
+    const filtered = loans.filter(loan =>
+      loan.clients?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      loan.clients?.dni?.includes(searchTerm) ||
+      (loan.clients?.phone && loan.clients.phone.includes(searchTerm)) ||
+      loan.id.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    
+    setFilteredLoansForGeneration(filtered);
+    setShowLoanDropdownForGeneration(filtered.length > 0);
+  };
+
+  // Seleccionar préstamo para generación
+  const selectLoanForGeneration = (loan: Loan) => {
+    setSelectedLoanForGeneration(loan);
+    const clientName = loan.clients?.full_name || 'Sin cliente';
+    const loanInfo = `${clientName} - RD$${loan.amount.toLocaleString()}`;
+    setLoanSearchForGeneration(loanInfo);
+    setShowLoanDropdownForGeneration(false);
+    checkAvailableDocuments(loan.id);
+  };
+
+  // Generar documentos seleccionados
+  const handleGenerateDocuments = async () => {
+    if (!selectedLoanForGeneration || selectedDocumentsToGenerate.length === 0) {
+      toast.error('Selecciona un préstamo y al menos un documento');
+      return;
+    }
+
+    if (!companyId || !user) {
+      toast.error('Debes iniciar sesión para generar documentos');
+      return;
+    }
+
+    try {
+      setGeneratingDocuments(true);
+      toast.loading('Generando documentos...', { id: 'generate-docs' });
+
+      // Obtener datos completos del préstamo
+      const { data: loanData, error: loanError } = await supabase
+        .from('loans')
+        .select(`
+          *,
+          clients:client_id (
+            id,
+            full_name,
+            dni,
+            phone,
+            email,
+            address
+          )
+        `)
+        .eq('id', selectedLoanForGeneration.id)
+        .single();
+
+      if (loanError || !loanData) {
+        throw new Error('No se pudo obtener los datos del préstamo');
+      }
+
+      // Obtener configuración de la empresa
+      const { data: companySettingsData } = await supabase
+        .from('company_settings')
+        .select('*')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      const companySettings = companySettingsData || {};
+
+      // Importar la función de generación de documentos
+      const { generateDocumentPDF } = await import('@/components/loans/LoanForm');
+      
+      let generatedCount = 0;
+      let failedCount = 0;
+
+      for (const docType of selectedDocumentsToGenerate) {
+        try {
+          console.log(`🔍 Generando documento: ${docType}`);
+
+          // Generar PDF del documento
+          const pdfBlob = await generateDocumentPDF(
+            docType, 
+            loanData, 
+            {}, 
+            companySettings, 
+            companyId
+          );
+
+          if (!pdfBlob || pdfBlob.size === 0) {
+            console.error(`❌ Error: No se pudo generar el PDF para ${docType}`);
+            failedCount++;
+            continue;
+          }
+
+          // Crear un File desde el PDF Blob
+          const fileName = `${docType}_${selectedLoanForGeneration.id}_${Date.now()}.pdf`;
+          const filePath = `user-${companyId}/loans/${selectedLoanForGeneration.id}/${fileName}`;
+          const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+
+          // Subir a storage
+          const { error: uploadError } = await supabase.storage
+            .from('documents')
+            .upload(filePath, file, {
+              contentType: 'application/pdf',
+              upsert: false
+            });
+
+          if (uploadError) {
+            console.error(`❌ Error subiendo ${docType}:`, uploadError);
+            failedCount++;
+            continue;
+          }
+
+          // Guardar metadata en la base de datos
+          const documentMetadata = {
+            user_id: companyId,
+            loan_id: selectedLoanForGeneration.id,
+            client_id: loanData.client_id,
+            title: documentTypes[docType] || docType,
+            file_name: fileName,
+            file_url: filePath,
+            description: `Documento generado automáticamente: ${documentTypes[docType]} (Tipo: ${docType})`,
+            document_type: 'loan_document',
+            mime_type: 'application/pdf',
+            file_size: file.size,
+            status: 'active'
+          };
+
+          const { error: insertError } = await supabase
+            .from('documents')
+            .insert(documentMetadata);
+
+          if (insertError) {
+            console.error(`❌ Error guardando metadata para ${docType}:`, insertError);
+            failedCount++;
+            continue;
+          }
+
+          generatedCount++;
+        } catch (error: any) {
+          console.error(`❌ Error generando ${docType}:`, error);
+          failedCount++;
+        }
+      }
+
+      if (generatedCount > 0) {
+        toast.success(`${generatedCount} documento(s) generado(s) exitosamente`, { id: 'generate-docs' });
+      }
+      if (failedCount > 0) {
+        toast.error(`${failedCount} documento(s) fallaron al generarse`, { id: 'generate-docs' });
+      }
+      if (generatedCount === 0 && failedCount === 0) {
+        toast.error('No se pudo generar ningún documento', { id: 'generate-docs' });
+      }
+
+      // Recargar documentos y cerrar modal
+      fetchDocuments();
+      setShowGenerateDialog(false);
+      setSelectedDocumentsToGenerate([]);
+      setSelectedLoanForGeneration(null);
+      setLoanSearchForGeneration('');
+    } catch (error: any) {
+      console.error('Error generando documentos:', error);
+      toast.error(error.message || 'Error al generar documentos', { id: 'generate-docs' });
+    } finally {
+      setGeneratingDocuments(false);
+    }
+  };
+
   const documentStats = {
     total: documents.length,
     contracts: documents.filter(d => d.document_type === 'contract').length,
@@ -377,6 +624,21 @@ export const DocumentsModule = () => {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Gestión de Documentos</h1>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button 
+            onClick={() => {
+              setShowGenerateDialog(true);
+              setSelectedLoanForGeneration(selectedLoan);
+              if (selectedLoan) {
+                setLoanSearchForGeneration(`${selectedLoan.clients?.full_name || 'Sin cliente'} - RD$${selectedLoan.amount.toLocaleString()}`);
+                checkAvailableDocuments(selectedLoan.id);
+              }
+            }}
+            variant="outline"
+            className="w-full sm:w-auto"
+          >
+            <FileCheck className="h-4 w-4 mr-2" />
+            Generar Documentos
+          </Button>
           <Button 
             onClick={() => setShowUploadDialog(true)} 
             className="w-full sm:w-auto"
@@ -986,6 +1248,145 @@ export const DocumentsModule = () => {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Generar Documentos */}
+      <Dialog open={showGenerateDialog} onOpenChange={setShowGenerateDialog}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Generar Documentos</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Selección de préstamo */}
+            <div>
+              <Label htmlFor="loan-search-generation">Seleccionar Préstamo *</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                <Input
+                  id="loan-search-generation"
+                  placeholder="Buscar préstamo por cliente, DNI, teléfono o ID..."
+                  value={loanSearchForGeneration}
+                  onChange={(e) => handleLoanSearchForGeneration(e.target.value)}
+                  onFocus={() => {
+                    if (loanSearchForGeneration && filteredLoansForGeneration.length > 0) {
+                      setShowLoanDropdownForGeneration(true);
+                    }
+                  }}
+                  className="pl-10 pr-10"
+                />
+                {selectedLoanForGeneration && (
+                  <button
+                    onClick={() => {
+                      setSelectedLoanForGeneration(null);
+                      setLoanSearchForGeneration('');
+                      setAvailableDocuments([]);
+                      setSelectedDocumentsToGenerate([]);
+                    }}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+                {showLoanDropdownForGeneration && filteredLoansForGeneration.length > 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
+                    {filteredLoansForGeneration.map((loan) => (
+                      <div
+                        key={loan.id}
+                        onClick={() => selectLoanForGeneration(loan)}
+                        className="px-4 py-2 hover:bg-gray-100 cursor-pointer flex items-center justify-between"
+                      >
+                        <div>
+                          <div className="font-medium">
+                            {loan.clients?.full_name || 'Sin cliente'} - RD${loan.amount.toLocaleString()}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {loan.clients?.dni && `DNI: ${loan.clients.dni}`} 
+                            {loan.clients?.phone && ` • Tel: ${loan.clients.phone}`}
+                            <span className="ml-2">• Estado: {loan.status}</span>
+                          </div>
+                        </div>
+                        <FileText className="h-4 w-4 text-gray-400" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {selectedLoanForGeneration && (
+                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                  <div className="font-medium text-blue-900">
+                    {selectedLoanForGeneration.clients?.full_name || 'Sin cliente'} - RD${selectedLoanForGeneration.amount.toLocaleString()}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Lista de documentos disponibles */}
+            {selectedLoanForGeneration && (
+              <div>
+                <Label>Documentos Disponibles</Label>
+                {availableDocuments.length === 0 ? (
+                  <div className="mt-2 p-4 text-center text-gray-500 bg-gray-50 rounded-md">
+                    <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p>Todos los documentos para este préstamo ya han sido generados</p>
+                  </div>
+                ) : (
+                  <div className="mt-2 space-y-2 max-h-60 overflow-y-auto border rounded-md p-4">
+                    {availableDocuments.map((docType) => (
+                      <div key={docType} className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded">
+                        <Checkbox
+                          id={docType}
+                          checked={selectedDocumentsToGenerate.includes(docType)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedDocumentsToGenerate([...selectedDocumentsToGenerate, docType]);
+                            } else {
+                              setSelectedDocumentsToGenerate(selectedDocumentsToGenerate.filter(d => d !== docType));
+                            }
+                          }}
+                        />
+                        <Label 
+                          htmlFor={docType} 
+                          className="flex-1 cursor-pointer font-normal"
+                        >
+                          {documentTypes[docType] || docType}
+                        </Label>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!selectedLoanForGeneration && (
+              <div className="p-4 text-center text-gray-500 bg-gray-50 rounded-md">
+                <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>Selecciona un préstamo para ver los documentos disponibles</p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setShowGenerateDialog(false);
+                  setSelectedLoanForGeneration(null);
+                  setLoanSearchForGeneration('');
+                  setAvailableDocuments([]);
+                  setSelectedDocumentsToGenerate([]);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={handleGenerateDocuments}
+                disabled={!selectedLoanForGeneration || selectedDocumentsToGenerate.length === 0 || generatingDocuments}
+              >
+                <FileCheck className="h-4 w-4 mr-2" />
+                {generatingDocuments ? 'Generando...' : `Generar ${selectedDocumentsToGenerate.length} Documento(s)`}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
