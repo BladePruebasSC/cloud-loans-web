@@ -2992,7 +2992,29 @@ Fecha: {fecha_actual}`
                   <Type className="h-4 w-4 text-gray-600" />
                   <Select value={fontFamily} onValueChange={(value) => {
                     setFontFamily(value);
-                    document.execCommand('fontName', false, value);
+                    const selection = window.getSelection();
+                    if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+                      const range = selection.getRangeAt(0);
+                      const span = document.createElement('span');
+                      span.style.fontFamily = value === 'helvetica' ? 'Arial, sans-serif' : 
+                                              value === 'times' ? 'Times New Roman, serif' : 
+                                              value === 'courier' ? 'Courier New, monospace' : 
+                                              'Arial, sans-serif';
+                      try {
+                        range.surroundContents(span);
+                      } catch (e) {
+                        const contents = range.extractContents();
+                        span.appendChild(contents);
+                        range.insertNode(span);
+                      }
+                      selection.removeAllRanges();
+                      selection.addRange(range);
+                    } else {
+                      document.execCommand('fontName', false, value === 'helvetica' ? 'Arial' : 
+                                                               value === 'times' ? 'Times New Roman' : 
+                                                               value === 'courier' ? 'Courier New' : 
+                                                               'Arial');
+                    }
                   }}>
                     <SelectTrigger className="w-[120px] h-8">
                       <SelectValue />
@@ -3010,7 +3032,26 @@ Fecha: {fecha_actual}`
                 <div className="flex items-center gap-1">
                   <Select value={fontSize} onValueChange={(value) => {
                     setFontSize(value);
-                    document.execCommand('fontSize', false, value);
+                    const selection = window.getSelection();
+                    if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+                      const range = selection.getRangeAt(0);
+                      const span = document.createElement('span');
+                      span.style.fontSize = `${value}px`;
+                      try {
+                        range.surroundContents(span);
+                      } catch (e) {
+                        const contents = range.extractContents();
+                        span.appendChild(contents);
+                        range.insertNode(span);
+                      }
+                      selection.removeAllRanges();
+                      selection.addRange(range);
+                    } else {
+                      // Si no hay selección, aplicar al siguiente texto que se escriba
+                      if (editorRef) {
+                        editorRef.style.fontSize = `${value}px`;
+                      }
+                    }
                   }}>
                     <SelectTrigger className="w-[80px] h-8">
                       <SelectValue />
@@ -3088,7 +3129,50 @@ Fecha: {fecha_actual}`
                   variant="outline"
                   size="sm"
                   className="h-8"
-                  onClick={() => document.execCommand('justifyLeft', false)}
+                  onClick={() => {
+                    const selection = window.getSelection();
+                    if (selection && selection.rangeCount > 0 && editorRef) {
+                      const range = selection.getRangeAt(0);
+                      let container: Node | null = range.commonAncestorContainer;
+                      
+                      // Encontrar el elemento contenedor más cercano
+                      while (container && container.nodeType !== 1) {
+                        container = container.parentElement;
+                      }
+                      
+                      if (container && container instanceof HTMLElement) {
+                        // Buscar si ya está dentro de un div con alineación
+                        let alignedParent: HTMLElement | null = container;
+                        while (alignedParent && alignedParent !== editorRef) {
+                          if (alignedParent.style.textAlign) {
+                            alignedParent.style.textAlign = 'left';
+                            return;
+                          }
+                          alignedParent = alignedParent.parentElement;
+                        }
+                        
+                        // Si hay texto seleccionado, envolverlo en un div con alineación
+                        if (!selection.isCollapsed) {
+                          const selectedText = range.extractContents();
+                          const div = document.createElement('div');
+                          div.style.textAlign = 'left';
+                          div.appendChild(selectedText);
+                          range.insertNode(div);
+                          selection.removeAllRanges();
+                          selection.addRange(range);
+                        } else {
+                          // Si no hay selección, aplicar al párrafo actual
+                          let block: HTMLElement | null = container;
+                          while (block && block !== editorRef && !['DIV', 'P'].includes(block.tagName)) {
+                            block = block.parentElement;
+                          }
+                          if (block && block !== editorRef) {
+                            block.style.textAlign = 'left';
+                          }
+                        }
+                      }
+                    }
+                  }}
                   title="Alinear izquierda"
                 >
                   <AlignLeft className="h-4 w-4" />
@@ -3098,7 +3182,50 @@ Fecha: {fecha_actual}`
                   variant="outline"
                   size="sm"
                   className="h-8"
-                  onClick={() => document.execCommand('justifyCenter', false)}
+                  onClick={() => {
+                    const selection = window.getSelection();
+                    if (selection && selection.rangeCount > 0 && editorRef) {
+                      const range = selection.getRangeAt(0);
+                      let container: Node | null = range.commonAncestorContainer;
+                      
+                      // Encontrar el elemento contenedor más cercano
+                      while (container && container.nodeType !== 1) {
+                        container = container.parentElement;
+                      }
+                      
+                      if (container && container instanceof HTMLElement) {
+                        // Buscar si ya está dentro de un div con alineación
+                        let alignedParent: HTMLElement | null = container;
+                        while (alignedParent && alignedParent !== editorRef) {
+                          if (alignedParent.style.textAlign) {
+                            alignedParent.style.textAlign = 'center';
+                            return;
+                          }
+                          alignedParent = alignedParent.parentElement;
+                        }
+                        
+                        // Si hay texto seleccionado, envolverlo en un div con alineación
+                        if (!selection.isCollapsed) {
+                          const selectedText = range.extractContents();
+                          const div = document.createElement('div');
+                          div.style.textAlign = 'center';
+                          div.appendChild(selectedText);
+                          range.insertNode(div);
+                          selection.removeAllRanges();
+                          selection.addRange(range);
+                        } else {
+                          // Si no hay selección, aplicar al párrafo actual
+                          let block: HTMLElement | null = container;
+                          while (block && block !== editorRef && !['DIV', 'P'].includes(block.tagName)) {
+                            block = block.parentElement;
+                          }
+                          if (block && block !== editorRef) {
+                            block.style.textAlign = 'center';
+                          }
+                        }
+                      }
+                    }
+                  }}
                   title="Centrar"
                 >
                   <AlignCenter className="h-4 w-4" />
@@ -3108,7 +3235,50 @@ Fecha: {fecha_actual}`
                   variant="outline"
                   size="sm"
                   className="h-8"
-                  onClick={() => document.execCommand('justifyRight', false)}
+                  onClick={() => {
+                    const selection = window.getSelection();
+                    if (selection && selection.rangeCount > 0 && editorRef) {
+                      const range = selection.getRangeAt(0);
+                      let container: Node | null = range.commonAncestorContainer;
+                      
+                      // Encontrar el elemento contenedor más cercano
+                      while (container && container.nodeType !== 1) {
+                        container = container.parentElement;
+                      }
+                      
+                      if (container && container instanceof HTMLElement) {
+                        // Buscar si ya está dentro de un div con alineación
+                        let alignedParent: HTMLElement | null = container;
+                        while (alignedParent && alignedParent !== editorRef) {
+                          if (alignedParent.style.textAlign) {
+                            alignedParent.style.textAlign = 'right';
+                            return;
+                          }
+                          alignedParent = alignedParent.parentElement;
+                        }
+                        
+                        // Si hay texto seleccionado, envolverlo en un div con alineación
+                        if (!selection.isCollapsed) {
+                          const selectedText = range.extractContents();
+                          const div = document.createElement('div');
+                          div.style.textAlign = 'right';
+                          div.appendChild(selectedText);
+                          range.insertNode(div);
+                          selection.removeAllRanges();
+                          selection.addRange(range);
+                        } else {
+                          // Si no hay selección, aplicar al párrafo actual
+                          let block: HTMLElement | null = container;
+                          while (block && block !== editorRef && !['DIV', 'P'].includes(block.tagName)) {
+                            block = block.parentElement;
+                          }
+                          if (block && block !== editorRef) {
+                            block.style.textAlign = 'right';
+                          }
+                        }
+                      }
+                    }
+                  }}
                   title="Alinear derecha"
                 >
                   <AlignRight className="h-4 w-4" />
