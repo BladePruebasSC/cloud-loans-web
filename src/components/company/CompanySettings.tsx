@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +27,8 @@ const CompanySettings = () => {
   const [resetCode, setResetCode] = useState('');
   const [resetting, setResetting] = useState(false);
   const [resetCodeError, setResetCodeError] = useState('');
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState({
     company_name: '',
     business_type: '',
@@ -79,6 +81,7 @@ const CompanySettings = () => {
         setFormData(prev => ({
           ...prev,
           ...data,
+          logo_url: data.logo_url || prev.logo_url, // Asegurar que logo_url se cargue
           interest_rate_default: sanitizeNumber(data.interest_rate_default, prev.interest_rate_default),
           grace_period_days: sanitizeNumber(data.grace_period_days, prev.grace_period_days),
           default_late_fee_rate: sanitizeNumber(data.default_late_fee_rate, prev.default_late_fee_rate),
@@ -154,6 +157,176 @@ const CompanySettings = () => {
       ...prev,
       [field]: value
     }));
+  };
+
+  const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !user || !companyId) return;
+
+    // Validar que sea una imagen
+    if (!file.type.startsWith('image/')) {
+      toast.error('Por favor selecciona un archivo de imagen');
+      return;
+    }
+
+    // Validar tamaño (máximo 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('La imagen es demasiado grande. Máximo 5MB');
+      return;
+    }
+
+    setUploadingLogo(true);
+    try {
+      toast.loading('Subiendo logo...', { id: 'upload-logo' });
+
+      // Subir imagen a Supabase Storage
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${companyId}/logo_${Date.now()}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('company-assets')
+        .upload(fileName, file, {
+          upsert: true,
+          contentType: file.type
+        });
+
+      if (uploadError) {
+        // Si el bucket no existe, intentar crearlo o usar otro bucket
+        console.error('Error uploading logo:', uploadError);
+        
+        // Intentar con el bucket 'documents' como fallback
+        const fallbackFileName = `user-${companyId}/logo_${Date.now()}.${fileExt}`;
+        const { error: fallbackError } = await supabase.storage
+          .from('documents')
+          .upload(fallbackFileName, file, {
+            upsert: true,
+            contentType: file.type
+          });
+
+        if (fallbackError) {
+          throw fallbackError;
+        }
+
+        // Obtener URL pública
+        const { data: urlData } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(fallbackFileName, 31536000); // 1 año
+
+        if (!urlData) {
+          throw new Error('No se pudo obtener la URL del logo');
+        }
+
+        const logoUrl = urlData.signedUrl;
+        handleInputChange('logo_url', logoUrl);
+        
+        // Guardar automáticamente en la base de datos
+        // Primero verificar si existe un registro
+        const { data: existingData } = await supabase
+          .from('company_settings')
+          .select('user_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        let saveError;
+        if (existingData) {
+          // Si existe, usar update
+          const { error } = await supabase
+            .from('company_settings')
+            .update({
+              logo_url: logoUrl,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', user.id);
+          saveError = error;
+        } else {
+          // Si no existe, crear con upsert usando los datos actuales del formData
+          const { error } = await supabase
+            .from('company_settings')
+            .upsert({
+              user_id: user.id,
+              logo_url: logoUrl,
+              ...formData,
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'user_id'
+            });
+          saveError = error;
+        }
+
+        if (saveError) {
+          console.error('Error saving logo URL:', saveError);
+          toast.error('Logo subido pero no se pudo guardar en la base de datos', { id: 'upload-logo' });
+        } else {
+          toast.success('Logo subido y guardado exitosamente', { id: 'upload-logo' });
+          // Recargar los datos de la empresa
+          await fetchCompanySettings();
+        }
+      } else {
+        // Obtener URL pública
+        const { data: urlData } = await supabase.storage
+          .from('company-assets')
+          .createSignedUrl(fileName, 31536000); // 1 año
+
+        if (!urlData) {
+          throw new Error('No se pudo obtener la URL del logo');
+        }
+
+        const logoUrl = urlData.signedUrl;
+        handleInputChange('logo_url', logoUrl);
+        
+        // Guardar automáticamente en la base de datos
+        // Primero verificar si existe un registro
+        const { data: existingData } = await supabase
+          .from('company_settings')
+          .select('user_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        let saveError;
+        if (existingData) {
+          // Si existe, usar update
+          const { error } = await supabase
+            .from('company_settings')
+            .update({
+              logo_url: logoUrl,
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', user.id);
+          saveError = error;
+        } else {
+          // Si no existe, crear con upsert usando los datos actuales del formData
+          const { error } = await supabase
+            .from('company_settings')
+            .upsert({
+              user_id: user.id,
+              logo_url: logoUrl,
+              ...formData,
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'user_id'
+            });
+          saveError = error;
+        }
+
+        if (saveError) {
+          console.error('Error saving logo URL:', saveError);
+          toast.error('Logo subido pero no se pudo guardar en la base de datos', { id: 'upload-logo' });
+        } else {
+          toast.success('Logo subido y guardado exitosamente', { id: 'upload-logo' });
+          // Recargar los datos de la empresa
+          await fetchCompanySettings();
+        }
+      }
+    } catch (error: any) {
+      console.error('Error uploading logo:', error);
+      toast.error(error.message || 'Error al subir el logo', { id: 'upload-logo' });
+    } finally {
+      setUploadingLogo(false);
+      // Limpiar el input
+      if (logoInputRef.current) {
+        logoInputRef.current.value = '';
+      }
+    }
   };
 
 
@@ -576,11 +749,41 @@ const CompanySettings = () => {
                         className="h-16 w-16 object-contain rounded border"
                       />
                     )}
-                    <Button variant="outline">
-                      <Upload className="h-4 w-4 mr-2" />
-                      Subir Logo
-                    </Button>
+                    <div className="flex flex-col gap-2">
+                      <Button 
+                        variant="outline" 
+                        type="button"
+                        onClick={() => logoInputRef.current?.click()}
+                        disabled={uploadingLogo}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        {uploadingLogo ? 'Subiendo...' : 'Subir Logo'}
+                      </Button>
+                      <input
+                        ref={logoInputRef}
+                        type="file"
+                        id="logo_upload"
+                        accept="image/*"
+                        onChange={handleLogoUpload}
+                        style={{ display: 'none' }}
+                      />
+                      {formData.logo_url && (
+                        <Button
+                          variant="outline"
+                          type="button"
+                          size="sm"
+                          onClick={() => handleInputChange('logo_url', '')}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Eliminar Logo
+                        </Button>
+                      )}
+                    </div>
                   </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Formatos soportados: JPG, PNG, GIF. Tamaño máximo: 5MB
+                  </p>
                 </div>
               </CardContent>
             </Card>

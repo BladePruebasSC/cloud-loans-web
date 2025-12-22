@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { generatePawnPaymentReceipt, openWhatsApp } from '@/utils/whatsappReceipt';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -98,6 +99,7 @@ interface PaymentFormContentProps {
     amount: number;
     payment_method: 'cash' | 'transfer' | 'card' | 'check' | 'other';
     notes: string;
+    reference_number?: string;
   };
   setPaymentData: (data: any) => void;
   onCancel: () => void;
@@ -340,6 +342,8 @@ export const PawnShopModule = () => {
   const [paymentHistory, setPaymentHistory] = useState<PawnPayment[]>([]);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<PawnPayment | null>(null);
+  const [showWhatsAppDialog, setShowWhatsAppDialog] = useState(false);
+  const [lastPaymentData, setLastPaymentData] = useState<any>(null);
   const [interestPreviewData, setInterestPreviewData] = useState<{
     principal: number;
     rate: number;
@@ -1086,10 +1090,25 @@ export const PawnShopModule = () => {
       }
 
       toast.success('Pago registrado exitosamente');
-      setShowPaymentForm(false);
-      setSelectedTransaction(null);
-      resetPaymentForm();
-      fetchData();
+      
+      // Guardar datos del pago para el diálogo de WhatsApp
+      const selectedClient = clients.find(c => c.id === selectedTransaction.client_id);
+      setLastPaymentData({
+        payment,
+        transaction: selectedTransaction,
+        client: selectedClient,
+        paymentDate: formatDateStringForSantoDomingo(paymentDate.split('T')[0]),
+        principalPayment: paymentBreakdown.principalPayment,
+        interestPayment: paymentBreakdown.interestPayment,
+        remainingBalance: paymentBreakdown.remainingBalance,
+        paymentMethod: paymentData.payment_method,
+        referenceNumber: (paymentData as any).reference_number || undefined
+      });
+      
+      // Mostrar diálogo de WhatsApp
+      setShowWhatsAppDialog(true);
+      
+      // No cerrar el formulario todavía, esperar a que el usuario decida sobre WhatsApp
     } catch (error) {
       console.error('Error processing payment:', error);
       toast.error('Error al procesar pago');
@@ -5015,8 +5034,111 @@ export const PawnShopModule = () => {
           )}
         </DialogContent>
       </Dialog>
+      
+      {/* Diálogo de confirmación de WhatsApp */}
+      <Dialog open={showWhatsAppDialog} onOpenChange={setShowWhatsAppDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Enviar recibo por WhatsApp?</DialogTitle>
+            <DialogDescription>
+              ¿Deseas enviar el recibo del pago al cliente por WhatsApp?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowWhatsAppDialog(false);
+                setShowPaymentForm(false);
+                setSelectedTransaction(null);
+                resetPaymentForm();
+                fetchData();
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={async () => {
+                // Obtener el teléfono del cliente si no está disponible
+                let clientPhone = lastPaymentData?.client?.phone;
+                
+                if (!clientPhone && lastPaymentData?.client?.id) {
+                  try {
+                    console.log('🔍 Obteniendo teléfono del cliente desde BD para client:', lastPaymentData.client.id);
+                    const { data: clientData, error: clientError } = await supabase
+                      .from('clients')
+                      .select('phone')
+                      .eq('id', lastPaymentData.client.id)
+                      .maybeSingle();
+                    
+                    console.log('🔍 Client data:', clientData, 'Error:', clientError);
+                    
+                    if (clientData?.phone) {
+                      clientPhone = clientData.phone;
+                      // Actualizar lastPaymentData con el teléfono
+                      setLastPaymentData({
+                        ...lastPaymentData,
+                        client: {
+                          ...lastPaymentData.client,
+                          phone: clientPhone
+                        }
+                      });
+                    }
+                  } catch (error) {
+                    console.error('Error obteniendo teléfono del cliente:', error);
+                  }
+                }
+                
+                console.log('🔍 Teléfono final del cliente:', clientPhone);
+                
+                if (!clientPhone) {
+                  toast.error('No se encontró el número de teléfono del cliente. Por favor, verifica que el cliente tenga un número de teléfono registrado.');
+                  setShowWhatsAppDialog(false);
+                  setShowPaymentForm(false);
+                  setSelectedTransaction(null);
+                  resetPaymentForm();
+                  fetchData();
+                  return;
+                }
 
+                try {
+                  const companyName = companySettings?.company_name || 'LA EMPRESA';
+                  const receiptMessage = generatePawnPaymentReceipt({
+                    companyName,
+                    clientName: lastPaymentData.client.full_name,
+                    clientDni: lastPaymentData.client.dni,
+                    paymentDate: lastPaymentData.paymentDate,
+                    paymentAmount: lastPaymentData.payment.amount,
+                    principalAmount: lastPaymentData.principalPayment,
+                    interestAmount: lastPaymentData.interestPayment,
+                    remainingBalance: lastPaymentData.remainingBalance,
+                    paymentMethod: lastPaymentData.paymentMethod,
+                    transactionId: lastPaymentData.transaction.id,
+                    productName: lastPaymentData.transaction.product_name,
+                    loanAmount: lastPaymentData.transaction.loan_amount,
+                    interestRate: lastPaymentData.transaction.interest_rate,
+                    referenceNumber: lastPaymentData.referenceNumber
+                  });
 
+                  openWhatsApp(clientPhone, receiptMessage);
+                  toast.success('Abriendo WhatsApp...');
+                } catch (error: any) {
+                  console.error('Error abriendo WhatsApp:', error);
+                  toast.error(error.message || 'Error al abrir WhatsApp');
+                }
+
+                setShowWhatsAppDialog(false);
+                setShowPaymentForm(false);
+                setSelectedTransaction(null);
+                resetPaymentForm();
+                fetchData();
+              }}
+            >
+              Enviar por WhatsApp
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,7 +38,8 @@ import {
   AlignCenter,
   AlignRight,
   Type,
-  Palette
+  Palette,
+  Image
 } from 'lucide-react';
 
 interface Expense {
@@ -139,6 +140,148 @@ const UtilitiesModule = () => {
   const [fontSize, setFontSize] = useState<string>('11');
   const [fontFamily, setFontFamily] = useState<string>('helvetica');
   const [textColor, setTextColor] = useState<string>('#000000');
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Función para hacer imágenes redimensionables y rotables
+  const makeImageResizable = (img: HTMLImageElement) => {
+    // Si ya tiene un contenedor, no hacer nada
+    if (img.parentElement?.classList.contains('image-container')) {
+      return;
+    }
+    
+    img.style.position = 'relative';
+    img.style.display = 'inline-block';
+    img.style.cursor = 'move';
+    
+    // Contenedor para la imagen con controles
+    const container = document.createElement('div');
+    container.className = 'image-container';
+    container.style.position = 'relative';
+    container.style.display = 'inline-block';
+    container.style.margin = '10px';
+    container.style.border = '2px dashed transparent';
+    container.style.borderRadius = '4px';
+    container.style.verticalAlign = 'top';
+    
+    // Reemplazar la imagen con el contenedor
+    img.parentNode?.insertBefore(container, img);
+    container.appendChild(img);
+    
+    // Agregar controles de redimensionamiento
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'resize-handle';
+    resizeHandle.style.position = 'absolute';
+    resizeHandle.style.bottom = '0';
+    resizeHandle.style.right = '0';
+    resizeHandle.style.width = '20px';
+    resizeHandle.style.height = '20px';
+    resizeHandle.style.backgroundColor = '#3b82f6';
+    resizeHandle.style.border = '2px solid white';
+    resizeHandle.style.borderRadius = '50%';
+    resizeHandle.style.cursor = 'nwse-resize';
+    resizeHandle.style.zIndex = '1000';
+    resizeHandle.style.pointerEvents = 'auto';
+    resizeHandle.title = 'Arrastra para redimensionar';
+    container.appendChild(resizeHandle);
+    
+    // Botón de rotación
+    const rotateHandle = document.createElement('div');
+    rotateHandle.className = 'rotate-handle';
+    rotateHandle.style.position = 'absolute';
+    rotateHandle.style.top = '0';
+    rotateHandle.style.right = '0';
+    rotateHandle.style.width = '20px';
+    rotateHandle.style.height = '20px';
+    rotateHandle.style.backgroundColor = '#10b981';
+    rotateHandle.style.border = '2px solid white';
+    rotateHandle.style.borderRadius = '50%';
+    rotateHandle.style.cursor = 'pointer';
+    rotateHandle.style.zIndex = '1000';
+    rotateHandle.style.pointerEvents = 'auto';
+    rotateHandle.innerHTML = '↻';
+    rotateHandle.style.display = 'flex';
+    rotateHandle.style.alignItems = 'center';
+    rotateHandle.style.justifyContent = 'center';
+    rotateHandle.style.fontSize = '12px';
+    rotateHandle.style.color = 'white';
+    rotateHandle.style.fontWeight = 'bold';
+    rotateHandle.title = 'Click para rotar 90°';
+    container.appendChild(rotateHandle);
+    
+    // Mostrar controles al hacer hover
+    container.addEventListener('mouseenter', () => {
+      container.style.borderColor = '#3b82f6';
+    });
+    
+    container.addEventListener('mouseleave', () => {
+      container.style.borderColor = 'transparent';
+    });
+    
+    // Rotación
+    let rotation = parseInt(img.getAttribute('data-rotation') || '0');
+    rotateHandle.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    });
+    rotateHandle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      rotation = (rotation + 90) % 360;
+      img.style.transform = `rotate(${rotation}deg)`;
+      img.setAttribute('data-rotation', rotation.toString());
+      // Actualizar el contenido del editor
+      if (editorRef) {
+        setTemplateContent(editorRef.innerHTML);
+      }
+    });
+    
+    // Redimensionamiento
+    let isResizing = false;
+    let startX = 0;
+    let startY = 0;
+    let startWidth = 0;
+    let startHeight = 0;
+    
+    resizeHandle.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      isResizing = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startWidth = img.offsetWidth;
+      startHeight = img.offsetHeight;
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', handleResize, true);
+      document.addEventListener('mouseup', stopResize, true);
+    });
+    
+    const handleResize = (e: MouseEvent) => {
+      if (!isResizing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const diffX = e.clientX - startX;
+      const diffY = e.clientY - startY;
+      const newWidth = Math.max(50, startWidth + diffX);
+      const newHeight = Math.max(50, startHeight + diffY);
+      img.style.width = `${newWidth}px`;
+      img.style.height = `${newHeight}px`;
+      img.style.maxWidth = 'none';
+    };
+    
+    const stopResize = () => {
+      isResizing = false;
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleResize, true);
+      document.removeEventListener('mouseup', stopResize, true);
+      // Actualizar el contenido del editor
+      if (editorRef) {
+        setTemplateContent(editorRef.innerHTML);
+      }
+    };
+  };
 
   useEffect(() => {
     if (user) {
@@ -1482,7 +1625,7 @@ Fecha: {fecha_actual}`
   };
 
   // Función para parsear HTML y renderizar en PDF
-  const renderHtmlToPdf = (doc: any, htmlContent: string, startY: number, margin: number, pageWidth: number, pageHeight: number) => {
+  const renderHtmlToPdf = async (doc: any, htmlContent: string, startY: number, margin: number, pageWidth: number, pageHeight: number) => {
     // Crear un elemento temporal para parsear el HTML
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = htmlContent;
@@ -1613,10 +1756,19 @@ Fecha: {fecha_actual}`
           yPos += baseLineHeight;
         } else if (tagName === 'br') {
           yPos += baseLineHeight;
+        } else if (tagName === 'img') {
+          // Las imágenes ya se procesaron antes
+          // Solo agregar espacio después
+          yPos += baseLineHeight * 2;
         } else {
           // Elementos inline (span, b, i, u, etc.)
           for (let i = 0; i < element.childNodes.length; i++) {
-            yPos = processNode(element.childNodes[i], elementStyles, isBlockElement ? margin : x, isBlockElement);
+            const child = element.childNodes[i];
+            // Saltar imágenes
+            if (child.nodeType === Node.ELEMENT_NODE && (child as HTMLElement).tagName === 'IMG') {
+              continue;
+            }
+            yPos = processNode(child, elementStyles, isBlockElement ? margin : x, isBlockElement);
           }
         }
       }
@@ -1635,8 +1787,63 @@ Fecha: {fecha_actual}`
       underline: false
     };
     
+    // Procesar imágenes primero de forma asíncrona
+    const processImages = async () => {
+      const images = tempDiv.querySelectorAll('img');
+      for (const img of Array.from(images)) {
+        try {
+          const imgData = await fetch(img.src).then(res => res.blob());
+          const imgBase64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(imgData);
+          });
+          
+          // Calcular dimensiones manteniendo proporción
+          const maxWidth = pageWidth - (margin * 2);
+          // Cargar imagen para obtener dimensiones reales
+          const imgElement = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const imgEl = document.createElement('img');
+            imgEl.onload = () => resolve(imgEl);
+            imgEl.onerror = () => {
+              // Si falla, crear imagen con dimensiones por defecto
+              const defaultImg = document.createElement('img');
+              defaultImg.width = 100;
+              defaultImg.height = 100;
+              resolve(defaultImg);
+            };
+            imgEl.src = img.src;
+          });
+          
+          const imgWidth = Math.min(imgElement.width * 0.264583, maxWidth); // Convertir px a mm
+          const imgHeight = imgElement.height * 0.264583 * (imgWidth / (imgElement.width * 0.264583));
+          
+          // Verificar si necesitamos una nueva página
+          if (yPos + imgHeight > pageHeight - margin) {
+            doc.addPage();
+            yPos = margin;
+          }
+          
+          // Agregar imagen al PDF
+          doc.addImage(imgBase64, 'PNG', margin, yPos, imgWidth, imgHeight);
+          yPos += imgHeight + 5; // Espacio después de la imagen
+        } catch (error) {
+          console.error('Error procesando imagen:', error);
+        }
+      }
+    };
+    
+    await processImages();
+    
+    // Procesar el resto de nodos (saltando imágenes ya procesadas)
     for (let i = 0; i < tempDiv.childNodes.length; i++) {
-      yPos = processNode(tempDiv.childNodes[i], defaultStyles, margin, true);
+      const node = tempDiv.childNodes[i];
+      // Saltar imágenes ya procesadas
+      if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === 'IMG') {
+        continue;
+      }
+      yPos = processNode(node, defaultStyles, margin, true);
     }
     
     return yPos;
@@ -1682,7 +1889,7 @@ Fecha: {fecha_actual}`
 
       // Si el contenido tiene HTML, renderizarlo con estilos
       if (processedContent.includes('<') && processedContent.includes('>')) {
-        yPos = renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
+        yPos = await renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
       } else {
         // Si es texto plano, procesarlo línea por línea
         const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
@@ -1776,7 +1983,7 @@ Fecha: {fecha_actual}`
 
       // Si el contenido tiene HTML, renderizarlo con estilos
       if (processedContent.includes('<') && processedContent.includes('>')) {
-        yPos = renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
+        yPos = await renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
       } else {
         // Si es texto plano, procesarlo línea por línea
         const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
@@ -1875,7 +2082,7 @@ Fecha: {fecha_actual}`
 
       // Si el contenido tiene HTML, renderizarlo con estilos
       if (processedContent.includes('<') && processedContent.includes('>')) {
-        yPos = renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
+        yPos = await renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
       } else {
         // Si es texto plano, procesarlo línea por línea
         const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
@@ -3213,26 +3420,112 @@ Fecha: {fecha_actual}`
                 <div className="flex items-center gap-1">
                   <Select value={fontSize} onValueChange={(value) => {
                     setFontSize(value);
+                    if (!editorRef) return;
+                    
                     const selection = window.getSelection();
-                    if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
-                      const range = selection.getRangeAt(0);
-                      const span = document.createElement('span');
-                      span.style.fontSize = `${value}px`;
-                      try {
-                        range.surroundContents(span);
-                      } catch (e) {
-                        const contents = range.extractContents();
-                        span.appendChild(contents);
-                        range.insertNode(span);
+                    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+                      // No hay selección, no hacer nada
+                      return;
+                    }
+                    
+                    const range = selection.getRangeAt(0);
+                    
+                    // Verificar que la selección esté dentro del editor
+                    if (!editorRef.contains(range.commonAncestorContainer)) {
+                      return;
+                    }
+                    
+                    // Guardar el contenido seleccionado antes de modificar
+                    const selectedText = range.toString();
+                    if (!selectedText || selectedText.trim() === '') {
+                      return;
+                    }
+                    
+                    // Remover spans con fontSize que intersecten con la selección
+                    const allSpans = Array.from(editorRef.querySelectorAll('span[style*="font-size"]'));
+                    allSpans.forEach(span => {
+                      if (range.intersectsNode(span)) {
+                        const parent = span.parentNode;
+                        if (parent) {
+                          // Mover todos los hijos del span al padre
+                          const fragment = document.createDocumentFragment();
+                          while (span.firstChild) {
+                            fragment.appendChild(span.firstChild);
+                          }
+                          parent.insertBefore(fragment, span);
+                          parent.removeChild(span);
+                        }
                       }
-                      selection.removeAllRanges();
-                      selection.addRange(range);
-                    } else {
-                      // Si no hay selección, aplicar al siguiente texto que se escriba
-                      if (editorRef) {
-                        editorRef.style.fontSize = `${value}px`;
+                    });
+                    
+                    // Recrear el range después de remover los spans
+                    // Buscar el texto seleccionado de nuevo
+                    const textNodes: Text[] = [];
+                    const walker = document.createTreeWalker(
+                      editorRef,
+                      NodeFilter.SHOW_TEXT,
+                      null
+                    );
+                    
+                    let node;
+                    while (node = walker.nextNode()) {
+                      const textNode = node as Text;
+                      if (textNode.textContent && textNode.textContent.includes(selectedText)) {
+                        textNodes.push(textNode);
                       }
                     }
+                    
+                    if (textNodes.length === 0) {
+                      return; // No se pudo encontrar el texto
+                    }
+                    
+                    // Encontrar el primer nodo que contiene el texto seleccionado
+                    const targetNode = textNodes[0];
+                    const index = targetNode.textContent?.indexOf(selectedText) || 0;
+                    
+                    // Crear nuevo range
+                    const newRange = document.createRange();
+                    newRange.setStart(targetNode, index);
+                    newRange.setEnd(targetNode, index + selectedText.length);
+                    
+                    // Crear nuevo span con el tamaño de fuente
+                    const span = document.createElement('span');
+                    span.style.fontSize = `${value}px`;
+                    
+                    try {
+                      // Intentar envolver el contenido seleccionado
+                      newRange.surroundContents(span);
+                    } catch (e) {
+                      // Si falla, extraer el contenido y envolverlo
+                      const contents = newRange.extractContents();
+                      
+                      // Limpiar el contenido de elementos con fontSize
+                      const contentWalker = document.createTreeWalker(
+                        contents,
+                        NodeFilter.SHOW_ELEMENT,
+                        null
+                      );
+                      
+                      let contentNode;
+                      while (contentNode = contentWalker.nextNode()) {
+                        const el = contentNode as HTMLElement;
+                        if (el.style.fontSize) {
+                          el.style.fontSize = '';
+                        }
+                      }
+                      
+                      span.appendChild(contents);
+                      newRange.insertNode(span);
+                    }
+                    
+                    // Mantener la selección en el nuevo span
+                    const finalRange = document.createRange();
+                    finalRange.selectNodeContents(span);
+                    selection.removeAllRanges();
+                    selection.addRange(finalRange);
+                    
+                    // Actualizar el contenido
+                    setTemplateContent(editorRef.innerHTML);
                   }}>
                     <SelectTrigger className="w-[80px] h-8">
                       <SelectValue />
@@ -3250,6 +3543,110 @@ Fecha: {fecha_actual}`
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div className="w-px h-6 bg-gray-300" />
+
+                {/* Insertar Imagen */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => {
+                    imageInputRef.current?.click();
+                  }}
+                  title="Insertar Imagen"
+                >
+                  <Image className="h-4 w-4" />
+                </Button>
+                <input
+                  type="file"
+                  ref={imageInputRef}
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file || !companyId || !editorRef) return;
+
+                    try {
+                      toast.loading('Subiendo imagen...', { id: 'upload-image' });
+
+                      // Subir imagen a storage
+                      const filePath = `user-${companyId}/templates/images/${Date.now()}-${file.name}`;
+                      const { error: uploadError } = await supabase.storage
+                        .from('documents')
+                        .upload(filePath, file, {
+                          upsert: false,
+                          contentType: file.type
+                        });
+
+                      if (uploadError) throw uploadError;
+
+                      // Obtener URL pública de la imagen
+                      const { data: urlData } = await supabase.storage
+                        .from('documents')
+                        .createSignedUrl(filePath, 31536000); // URL válida por 1 año
+
+                      if (!urlData) {
+                        throw new Error('No se pudo obtener la URL de la imagen');
+                      }
+
+                      // Insertar imagen en el editor
+                      const selection = window.getSelection();
+                      const img = document.createElement('img');
+                      img.src = urlData.signedUrl;
+                      img.style.maxWidth = '300px';
+                      img.style.height = 'auto';
+                      img.style.display = 'block';
+                      img.style.margin = '10px auto';
+                      img.style.cursor = 'move';
+                      img.alt = file.name;
+                      img.setAttribute('data-rotation', '0');
+                      img.setAttribute('data-resizable', 'true');
+                      
+                      // Hacer la imagen redimensionable y rotable
+                      makeImageResizable(img);
+                      
+                      // Obtener el contenedor creado por makeImageResizable
+                      const container = img.parentElement;
+                      
+                      if (selection && selection.rangeCount > 0) {
+                        const range = selection.getRangeAt(0);
+                        // Insertar el contenedor en la posición del cursor
+                        range.insertNode(container || img);
+                        
+                        // Mover el cursor después de la imagen
+                        if (container) {
+                          range.setStartAfter(container);
+                        } else {
+                          range.setStartAfter(img);
+                        }
+                        range.collapse(true);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                      } else {
+                        // Si no hay selección, insertar al final
+                        editorRef.appendChild(container || img);
+                      }
+
+                      // Actualizar el contenido
+                      if (editorRef) {
+                        const html = editorRef.innerHTML;
+                        setTemplateContent(html);
+                      }
+
+                      toast.success('Imagen insertada correctamente', { id: 'upload-image' });
+                    } catch (error: any) {
+                      console.error('Error al subir imagen:', error);
+                      toast.error(error.message || 'Error al subir imagen', { id: 'upload-image' });
+                    } finally {
+                      // Limpiar el input
+                      if (imageInputRef.current) {
+                        imageInputRef.current.value = '';
+                      }
+                    }
+                  }}
+                />
 
                 <div className="w-px h-6 bg-gray-300" />
 
@@ -3474,7 +3871,22 @@ Fecha: {fecha_actual}`
                     setEditorRef(el);
                     // Inicializar contenido cuando se monta
                     if (templateContent && el.innerHTML === '') {
-                      el.innerHTML = templateContent.replace(/\n/g, '<br>');
+                      // Si el contenido ya es HTML (tiene imágenes o tags), usarlo directamente
+                      if (templateContent.includes('<img') || (templateContent.includes('<') && templateContent.includes('>'))) {
+                        el.innerHTML = templateContent;
+                        // Hacer las imágenes existentes redimensionables
+                        setTimeout(() => {
+                          const images = el.querySelectorAll('img[data-resizable="true"]');
+                          images.forEach(img => {
+                            if (!img.parentElement?.classList.contains('image-container')) {
+                              makeImageResizable(img as HTMLImageElement);
+                            }
+                          });
+                        }, 100);
+                      } else {
+                        // Si es texto plano, convertirlo a HTML básico
+                        el.innerHTML = templateContent.replace(/\n/g, '<br>');
+                      }
                     }
                   }
                 }}
@@ -3488,7 +3900,6 @@ Fecha: {fecha_actual}`
                 className="border border-t-0 border-gray-300 rounded-b-lg p-4 min-h-[400px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 style={{
                   fontFamily: fontFamily === 'helvetica' ? 'Arial, sans-serif' : fontFamily === 'times' ? 'Times New Roman, serif' : fontFamily === 'courier' ? 'Courier New, monospace' : 'Arial, sans-serif',
-                  fontSize: `${fontSize}px`,
                   color: textColor
                 }}
               />

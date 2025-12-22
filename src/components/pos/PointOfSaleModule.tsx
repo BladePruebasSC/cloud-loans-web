@@ -5,7 +5,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { generateSaleReceipt, openWhatsApp } from '@/utils/whatsappReceipt';
+import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
@@ -169,6 +171,8 @@ export const PointOfSaleModule = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [receiptData, setReceiptData] = useState<SaleData | null>(null); // Datos de la venta para el recibo
+  const [showWhatsAppDialog, setShowWhatsAppDialog] = useState(false);
+  const [lastSaleData, setLastSaleData] = useState<any>(null);
   const [showNewClientModal, setShowNewClientModal] = useState(false);
   const [newClientData, setNewClientData] = useState({
     full_name: '',
@@ -1033,7 +1037,19 @@ export const PointOfSaleModule = () => {
     setShowPaymentModal(false);
     // Guardar los datos de la venta antes de limpiar el carrito (incluyendo el cambio calculado)
     setReceiptData({ ...saleData, change });
-    setShowReceiptModal(true);
+    
+    // Guardar datos para el diálogo de WhatsApp
+    setLastSaleData({
+      saleData: { ...saleData, change },
+      cart: [...cart],
+      paymentMethods: saleData.paymentSplits,
+      customer: saleData.customer
+    });
+    
+    // Mostrar diálogo de WhatsApp
+    setShowWhatsAppDialog(true);
+    
+    // No mostrar el recibo todavía, esperar a que el usuario decida sobre WhatsApp
           // Refrescar inventario
         await fetchData();
           // NO limpiar el carrito aquí - se limpiará cuando se cierre el modal del recibo
@@ -3346,6 +3362,112 @@ export const PointOfSaleModule = () => {
               Crear Cliente
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Diálogo de confirmación de WhatsApp */}
+      <Dialog open={showWhatsAppDialog} onOpenChange={setShowWhatsAppDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Enviar recibo por WhatsApp?</DialogTitle>
+            <DialogDescription>
+              ¿Deseas enviar el recibo de la venta al cliente por WhatsApp?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowWhatsAppDialog(false);
+                setShowReceiptModal(true);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={async () => {
+                // Obtener el teléfono del cliente si no está disponible
+                let clientPhone = lastSaleData?.customer?.phone;
+                
+                if (!clientPhone && lastSaleData?.customer?.id) {
+                  try {
+                    console.log('🔍 Obteniendo teléfono del cliente desde BD para customer:', lastSaleData.customer.id);
+                    const { data: clientData, error: clientError } = await supabase
+                      .from('clients')
+                      .select('phone')
+                      .eq('id', lastSaleData.customer.id)
+                      .maybeSingle();
+                    
+                    console.log('🔍 Client data:', clientData, 'Error:', clientError);
+                    
+                    if (clientData?.phone) {
+                      clientPhone = clientData.phone;
+                      // Actualizar lastSaleData con el teléfono
+                      setLastSaleData({
+                        ...lastSaleData,
+                        customer: {
+                          ...lastSaleData.customer,
+                          phone: clientPhone
+                        }
+                      });
+                    }
+                  } catch (error) {
+                    console.error('Error obteniendo teléfono del cliente:', error);
+                  }
+                }
+                
+                console.log('🔍 Teléfono final del cliente:', clientPhone);
+                
+                if (!clientPhone) {
+                  toast.error('No se encontró el número de teléfono del cliente. Por favor, verifica que el cliente tenga un número de teléfono registrado.');
+                  setShowWhatsAppDialog(false);
+                  setShowReceiptModal(true);
+                  return;
+                }
+
+                try {
+                  const companyName = companyInfo.company_name || 'LA EMPRESA';
+                  const saleDate = formatDateStringForSantoDomingo(new Date().toISOString().split('T')[0]);
+                  
+                  const items = lastSaleData.cart.map((item: any) => ({
+                    name: item.product.name,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    subtotal: item.subtotal
+                  }));
+                  
+                  const paymentMethods = lastSaleData.paymentMethods.map((split: any) => ({
+                    method: split.method.type || split.method.id || 'cash',
+                    amount: split.amount
+                  }));
+                  
+                  const receiptMessage = generateSaleReceipt({
+                    companyName,
+                    clientName: lastSaleData.customer.full_name,
+                    clientDni: lastSaleData.customer.dni,
+                    saleDate,
+                    totalAmount: lastSaleData.saleData.total,
+                    items,
+                    paymentMethods,
+                    discount: 0, // TODO: calcular descuento si existe
+                    tax: lastSaleData.saleData.total * 0.18, // TODO: calcular ITBIS correctamente
+                    saleId: lastSaleData.saleData.ncfNumber || undefined
+                  });
+
+                  openWhatsApp(clientPhone, receiptMessage);
+                  toast.success('Abriendo WhatsApp...');
+                } catch (error: any) {
+                  console.error('Error abriendo WhatsApp:', error);
+                  toast.error(error.message || 'Error al abrir WhatsApp');
+                }
+
+                setShowWhatsAppDialog(false);
+                setShowReceiptModal(true);
+              }}
+            >
+              Enviar por WhatsApp
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

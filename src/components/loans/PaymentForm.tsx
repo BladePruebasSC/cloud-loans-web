@@ -22,6 +22,9 @@ import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
 import { Search, User } from 'lucide-react';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { generateLoanPaymentReceipt, openWhatsApp } from '@/utils/whatsappReceipt';
+import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 
 const paymentSchema = z.object({
   loan_id: z.string().min(1, 'Debe seleccionar un préstamo'),
@@ -96,6 +99,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [appliedLateFeePayment, setAppliedLateFeePayment] = useState<number>(0);
   const [companySettings, setCompanySettings] = useState<any>(null);
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
+  const [showWhatsAppDialog, setShowWhatsAppDialog] = useState(false);
+  const [lastPaymentData, setLastPaymentData] = useState<any>(null);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
@@ -1331,6 +1336,57 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       toast.success(successMessage);
       
+      // Obtener el teléfono del cliente desde la base de datos si no está disponible
+      let clientPhone = selectedLoan.client?.phone;
+      if (!clientPhone) {
+        try {
+          // Primero obtener el client_id del préstamo
+          const { data: loanData } = await supabase
+            .from('loans')
+            .select('client_id')
+            .eq('id', data.loan_id)
+            .single();
+          
+          if (loanData?.client_id) {
+            // Obtener el teléfono del cliente
+            const { data: clientData } = await supabase
+              .from('clients')
+              .select('phone')
+              .eq('id', loanData.client_id)
+              .maybeSingle();
+            
+            if (clientData) {
+              clientPhone = clientData.phone || clientPhone;
+            }
+          }
+        } catch (error) {
+          console.error('Error obteniendo teléfono del cliente:', error);
+        }
+      }
+      
+      // Guardar datos del pago para el diálogo de WhatsApp
+      setLastPaymentData({
+        payment: insertedPayment?.[0],
+        loan: {
+          ...selectedLoan,
+          client: {
+            ...selectedLoan.client,
+            phone: clientPhone || selectedLoan.client?.phone
+          }
+        },
+        paymentDate: formatDateStringForSantoDomingo(paymentDate),
+        principalPayment,
+        interestAmount: interestPayment,
+        lateFeeAmount: data.late_fee_amount || 0,
+        paymentMethod: data.payment_method,
+        referenceNumber: data.reference_number,
+        remainingBalance: newBalance,
+        nextPaymentDate: formatDateStringForSantoDomingo(nextPaymentDate)
+      });
+      
+      // Mostrar diálogo de WhatsApp
+      setShowWhatsAppDialog(true);
+      
       // Recalcular automáticamente la mora después del pago usando la función correcta
       try {
         console.log('🔍 PaymentForm: Recalculando mora después del pago...');
@@ -1385,15 +1441,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         onPaymentSuccess();
       }
       
-      // Si es móvil, redirigir a Cobro Rápido
-      if (isMobile) {
-        toast.success('Redirigiendo a Cobro Rápido...');
-        setTimeout(() => {
-          navigate('/cobro-rapido');
-        }, 1000);
-      } else {
-      onBack();
-      }
+      // No cerrar el formulario todavía, esperar a que el usuario decida sobre WhatsApp
+      // El diálogo de WhatsApp se encargará de cerrar cuando corresponda
     } catch (error) {
       console.error('Error registering payment:', error);
       toast.error('Error al registrar el pago');
@@ -1930,6 +1979,139 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           </div>
         )}
       </div>
+      
+      {/* Diálogo de confirmación de WhatsApp */}
+      <Dialog open={showWhatsAppDialog} onOpenChange={setShowWhatsAppDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Enviar recibo por WhatsApp?</DialogTitle>
+            <DialogDescription>
+              ¿Deseas enviar el recibo del pago al cliente por WhatsApp?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowWhatsAppDialog(false);
+                // Cerrar el formulario después de cancelar
+                if (isMobile) {
+                  toast.success('Redirigiendo a Cobro Rápido...');
+                  setTimeout(() => {
+                    navigate('/cobro-rapido');
+                  }, 1000);
+                } else {
+                  onBack();
+                }
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={async () => {
+                // Obtener el teléfono del cliente si no está disponible
+                let clientPhone = lastPaymentData?.loan?.client?.phone;
+                
+                if (!clientPhone && lastPaymentData?.loan?.id) {
+                  try {
+                    console.log('🔍 Obteniendo teléfono del cliente desde BD para loan:', lastPaymentData.loan.id);
+                    // Obtener el client_id del préstamo
+                    const { data: loanData, error: loanError } = await supabase
+                      .from('loans')
+                      .select('client_id')
+                      .eq('id', lastPaymentData.loan.id)
+                      .single();
+                    
+                    console.log('🔍 Loan data:', loanData, 'Error:', loanError);
+                    
+                    if (loanData?.client_id) {
+                      // Obtener el teléfono del cliente
+                      const { data: clientData, error: clientError } = await supabase
+                        .from('clients')
+                        .select('phone')
+                        .eq('id', loanData.client_id)
+                        .maybeSingle();
+                      
+                      console.log('🔍 Client data:', clientData, 'Error:', clientError);
+                      
+                      if (clientData?.phone) {
+                        clientPhone = clientData.phone;
+                        // Actualizar lastPaymentData con el teléfono
+                        setLastPaymentData({
+                          ...lastPaymentData,
+                          loan: {
+                            ...lastPaymentData.loan,
+                            client: {
+                              ...lastPaymentData.loan.client,
+                              phone: clientPhone
+                            }
+                          }
+                        });
+                      }
+                    }
+                  } catch (error) {
+                    console.error('Error obteniendo teléfono del cliente:', error);
+                  }
+                }
+                
+                console.log('🔍 Teléfono final del cliente:', clientPhone);
+                console.log('🔍 lastPaymentData completo:', lastPaymentData);
+                
+                if (!clientPhone) {
+                  toast.error('No se encontró el número de teléfono del cliente. Por favor, verifica que el cliente tenga un número de teléfono registrado.');
+                  setShowWhatsAppDialog(false);
+                  if (isMobile) {
+                    setTimeout(() => {
+                      navigate('/cobro-rapido');
+                    }, 1000);
+                  } else {
+                    onBack();
+                  }
+                  return;
+                }
+
+                try {
+                  const companyName = companySettings?.company_name || 'LA EMPRESA';
+                  const receiptMessage = generateLoanPaymentReceipt({
+                    companyName,
+                    clientName: lastPaymentData.loan.client.full_name,
+                    clientDni: lastPaymentData.loan.client.dni,
+                    paymentDate: lastPaymentData.paymentDate,
+                    paymentAmount: lastPaymentData.payment.amount + (lastPaymentData.lateFeeAmount || 0),
+                    principalAmount: lastPaymentData.principalPayment,
+                    interestAmount: lastPaymentData.interestAmount || lastPaymentData.interestPayment || 0,
+                    lateFeeAmount: lastPaymentData.lateFeeAmount > 0 ? lastPaymentData.lateFeeAmount : undefined,
+                    paymentMethod: lastPaymentData.paymentMethod,
+                    loanAmount: lastPaymentData.loan.amount,
+                    remainingBalance: lastPaymentData.remainingBalance,
+                    interestRate: lastPaymentData.loan.interest_rate,
+                    nextPaymentDate: lastPaymentData.nextPaymentDate,
+                    referenceNumber: lastPaymentData.referenceNumber
+                  });
+
+                  openWhatsApp(clientPhone, receiptMessage);
+                  toast.success('Abriendo WhatsApp...');
+                } catch (error: any) {
+                  console.error('Error abriendo WhatsApp:', error);
+                  toast.error(error.message || 'Error al abrir WhatsApp');
+                }
+
+                setShowWhatsAppDialog(false);
+                // Cerrar el formulario después de enviar
+                if (isMobile) {
+                  setTimeout(() => {
+                    navigate('/cobro-rapido');
+                  }, 1000);
+                } else {
+                  onBack();
+                }
+              }}
+            >
+              Enviar por WhatsApp
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
