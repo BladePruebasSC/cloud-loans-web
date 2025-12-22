@@ -38,7 +38,8 @@ import {
   TrendingUp,
   Clock,
   AlertCircle,
-  X
+  X,
+  MessageCircle
 } from 'lucide-react';
 
 interface Product {
@@ -3146,7 +3147,7 @@ export const PointOfSaleModule = () => {
               <p className="text-green-600">Total: ${(receiptData?.total || saleData.total || 0).toFixed(2)}</p>
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <Button onClick={() => generateReceipt()} variant="outline">
                 <Printer className="h-4 w-4 mr-2" />
                 Imprimir Recibo
@@ -3154,6 +3155,75 @@ export const PointOfSaleModule = () => {
               <Button onClick={downloadReceipt} variant="outline">
                 <Download className="h-4 w-4 mr-2" />
                 Descargar PDF
+              </Button>
+              <Button onClick={async () => {
+                try {
+                  const dataToUse = receiptData || saleData;
+                  if (!dataToUse.customer) {
+                    toast.error('No hay información del cliente para enviar por WhatsApp');
+                    return;
+                  }
+                  
+                  // Obtener el teléfono del cliente
+                  let clientPhone = dataToUse.customer.phone;
+                  if (!clientPhone && dataToUse.customer.id) {
+                    // Intentar obtener el teléfono desde la base de datos
+                    const { data: clientData, error: clientError } = await supabase
+                      .from('clients')
+                      .select('phone')
+                      .eq('id', dataToUse.customer.id)
+                      .single();
+                    
+                    if (!clientError && clientData) {
+                      clientPhone = clientData.phone;
+                    }
+                  }
+                  
+                  if (!clientPhone) {
+                    toast.error('No se encontró el número de teléfono del cliente');
+                    return;
+                  }
+                  
+                  const saleDate = new Date().toLocaleDateString('es-DO', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                  });
+                  
+                  const items = (dataToUse.items && dataToUse.items.length > 0 ? dataToUse.items : cart).map((item: any) => ({
+                    name: item.product.name,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    subtotal: item.subtotal
+                  }));
+                  
+                  const paymentMethods = (dataToUse.paymentSplits || []).map((split: any) => ({
+                    method: split.method.type || split.method.id || 'cash',
+                    amount: split.amount
+                  }));
+                  
+                  const receiptMessage = generateSaleReceipt({
+                    companyName: companyInfo.company_name || 'Mi Empresa',
+                    clientName: dataToUse.customer.full_name,
+                    clientDni: (dataToUse.customer as any).dni,
+                    saleDate,
+                    totalAmount: dataToUse.total,
+                    items,
+                    paymentMethods,
+                    discount: dataToUse.discount || 0,
+                    tax: dataToUse.tax || 0,
+                    saleId: dataToUse.ncfNumber ? `${dataToUse.ncfType || '01'}-${dataToUse.ncfNumber}` : undefined
+                  });
+                  
+                  openWhatsApp(clientPhone, receiptMessage);
+                  toast.success('Abriendo WhatsApp...');
+                } catch (error: any) {
+                  console.error('Error abriendo WhatsApp:', error);
+                  toast.error(error.message || 'Error al abrir WhatsApp');
+                }
+              }} variant="outline">
+                <MessageCircle className="h-4 w-4 mr-2" />
+                WhatsApp
               </Button>
             </div>
           </div>

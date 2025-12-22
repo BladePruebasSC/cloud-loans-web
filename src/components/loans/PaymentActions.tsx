@@ -19,8 +19,10 @@ import {
   User,
   DollarSign,
   Receipt,
-  X
+  X,
+  MessageCircle
 } from 'lucide-react';
+import { generateLoanPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -678,6 +680,85 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <Download className="mr-2 h-4 w-4" />
             Descargar
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={async () => {
+            try {
+              // Obtener solo los datos mínimos necesarios: teléfono del cliente, nombre de la empresa y datos básicos del préstamo
+              const { data: loanBasicData, error: loanError } = await supabase
+                .from('loans')
+                .select('client_id, amount, interest_rate, remaining_balance, next_payment_date')
+                .eq('id', payment.loan_id)
+                .single();
+              
+              if (loanError || !loanBasicData) {
+                toast.error('Error al cargar datos del préstamo');
+                return;
+              }
+              
+              // Obtener datos del cliente
+              const { data: clientData, error: clientError } = await supabase
+                .from('clients')
+                .select('full_name, dni, phone')
+                .eq('id', loanBasicData.client_id)
+                .single();
+              
+              if (clientError || !clientData) {
+                toast.error('Error al cargar datos del cliente');
+                return;
+              }
+              
+              if (!clientData.phone) {
+                toast.error('No se encontró el número de teléfono del cliente');
+                return;
+              }
+              
+              // Obtener configuración de la empresa
+              const { data: { user } } = await supabase.auth.getUser();
+              if (!user) {
+                toast.error('No se pudo obtener información del usuario');
+                return;
+              }
+              
+              const { data: companyData } = await supabase
+                .from('company_settings')
+                .select('company_name')
+                .eq('user_id', user.id)
+                .maybeSingle();
+              
+              const receiptMessage = generateLoanPaymentReceipt({
+                companyName: companyData?.company_name || 'Mi Empresa',
+                clientName: clientData.full_name,
+                clientDni: clientData.dni,
+                paymentDate: new Date(payment.payment_date).toLocaleDateString('es-DO', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                }),
+                paymentAmount: payment.amount,
+                principalAmount: payment.principal_amount,
+                interestAmount: payment.interest_amount,
+                lateFeeAmount: payment.late_fee || 0,
+                paymentMethod: payment.payment_method,
+                loanAmount: loanBasicData.amount,
+                remainingBalance: loanBasicData.remaining_balance,
+                interestRate: loanBasicData.interest_rate,
+                nextPaymentDate: loanBasicData.next_payment_date ? new Date(loanBasicData.next_payment_date).toLocaleDateString('es-DO', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                }) : undefined,
+                referenceNumber: payment.reference_number
+              });
+              
+              openWhatsApp(clientData.phone, receiptMessage);
+              toast.success('Abriendo WhatsApp...');
+            } catch (error: any) {
+              console.error('Error abriendo WhatsApp:', error);
+              toast.error(error.message || 'Error al abrir WhatsApp');
+            }
+          }}>
+            <MessageCircle className="mr-2 h-4 w-4" />
+            Enviar por WhatsApp
+          </DropdownMenuItem>
           {isLatestPayment && loanStatus !== 'paid' && (
             <DropdownMenuItem 
               onClick={() => {
@@ -710,6 +791,85 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                 <Button size="sm" variant="outline" onClick={() => setShowPrintFormatModal(true)}>
                   <Download className="h-4 w-4 mr-2" />
                   Descargar
+                </Button>
+                <Button size="sm" variant="outline" onClick={async () => {
+                  try {
+                    // Obtener solo los datos mínimos necesarios: teléfono del cliente, nombre de la empresa y datos básicos del préstamo
+                    const { data: loanBasicData, error: loanError } = await supabase
+                      .from('loans')
+                      .select('client_id, amount, interest_rate, remaining_balance, next_payment_date')
+                      .eq('id', payment.loan_id)
+                      .single();
+                    
+                    if (loanError || !loanBasicData) {
+                      toast.error('Error al cargar datos del préstamo');
+                      return;
+                    }
+                    
+                    // Obtener datos del cliente
+                    const { data: clientData, error: clientError } = await supabase
+                      .from('clients')
+                      .select('full_name, dni, phone')
+                      .eq('id', loanBasicData.client_id)
+                      .single();
+                    
+                    if (clientError || !clientData) {
+                      toast.error('Error al cargar datos del cliente');
+                      return;
+                    }
+                    
+                    if (!clientData.phone) {
+                      toast.error('No se encontró el número de teléfono del cliente');
+                      return;
+                    }
+                    
+                    // Obtener configuración de la empresa
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (!user) {
+                      toast.error('No se pudo obtener información del usuario');
+                      return;
+                    }
+                    
+                    const { data: companyData } = await supabase
+                      .from('company_settings')
+                      .select('company_name')
+                      .eq('user_id', user.id)
+                      .maybeSingle();
+                    
+                    const receiptMessage = generateLoanPaymentReceipt({
+                      companyName: companyData?.company_name || 'Mi Empresa',
+                      clientName: clientData.full_name,
+                      clientDni: clientData.dni,
+                      paymentDate: new Date(payment.payment_date).toLocaleDateString('es-DO', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      }),
+                      paymentAmount: payment.amount,
+                      principalAmount: payment.principal_amount,
+                      interestAmount: payment.interest_amount,
+                      lateFeeAmount: payment.late_fee || 0,
+                      paymentMethod: payment.payment_method,
+                      loanAmount: loanBasicData.amount,
+                      remainingBalance: loanBasicData.remaining_balance,
+                      interestRate: loanBasicData.interest_rate,
+                      nextPaymentDate: loanBasicData.next_payment_date ? new Date(loanBasicData.next_payment_date).toLocaleDateString('es-DO', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      }) : undefined,
+                      referenceNumber: payment.reference_number
+                    });
+                    
+                    openWhatsApp(clientData.phone, receiptMessage);
+                    toast.success('Abriendo WhatsApp...');
+                  } catch (error: any) {
+                    console.error('Error abriendo WhatsApp:', error);
+                    toast.error(error.message || 'Error al abrir WhatsApp');
+                  }
+                }}>
+                  <MessageCircle className="h-4 w-4 mr-2" />
+                  WhatsApp
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setShowReceiptModal(false)}>
                   <X className="h-4 w-4" />

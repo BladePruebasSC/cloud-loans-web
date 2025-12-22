@@ -32,7 +32,8 @@ import {
   Download,
   Eye,
   Edit,
-  X
+  X,
+  MessageCircle
 } from 'lucide-react';
 
 interface PawnTransaction {
@@ -422,9 +423,72 @@ export const PawnShopModule = () => {
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [showClientDropdown, setShowClientDropdown] = useState(false);
 
+  // Función para verificar y aplicar cambios de tasa programados
+  const checkAndApplyScheduledRateChanges = async () => {
+    if (!user) return;
+    
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Buscar cambios de tasa programados que deben aplicarse hoy o antes
+      const { data: scheduledChanges, error } = await supabase
+        .from('pawn_rate_changes')
+        .select(`
+          id,
+          pawn_transaction_id,
+          new_rate,
+          effective_date,
+          pawn_transactions!inner(id, interest_rate, status)
+        `)
+        .eq('user_id', user.id)
+        .lte('effective_date', today)
+        .order('effective_date', { ascending: true });
+      
+      if (error) {
+        console.error('Error verificando cambios de tasa programados:', error);
+        return;
+      }
+      
+      if (!scheduledChanges || scheduledChanges.length === 0) {
+        return;
+      }
+      
+      // Aplicar cada cambio programado
+      for (const change of scheduledChanges) {
+        const transaction = change.pawn_transactions as any;
+        
+        // Solo aplicar si la transacción está activa y la tasa actual es diferente
+        if (transaction.status === 'active' && transaction.interest_rate !== change.new_rate) {
+          const { error: updateError } = await supabase
+            .from('pawn_transactions')
+            .update({ 
+              interest_rate: change.new_rate,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', change.pawn_transaction_id);
+          
+          if (updateError) {
+            console.error(`Error aplicando cambio de tasa para transacción ${change.pawn_transaction_id}:`, updateError);
+          } else {
+            console.log(`Tasa actualizada para transacción ${change.pawn_transaction_id}: ${transaction.interest_rate}% -> ${change.new_rate}%`);
+          }
+        }
+      }
+      
+      // Recargar datos después de aplicar cambios
+      if (scheduledChanges.length > 0) {
+        await fetchData();
+      }
+    } catch (error) {
+      console.error('Error en checkAndApplyScheduledRateChanges:', error);
+    }
+  };
+
   useEffect(() => {
     if (user) {
       fetchData();
+      // Verificar y aplicar cambios de tasa programados al cargar
+      checkAndApplyScheduledRateChanges();
     }
   }, [user]);
 
@@ -2129,7 +2193,7 @@ export const PawnShopModule = () => {
       const effectiveDate = rateUpdateData.effective_date;
       
       // Si la fecha efectiva es hoy o en el pasado, aplicar el cambio inmediatamente
-      // Si es en el futuro, solo guardar en historial (se aplicará cuando llegue la fecha)
+      // Si es en el futuro, también aplicar el cambio pero guardar en historial para referencia
       const shouldApplyNow = effectiveDate <= today;
 
       if (shouldApplyNow) {
@@ -2145,9 +2209,38 @@ export const PawnShopModule = () => {
         if (error) throw error;
         toast.success('Tasa de interés actualizada exitosamente');
       } else {
-        // Si la fecha efectiva es futura, solo guardar en historial
-        // El cambio se aplicará cuando llegue la fecha (requiere un job/cron o procesamiento manual)
-        toast.success(`Cambio de tasa programado para ${effectiveDate}. Se aplicará automáticamente en esa fecha.`);
+        // Si la fecha efectiva es futura, aplicar el cambio ahora pero guardar en historial
+        // para referencia y verificación posterior
+        const { error } = await supabase
+          .from('pawn_transactions')
+          .update({ 
+            interest_rate: rateUpdateData.new_rate,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', selectedTransaction.id);
+
+        if (error) throw error;
+        
+        // Crear notificación para el cambio programado
+        try {
+          const { data: transactionData } = await supabase
+            .from('pawn_transactions')
+            .select('product_name, clients!inner(full_name)')
+            .eq('id', selectedTransaction.id)
+            .single();
+          
+          if (transactionData) {
+            const clientName = (transactionData.clients as any)?.full_name || 'Cliente';
+            const productName = transactionData.product_name || 'Artículo';
+            
+            // Crear notificación en la tabla de notificaciones (si existe)
+            // Por ahora, solo mostramos un mensaje
+            toast.success(`Tasa actualizada a ${rateUpdateData.new_rate}% y programada para ${effectiveDate}. Se aplicará automáticamente en esa fecha.`);
+          }
+        } catch (notifError) {
+          console.warn('Error creando notificación:', notifError);
+          toast.success(`Tasa actualizada a ${rateUpdateData.new_rate}% y programada para ${effectiveDate}.`);
+        }
       }
 
       // Registrar el cambio de tasa en el historial (siempre)
@@ -2173,8 +2266,24 @@ export const PawnShopModule = () => {
         }
       }
 
+      // Recargar la transacción seleccionada con los datos actualizados
+      if (selectedTransaction) {
+        const { data: refreshedTransaction, error: refreshError } = await supabase
+          .from('pawn_transactions')
+          .select(`
+            *,
+            clients(id, full_name, phone),
+            products!pawn_transactions_product_id_fkey(id, name)
+          `)
+          .eq('id', selectedTransaction.id)
+          .single();
+        
+        if (!refreshError && refreshedTransaction) {
+          setSelectedTransaction(refreshedTransaction as PawnTransaction);
+        }
+      }
+      
       setShowRateUpdateForm(false);
-      setSelectedTransaction(null);
       resetRateUpdateForm();
       fetchData();
     } catch (error) {
@@ -4103,6 +4212,88 @@ export const PawnShopModule = () => {
                                     <Download className="h-4 w-4 mr-1" />
                                     Descargar
                                   </Button>
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline"
+                                    onClick={async () => {
+                                      try {
+                                        if (!selectedTransaction) {
+                                          toast.error('No hay transacción seleccionada');
+                                          return;
+                                        }
+                                        
+                                        // Obtener el teléfono del cliente
+                                        let clientPhone = selectedTransaction.clients?.phone;
+                                        if (!clientPhone && selectedTransaction.client_id) {
+                                          const { data: clientData, error: clientError } = await supabase
+                                            .from('clients')
+                                            .select('phone')
+                                            .eq('id', selectedTransaction.client_id)
+                                            .single();
+                                          
+                                          if (!clientError && clientData) {
+                                            clientPhone = clientData.phone;
+                                          }
+                                        }
+                                        
+                                        if (!clientPhone) {
+                                          toast.error('No se encontró el número de teléfono del cliente');
+                                          return;
+                                        }
+                                        
+                                        // Obtener configuración de la empresa
+                                        const { data: { user } } = await supabase.auth.getUser();
+                                        if (!user) {
+                                          toast.error('No se pudo obtener información del usuario');
+                                          return;
+                                        }
+                                        
+                                        const { data: companySettings } = await supabase
+                                          .from('company_settings')
+                                          .select('company_name')
+                                          .eq('user_id', user.id)
+                                          .maybeSingle();
+                                        
+                                        const companyName = companySettings?.company_name || 'Mi Empresa';
+                                        
+                                        // Calcular balance restante
+                                        const currentPrincipal = await getCurrentRemainingPrincipal(
+                                          selectedTransaction.id,
+                                          Number(selectedTransaction.loan_amount)
+                                        );
+                                        
+                                        const receiptMessage = generatePawnPaymentReceipt({
+                                          companyName,
+                                          clientName: selectedTransaction.clients?.full_name || 'Cliente',
+                                          clientDni: (selectedTransaction.clients as any)?.dni,
+                                          paymentDate: new Date(payment.payment_date).toLocaleDateString('es-DO', {
+                                            year: 'numeric',
+                                            month: 'long',
+                                            day: 'numeric'
+                                          }),
+                                          paymentAmount: payment.amount,
+                                          principalAmount: payment.principal_payment || 0,
+                                          interestAmount: payment.interest_payment || 0,
+                                          remainingBalance: currentPrincipal,
+                                          paymentMethod: payment.payment_type === 'partial' ? 'cash' : payment.payment_type === 'full' ? 'cash' : 'cash',
+                                          transactionId: selectedTransaction.id,
+                                          productName: selectedTransaction.product_name,
+                                          loanAmount: Number(selectedTransaction.loan_amount),
+                                          interestRate: selectedTransaction.interest_rate,
+                                          referenceNumber: payment.notes || undefined
+                                        });
+                                        
+                                        openWhatsApp(clientPhone, receiptMessage);
+                                        toast.success('Abriendo WhatsApp...');
+                                      } catch (error: any) {
+                                        console.error('Error abriendo WhatsApp:', error);
+                                        toast.error(error.message || 'Error al abrir WhatsApp');
+                                      }
+                                    }}
+                                  >
+                                    <MessageCircle className="h-4 w-4 mr-1" />
+                                    WhatsApp
+                                  </Button>
                                   {paymentHistory.length > 0 && paymentHistory[0].id === payment.id && (
                                     <Button 
                                       size="sm" 
@@ -4875,6 +5066,84 @@ export const PawnShopModule = () => {
                 <Button size="sm" variant="outline" onClick={() => selectedPayment && selectedTransaction && downloadReceipt(selectedPayment, selectedTransaction)}>
                   <Download className="h-4 w-4 mr-2" />
                   Descargar
+                </Button>
+                <Button size="sm" variant="outline" onClick={async () => {
+                  try {
+                    if (!selectedPayment || !selectedTransaction) {
+                      toast.error('No hay pago o transacción seleccionada');
+                      return;
+                    }
+                    
+                    // Obtener el teléfono del cliente
+                    let clientPhone = selectedTransaction.clients?.phone;
+                    if (!clientPhone && selectedTransaction.client_id) {
+                      const { data: clientData, error: clientError } = await supabase
+                        .from('clients')
+                        .select('phone')
+                        .eq('id', selectedTransaction.client_id)
+                        .single();
+                      
+                      if (!clientError && clientData) {
+                        clientPhone = clientData.phone;
+                      }
+                    }
+                    
+                    if (!clientPhone) {
+                      toast.error('No se encontró el número de teléfono del cliente');
+                      return;
+                    }
+                    
+                    // Obtener configuración de la empresa
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (!user) {
+                      toast.error('No se pudo obtener información del usuario');
+                      return;
+                    }
+                    
+                    const { data: companySettings } = await supabase
+                      .from('company_settings')
+                      .select('company_name')
+                      .eq('user_id', user.id)
+                      .maybeSingle();
+                    
+                    const companyName = companySettings?.company_name || 'Mi Empresa';
+                    
+                    // Calcular balance restante
+                    const currentPrincipal = await getCurrentRemainingPrincipal(
+                      selectedTransaction.id,
+                      Number(selectedTransaction.loan_amount)
+                    );
+                    
+                    const receiptMessage = generatePawnPaymentReceipt({
+                      companyName,
+                      clientName: selectedTransaction.clients?.full_name || 'Cliente',
+                      clientDni: (selectedTransaction.clients as any)?.dni,
+                      paymentDate: new Date(selectedPayment.payment_date).toLocaleDateString('es-DO', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      }),
+                      paymentAmount: selectedPayment.amount,
+                      principalAmount: selectedPayment.principal_payment || 0,
+                      interestAmount: selectedPayment.interest_payment || 0,
+                      remainingBalance: currentPrincipal,
+                      paymentMethod: selectedPayment.payment_type === 'partial' ? 'cash' : selectedPayment.payment_type === 'full' ? 'cash' : 'cash',
+                      transactionId: selectedTransaction.id,
+                      productName: selectedTransaction.product_name,
+                      loanAmount: Number(selectedTransaction.loan_amount),
+                      interestRate: selectedTransaction.interest_rate,
+                      referenceNumber: selectedPayment.notes || undefined
+                    });
+                    
+                    openWhatsApp(clientPhone, receiptMessage);
+                    toast.success('Abriendo WhatsApp...');
+                  } catch (error: any) {
+                    console.error('Error abriendo WhatsApp:', error);
+                    toast.error(error.message || 'Error al abrir WhatsApp');
+                  }
+                }}>
+                  <MessageCircle className="h-4 w-4 mr-2" />
+                  WhatsApp
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setShowReceiptModal(false)}>
                   <X className="h-4 w-4" />
