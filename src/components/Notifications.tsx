@@ -132,6 +132,7 @@ const Notifications: React.FC = () => {
 
       // 2. Cambios de tasa de interés programados para empeños
       // IMPORTANTE: Solo mostrar notificaciones si la tasa aún NO se ha aplicado
+      // IMPORTANTE: Solo mostrar el ÚLTIMO cambio programado por transacción y fecha
       const { data: scheduledRateChanges, error: rateChangesError } = await supabase
         .from('pawn_rate_changes')
         .select(`
@@ -139,6 +140,7 @@ const Notifications: React.FC = () => {
           pawn_transaction_id,
           new_rate,
           effective_date,
+          changed_at,
           pawn_transactions!inner(
             id,
             product_name,
@@ -150,10 +152,29 @@ const Notifications: React.FC = () => {
         .eq('user_id', user.id)
         .gte('effective_date', today.toISOString().split('T')[0])
         .lte('effective_date', nextWeek.toISOString().split('T')[0])
-        .order('effective_date', { ascending: true });
+        .order('effective_date', { ascending: true })
+        .order('changed_at', { ascending: false }); // Más reciente primero
 
       if (!rateChangesError && scheduledRateChanges) {
-        scheduledRateChanges.forEach((change: any) => {
+        // Agrupar por transacción y fecha efectiva, manteniendo solo el más reciente para cada combinación
+        // Esto asegura que solo se muestre el último cambio programado para cada fecha
+        const changesByTransactionAndDate = new Map<string, any>();
+        
+        for (const change of scheduledRateChanges) {
+          // Crear una clave única: transactionId + effectiveDate
+          const key = `${change.pawn_transaction_id}_${change.effective_date}`;
+          
+          // Si ya existe un cambio para esta combinación, mantener el primero (que es el más reciente por el orden)
+          if (!changesByTransactionAndDate.has(key)) {
+            changesByTransactionAndDate.set(key, change);
+          }
+        }
+        
+        // Convertir el Map a array para procesar solo los cambios únicos
+        const uniqueChanges = Array.from(changesByTransactionAndDate.values());
+        console.log(`🔍 Cambios de tasa programados: ${scheduledRateChanges.length} totales, ${uniqueChanges.length} únicos (último por transacción y fecha)`);
+        
+        uniqueChanges.forEach((change: any) => {
           const transaction = change.pawn_transactions;
           if (transaction && transaction.status === 'active') {
             // Verificar si la tasa ya se aplicó

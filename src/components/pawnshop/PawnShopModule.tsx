@@ -435,6 +435,8 @@ export const PawnShopModule = () => {
       
       // Buscar cambios de tasa programados que deben aplicarse hoy o antes
       // IMPORTANTE: effective_date es DATE, así que la comparación debe ser con string YYYY-MM-DD
+      // Ordenar por fecha efectiva descendente y luego por changed_at descendente
+      // para obtener el cambio más reciente para cada transacción
       const { data: scheduledChanges, error } = await supabase
         .from('pawn_rate_changes')
         .select(`
@@ -442,11 +444,13 @@ export const PawnShopModule = () => {
           pawn_transaction_id,
           new_rate,
           effective_date,
+          changed_at,
           pawn_transactions!inner(id, interest_rate, status)
         `)
         .eq('user_id', user.id)
         .lte('effective_date', today)
-        .order('effective_date', { ascending: true });
+        .order('effective_date', { ascending: false })
+        .order('changed_at', { ascending: false });
       
       console.log('🔍 Cambios programados encontrados:', scheduledChanges?.length || 0);
       
@@ -459,8 +463,23 @@ export const PawnShopModule = () => {
         return;
       }
       
-      // Aplicar cada cambio programado
+      // Agrupar por transacción y solo tomar el último cambio programado para cada una
+      // Esto asegura que si hay múltiples cambios para la misma transacción, solo se aplique el último
+      const changesByTransaction = new Map<string, any>();
       for (const change of scheduledChanges) {
+        const transactionId = change.pawn_transaction_id;
+        // Si ya existe un cambio para esta transacción, mantener el primero (que es el más reciente por el orden)
+        if (!changesByTransaction.has(transactionId)) {
+          changesByTransaction.set(transactionId, change);
+        }
+      }
+      
+      // Convertir el Map a array para procesar
+      const uniqueChanges = Array.from(changesByTransaction.values());
+      console.log('🔍 Cambios únicos por transacción (solo el último):', uniqueChanges.length);
+      
+      // Aplicar cada cambio programado (solo el último por transacción)
+      for (const change of uniqueChanges) {
         const transaction = change.pawn_transactions as any;
         
         console.log(`🔍 Evaluando cambio de tasa:`, {
@@ -504,7 +523,7 @@ export const PawnShopModule = () => {
       }
       
       // Recargar datos después de aplicar cambios
-      if (scheduledChanges.length > 0) {
+      if (uniqueChanges.length > 0) {
         await fetchData();
       }
     } catch (error) {
@@ -2235,6 +2254,27 @@ export const PawnShopModule = () => {
       console.log('🔍 Fecha seleccionada por el usuario (input):', effectiveDateInput);
       console.log('🔍 Fecha parseada como local:', effectiveDate);
       console.log('🔍 Fecha actual en Santo Domingo:', today);
+      
+      // IMPORTANTE: Antes de insertar un nuevo cambio programado, eliminar todos los cambios programados
+      // futuros o para la misma fecha para esta transacción, para que solo quede el último cambio programado
+      // Esto evita que se apliquen múltiples cambios para la misma fecha
+      console.log('🗑️ Eliminando cambios de tasa programados futuros o para la misma fecha...');
+      
+      // Eliminar cambios programados que sean futuros (mayores a hoy) O que tengan la misma fecha efectiva
+      // Esto asegura que solo quede el último cambio programado
+      const { error: deleteError } = await supabase
+        .from('pawn_rate_changes')
+        .delete()
+        .eq('pawn_transaction_id', selectedTransaction.id)
+        .eq('user_id', user?.id)
+        .or(`effective_date.gt.${today},effective_date.eq.${effectiveDate}`); // Futuros O misma fecha
+      
+      if (deleteError) {
+        console.warn('⚠️ Error al eliminar cambios programados anteriores:', deleteError);
+        // No es crítico, continuar con el proceso
+      } else {
+        console.log('✅ Cambios programados futuros y para la misma fecha eliminados exitosamente');
+      }
       
       // Si la fecha efectiva es hoy o en el pasado, aplicar el cambio inmediatamente
       // Si es en el futuro, NO aplicar el cambio ahora, solo guardarlo para aplicar después

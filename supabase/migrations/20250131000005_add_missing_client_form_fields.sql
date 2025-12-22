@@ -226,3 +226,4 @@ COMMENT ON COLUMN public.clients.custom_field_2 IS 'Campo personalizado 2';
 COMMENT ON COLUMN public.clients.created_by IS 'Usuario que creó el cliente';
 
 
+
