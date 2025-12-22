@@ -428,9 +428,13 @@ export const PawnShopModule = () => {
     if (!user) return;
     
     try {
-      const today = new Date().toISOString().split('T')[0];
+      // Usar la fecha actual en zona horaria de Santo Domingo para comparar
+      const today = getCurrentDateStringForSantoDomingo();
+      
+      console.log('🔍 Verificando cambios de tasa programados. Fecha actual (Santo Domingo):', today);
       
       // Buscar cambios de tasa programados que deben aplicarse hoy o antes
+      // IMPORTANTE: effective_date es DATE, así que la comparación debe ser con string YYYY-MM-DD
       const { data: scheduledChanges, error } = await supabase
         .from('pawn_rate_changes')
         .select(`
@@ -443,6 +447,8 @@ export const PawnShopModule = () => {
         .eq('user_id', user.id)
         .lte('effective_date', today)
         .order('effective_date', { ascending: true });
+      
+      console.log('🔍 Cambios programados encontrados:', scheduledChanges?.length || 0);
       
       if (error) {
         console.error('Error verificando cambios de tasa programados:', error);
@@ -457,8 +463,23 @@ export const PawnShopModule = () => {
       for (const change of scheduledChanges) {
         const transaction = change.pawn_transactions as any;
         
+        console.log(`🔍 Evaluando cambio de tasa:`, {
+          transactionId: change.pawn_transaction_id,
+          effectiveDate: change.effective_date,
+          currentRate: transaction.interest_rate,
+          newRate: change.new_rate,
+          status: transaction.status,
+          today: today
+        });
+        
         // Solo aplicar si la transacción está activa y la tasa actual es diferente
-        if (transaction.status === 'active' && transaction.interest_rate !== change.new_rate) {
+        // Y si la fecha efectiva es hoy o antes (ya filtrado por la query, pero verificamos de nuevo)
+        if (transaction.status === 'active' && 
+            transaction.interest_rate !== change.new_rate &&
+            change.effective_date <= today) {
+          
+          console.log(`✅ Aplicando cambio de tasa para transacción ${change.pawn_transaction_id}: ${transaction.interest_rate}% -> ${change.new_rate}%`);
+          
           const { error: updateError } = await supabase
             .from('pawn_transactions')
             .update({ 
@@ -468,10 +489,17 @@ export const PawnShopModule = () => {
             .eq('id', change.pawn_transaction_id);
           
           if (updateError) {
-            console.error(`Error aplicando cambio de tasa para transacción ${change.pawn_transaction_id}:`, updateError);
+            console.error(`❌ Error aplicando cambio de tasa para transacción ${change.pawn_transaction_id}:`, updateError);
           } else {
-            console.log(`Tasa actualizada para transacción ${change.pawn_transaction_id}: ${transaction.interest_rate}% -> ${change.new_rate}%`);
+            console.log(`✅ Tasa actualizada exitosamente para transacción ${change.pawn_transaction_id}`);
+            toast.success(`Tasa de interés actualizada automáticamente a ${change.new_rate}%`);
           }
+        } else {
+          console.log(`⏭️ Cambio de tasa omitido:`, {
+            reason: transaction.status !== 'active' ? 'Transacción no activa' :
+                    transaction.interest_rate === change.new_rate ? 'Tasa ya actualizada' :
+                    change.effective_date > today ? 'Fecha efectiva aún no llegada' : 'Razón desconocida'
+          });
         }
       }
       
@@ -2189,11 +2217,27 @@ export const PawnShopModule = () => {
     if (!selectedTransaction) return;
 
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const effectiveDate = rateUpdateData.effective_date;
+      // Usar la fecha actual en zona horaria de Santo Domingo para comparar
+      const today = getCurrentDateStringForSantoDomingo();
+      // La fecha del input ya viene en formato YYYY-MM-DD
+      // Parsear la fecha como fecha local (no UTC) para evitar problemas de zona horaria
+      // Esto asegura que se guarde exactamente como el usuario la seleccionó
+      const effectiveDateInput = rateUpdateData.effective_date;
+      
+      // Parsear la fecha como fecha local para evitar conversiones de zona horaria
+      // El input date viene en formato YYYY-MM-DD, parsearlo como fecha local
+      const [year, month, day] = effectiveDateInput.split('-').map(Number);
+      const localDate = new Date(year, month - 1, day); // month es 0-indexado
+      
+      // Formatear de vuelta a YYYY-MM-DD para asegurar que se guarde correctamente
+      const effectiveDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      
+      console.log('🔍 Fecha seleccionada por el usuario (input):', effectiveDateInput);
+      console.log('🔍 Fecha parseada como local:', effectiveDate);
+      console.log('🔍 Fecha actual en Santo Domingo:', today);
       
       // Si la fecha efectiva es hoy o en el pasado, aplicar el cambio inmediatamente
-      // Si es en el futuro, también aplicar el cambio pero guardar en historial para referencia
+      // Si es en el futuro, NO aplicar el cambio ahora, solo guardarlo para aplicar después
       const shouldApplyNow = effectiveDate <= today;
 
       if (shouldApplyNow) {
@@ -2209,17 +2253,10 @@ export const PawnShopModule = () => {
         if (error) throw error;
         toast.success('Tasa de interés actualizada exitosamente');
       } else {
-        // Si la fecha efectiva es futura, aplicar el cambio ahora pero guardar en historial
-        // para referencia y verificación posterior
-        const { error } = await supabase
-          .from('pawn_transactions')
-          .update({ 
-            interest_rate: rateUpdateData.new_rate,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', selectedTransaction.id);
-
-        if (error) throw error;
+        // Si la fecha efectiva es futura, NO aplicar el cambio ahora
+        // Solo guardarlo en el historial para que se aplique automáticamente cuando llegue la fecha
+        console.log('📅 Cambio de tasa programado para fecha futura:', effectiveDate);
+        console.log('📅 La tasa NO se actualizará hasta que llegue la fecha efectiva');
         
         // Crear notificación para el cambio programado
         try {
@@ -2233,30 +2270,59 @@ export const PawnShopModule = () => {
             const clientName = (transactionData.clients as any)?.full_name || 'Cliente';
             const productName = transactionData.product_name || 'Artículo';
             
-            // Crear notificación en la tabla de notificaciones (si existe)
-            // Por ahora, solo mostramos un mensaje
-            toast.success(`Tasa actualizada a ${rateUpdateData.new_rate}% y programada para ${effectiveDate}. Se aplicará automáticamente en esa fecha.`);
+            toast.success(`Cambio de tasa programado para ${formatDateStringForSantoDomingo(effectiveDate)}. La tasa se actualizará automáticamente en esa fecha.`);
           }
         } catch (notifError) {
           console.warn('Error creando notificación:', notifError);
-          toast.success(`Tasa actualizada a ${rateUpdateData.new_rate}% y programada para ${effectiveDate}.`);
+          toast.success(`Cambio de tasa programado para ${formatDateStringForSantoDomingo(effectiveDate)}. La tasa se actualizará automáticamente en esa fecha.`);
         }
       }
 
-      // Registrar el cambio de tasa en el historial (siempre)
+      // Registrar el cambio de tasa en pawn_rate_changes (siempre)
+      // IMPORTANTE: Para evitar problemas de zona horaria, usar una función SQL que fuerce la fecha como DATE local
+      // En lugar de enviar la fecha como string, usaremos una función RPC o parsearemos la fecha en SQL
       const rateChangeRecord = {
         pawn_transaction_id: selectedTransaction.id,
         old_rate: selectedTransaction.interest_rate,
         new_rate: rateUpdateData.new_rate,
         reason: rateUpdateData.reason,
-        effective_date: rateUpdateData.effective_date,
+        // Usar la fecha parseada directamente - PostgreSQL debería interpretarla como DATE local
+        effective_date: effectiveDate, // Formato YYYY-MM-DD
         changed_at: new Date().toISOString(),
         user_id: user?.id
       };
 
-      const { error: historyError } = await supabase
-        .from('pawn_rate_changes')
-        .insert([rateChangeRecord]);
+      console.log('🔍 Guardando rateChangeRecord con effective_date:', rateChangeRecord.effective_date);
+      console.log('🔍 Tipo de effective_date:', typeof rateChangeRecord.effective_date);
+
+      // Intentar usar RPC para insertar con parseo explícito de fecha como DATE local
+      // Si la función RPC no existe, usar insert directo
+      let historyError: any = null;
+      try {
+        const { error: rpcError } = await supabase.rpc('insert_pawn_rate_change', {
+          p_pawn_transaction_id: selectedTransaction.id,
+          p_old_rate: selectedTransaction.interest_rate,
+          p_new_rate: rateUpdateData.new_rate,
+          p_reason: rateUpdateData.reason || null,
+          p_effective_date: effectiveDate, // Se parseará como DATE en SQL
+          p_user_id: user?.id
+        });
+        historyError = rpcError;
+      } catch (rpcException) {
+        // Si la función RPC no existe, usar insert directo
+        console.warn('⚠️ Función RPC no disponible, usando insert directo:', rpcException);
+        const { error: insertError } = await supabase
+          .from('pawn_rate_changes')
+          .insert([rateChangeRecord]);
+        historyError = insertError;
+      }
+      
+      if (historyError) {
+        console.error('🔍 Error al guardar rate change:', historyError);
+        console.error('🔍 Detalles del error:', JSON.stringify(historyError, null, 2));
+      } else {
+        console.log('🔍 Rate change guardado exitosamente con effective_date:', effectiveDate);
+      }
 
       if (historyError) {
         console.warn('Error saving rate change history:', historyError);
@@ -2264,6 +2330,36 @@ export const PawnShopModule = () => {
         if (!shouldApplyNow) {
           throw historyError; // Si es futuro, el historial es crítico
         }
+      }
+
+      // Registrar también en pawn_history para que aparezca en el historial de movimientos
+      // Obtener companyId usando user.id
+      const companyId = user?.id || '';
+      const pawnHistoryRecord = {
+        pawn_transaction_id: selectedTransaction.id,
+        change_type: 'rate_change',
+        old_values: {
+          interest_rate: selectedTransaction.interest_rate
+        },
+        new_values: {
+          interest_rate: rateUpdateData.new_rate,
+          effective_date: effectiveDate
+        },
+        reason: rateUpdateData.reason || `Tasa actualizada de ${selectedTransaction.interest_rate}% a ${rateUpdateData.new_rate}%`,
+        amount: null,
+        notes: `Tasa de interés actualizada. Fecha efectiva: ${formatDateStringForSantoDomingo(effectiveDate)}`,
+        created_by: companyId
+      };
+
+      const { error: pawnHistoryError } = await supabase
+        .from('pawn_history')
+        .insert([pawnHistoryRecord]);
+
+      if (pawnHistoryError) {
+        console.warn('Error guardando en historial de movimientos:', pawnHistoryError);
+        // No es crítico, solo un warning
+      } else {
+        console.log('✅ Movimiento de cambio de tasa agregado al historial');
       }
 
       // Recargar la transacción seleccionada con los datos actualizados
@@ -4038,7 +4134,7 @@ export const PawnShopModule = () => {
                       {(() => {
                         const movements: Array<{
                           id: string;
-                          type: 'payment' | 'charge';
+                          type: 'payment' | 'charge' | 'rate_change';
                           date: Date;
                           data: any;
                         }> = [];
@@ -4053,12 +4149,19 @@ export const PawnShopModule = () => {
                           });
                         });
 
-                        // Agregar cargos del historial
+                        // Agregar cargos y cambios de tasa del historial
                         pawnHistory.forEach(entry => {
                           if (entry.change_type === 'add_charge') {
                             movements.push({
                               id: entry.id,
                               type: 'charge',
+                              date: new Date(entry.created_at),
+                              data: entry
+                            });
+                          } else if (entry.change_type === 'rate_change') {
+                            movements.push({
+                              id: entry.id,
+                              type: 'rate_change',
                               date: new Date(entry.created_at),
                               data: entry
                             });

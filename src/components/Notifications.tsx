@@ -7,6 +7,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { 
   Bell, 
   Clock, 
@@ -129,7 +130,95 @@ const Notifications: React.FC = () => {
         });
       }
 
-      // 2. Préstamos con pagos próximos (hoy y próximos 7 días)
+      // 2. Cambios de tasa de interés programados para empeños
+      // IMPORTANTE: Solo mostrar notificaciones si la tasa aún NO se ha aplicado
+      const { data: scheduledRateChanges, error: rateChangesError } = await supabase
+        .from('pawn_rate_changes')
+        .select(`
+          id,
+          pawn_transaction_id,
+          new_rate,
+          effective_date,
+          pawn_transactions!inner(
+            id,
+            product_name,
+            status,
+            interest_rate,
+            clients!inner(full_name)
+          )
+        `)
+        .eq('user_id', user.id)
+        .gte('effective_date', today.toISOString().split('T')[0])
+        .lte('effective_date', nextWeek.toISOString().split('T')[0])
+        .order('effective_date', { ascending: true });
+
+      if (!rateChangesError && scheduledRateChanges) {
+        scheduledRateChanges.forEach((change: any) => {
+          const transaction = change.pawn_transactions;
+          if (transaction && transaction.status === 'active') {
+            // Verificar si la tasa ya se aplicó
+            // Si la tasa actual es igual a la nueva tasa programada, significa que ya se aplicó
+            const currentRate = Number(transaction.interest_rate);
+            const newRate = Number(change.new_rate);
+            
+            // Solo mostrar notificación si la tasa actual es diferente a la nueva tasa programada
+            // Esto significa que el cambio aún no se ha aplicado
+            if (currentRate === newRate) {
+              console.log(`⏭️ Omitiendo notificación de cambio de tasa ${change.id}: La tasa ya se aplicó (${currentRate}% = ${newRate}%)`);
+              return; // Saltar esta notificación, la tasa ya se aplicó
+            }
+            
+            const clientName = (transaction.clients as any)?.full_name || 'Cliente desconocido';
+            const productName = transaction.product_name || 'Artículo';
+            
+            // Usar la fecha actual en zona horaria de Santo Domingo para comparar correctamente
+            const todayString = getCurrentDateStringForSantoDomingo(); // Formato YYYY-MM-DD
+            
+            // Parsear la fecha efectiva como fecha local (no UTC) para evitar problemas de zona horaria
+            const [year, month, day] = change.effective_date.split('-').map(Number);
+            const effectiveDateLocal = new Date(year, month - 1, day); // month es 0-indexado
+            
+            // Parsear la fecha actual como fecha local para comparar
+            const [todayYear, todayMonth, todayDay] = todayString.split('-').map(Number);
+            const todayLocal = new Date(todayYear, todayMonth - 1, todayDay);
+            
+            // Calcular la diferencia en días
+            const daysUntilEffective = Math.floor((effectiveDateLocal.getTime() - todayLocal.getTime()) / (1000 * 60 * 60 * 24));
+            
+            console.log('🔍 Calculando días hasta fecha efectiva:', {
+              effectiveDate: change.effective_date,
+              todayString,
+              daysUntilEffective,
+              effectiveDateLocal: effectiveDateLocal.toISOString().split('T')[0],
+              todayLocal: todayLocal.toISOString().split('T')[0]
+            });
+            
+            let title, message;
+            if (daysUntilEffective === 0) {
+              title = '📅 Cambio de Tasa HOY';
+              message = `La tasa de interés de ${productName} (${clientName}) cambiará a ${change.new_rate}% HOY`;
+            } else if (daysUntilEffective === 1) {
+              title = '📅 Cambio de Tasa Mañana';
+              message = `La tasa de interés de ${productName} (${clientName}) cambiará a ${change.new_rate}% mañana`;
+            } else {
+              title = '📅 Cambio de Tasa Programado';
+              message = `La tasa de interés de ${productName} (${clientName}) cambiará a ${change.new_rate}% en ${daysUntilEffective} días`;
+            }
+            
+            notificationsList.push({
+              id: `rate-change-${change.id}`,
+              type: 'payment_due', // Usar tipo existente
+              title,
+              message,
+              priority: daysUntilEffective <= 1 ? 'high' : 'medium',
+              dueDate: change.effective_date,
+              clientName: clientName || 'Cliente desconocido'
+            });
+          }
+        });
+      }
+
+      // 3. Préstamos con pagos próximos (hoy y próximos 7 días)
       const { data: upcomingLoans, error: upcomingError } = await supabase
         .from('loans')
         .select(`
@@ -505,7 +594,7 @@ const Notifications: React.FC = () => {
                           <div className="flex items-center gap-4 text-xs text-gray-500">
                             <div className="flex items-center gap-1">
                               <Calendar className="h-3 w-3" />
-                              {new Date(notification.dueDate).toLocaleDateString()}
+                              {formatDateStringForSantoDomingo(notification.dueDate)}
                             </div>
                             {notification.amount && (
                               <div className="flex items-center gap-1">
