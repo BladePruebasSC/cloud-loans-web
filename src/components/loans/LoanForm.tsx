@@ -95,12 +95,74 @@ const replaceTemplateVariablesForLoan = (content: string, loanData: any, company
 };
 
 // Función para renderizar HTML a PDF
-const renderHtmlToPdf = (doc: any, htmlContent: string, startY: number, margin: number, pageWidth: number, pageHeight: number) => {
+// Función auxiliar para agregar el logo de la empresa arriba a la derecha
+const addCompanyLogo = async (doc: any, logoUrl: string | null | undefined, margin: number, pageWidth: number): Promise<number> => {
+  if (!logoUrl) return 0;
+  
+  try {
+    // Cargar la imagen
+    const imgData = await fetch(logoUrl).then(res => res.blob());
+    const imgBase64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(imgData);
+    });
+    
+    // Cargar imagen para obtener dimensiones reales
+    const imgElement = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const imgEl = document.createElement('img');
+      imgEl.onload = () => resolve(imgEl);
+      imgEl.onerror = reject;
+      imgEl.src = logoUrl;
+    });
+    
+    // Tamaño máximo del logo: 30mm de ancho, mantener proporción
+    const maxWidth = 30;
+    const maxHeight = 20;
+    let imgWidth = imgElement.width * 0.264583; // Convertir px a mm
+    let imgHeight = imgElement.height * 0.264583;
+    
+    // Ajustar tamaño manteniendo proporción
+    if (imgWidth > maxWidth) {
+      const ratio = maxWidth / imgWidth;
+      imgWidth = maxWidth;
+      imgHeight = imgHeight * ratio;
+    }
+    if (imgHeight > maxHeight) {
+      const ratio = maxHeight / imgHeight;
+      imgHeight = maxHeight;
+      imgWidth = imgWidth * ratio;
+    }
+    
+    // Posición: arriba a la derecha
+    const xPos = pageWidth - margin - imgWidth;
+    const yPos = margin;
+    
+    // Agregar imagen al PDF
+    doc.addImage(imgBase64, 'PNG', xPos, yPos, imgWidth, imgHeight);
+    
+    // Retornar la altura del logo para ajustar el startY del contenido
+    return imgHeight + 5; // 5mm de espacio adicional
+  } catch (error) {
+    console.error('Error agregando logo:', error);
+    return 0;
+  }
+};
+
+const renderHtmlToPdf = async (doc: any, htmlContent: string, startY: number, margin: number, pageWidth: number, pageHeight: number, logoUrl?: string | null) => {
+  // Agregar logo si está disponible
+  let adjustedStartY = startY;
+  if (logoUrl) {
+    const logoHeight = await addCompanyLogo(doc, logoUrl, margin, pageWidth);
+    adjustedStartY = startY + logoHeight;
+  }
+  
   // Crear un elemento temporal para parsear el HTML
   const tempDiv = document.createElement('div');
   tempDiv.innerHTML = htmlContent;
   
-  let yPos = startY;
+  let yPos = adjustedStartY;
   const baseLineHeight = 5; // Altura de línea base en mm
   
   // Función para obtener estilos de un elemento
@@ -306,9 +368,15 @@ export const generateDocumentPDF = async (docType: string, loanData: any, formDa
           const margin = 20;
           let yPos = margin;
           
+          // Agregar logo de la empresa si está disponible
+          if (companySettings?.logo_url) {
+            const logoHeight = await addCompanyLogo(doc, companySettings.logo_url, margin, pageWidth);
+            yPos = margin + logoHeight;
+          }
+          
           // Si el contenido tiene HTML, renderizarlo con estilos
           if (processedContent.includes('<') && processedContent.includes('>')) {
-            yPos = renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight);
+            yPos = await renderHtmlToPdf(doc, processedContent, yPos, margin, pageWidth, pageHeight, companySettings?.logo_url);
           } else {
             // Si es texto plano, procesarlo línea por línea
             const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
@@ -405,6 +473,48 @@ export const generateDocumentPDF = async (docType: string, loanData: any, formDa
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 15;
   let yPos = margin;
+  
+  // Agregar logo de la empresa si está disponible (arriba a la derecha)
+  if (companySettings?.logo_url) {
+    try {
+      const imgData = await fetch(companySettings.logo_url).then(res => res.blob());
+      const imgBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(imgData);
+      });
+      
+      const imgElement = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const imgEl = document.createElement('img');
+        imgEl.onload = () => resolve(imgEl);
+        imgEl.onerror = reject;
+        imgEl.src = companySettings.logo_url;
+      });
+      
+      const maxWidth = 30;
+      const maxHeight = 20;
+      let imgWidth = imgElement.width * 0.264583;
+      let imgHeight = imgElement.height * 0.264583;
+      
+      if (imgWidth > maxWidth) {
+        const ratio = maxWidth / imgWidth;
+        imgWidth = maxWidth;
+        imgHeight = imgHeight * ratio;
+      }
+      if (imgHeight > maxHeight) {
+        const ratio = maxHeight / imgHeight;
+        imgHeight = maxHeight;
+        imgWidth = imgWidth * ratio;
+      }
+      
+      const xPos = pageWidth - margin - imgWidth;
+      doc.addImage(imgBase64, 'PNG', xPos, margin, imgWidth, imgHeight);
+      yPos = margin + imgHeight + 5;
+    } catch (error) {
+      console.error('Error agregando logo:', error);
+    }
+  }
   
   // Función auxiliar para agregar texto con salto de línea automático
   const addText = (text: string, x: number, y: number, maxWidth: number, fontSize: number = 10, fontStyle: string = 'normal') => {
