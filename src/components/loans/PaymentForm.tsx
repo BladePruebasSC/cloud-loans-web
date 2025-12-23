@@ -19,7 +19,7 @@ import { calculateLateFee as calculateLateFeeUtil, getDetailedLateFeeBreakdown, 
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/dateUtils';
 import { toast } from 'sonner';
-import { ArrowLeft, DollarSign, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, DollarSign, AlertTriangle, Printer, Download } from 'lucide-react';
 import { Search, User } from 'lucide-react';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -100,10 +100,344 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [companySettings, setCompanySettings] = useState<any>(null);
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
   const [showWhatsAppDialog, setShowWhatsAppDialog] = useState(false);
+  const [showPrintFormatModal, setShowPrintFormatModal] = useState(false);
   const [lastPaymentData, setLastPaymentData] = useState<any>(null);
+  const [isClosingPrintModal, setIsClosingPrintModal] = useState(false);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
+
+  // Función para generar el HTML del recibo según el formato
+  const generateReceiptHTMLWithFormat = (format: string = 'LETTER'): string => {
+    if (!lastPaymentData || !selectedLoan) return '';
+    
+    const payment = lastPaymentData.payment;
+    const loan = lastPaymentData.loan;
+    const client = loan.client;
+    
+    const getPaymentMethodLabel = (method: string) => {
+      const methods: { [key: string]: string } = {
+        cash: 'Efectivo',
+        bank_transfer: 'Transferencia',
+        check: 'Cheque',
+        card: 'Tarjeta',
+        online: 'En línea'
+      };
+      return methods[method] || method;
+    };
+
+    const getFormatStyles = (format: string) => {
+      switch (format) {
+        case 'POS58':
+          return `
+            * { box-sizing: border-box; }
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0 !important; 
+              padding: 0 !important;
+              font-size: 12px;
+              line-height: 1.2;
+              color: #000;
+              width: 100% !important;
+              min-width: 100% !important;
+            }
+            .receipt-container {
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 5px !important;
+              min-width: 100% !important;
+            }
+            .header { text-align: center; margin-bottom: 10px; width: 100%; }
+            .receipt-title { font-size: 14px; font-weight: bold; margin-bottom: 5px; }
+            .receipt-number { font-size: 10px; }
+            .section { margin-bottom: 10px; width: 100%; }
+            .section-title { font-weight: bold; font-size: 11px; margin-bottom: 5px; text-decoration: underline; }
+            .info-row { margin-bottom: 3px; font-size: 10px; width: 100%; }
+            .amount-section { margin: 10px 0; width: 100%; }
+            .total-amount { font-size: 14px; font-weight: bold; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 15px; text-align: center; font-size: 9px; width: 100%; }
+            @media print { 
+              * { box-sizing: border-box; }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100% !important;
+                min-width: 100% !important;
+              }
+              .receipt-container { 
+                border: none; 
+                width: 100% !important; 
+                max-width: none !important; 
+                margin: 0 !important;
+                min-width: 100% !important;
+              }
+              @page { 
+                margin: 0 !important; 
+                size: auto !important;
+              }
+            }
+          `;
+        
+        case 'POS80':
+          return `
+            * { box-sizing: border-box; }
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0 !important; 
+              padding: 0 !important;
+              font-size: 14px;
+              line-height: 1.3;
+              color: #000;
+              width: 100% !important;
+              min-width: 100% !important;
+            }
+            .receipt-container {
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 8px !important;
+              min-width: 100% !important;
+            }
+            .header { text-align: center; margin-bottom: 15px; width: 100%; }
+            .receipt-title { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
+            .receipt-number { font-size: 12px; }
+            .section { margin-bottom: 15px; width: 100%; }
+            .section-title { font-weight: bold; font-size: 13px; margin-bottom: 8px; text-decoration: underline; }
+            .info-row { margin-bottom: 4px; font-size: 12px; width: 100%; }
+            .amount-section { margin: 15px 0; width: 100%; }
+            .total-amount { font-size: 16px; font-weight: bold; text-align: center; margin-top: 15px; }
+            .footer { margin-top: 20px; text-align: center; font-size: 10px; width: 100%; }
+            @media print { 
+              * { box-sizing: border-box; }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100% !important;
+                min-width: 100% !important;
+              }
+              .receipt-container { 
+                border: none; 
+                width: 100% !important; 
+                max-width: none !important; 
+                margin: 0 !important;
+                min-width: 100% !important;
+              }
+              @page { 
+                margin: 0 !important; 
+                size: auto !important;
+              }
+            }
+          `;
+        
+        case 'LETTER':
+          return `
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              line-height: 1.6;
+              color: #333;
+            }
+            .receipt-container {
+              max-width: 8.5in;
+              margin: 0 auto;
+              padding: 30px;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+            }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+            @media print { 
+              body { margin: 0; }
+              .receipt-container { border: none; max-width: 8.5in; }
+            }
+          `;
+        
+        case 'A4':
+          return `
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              line-height: 1.6;
+              color: #333;
+            }
+            .receipt-container {
+              max-width: 210mm;
+              margin: 0 auto;
+              padding: 30px;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+            }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+            @media print { 
+              body { margin: 0; }
+              .receipt-container { border: none; max-width: 210mm; }
+            }
+          `;
+        
+        default:
+          return '';
+      }
+    };
+
+    const getFormatTitle = (format: string) => {
+      switch (format) {
+        case 'POS58': return 'RECIBO DE PAGO - POS58';
+        case 'POS80': return 'RECIBO DE PAGO - POS80';
+        case 'LETTER': return 'RECIBO DE PAGO';
+        case 'A4': return 'RECIBO DE PAGO';
+        default: return 'RECIBO DE PAGO';
+      }
+    };
+
+    return `
+      <html>
+        <head>
+          <title>${getFormatTitle(format)} - ${client?.full_name || ''}</title>
+          <style>
+            ${getFormatStyles(format)}
+          </style>
+        </head>
+        <body>
+          <div class="receipt-container">
+            <div class="header">
+              ${companySettings ? `
+                <div style="margin-bottom: 15px; text-align: center;">
+                  <div style="font-size: ${format.includes('POS') ? '14px' : '18px'}; font-weight: bold; margin-bottom: 5px;">
+                    ${companySettings.company_name || 'LA EMPRESA'}
+                  </div>
+                  ${companySettings.address ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 2px;">${companySettings.address}</div>` : ''}
+                  ${companySettings.tax_id ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 5px;">RNC: ${companySettings.tax_id}</div>` : ''}
+                </div>
+                <hr style="border: none; border-top: 1px solid #000; margin: 10px 0;">
+              ` : ''}
+              <div class="receipt-title">${getFormatTitle(format)}</div>
+              <div class="receipt-number">Recibo #${payment.id.slice(0, 8).toUpperCase()}</div>
+              <div style="margin-top: 10px; font-size: ${format.includes('POS') ? '10px' : '14px'};">
+                ${new Date(payment.created_at || payment.payment_date || lastPaymentData.paymentDate).toLocaleDateString('es-ES', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">INFORMACIÓN DEL CLIENTE</div>
+              <div class="info-row">
+                <span>Nombre: ${client?.full_name || 'N/A'}</span>
+              </div>
+              <div class="info-row">
+                <span>Cédula: ${client?.dni || 'N/A'}</span>
+              </div>
+              ${client?.phone ? `<div class="info-row"><span>Teléfono: ${client.phone}</span></div>` : ''}
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL PRÉSTAMO</div>
+              <div class="info-row">
+                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Tasa de Interés: ${loan.interest_rate}%</span>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL PAGO</div>
+              <div class="info-row">
+                <span>Fecha de Pago: ${lastPaymentData.paymentDate || payment.payment_date}</span>
+              </div>
+              <div class="info-row">
+                <span>Método de Pago: ${getPaymentMethodLabel(lastPaymentData.paymentMethod || payment.payment_method)}</span>
+              </div>
+              ${lastPaymentData.referenceNumber || payment.reference_number ? `<div class="info-row"><span>Referencia: ${lastPaymentData.referenceNumber || payment.reference_number}</span></div>` : ''}
+            </div>
+
+            <div class="amount-section">
+              <div class="section-title">DESGLOSE DEL PAGO</div>
+              <div class="info-row">
+                <span>Pago a Principal: RD$${(lastPaymentData.principalPayment || payment.principal_amount || 0).toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Pago a Intereses: RD$${(lastPaymentData.interestAmount || payment.interest_amount || 0).toLocaleString()}</span>
+              </div>
+              ${(lastPaymentData.lateFeeAmount || payment.late_fee || 0) > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${(lastPaymentData.lateFeeAmount || payment.late_fee || 0).toLocaleString()}</span></div>` : ''}
+              <div class="total-amount">
+                TOTAL: RD$${payment.amount.toLocaleString()}
+              </div>
+            </div>
+
+            <div class="footer">
+              <p>Este documento es un comprobante oficial de pago.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
+  // Función helper para cerrar el modal de impresión y mostrar el diálogo de WhatsApp
+  const handleClosePrintModalAndShowWhatsApp = (action?: () => void) => {
+    setIsClosingPrintModal(true);
+    // Ejecutar la acción primero si existe
+    if (action) {
+      action();
+    }
+    // Cerrar el modal
+    setShowPrintFormatModal(false);
+    // Mostrar el diálogo de WhatsApp después de un delay para asegurar que el modal se cierre
+    setTimeout(() => {
+      setShowWhatsAppDialog(true);
+      setIsClosingPrintModal(false);
+    }, 300);
+  };
+
+  const printReceipt = (format: string = 'LETTER') => {
+    if (!lastPaymentData || !selectedLoan) return;
+    
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      const receiptHTML = generateReceiptHTMLWithFormat(format);
+      printWindow.document.write(receiptHTML);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
+  const downloadReceipt = (format: string = 'LETTER') => {
+    if (!lastPaymentData || !selectedLoan) return;
+    
+    const receiptHTML = generateReceiptHTMLWithFormat(format);
+    const client = lastPaymentData.loan.client;
+
+    const blob = new Blob([receiptHTML], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `recibo_${client.full_name.replace(/\s+/g, '_')}_${new Date(lastPaymentData.paymentDate || lastPaymentData.payment.payment_date).toISOString().split('T')[0]}_${format}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   // Función para generar el HTML del recibo
   const generateReceiptHTML = (loan: any, payment: any, companySettings: any): string => {
@@ -922,6 +1256,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Validación 1: No permitir que la cuota exceda el balance restante
       if (data.amount > remainingBalance) {
         toast.error(`El pago de cuota no puede exceder el balance restante de ${formatCurrency(remainingBalance)}`);
+        setLoading(false);
         return;
       }
       
@@ -930,18 +1265,21 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       const roundedLateFeePayment = roundToTwoDecimals(data.late_fee_amount || 0);
       if (data.late_fee_amount && roundedLateFeePayment > roundedLateFeeAmount) {
         toast.error(`El pago de mora no puede exceder la mora actual de RD$${roundedLateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+        setLoading(false);
         return;
       }
       
       // Validación 2: No permitir pagos negativos, pero permitir 0 si hay pago de mora
       if (data.amount < 0) {
         toast.error('El monto del pago no puede ser negativo');
+        setLoading(false);
         return;
       }
       
       // Validación 2b: Debe haber al menos un pago (cuota o mora)
       if (data.amount <= 0 && (!data.late_fee_amount || data.late_fee_amount <= 0)) {
         toast.error('Debe pagar al menos algo de la cuota o de la mora');
+        setLoading(false);
         return;
       }
 
@@ -951,6 +1289,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         const roundedMaxAllowed = Math.round(maxAllowedPayment);
         if (data.amount > roundedMaxAllowed) {
           toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: ${formatCurrency(roundedMaxAllowed)}`);
+          setLoading(false);
           return;
         }
       }
@@ -1384,8 +1723,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         nextPaymentDate: formatDateStringForSantoDomingo(nextPaymentDate)
       });
       
-      // Mostrar diálogo de WhatsApp
-      setShowWhatsAppDialog(true);
+      // Mostrar primero el modal de impresión
+      setShowPrintFormatModal(true);
       
       // Recalcular automáticamente la mora después del pago usando la función correcta
       try {
@@ -1979,6 +2318,170 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           </div>
         )}
       </div>
+      
+      {/* Modal de Selección de Formato de Impresión */}
+      <Dialog open={showPrintFormatModal} onOpenChange={(open) => {
+        if (!open && !isClosingPrintModal) {
+          // Cuando se cierra el modal (X o clic fuera) y no se está cerrando desde un botón, mostrar el diálogo de WhatsApp
+          setShowPrintFormatModal(false);
+          setTimeout(() => {
+            setShowWhatsAppDialog(true);
+          }, 300);
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="h-5 w-5" />
+              Seleccionar Formato de Impresión
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Selecciona el formato de impresión según tu impresora:
+            </p>
+            
+            <div className="grid grid-cols-1 gap-3">
+              {/* POS58 - Impresoras portátiles Verifone */}
+              <Button 
+                variant="outline" 
+                className="h-auto p-4 flex flex-col items-start"
+                onClick={() => {
+                  handleClosePrintModalAndShowWhatsApp(() => {
+                    printReceipt('POS58');
+                  });
+                }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-8 h-8 bg-blue-100 rounded flex items-center justify-center">
+                    <span className="text-xs font-bold">58</span>
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">POS58</div>
+                    <div className="text-xs text-gray-500">Verifone / Impresoras Portátiles</div>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400">
+                  Ancho: 58mm - Ideal para impresoras portátiles
+                </div>
+              </Button>
+
+              {/* POS80 - Punto de venta */}
+              <Button 
+                variant="outline" 
+                className="h-auto p-4 flex flex-col items-start"
+                onClick={() => {
+                  handleClosePrintModalAndShowWhatsApp(() => {
+                    printReceipt('POS80');
+                  });
+                }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-8 h-8 bg-green-100 rounded flex items-center justify-center">
+                    <span className="text-xs font-bold">80</span>
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">POS80</div>
+                    <div className="text-xs text-gray-500">Punto de Venta</div>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400">
+                  Ancho: 80mm - Para impresoras de punto de venta
+                </div>
+              </Button>
+
+              {/* Carta 8½ x 11 */}
+              <Button 
+                variant="outline" 
+                className="h-auto p-4 flex flex-col items-start"
+                onClick={() => {
+                  handleClosePrintModalAndShowWhatsApp(() => {
+                    printReceipt('LETTER');
+                  });
+                }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-8 h-8 bg-purple-100 rounded flex items-center justify-center">
+                    <span className="text-xs font-bold">8½</span>
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">Carta (8½ x 11)</div>
+                    <div className="text-xs text-gray-500">Impresoras de Escritorio</div>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400">
+                  Formato: 8.5 x 11 pulgadas - Estándar americano
+                </div>
+              </Button>
+
+              {/* A4 */}
+              <Button 
+                variant="outline" 
+                className="h-auto p-4 flex flex-col items-start"
+                onClick={() => {
+                  handleClosePrintModalAndShowWhatsApp(() => {
+                    printReceipt('A4');
+                  });
+                }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-8 h-8 bg-orange-100 rounded flex items-center justify-center">
+                    <span className="text-xs font-bold">A4</span>
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">A4</div>
+                    <div className="text-xs text-gray-500">Impresoras de Escritorio</div>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400">
+                  Formato: 210 x 297mm - Estándar internacional
+                </div>
+              </Button>
+            </div>
+
+            <div className="pt-4 border-t">
+              <p className="text-xs text-gray-500 mb-3">
+                También puedes descargar el recibo en formato HTML:
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <Button 
+                  size="sm" 
+                  variant="secondary"
+                  onClick={() => {
+                    handleClosePrintModalAndShowWhatsApp(() => {
+                      downloadReceipt('POS58');
+                    });
+                  }}
+                >
+                  <Download className="h-3 w-3 mr-1" />
+                  POS58
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="secondary"
+                  onClick={() => {
+                    handleClosePrintModalAndShowWhatsApp(() => {
+                      downloadReceipt('LETTER');
+                    });
+                  }}
+                >
+                  <Download className="h-3 w-3 mr-1" />
+                  Carta
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={() => {
+              handleClosePrintModalAndShowWhatsApp();
+            }}>
+              Cerrar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       
       {/* Diálogo de confirmación de WhatsApp */}
       <Dialog open={showWhatsAppDialog} onOpenChange={setShowWhatsAppDialog}>
