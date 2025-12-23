@@ -239,13 +239,17 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             .order('payment_date', { ascending: true });
 
           // Calcular cuántas cuotas se han pagado basándose en los pagos
-          // Para préstamos indefinidos, cada pago de interés completo = 1 cuota pagada
+          // Para préstamos indefinidos, acumular interés pagado para manejar múltiples pagos
           const interestPerPayment = (loanInfo.amount || 0) * ((loanInfo.interest_rate || 0) / 100);
           let paidInstallmentsCount = 0;
           if (allPayments && interestPerPayment > 0) {
-            // Contar cuántos pagos completos de interés se han hecho
-            // Esto nos da el número mínimo de cuotas que deben mostrarse
-            paidInstallmentsCount = allPayments.filter(p => (p.interest_amount || 0) >= interestPerPayment * 0.99).length;
+            // CORRECCIÓN: Acumular interés pagado para contar correctamente cuando hay múltiples pagos
+            let totalInterestPaid = 0;
+            for (const payment of allPayments) {
+              totalInterestPaid += payment.interest_amount || 0;
+            }
+            // Calcular cuántas cuotas completas se han pagado
+            paidInstallmentsCount = Math.floor(totalInterestPaid / interestPerPayment);
           }
 
           // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
@@ -355,26 +359,46 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             });
           }
           
-          // Asignar pagos a las cuotas generadas
+          // Asignar pagos a las cuotas generadas - CORRECCIÓN: Acumular interés pagado para manejar múltiples pagos
           if (allPayments && allPayments.length > 0 && interestPerPayment > 0) {
             // Ordenar pagos por fecha
             const sortedPayments = [...allPayments].sort((a, b) => 
               new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime()
             );
             
-            // Asignar pagos a cuotas en orden secuencial
+            // Acumular interés pagado para asignar correctamente cuando hay múltiples pagos
+            let accumulatedInterest = 0;
             let paymentIndex = 0;
+            let firstPaymentDateForInstallment: string | null = null;
+            
             for (let i = 0; i < dynamicInstallments.length && paymentIndex < sortedPayments.length; i++) {
               const installment = dynamicInstallments[i];
-              const payment = sortedPayments[paymentIndex];
               
-              // Si el pago tiene suficiente interés para esta cuota, asignarlo
-              if (payment && (payment.interest_amount || 0) >= interestPerPayment * 0.99) {
-                installment.is_paid = true;
-                installment.paid_date = payment.payment_date?.split('T')[0] || payment.payment_date;
-                installment.amount = payment.interest_amount || interestPerPayment;
-                installment.interest_amount = payment.interest_amount || interestPerPayment;
+              // Acumular interés de los pagos hasta que se complete esta cuota
+              while (paymentIndex < sortedPayments.length && accumulatedInterest < interestPerPayment * 0.99) {
+                const payment = sortedPayments[paymentIndex];
+                const paymentInterest = payment.interest_amount || 0;
+                
+                if (firstPaymentDateForInstallment === null) {
+                  firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;
+                }
+                
+                accumulatedInterest += paymentInterest;
                 paymentIndex++;
+              }
+              
+              // Si se acumuló suficiente interés, marcar la cuota como pagada
+              if (accumulatedInterest >= interestPerPayment * 0.99) {
+                installment.is_paid = true;
+                installment.paid_date = firstPaymentDateForInstallment;
+                installment.amount = interestPerPayment;
+                installment.interest_amount = interestPerPayment;
+                
+                // Restar el interés usado para esta cuota (el excedente se usa para la siguiente)
+                accumulatedInterest -= interestPerPayment;
+                
+                // Resetear la fecha del primer pago para la siguiente cuota
+                firstPaymentDateForInstallment = null;
               }
             }
           }

@@ -375,13 +375,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               break;
             case 'monthly':
             default:
-              // CORRECCIÓN: Para préstamos indefinidos, siempre usar el día 1 del mes siguiente
-              if (loanData.amortization_type === 'indefinite') {
-                firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, 1);
-              } else {
-                // Usar setFullYear para preservar el día exacto
-                firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
-              }
+              // Preservar el día del mes de start_date para todos los préstamos
+              const startDay = startDate.getDate();
+              const nextMonth = startDate.getMonth() + 1;
+              const nextYear = startDate.getFullYear();
+              // Verificar si el día existe en el mes siguiente
+              const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
+              const dayToUse = Math.min(startDay, lastDayOfNextMonth);
+              firstPaymentDateBase.setFullYear(nextYear, nextMonth, dayToUse);
               break;
           }
         }
@@ -395,14 +396,18 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             .order('payment_date', { ascending: true });
 
           // Calcular cuántas cuotas se han pagado basándose en los pagos
-          // Para préstamos indefinidos, cada pago de interés completo = 1 cuota pagada
+          // Para préstamos indefinidos, acumular interés pagado para manejar múltiples pagos
           const periodRate = (loanData.interest_rate || 0) / 100;
           const interestPerPayment = (loanData.amount || 0) * periodRate;
           let paidInstallmentsCount = 0;
           if (allPayments && interestPerPayment > 0) {
-            // Contar cuántos pagos completos de interés se han hecho
-            // Esto nos da el número mínimo de cuotas que deben mostrarse
-            paidInstallmentsCount = allPayments.filter(p => (p.interest_amount || 0) >= interestPerPayment * 0.99).length;
+            // CORRECCIÓN: Acumular interés pagado para contar correctamente cuando hay múltiples pagos
+            let totalInterestPaid = 0;
+            for (const payment of allPayments) {
+              totalInterestPaid += payment.interest_amount || 0;
+            }
+            // Calcular cuántas cuotas completas se han pagado
+            paidInstallmentsCount = Math.floor(totalInterestPaid / interestPerPayment);
           }
           
           // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
@@ -462,13 +467,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 break;
             case 'monthly':
             default:
-                // CORRECCIÓN: Para préstamos indefinidos, siempre usar el día 1 del mes
-                if (loanData.amortization_type === 'indefinite') {
-                  installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), 1);
-                } else {
-                  // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
-                  installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), firstPaymentDate.getDate());
-                }
+                // Preservar el día del mes de firstPaymentDate para todos los préstamos
+                const paymentDay = firstPaymentDate.getDate();
+                const targetMonth = firstPaymentDate.getMonth() + (i - 1);
+                const targetYear = firstPaymentDate.getFullYear();
+                // Verificar si el día existe en el mes objetivo
+                const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+                const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
+                installmentDate.setFullYear(targetYear, targetMonth, dayToUse);
                 break;
             }
             
@@ -487,6 +493,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             // para evitar usar fechas incorrectas guardadas en la BD
             const finalDueDate = formattedDate; // Siempre usar la fecha calculada correctamente
             
+            // Para préstamos indefinidos, inicializar is_paid como false
+            // Se determinará correctamente basándose en el interés acumulado de los pagos
+            const initialIsPaid = loanData.amortization_type === 'indefinite' 
+              ? false 
+              : (existingInstallment?.is_paid || false);
+            
             dynamicInstallments.push({
               id: existingInstallment?.id || `dynamic-${i}`,
               loan_id: loanId,
@@ -496,13 +508,68 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               principal_amount: existingInstallment?.principal_amount || 0,
               interest_amount: existingInstallment?.interest_amount || interestPerPayment,
               late_fee_paid: existingInstallment?.late_fee_paid || 0,
-              is_paid: existingInstallment?.is_paid || false,
+              is_paid: initialIsPaid,
               is_settled: existingInstallment?.is_settled || false,
               paid_date: existingInstallment?.paid_date || null,
               created_at: existingInstallment?.created_at || new Date().toISOString(),
               updated_at: existingInstallment?.updated_at || new Date().toISOString(),
               total_amount: existingInstallment?.total_amount || interestPerPayment
             });
+          }
+          
+          // CORRECCIÓN: Asignar pagos acumulando interés para marcar cuotas como pagadas cuando hay múltiples pagos
+          // Para préstamos indefinidos, esta es la fuente de verdad para determinar si una cuota está pagada
+          if (allPayments && allPayments.length > 0 && interestPerPayment > 0) {
+            // Ordenar pagos por fecha
+            const sortedPayments = [...allPayments].sort((a, b) => 
+              new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime()
+            );
+            
+            // Acumular interés pagado para asignar correctamente cuando hay múltiples pagos
+            let accumulatedInterest = 0;
+            let paymentIndex = 0;
+            let firstPaymentDateForInstallment: string | null = null;
+            
+            for (let i = 0; i < dynamicInstallments.length; i++) {
+              const installment = dynamicInstallments[i];
+              
+              // Acumular interés de los pagos hasta que se complete esta cuota
+              while (paymentIndex < sortedPayments.length && accumulatedInterest < interestPerPayment * 0.99) {
+                const payment = sortedPayments[paymentIndex];
+                const paymentInterest = payment.interest_amount || 0;
+                
+                if (firstPaymentDateForInstallment === null && paymentInterest > 0) {
+                  firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;
+                }
+                
+                accumulatedInterest += paymentInterest;
+                paymentIndex++;
+              }
+              
+              // Si se acumuló suficiente interés, marcar la cuota como pagada
+              // IMPORTANTE: Solo marcar como pagada si realmente hay suficiente interés acumulado
+              if (accumulatedInterest >= interestPerPayment * 0.99) {
+                installment.is_paid = true;
+                if (!installment.paid_date) {
+                  installment.paid_date = firstPaymentDateForInstallment;
+                }
+                
+                // Restar el interés usado para esta cuota (el excedente se usa para la siguiente)
+                accumulatedInterest -= interestPerPayment;
+                
+                // Si todavía hay interés acumulado para la siguiente cuota, mantener la fecha del primer pago
+                // Solo resetear si ya no hay más interés acumulado
+                if (accumulatedInterest < interestPerPayment * 0.99) {
+                  firstPaymentDateForInstallment = null;
+                }
+              } else {
+                // Si no hay suficiente interés acumulado, esta cuota NO está pagada
+                // IMPORTANTE: Detener el procesamiento inmediatamente, ya que si una cuota no tiene
+                // suficiente interés, significa que los pagos no la cubren completamente,
+                // y por lo tanto todas las cuotas siguientes también están pendientes
+                break;
+              }
+            }
           }
           
           installmentsData = dynamicInstallments;

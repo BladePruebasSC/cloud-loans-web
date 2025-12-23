@@ -395,6 +395,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   };
 
   // Función helper para cerrar el modal de impresión y mostrar el diálogo de WhatsApp
+  // Función helper para cerrar el modal de WhatsApp y el formulario
+  const handleCloseWhatsAppDialog = (showRedirectToast: boolean = true) => {
+    setShowWhatsAppDialog(false);
+    // Cerrar el formulario después de cancelar o enviar
+    if (isMobile) {
+      if (showRedirectToast) {
+        toast.success('Redirigiendo a Cobro Rápido...');
+      }
+      setTimeout(() => {
+        navigate('/cobro-rapido');
+      }, 1000);
+    } else {
+      onBack();
+    }
+  };
+
   const handleClosePrintModalAndShowWhatsApp = (action?: () => void) => {
     setIsClosingPrintModal(true);
     // Ejecutar la acción primero si existe
@@ -1579,8 +1595,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               break;
             case 'monthly':
             default:
-              // Para indefinidos, siempre usar el día 1 del mes siguiente
-              firstPaymentDate.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, 1);
+              // Para indefinidos, preservar el día del mes de start_date
+              const startDay = startDate.getDate();
+              const nextMonth = startDate.getMonth() + 1;
+              const nextYear = startDate.getFullYear();
+              // Verificar si el día existe en el mes siguiente
+              const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
+              const dayToUse = Math.min(startDay, lastDayOfNextMonth);
+              firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
               break;
           }
           
@@ -1613,8 +1635,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               break;
             case 'monthly':
             default:
-              // Para indefinidos, siempre usar el día 1 del mes
-              nextDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + periodsToAdd, 1);
+              // Preservar el día del mes de firstPaymentDate
+              const paymentDay = firstPaymentDate.getDate();
+              const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
+              const targetYear = firstPaymentDate.getFullYear();
+              // Verificar si el día existe en el mes objetivo
+              const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+              const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
+              nextDate.setFullYear(targetYear, targetMonth, dayToUse);
               break;
           }
           
@@ -2586,7 +2614,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       </Dialog>
       
       {/* Diálogo de confirmación de WhatsApp */}
-      <Dialog open={showWhatsAppDialog} onOpenChange={setShowWhatsAppDialog}>
+      <Dialog open={showWhatsAppDialog} onOpenChange={(open) => {
+        if (!open) {
+          // Cuando se cierra el modal (X o clic fuera), ejecutar la misma lógica que el botón Cancelar
+          handleCloseWhatsAppDialog();
+        } else {
+          setShowWhatsAppDialog(true);
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>¿Enviar recibo por WhatsApp?</DialogTitle>
@@ -2597,18 +2632,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => {
-                setShowWhatsAppDialog(false);
-                // Cerrar el formulario después de cancelar
-                if (isMobile) {
-                  toast.success('Redirigiendo a Cobro Rápido...');
-                  setTimeout(() => {
-                    navigate('/cobro-rapido');
-                  }, 1000);
-                } else {
-                  onBack();
-                }
-              }}
+              onClick={() => handleCloseWhatsAppDialog()}
             >
               Cancelar
             </Button>
@@ -2701,15 +2725,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                   toast.error(error.message || 'Error al abrir WhatsApp');
                 }
 
-                setShowWhatsAppDialog(false);
-                // Cerrar el formulario después de enviar
-                if (isMobile) {
-                  setTimeout(() => {
-                    navigate('/cobro-rapido');
-                  }, 1000);
-                } else {
-                  onBack();
-                }
+                // Cerrar el formulario después de enviar (sin mostrar toast de redirección)
+                handleCloseWhatsAppDialog(false);
               }}
             >
               Enviar por WhatsApp

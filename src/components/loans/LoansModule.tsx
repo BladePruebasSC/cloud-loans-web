@@ -112,8 +112,14 @@ export const LoansModule = () => {
             break;
           case 'monthly':
           default:
-            // Para indefinidos mensuales, siempre usar el día 1 del mes siguiente
-            firstPaymentDate.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, 1);
+            // Para indefinidos mensuales, preservar el día del mes de start_date
+            const startDay = startDate.getDate();
+            const nextMonth = startDate.getMonth() + 1;
+            const nextYear = startDate.getFullYear();
+            // Verificar si el día existe en el mes siguiente
+            const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
+            const dayToUse = Math.min(startDay, lastDayOfNextMonth);
+            firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
             break;
         }
         
@@ -191,7 +197,14 @@ export const LoansModule = () => {
             break;
           case 'monthly':
           default:
-            nextDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + periodsToAdd, 1);
+            // Preservar el día del mes de firstPaymentDate
+            const paymentDay = firstPaymentDate.getDate();
+            const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
+            const targetYear = firstPaymentDate.getFullYear();
+            // Verificar si el día existe en el mes objetivo
+            const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+            const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
+            nextDate.setFullYear(targetYear, targetMonth, dayToUse);
             break;
         }
         
