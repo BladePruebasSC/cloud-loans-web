@@ -976,7 +976,91 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         <div className="font-semibold">
                           {(loan.status === 'paid' || remainingBalance === 0 || !loan.next_payment_date) 
                             ? 'N/A' 
-                            : formatDateStringForSantoDomingo(loan.next_payment_date)}
+                            : (() => {
+                                // CORRECCIÓN: Para préstamos indefinidos, calcular la primera cuota NO PAGADA
+                                if (loan.amortization_type === 'indefinite' && loan.start_date) {
+                                  try {
+                                    // Calcular cuántas cuotas se han pagado basándose en los pagos
+                                    const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+                                    let paidInstallmentsCount = 0;
+                                    let currentInstallmentInterestPaid = 0;
+                                    
+                                    if (payments && payments.length > 0) {
+                                      for (const payment of payments) {
+                                        currentInstallmentInterestPaid += payment.interest_amount || 0;
+                                        if (currentInstallmentInterestPaid >= interestPerPayment) {
+                                          paidInstallmentsCount++;
+                                          currentInstallmentInterestPaid = 0;
+                                        }
+                                      }
+                                    }
+                                    
+                                    // Calcular la primera fecha de pago
+                                    const startDateStr = loan.start_date.split('T')[0];
+                                    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+                                    const startDate = new Date(startYear, startMonth - 1, startDay);
+                                    const firstPaymentDate = new Date(startDate);
+                                    const frequency = loan.payment_frequency || 'monthly';
+                                    
+                                    switch (frequency) {
+                                      case 'daily':
+                                        firstPaymentDate.setDate(startDate.getDate() + 1);
+                                        break;
+                                      case 'weekly':
+                                        firstPaymentDate.setDate(startDate.getDate() + 7);
+                                        break;
+                                      case 'biweekly':
+                                        firstPaymentDate.setDate(startDate.getDate() + 14);
+                                        break;
+                                      case 'monthly':
+                                      default:
+                                        firstPaymentDate.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, 1);
+                                        break;
+                                    }
+                                    
+                                    // La próxima cuota no pagada está a 'paidInstallmentsCount' períodos de la primera cuota
+                                    const nextDate = new Date(firstPaymentDate);
+                                    const periodsToAdd = paidInstallmentsCount;
+                                    
+                                    switch (frequency) {
+                                      case 'daily':
+                                        nextDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
+                                        break;
+                                      case 'weekly':
+                                        nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
+                                        break;
+                                      case 'biweekly':
+                                        nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
+                                        break;
+                                      case 'monthly':
+                                      default:
+                                        nextDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + periodsToAdd, 1);
+                                        break;
+                                    }
+                                    
+                                    const correctedYear = nextDate.getFullYear();
+                                    const correctedMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+                                    const correctedDay = String(nextDate.getDate()).padStart(2, '0');
+                                    return formatDateStringForSantoDomingo(`${correctedYear}-${correctedMonth}-${correctedDay}`);
+                                  } catch (error) {
+                                    // Si hay error, usar la fecha original pero corregir el día
+                                    const date = new Date(loan.next_payment_date);
+                                    const year = date.getFullYear();
+                                    const month = date.getMonth();
+                                    const day = date.getDate();
+                                    const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+                                    
+                                    if (day === lastDayOfMonth || day !== 1) {
+                                      const correctedDate = day === lastDayOfMonth 
+                                        ? new Date(year, month + 1, 1)
+                                        : new Date(year, month, 1);
+                                      return formatDateStringForSantoDomingo(correctedDate.toISOString().split('T')[0]);
+                                    }
+                                    return formatDateStringForSantoDomingo(loan.next_payment_date);
+                                  }
+                                }
+                                return formatDateStringForSantoDomingo(loan.next_payment_date);
+                              })()}
                         </div>
                       </div>
                       {loan.amortization_type !== 'indefinite' && (

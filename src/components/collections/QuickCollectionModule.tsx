@@ -30,7 +30,10 @@ import {
   X
 } from 'lucide-react';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { generateLoanPaymentReceipt, openWhatsApp } from '@/utils/whatsappReceipt';
+import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { MessageCircle } from 'lucide-react';
 
 const paymentSchema = z.object({
   loan_id: z.string().min(1, 'Debe seleccionar un préstamo'),
@@ -75,7 +78,9 @@ export const QuickCollectionModule = () => {
   const [lateFeeAmount, setLateFeeAmount] = useState<number>(0);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [showWhatsAppDialog, setShowWhatsAppDialog] = useState(false);
   const [lastPayment, setLastPayment] = useState<any>(null);
+  const [companySettings, setCompanySettings] = useState<any>(null);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
 
@@ -102,8 +107,33 @@ export const QuickCollectionModule = () => {
   useEffect(() => {
     if (user && companyId && isMobile) {
       fetchActiveLoans();
+      fetchCompanySettings();
     }
   }, [user, companyId, isMobile]);
+
+  // Obtener datos de la empresa
+  const fetchCompanySettings = async () => {
+    if (!companyId) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('company_settings')
+        .select('*')
+        .eq('user_id', companyId)
+        .maybeSingle();
+      
+      if (error) {
+        console.error('Error obteniendo datos de la empresa:', error);
+        return;
+      }
+      
+      if (data) {
+        setCompanySettings(data);
+      }
+    } catch (error) {
+      console.error('Error obteniendo datos de la empresa:', error);
+    }
+  };
 
   // Filtrar préstamos cuando cambia el término de búsqueda
   useEffect(() => {
@@ -251,6 +281,18 @@ export const QuickCollectionModule = () => {
     setShowPaymentForm(true);
   };
 
+  // Función para obtener el label del método de pago en español
+  const getPaymentMethodLabel = (method: string) => {
+    const methods: { [key: string]: string } = {
+      cash: 'Efectivo',
+      bank_transfer: 'Transferencia Bancaria',
+      check: 'Cheque',
+      card: 'Tarjeta',
+      online: 'Pago en línea'
+    };
+    return methods[method] || method;
+  };
+
   const calculatePaymentDistribution = async (amount: number) => {
     if (!selectedLoan || amount <= 0) {
       return { interestPayment: 0, principalPayment: 0 };
@@ -378,7 +420,7 @@ export const QuickCollectionModule = () => {
         payment_time_local: paymentTimeLocal,
         payment_timezone: paymentTimezone,
         payment_method: data.payment_method,
-        notes: `Cobro rápido - ${data.payment_method}`,
+        notes: `Cobro rápido - ${getPaymentMethodLabel(data.payment_method)}`,
         status: paymentStatusValue,
         created_by: companyId,
       };
@@ -394,14 +436,43 @@ export const QuickCollectionModule = () => {
       // Calcular balance restante después del pago
       const balanceAfterPayment = Math.max(0, selectedLoan.remaining_balance - Math.round(data.amount));
       
+      // Obtener el teléfono del cliente
+      let clientPhone = null;
+      try {
+        const { data: loanData } = await supabase
+          .from('loans')
+          .select('client_id')
+          .eq('id', data.loan_id)
+          .single();
+        
+        if (loanData?.client_id) {
+          const { data: clientData } = await supabase
+            .from('clients')
+            .select('phone')
+            .eq('id', loanData.client_id)
+            .maybeSingle();
+          
+          if (clientData) {
+            clientPhone = clientData.phone;
+          }
+        }
+      } catch (error) {
+        console.error('Error obteniendo teléfono del cliente:', error);
+      }
+
       // Guardar datos del pago para el recibo
       setLastPayment({
         ...insertedPayment,
         loan: {
           ...selectedLoan,
-          remaining_balance: balanceAfterPayment
+          remaining_balance: balanceAfterPayment,
+          client: {
+            ...selectedLoan.client,
+            phone: clientPhone || selectedLoan.client?.phone
+          }
         },
-        distribution: { interestPayment, principalPayment }
+        distribution: { interestPayment, principalPayment },
+        clientPhone
       });
 
       // Actualizar mora en cuotas si se pagó mora
@@ -1268,7 +1339,10 @@ export const QuickCollectionModule = () => {
                   <Button
                     onClick={() => {
                       printReceipt();
-                      setTimeout(() => setShowReceiptModal(false), 500);
+                      setTimeout(() => {
+                        setShowReceiptModal(false);
+                        setShowWhatsAppDialog(true);
+                      }, 500);
                     }}
                     className="flex-1 bg-blue-600 hover:bg-blue-700"
                   >
@@ -1277,7 +1351,10 @@ export const QuickCollectionModule = () => {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => setShowReceiptModal(false)}
+                    onClick={() => {
+                      setShowReceiptModal(false);
+                      setShowWhatsAppDialog(true);
+                    }}
                     className="flex-1"
                   >
                     Cerrar
@@ -1286,6 +1363,81 @@ export const QuickCollectionModule = () => {
               </>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo de confirmación de WhatsApp */}
+      <Dialog open={showWhatsAppDialog} onOpenChange={setShowWhatsAppDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Enviar recibo por WhatsApp?</DialogTitle>
+            <DialogDescription>
+              ¿Deseas enviar el recibo del pago al cliente por WhatsApp?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowWhatsAppDialog(false);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!lastPayment || !lastPayment.loan) {
+                  toast.error('No hay información del pago disponible');
+                  setShowWhatsAppDialog(false);
+                  return;
+                }
+
+                const clientPhone = lastPayment.clientPhone || lastPayment.loan?.client?.phone;
+                
+                if (!clientPhone) {
+                  toast.error('No se encontró el número de teléfono del cliente. Por favor, verifica que el cliente tenga un número de teléfono registrado.');
+                  setShowWhatsAppDialog(false);
+                  return;
+                }
+
+                try {
+                  const companyName = companySettings?.company_name || 'LA EMPRESA';
+                  // CORRECCIÓN: Para préstamos indefinidos, el balance restante es el monto original (no cambia)
+                  const remainingBalance = lastPayment.loan.amortization_type === 'indefinite'
+                    ? lastPayment.loan.amount
+                    : lastPayment.loan.remaining_balance;
+                  
+                  const receiptMessage = generateLoanPaymentReceipt({
+                    companyName,
+                    clientName: lastPayment.loan.client.full_name,
+                    clientDni: lastPayment.loan.client.dni,
+                    paymentDate: formatDateStringForSantoDomingo(lastPayment.payment_date),
+                    paymentAmount: lastPayment.amount + (lastPayment.late_fee || 0),
+                    principalAmount: lastPayment.distribution?.principalPayment || lastPayment.principal_amount || 0,
+                    interestAmount: lastPayment.distribution?.interestPayment || lastPayment.interest_amount || 0,
+                    lateFeeAmount: lastPayment.late_fee > 0 ? lastPayment.late_fee : undefined,
+                    paymentMethod: lastPayment.payment_method,
+                    loanAmount: lastPayment.loan.amount,
+                    remainingBalance: remainingBalance,
+                    interestRate: lastPayment.loan.interest_rate,
+                    nextPaymentDate: formatDateStringForSantoDomingo(lastPayment.loan.next_payment_date),
+                    referenceNumber: lastPayment.reference_number
+                  });
+
+                  openWhatsApp(clientPhone, receiptMessage);
+                  toast.success('Abriendo WhatsApp...');
+                } catch (error: any) {
+                  console.error('Error abriendo WhatsApp:', error);
+                  toast.error(error.message || 'Error al abrir WhatsApp');
+                }
+
+                setShowWhatsAppDialog(false);
+              }}
+            >
+              <MessageCircle className="h-4 w-4 mr-2" />
+              Enviar por WhatsApp
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

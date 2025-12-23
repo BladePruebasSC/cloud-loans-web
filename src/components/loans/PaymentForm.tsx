@@ -1509,55 +1509,157 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       }
 
       // CORREGIR: El balance se reduce por el pago completo (capital + interés), no solo por el capital
-      const newBalance = Math.max(0, remainingBalance - Math.round(data.amount));
+      // CORRECCIÓN: Para préstamos indefinidos, el balance restante no cambia (solo se paga interés)
+      // Para otros tipos, restar el capital pagado del balance restante
+      const newBalance = selectedLoan.amortization_type === 'indefinite'
+        ? selectedLoan.amount  // Para indefinidos, el balance siempre es el monto original
+        : Math.max(0, remainingBalance - Math.round(principalPayment));
       
       // Solo actualizar la fecha del próximo pago si es un pago completo
       let nextPaymentDate = selectedLoan.next_payment_date;
       let updatedPaidInstallments = selectedLoan.paid_installments || [];
 
       if (isFullPayment) {
-        // CORRECCIÓN: next_payment_date representa la PRÓXIMA cuota pendiente
-        // Se actualiza sumando un período de pago según la frecuencia
-        // Parsear la fecha como fecha local para evitar problemas de zona horaria
-        const [year, month, day] = selectedLoan.next_payment_date.split('-').map(Number);
-        const nextDate = new Date(year, month - 1, day); // month es 0-indexado
+        // CORRECCIÓN: Para préstamos indefinidos, calcular la próxima fecha desde start_date
+        // basándose en el número de cuotas pagadas, no desde next_payment_date
+        if (selectedLoan.amortization_type === 'indefinite') {
+          // Obtener todos los pagos EXCEPTO el actual (que aún no está en la BD)
+          // para calcular cuántas cuotas se han pagado ANTES de este pago
+          const { data: allPayments } = await supabase
+            .from('payments')
+            .select('interest_amount')
+            .eq('loan_id', selectedLoan.id)
+            .order('payment_date', { ascending: true });
+          
+          // Calcular cuántas cuotas se han pagado basándose en el interés pagado
+          const interestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
+          let paidInstallmentsCount = 0;
+          let currentInstallmentInterestPaid = 0;
+          
+          // Contar cuotas pagadas ANTES del pago actual
+          if (allPayments && allPayments.length > 0) {
+            for (const payment of allPayments) {
+              currentInstallmentInterestPaid += payment.interest_amount || 0;
+              if (currentInstallmentInterestPaid >= interestPerPayment) {
+                paidInstallmentsCount++;
+                currentInstallmentInterestPaid = 0;
+              }
+            }
+          }
+          
+          // CORRECCIÓN: Incluir el pago actual que se está registrando
+          // Este pago también completa una cuota, así que debemos contarlo
+          currentInstallmentInterestPaid += interestPayment;
+          if (currentInstallmentInterestPaid >= interestPerPayment) {
+            paidInstallmentsCount++;
+            currentInstallmentInterestPaid = 0;
+          }
+          
+          // La próxima cuota NO PAGADA es la cuota (paidInstallmentsCount + 1)
+          // Si se pagó 1 cuota, la próxima no pagada es la cuota 2
+          
+          // Calcular la próxima fecha desde start_date + (número de cuotas pagadas + 1) períodos
+          const startDateStr = selectedLoan.start_date.split('T')[0];
+          const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+          const startDate = new Date(startYear, startMonth - 1, startDay);
+          
+          // Calcular la primera fecha de pago (un período después de start_date)
+          const firstPaymentDate = new Date(startDate);
+          const frequency = selectedLoan.payment_frequency || 'monthly';
+          
+          switch (frequency) {
+            case 'daily':
+              firstPaymentDate.setDate(startDate.getDate() + 1);
+              break;
+            case 'weekly':
+              firstPaymentDate.setDate(startDate.getDate() + 7);
+              break;
+            case 'biweekly':
+              firstPaymentDate.setDate(startDate.getDate() + 14);
+              break;
+            case 'monthly':
+            default:
+              // Para indefinidos, siempre usar el día 1 del mes siguiente
+              firstPaymentDate.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, 1);
+              break;
+          }
+          
+          // CORRECCIÓN: Calcular la primera cuota NO PAGADA (vencida o no)
+          // Si se pagó 1 cuota (noviembre), la próxima cuota no pagada es la cuota 2 (diciembre)
+          // La cuota 2 está a 1 período después de la primera cuota (noviembre)
+          const nextDate = new Date(firstPaymentDate);
+          // La próxima cuota no pagada está a 'paidInstallmentsCount' períodos de la primera cuota
+          // Si se pagó 1 cuota, la próxima no pagada es la cuota 2, que está a 1 período de la primera
+          const periodsToAdd = paidInstallmentsCount; // La próxima cuota no pagada está a 'paidInstallmentsCount' períodos de la primera
+          
+          console.log('🔍 PaymentForm: Cálculo de próxima fecha para indefinido:', {
+            startDate: startDateStr,
+            firstPaymentDate: `${firstPaymentDate.getFullYear()}-${String(firstPaymentDate.getMonth() + 1).padStart(2, '0')}-${String(firstPaymentDate.getDate()).padStart(2, '0')}`,
+            paidInstallmentsCount,
+            periodsToAdd,
+            interestPerPayment,
+            currentPaymentInterest: interestPayment
+          });
+          
+          switch (frequency) {
+            case 'daily':
+              nextDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
+              break;
+            case 'weekly':
+              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
+              break;
+            case 'biweekly':
+              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
+              break;
+            case 'monthly':
+            default:
+              // Para indefinidos, siempre usar el día 1 del mes
+              nextDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + periodsToAdd, 1);
+              break;
+          }
+          
+          // Formatear como YYYY-MM-DD
+          const finalYear = nextDate.getFullYear();
+          const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+          const finalDay = String(nextDate.getDate()).padStart(2, '0');
+          nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
+        } else {
+          // Para otros tipos de préstamos, usar la lógica original
+          const [year, month, day] = selectedLoan.next_payment_date.split('-').map(Number);
+          const nextDate = new Date(year, month - 1, day);
 
-        // Ajustar según la frecuencia de pago
-        // CORRECCIÓN: Para frecuencia mensual, avanzar al día 1 del mes siguiente
-        switch (selectedLoan.payment_frequency) {
-          case 'daily':
-            nextDate.setDate(nextDate.getDate() + 1);
-            break;
-          case 'weekly':
-            nextDate.setDate(nextDate.getDate() + 7);
-            break;
-          case 'biweekly':
-            nextDate.setDate(nextDate.getDate() + 14);
-            break;
-          case 'monthly':
-            // Avanzar al día 1 del mes siguiente (preservar el día del mes original)
-            const originalDay = nextDate.getDate(); // Obtener el día original (ej: 1)
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDay);
-            break;
-          case 'quarterly':
-            const originalDayQuarterly = nextDate.getDate();
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 3, originalDayQuarterly);
-            break;
-          case 'yearly':
-            const originalDayYearly = nextDate.getDate();
-            nextDate.setFullYear(nextDate.getFullYear() + 1, nextDate.getMonth(), originalDayYearly);
-            break;
-          default:
-            // Avanzar al día 1 del mes siguiente
-            const originalDayDefault = nextDate.getDate();
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDayDefault);
+          switch (selectedLoan.payment_frequency) {
+            case 'daily':
+              nextDate.setDate(nextDate.getDate() + 1);
+              break;
+            case 'weekly':
+              nextDate.setDate(nextDate.getDate() + 7);
+              break;
+            case 'biweekly':
+              nextDate.setDate(nextDate.getDate() + 14);
+              break;
+            case 'monthly':
+              const originalDay = nextDate.getDate();
+              nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDay);
+              break;
+            case 'quarterly':
+              const originalDayQuarterly = nextDate.getDate();
+              nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 3, originalDayQuarterly);
+              break;
+            case 'yearly':
+              const originalDayYearly = nextDate.getDate();
+              nextDate.setFullYear(nextDate.getFullYear() + 1, nextDate.getMonth(), originalDayYearly);
+              break;
+            default:
+              const originalDayDefault = nextDate.getDate();
+              nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDayDefault);
+          }
+
+          const finalYear = nextDate.getFullYear();
+          const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+          const finalDay = String(nextDate.getDate()).padStart(2, '0');
+          nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
         }
-
-        // Formatear como YYYY-MM-DD sin conversión de zona horaria
-        const finalYear = nextDate.getFullYear();
-        const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
-        const finalDay = String(nextDate.getDate()).padStart(2, '0');
-        nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
 
         // CORRECCIÓN FUNDAMENTAL: Marcar la PRIMERA cuota NO pagada
         // NO calcular basándose en fechas, sino en el array paid_installments

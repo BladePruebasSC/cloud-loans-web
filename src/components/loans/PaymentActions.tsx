@@ -76,6 +76,31 @@ interface PaymentActionsProps {
   loanStatus?: string; // Estado del préstamo para validar si se puede eliminar
 }
 
+// Función para traducir el método de pago en las notas
+const translatePaymentNotes = (notes: string) => {
+  if (!notes) return notes;
+  
+  // Si las notas contienen "Cobro rápido - [método]", traducir el método
+  const quickCollectionPattern = /Cobro rápido\s*-\s*(\w+)/i;
+  const match = notes.match(quickCollectionPattern);
+  
+  if (match) {
+    const method = match[1].toLowerCase();
+    const methodTranslations: { [key: string]: string } = {
+      'cash': 'Efectivo',
+      'bank_transfer': 'Transferencia Bancaria',
+      'check': 'Cheque',
+      'card': 'Tarjeta',
+      'online': 'Pago en línea'
+    };
+    
+    const translatedMethod = methodTranslations[method] || method;
+    return notes.replace(quickCollectionPattern, `Cobro rápido - ${translatedMethod}`);
+  }
+  
+  return notes;
+};
+
 export const PaymentActions: React.FC<PaymentActionsProps> = ({ 
   payment, 
   onPaymentUpdated,
@@ -685,7 +710,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
               // Obtener solo los datos mínimos necesarios: teléfono del cliente, nombre de la empresa y datos básicos del préstamo
               const { data: loanBasicData, error: loanError } = await supabase
                 .from('loans')
-                .select('client_id, amount, interest_rate, remaining_balance, next_payment_date')
+                .select('client_id, amount, interest_rate, remaining_balance, next_payment_date, amortization_type')
                 .eq('id', payment.loan_id)
                 .single();
               
@@ -724,6 +749,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                 .eq('user_id', user.id)
                 .maybeSingle();
               
+              // CORRECCIÓN: Para préstamos indefinidos, el balance restante es el monto original (no cambia)
+              const remainingBalance = loanBasicData.amortization_type === 'indefinite'
+                ? loanBasicData.amount
+                : loanBasicData.remaining_balance;
+              
               const receiptMessage = generateLoanPaymentReceipt({
                 companyName: companyData?.company_name || 'Mi Empresa',
                 clientName: clientData.full_name,
@@ -739,7 +769,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                 lateFeeAmount: payment.late_fee || 0,
                 paymentMethod: payment.payment_method,
                 loanAmount: loanBasicData.amount,
-                remainingBalance: loanBasicData.remaining_balance,
+                remainingBalance: remainingBalance,
                 interestRate: loanBasicData.interest_rate,
                 nextPaymentDate: loanBasicData.next_payment_date ? new Date(loanBasicData.next_payment_date).toLocaleDateString('es-DO', {
                   year: 'numeric',
@@ -797,7 +827,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                     // Obtener solo los datos mínimos necesarios: teléfono del cliente, nombre de la empresa y datos básicos del préstamo
                     const { data: loanBasicData, error: loanError } = await supabase
                       .from('loans')
-                      .select('client_id, amount, interest_rate, remaining_balance, next_payment_date')
+                      .select('client_id, amount, interest_rate, remaining_balance, next_payment_date, amortization_type')
                       .eq('id', payment.loan_id)
                       .single();
                     
@@ -836,6 +866,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                       .eq('user_id', user.id)
                       .maybeSingle();
                     
+                    // CORRECCIÓN: Para préstamos indefinidos, el balance restante es el monto original (no cambia)
+                    const remainingBalance = loanBasicData.amortization_type === 'indefinite'
+                      ? loanBasicData.amount
+                      : loanBasicData.remaining_balance;
+                    
                     const receiptMessage = generateLoanPaymentReceipt({
                       companyName: companyData?.company_name || 'Mi Empresa',
                       clientName: clientData.full_name,
@@ -851,7 +886,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                       lateFeeAmount: payment.late_fee || 0,
                       paymentMethod: payment.payment_method,
                       loanAmount: loanBasicData.amount,
-                      remainingBalance: loanBasicData.remaining_balance,
+                      remainingBalance: remainingBalance,
                       interestRate: loanBasicData.interest_rate,
                       nextPaymentDate: loanBasicData.next_payment_date ? new Date(loanBasicData.next_payment_date).toLocaleDateString('es-DO', {
                         year: 'numeric',
@@ -1004,7 +1039,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                     <div className="mt-4">
                       <span className="font-medium text-gray-600">Notas:</span>
                       <div className="mt-2 p-3 bg-blue-50 rounded-lg">
-                        {payment.notes}
+                        {translatePaymentNotes(payment.notes)}
                       </div>
                     </div>
                   )}

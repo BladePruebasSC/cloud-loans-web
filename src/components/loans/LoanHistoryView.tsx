@@ -300,6 +300,31 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     return methods[method as keyof typeof methods] || method;
   };
 
+  // Función para traducir el método de pago en las notas
+  const translatePaymentNotes = (notes: string) => {
+    if (!notes) return notes;
+    
+    // Si las notas contienen "Cobro rápido - [método]", traducir el método
+    const quickCollectionPattern = /Cobro rápido\s*-\s*(\w+)/i;
+    const match = notes.match(quickCollectionPattern);
+    
+    if (match) {
+      const method = match[1].toLowerCase();
+      const methodTranslations: { [key: string]: string } = {
+        'cash': 'Efectivo',
+        'bank_transfer': 'Transferencia Bancaria',
+        'check': 'Cheque',
+        'card': 'Tarjeta',
+        'online': 'Pago en línea'
+      };
+      
+      const translatedMethod = methodTranslations[method] || method;
+      return notes.replace(quickCollectionPattern, `Cobro rápido - ${translatedMethod}`);
+    }
+    
+    return notes;
+  };
+
   const translateReason = (reason: string) => {
     const translations: Record<string, string> = {
       // Razones para cargos (add_charge)
@@ -476,7 +501,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
                                   {payment.notes && (
                                     <div className="text-sm text-gray-600 mt-2">
-                                      <span className="font-medium">Notas:</span> {payment.notes}
+                                      <span className="font-medium">Notas:</span> {translatePaymentNotes(payment.notes)}
                                     </div>
                                   )}
                                 </div>

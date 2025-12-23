@@ -208,9 +208,156 @@ export const getLateFeeBreakdownFromInstallments = async (
       });
     }
     
-    // CORRECCIÓN: Si hay un next_payment_date vencido y no hay una cuota correspondiente en el breakdown,
-    // generar dinámicamente esa cuota para calcular los días vencidos
-    if (loan.next_payment_date) {
+    // CORRECCIÓN: Para préstamos indefinidos, generar dinámicamente todas las cuotas vencidas
+    // desde la primera no pagada hasta hoy
+    if (loan.amortization_type === 'indefinite' && loan.start_date && loan.next_payment_date) {
+      const maxInstallmentNumber = installments.length > 0 
+        ? Math.max(...installments.map(i => i.installment_number))
+        : 0;
+      
+      // Calcular la primera fecha de pago desde start_date
+      const startDateStr = loan.start_date.split('T')[0];
+      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+      const startDate = new Date(startYear, startMonth - 1, startDay);
+      
+      const firstPaymentDate = new Date(startDate);
+      const frequency = loan.payment_frequency || 'monthly';
+      
+      switch (frequency) {
+        case 'daily':
+          firstPaymentDate.setDate(startDate.getDate() + 1);
+          break;
+        case 'weekly':
+          firstPaymentDate.setDate(startDate.getDate() + 7);
+          break;
+        case 'biweekly':
+          firstPaymentDate.setDate(startDate.getDate() + 14);
+          break;
+        case 'monthly':
+        default:
+          firstPaymentDate.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, 1);
+          break;
+      }
+      
+      // Calcular cuántas cuotas deberían existir desde firstPaymentDate hasta hoy
+      const monthsElapsed = Math.max(0, 
+        (calculationDate.getFullYear() - firstPaymentDate.getFullYear()) * 12 + 
+        (calculationDate.getMonth() - firstPaymentDate.getMonth())
+      );
+      const totalExpected = monthsElapsed + 1;
+      
+      // Calcular el monto base para la mora (interés por cuota para indefinidos)
+      const isIndefinite = loan.amortization_type === 'indefinite';
+      let baseAmount = 0;
+      
+      if (isIndefinite) {
+        const lastInstallment = installments[installments.length - 1];
+        baseAmount = lastInstallment?.interest_amount || lastInstallment?.total_amount || lastInstallment?.amount || loan.monthly_payment || 0;
+      } else {
+        const lastInstallment = installments[installments.length - 1];
+        baseAmount = lastInstallment?.principal_amount || lastInstallment?.total_amount || lastInstallment?.amount || 0;
+      }
+      
+      // CORRECCIÓN: Calcular cuántas cuotas se han pagado basándose en los pagos
+      // para saber cuáles cuotas generadas dinámicamente están pagadas
+      let paidInstallmentsCount = 0;
+      if (payments && payments.length > 0 && isIndefinite && baseAmount > 0) {
+        // Para préstamos indefinidos, calcular cuántas cuotas de interés se han pagado
+        const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+        paidInstallmentsCount = Math.floor(totalInterestPaid / baseAmount);
+        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuotas pagadas calculadas desde pagos:`, {
+          totalInterestPaid,
+          baseAmount,
+          paidInstallmentsCount
+        });
+      }
+      
+      // Generar todas las cuotas desde (maxInstallmentNumber + 1) hasta totalExpected
+      for (let installmentNum = maxInstallmentNumber + 1; installmentNum <= totalExpected; installmentNum++) {
+        // Calcular la fecha de vencimiento de esta cuota
+        const installmentDate = new Date(firstPaymentDate);
+        const periodsToAdd = installmentNum - 1;
+        
+        switch (frequency) {
+          case 'daily':
+            installmentDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
+            break;
+          case 'weekly':
+            installmentDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
+            break;
+          case 'biweekly':
+            installmentDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
+            break;
+          case 'monthly':
+          default:
+            installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + periodsToAdd, 1);
+            break;
+        }
+        
+        const dueDateStr = `${installmentDate.getFullYear()}-${String(installmentDate.getMonth() + 1).padStart(2, '0')}-${String(installmentDate.getDate()).padStart(2, '0')}`;
+        
+        // Verificar si ya existe una cuota con esta fecha en el breakdown
+        const existingInstallment = breakdown.find(item => item.dueDate === dueDateStr);
+        
+        if (!existingInstallment) {
+          // CORRECCIÓN: Verificar si esta cuota está pagada basándose en el número de cuotas pagadas
+          // La cuota 1 es la primera, así que si se pagaron 4 cuotas, las cuotas 1-4 están pagadas
+          const isPaid = isIndefinite && installmentNum <= paidInstallmentsCount;
+          
+          const daysSinceDue = Math.floor((calculationDate.getTime() - installmentDate.getTime()) / (1000 * 60 * 60 * 24));
+          const daysOverdueForInstallment = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
+          
+          let lateFeeForInstallment = 0;
+          // Solo calcular mora si la cuota NO está pagada y está vencida
+          if (!isPaid && daysOverdueForInstallment > 0 && baseAmount > 0) {
+            switch (loan.late_fee_calculation_type) {
+              case 'daily':
+                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForInstallment;
+                break;
+              case 'monthly':
+                const monthsOverdue = Math.ceil(daysOverdueForInstallment / 30);
+                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * monthsOverdue;
+                break;
+              case 'compound':
+                lateFeeForInstallment = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdueForInstallment) - 1);
+                break;
+              default:
+                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForInstallment;
+            }
+            
+            if (loan.max_late_fee && loan.max_late_fee > 0) {
+              lateFeeForInstallment = Math.min(lateFeeForInstallment, loan.max_late_fee);
+            }
+            
+            lateFeeForInstallment = Math.round(lateFeeForInstallment * 100) / 100;
+          }
+          
+          // Agregar la cuota generada dinámicamente al breakdown
+          breakdown.push({
+            installment: installmentNum,
+            dueDate: dueDateStr,
+            daysOverdue: isPaid ? 0 : daysOverdueForInstallment,
+            principal: isIndefinite ? 0 : baseAmount,
+            lateFee: isPaid ? 0 : lateFeeForInstallment,
+            isPaid: isPaid
+          });
+          
+          // Solo agregar la mora al total si la cuota NO está pagada
+          if (!isPaid) {
+            totalLateFee += lateFeeForInstallment;
+          }
+          
+          console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota generada dinámicamente para indefinido:`, {
+            installment: installmentNum,
+            dueDate: dueDateStr,
+            daysOverdue: isPaid ? 0 : daysOverdueForInstallment,
+            lateFee: isPaid ? 0 : lateFeeForInstallment,
+            isPaid
+          });
+        }
+      }
+    } else if (loan.next_payment_date) {
+      // Para préstamos no indefinidos, mantener la lógica original
       const [nextYear, nextMonth, nextDay] = loan.next_payment_date.split('-').map(Number);
       const nextPaymentDate = new Date(nextYear, nextMonth - 1, nextDay);
       const daysSinceNextPayment = Math.floor((calculationDate.getTime() - nextPaymentDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -228,16 +375,13 @@ export const getLateFeeBreakdownFromInstallments = async (
         const daysOverdueForNext = Math.max(0, daysSinceNextPayment - (loan.grace_period_days || 0));
         
         // Calcular el monto base para la mora
-        // Para préstamos indefinidos, usar el monthly_payment o interest_amount
         const isIndefinite = loan.amortization_type === 'indefinite';
         let baseAmount = 0;
         
         if (isIndefinite) {
-          // Para indefinidos, usar monthly_payment o interest_amount de la última cuota
           const lastInstallment = installments[installments.length - 1];
           baseAmount = lastInstallment?.interest_amount || lastInstallment?.total_amount || lastInstallment?.amount || loan.monthly_payment || 0;
         } else {
-          // Para otros tipos, calcular el principal por cuota
           const lastInstallment = installments[installments.length - 1];
           baseAmount = lastInstallment?.principal_amount || lastInstallment?.total_amount || lastInstallment?.amount || 0;
         }

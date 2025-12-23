@@ -106,9 +106,85 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   const [amortizationPeriod, setAmortizationPeriod] = useState('all');
   const [amortizationSchedule, setAmortizationSchedule] = useState<any[]>([]);
 
+  // Función para traducir el método de pago en las notas
+  const translatePaymentNotes = (notes: string) => {
+    if (!notes) return notes;
+    
+    // Si las notas contienen "Cobro rápido - [método]", traducir el método
+    const quickCollectionPattern = /Cobro rápido\s*-\s*(\w+)/i;
+    const match = notes.match(quickCollectionPattern);
+    
+    if (match) {
+      const method = match[1].toLowerCase();
+      const methodTranslations: { [key: string]: string } = {
+        'cash': 'Efectivo',
+        'bank_transfer': 'Transferencia Bancaria',
+        'check': 'Cheque',
+        'card': 'Tarjeta',
+        'online': 'Pago en línea'
+      };
+      
+      const translatedMethod = methodTranslations[method] || method;
+      return notes.replace(quickCollectionPattern, `Cobro rápido - ${translatedMethod}`);
+    }
+    
+    return notes;
+  };
+
   useEffect(() => {
     if (isOpen && loanId) {
       fetchAccountData();
+      
+      // Suscribirse a cambios en la tabla de pagos, cuotas y préstamos
+      const updatesChannel = supabase
+        .channel(`account-statement-${loanId}`)
+        .on('postgres_changes', 
+          { 
+            event: '*', 
+            schema: 'public', 
+            table: 'payments',
+            filter: `loan_id=eq.${loanId}`
+          }, 
+          (payload) => {
+            console.log('🔔 AccountStatement: Cambio detectado en pagos:', payload);
+            setTimeout(() => {
+              fetchAccountData();
+            }, 500);
+          }
+        )
+        .on('postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'installments',
+            filter: `loan_id=eq.${loanId}`
+          },
+          (payload) => {
+            console.log('🔔 AccountStatement: Cambio detectado en cuotas:', payload);
+            setTimeout(() => {
+              fetchAccountData();
+            }, 500);
+          }
+        )
+        .on('postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'loans',
+            filter: `id=eq.${loanId}`
+          },
+          (payload) => {
+            console.log('🔔 AccountStatement: Cambio detectado en préstamo:', payload);
+            setTimeout(() => {
+              fetchAccountData();
+            }, 500);
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(updatesChannel);
+      };
     }
   }, [isOpen, loanId]);
 
@@ -271,75 +347,63 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Para préstamos indefinidos, generar cuotas dinámicamente basándose en el tiempo transcurrido
       let installmentsData = installmentsDataRaw || [];
       if (isIndefinite && loanData) {
-        // CORRECCIÓN: Usar next_payment_date o first_payment_date directamente si está disponible
-        // Solo calcular desde start_date si no están disponibles
-        const firstPaymentDateStr = loanData.first_payment_date?.split('T')[0] || loanData.next_payment_date?.split('T')[0];
+        // CORRECCIÓN: Para préstamos indefinidos, siempre calcular desde start_date
+        // La primera cuota debe ser un mes después de start_date (día 1 del mes siguiente)
+        const startDateStr = loanData.start_date?.split('T')[0];
         let firstPaymentDateBase: Date;
-          const today = getCurrentDateInSantoDomingo();
-          const frequency = loanData.payment_frequency || 'monthly';
+        const today = getCurrentDateInSantoDomingo();
+        const frequency = loanData.payment_frequency || 'monthly';
         
-        if (firstPaymentDateStr) {
-          // CORRECCIÓN UTC-4: Parsear como fecha local para evitar problemas de zona horaria
-          const [firstYear, firstMonth, firstDay] = firstPaymentDateStr.split('-').map(Number);
-          // Usar new Date(year, month - 1, day) para crear fecha local (no UTC)
-          firstPaymentDateBase = new Date(firstYear, firstMonth - 1, firstDay);
+        if (!startDateStr) {
+          installmentsData = installmentsDataRaw || [];
+        } else {
+          const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+          const startDate = new Date(startYear, startMonth - 1, startDay);
+          firstPaymentDateBase = new Date(startDate);
           
-          // CORRECCIÓN: Si first_payment_date o next_payment_date es igual a start_date,
-          // entonces calcular un mes después (la primera cuota debe ser un mes después de start_date)
-          const startDateStr = loanData.start_date?.split('T')[0];
-          if (startDateStr && firstPaymentDateStr === startDateStr) {
-            // Si la fecha es igual a start_date, calcular un mes después
-            const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-            const startDate = new Date(startYear, startMonth - 1, startDay);
-            firstPaymentDateBase = new Date(startDate);
-          
+          // Calcular la primera fecha de pago (un mes después de start_date)
+          // Para préstamos indefinidos, siempre usar el día 1 del mes siguiente
           switch (frequency) {
             case 'daily':
-                firstPaymentDateBase.setDate(startDate.getDate() + 1);
+              firstPaymentDateBase.setDate(startDate.getDate() + 1);
               break;
             case 'weekly':
-                firstPaymentDateBase.setDate(startDate.getDate() + 7);
+              firstPaymentDateBase.setDate(startDate.getDate() + 7);
               break;
             case 'biweekly':
-                firstPaymentDateBase.setDate(startDate.getDate() + 14);
+              firstPaymentDateBase.setDate(startDate.getDate() + 14);
               break;
             case 'monthly':
             default:
-                firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
-                break;
-            }
-          }
-        } else {
-          // Si no hay first_payment_date ni next_payment_date, calcular desde start_date
-          const startDateStr = loanData.start_date?.split('T')[0];
-          if (!startDateStr) {
-            installmentsData = installmentsDataRaw || [];
-          } else {
-            const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-            const startDate = new Date(startYear, startMonth - 1, startDay);
-            firstPaymentDateBase = new Date(startDate);
-            
-            // Calcular la primera fecha de pago (un mes después de start_date)
-            switch (frequency) {
-              case 'daily':
-                firstPaymentDateBase.setDate(startDate.getDate() + 1);
-                break;
-              case 'weekly':
-                firstPaymentDateBase.setDate(startDate.getDate() + 7);
-                break;
-              case 'biweekly':
-                firstPaymentDateBase.setDate(startDate.getDate() + 14);
-                break;
-              case 'monthly':
-              default:
+              // CORRECCIÓN: Para préstamos indefinidos, siempre usar el día 1 del mes siguiente
+              if (loanData.amortization_type === 'indefinite') {
+                firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, 1);
+              } else {
                 // Usar setFullYear para preservar el día exacto
                 firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
+              }
               break;
-            }
           }
-          }
+        }
           
         if (firstPaymentDateBase) {
+          // Obtener todos los pagos para determinar cuántas cuotas se han pagado
+          const { data: allPayments, error: paymentsError } = await supabase
+            .from('payments')
+            .select('id, interest_amount, payment_date')
+            .eq('loan_id', loanId)
+            .order('payment_date', { ascending: true });
+
+          // Calcular cuántas cuotas se han pagado basándose en los pagos
+          // Para préstamos indefinidos, cada pago de interés completo = 1 cuota pagada
+          const periodRate = (loanData.interest_rate || 0) / 100;
+          const interestPerPayment = (loanData.amount || 0) * periodRate;
+          let paidInstallmentsCount = 0;
+          if (allPayments && interestPerPayment > 0) {
+            // Contar cuántos pagos completos de interés se han hecho
+            // Esto nos da el número mínimo de cuotas que deben mostrarse
+            paidInstallmentsCount = allPayments.filter(p => (p.interest_amount || 0) >= interestPerPayment * 0.99).length;
+          }
           
           // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
           let monthsElapsed = 0;
@@ -364,19 +428,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               if (today.getDate() >= firstPaymentDateBase.getDate()) {
                 monthsElapsed += 1;
               }
-              // CORRECCIÓN: Para préstamos indefinidos, siempre incluir el mes siguiente
-              // para asegurar que se muestren todas las cuotas hasta el próximo mes
-              // Si hoy es diciembre y la primera cuota es noviembre, debería haber 3 cuotas (nov, dic, ene)
-              monthsElapsed += 1; // Agregar 1 mes más para incluir el mes siguiente
-              // Asegurar que siempre haya al menos 1 cuota
-              monthsElapsed = Math.max(1, monthsElapsed);
               break;
           }
           
+          // CORRECCIÓN: Para préstamos indefinidos, usar el máximo entre:
+          // 1. Cuotas pagadas (basadas en pagos reales)
+          // 2. Meses transcurridos + 1 mes futuro
+          // Esto asegura que se muestren todas las cuotas pagadas y al menos 1 mes futuro
+          const monthsFromTime = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes siguiente
+          const monthsFromPayments = Math.max(1, paidInstallmentsCount + 1); // +1 para incluir la próxima cuota
+          monthsElapsed = Math.max(monthsFromTime, monthsFromPayments);
+          
           // Generar cuotas dinámicamente
           const dynamicInstallments = [];
-          const periodRate = (loanData.interest_rate || 0) / 100;
-          const interestPerPayment = (loanData.amount || 0) * periodRate;
           
           // CORRECCIÓN: Usar la fecha calculada correctamente
           const firstPaymentDate = new Date(firstPaymentDateBase);
@@ -396,10 +460,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               case 'biweekly':
                 installmentDate.setDate(firstPaymentDate.getDate() + ((i - 1) * 14));
                 break;
-              case 'monthly':
-              default:
-                // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
-                installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), firstPaymentDate.getDate());
+            case 'monthly':
+            default:
+                // CORRECCIÓN: Para préstamos indefinidos, siempre usar el día 1 del mes
+                if (loanData.amortization_type === 'indefinite') {
+                  installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), 1);
+                } else {
+                  // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
+                  installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), firstPaymentDate.getDate());
+                }
                 break;
             }
             
@@ -1141,7 +1210,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             ${payment.notes ? `
               <div class="payment-details">
                 <h3>Notas</h3>
-                <p>${payment.notes}</p>
+                <p>${translatePaymentNotes(payment.notes)}</p>
               </div>
             ` : ''}
 
@@ -1918,7 +1987,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
                           {payment.notes && (
                             <div className="mt-2 pt-2 border-t text-sm text-gray-600">
-                              <span className="font-medium">Notas:</span> {payment.notes}
+                              <span className="font-medium">Notas:</span> {translatePaymentNotes(payment.notes)}
                             </div>
                           )}
 
@@ -2081,7 +2150,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                     {selectedPayment.notes && (
                       <div className="mt-4 pt-4 border-t">
                         <span className="text-gray-600 font-medium">Notas:</span>
-                        <p className="mt-1 text-sm">{selectedPayment.notes}</p>
+                        <p className="mt-1 text-sm">{translatePaymentNotes(selectedPayment.notes)}</p>
                       </div>
                     )}
                   </CardContent>
