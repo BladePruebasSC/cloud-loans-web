@@ -1020,7 +1020,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               return;
             }
 
-            // Permitir pagos parciales negociados - no validar que el capital deba ser completo
+            // CORRECCIÓN: Para saldar un préstamo, es obligatorio pagar todo el capital pendiente como mínimo
+            // El interés y la mora pueden ser lo que se ponga, pero el capital debe ser completo
+            if (settleBreakdown.capitalPending > 0 && capitalPayment < settleBreakdown.capitalPending) {
+              toast.error(`Para saldar el préstamo debe pagar todo el capital pendiente (RD$${settleBreakdown.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) como mínimo. El interés y la mora pueden ser lo que se ponga.`);
+              setLoading(false);
+              return;
+            }
 
             try {
               // Usar los valores directamente de los campos

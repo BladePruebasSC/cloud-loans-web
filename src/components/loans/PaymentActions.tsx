@@ -25,6 +25,7 @@ import {
 import { generateLoanPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 
 interface Payment {
   id: string;
@@ -244,16 +245,16 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
     try {
       setLoading(true);
       
-      console.log('🗑️ ELIMINACIÓN DEL ÚLTIMO PAGO - Iniciando...');
+      console.log('🗑️ ELIMINACIÓN DEL PAGO - Iniciando...');
       console.log('🗑️ Pago ID:', payment.id);
       console.log('🗑️ Monto:', payment.amount);
       console.log('🗑️ Préstamo ID:', payment.loan_id);
       
-      // PASO 1: Obtener balance actual del préstamo
-      console.log('🗑️ OBTENIENDO BALANCE DEL PRÉSTAMO...');
+      // PASO 1: Obtener todos los datos del préstamo necesarios
+      console.log('🗑️ OBTENIENDO DATOS DEL PRÉSTAMO...');
       const { data: loanData, error: loanError } = await supabase
         .from('loans')
-        .select('remaining_balance')
+        .select('remaining_balance, amount, interest_rate, term_months, payment_frequency, amortization_type, start_date, next_payment_date, paid_installments, current_late_fee, late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type, late_fee_enabled, monthly_payment')
         .eq('id', payment.loan_id)
         .single();
 
@@ -262,9 +263,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         throw loanError;
       }
 
-      const newBalance = loanData.remaining_balance + payment.amount;
-      console.log('🗑️ Balance actual:', loanData.remaining_balance);
-      console.log('🗑️ Nuevo balance:', newBalance);
+      console.log('🗑️ Datos del préstamo obtenidos:', loanData);
 
       // PASO 2: Eliminar el pago
       console.log('🗑️ ELIMINANDO PAGO...');
@@ -275,36 +274,312 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       if (deleteError) {
         console.error('🗑️ ERROR eliminando pago:', deleteError);
-        console.error('🗑️ Detalles del error:', {
-          code: deleteError.code,
-          message: deleteError.message,
-          details: deleteError.details,
-          hint: deleteError.hint
-        });
         throw deleteError;
       }
 
       console.log('🗑️ ✅ Pago eliminado exitosamente');
 
-      // PASO 3: Actualizar balance del préstamo y restaurar mora si aplica
-      console.log('🗑️ ACTUALIZANDO BALANCE...');
-      
-      // Si el pago eliminado incluía mora, restaurarla al préstamo
-      let updateData: any = { remaining_balance: newBalance };
-      if (payment.late_fee && payment.late_fee > 0) {
-        console.log('🗑️ RESTAURANDO MORA:', payment.late_fee);
-        // Obtener la mora actual del préstamo
-        const { data: currentLoan, error: currentLoanError } = await supabase
-          .from('loans')
-          .select('current_late_fee')
-          .eq('id', payment.loan_id)
-          .single();
+      // PASO 3: Obtener todos los pagos restantes
+      console.log('🗑️ OBTENIENDO PAGOS RESTANTES...');
+      const { data: remainingPayments, error: paymentsError } = await supabase
+        .from('payments')
+        .select('id, principal_amount, interest_amount, late_fee, payment_date')
+        .eq('loan_id', payment.loan_id)
+        .order('payment_date', { ascending: true });
+
+      if (paymentsError) {
+        console.error('🗑️ ERROR obteniendo pagos restantes:', paymentsError);
+        throw paymentsError;
+      }
+
+      console.log('🗑️ Pagos restantes:', remainingPayments?.length || 0);
+
+      // PASO 4: Recalcular balance
+      // Para préstamos indefinidos, el balance siempre es el monto original
+      // Para otros tipos, calcular basándose en el capital pagado
+      let newBalance: number;
+      if (loanData.amortization_type === 'indefinite') {
+        newBalance = loanData.amount; // El balance no cambia en préstamos indefinidos
+      } else {
+        const totalPrincipalPaid = remainingPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
+        newBalance = loanData.amount - totalPrincipalPaid;
+      }
+      console.log('🗑️ Balance recalculado:', {
+        amount: loanData.amount,
+        amortization_type: loanData.amortization_type,
+        newBalance
+      });
+
+      // PASO 5: Recalcular next_payment_date y paid_installments basándose en los pagos restantes
+      let nextPaymentDate = loanData.next_payment_date;
+      let updatedPaidInstallments: number[] = [];
+
+      if (loanData.amortization_type === 'indefinite') {
+        // Para préstamos indefinidos, calcular basándose en el interés pagado
+        const interestPerPayment = (loanData.amount * loanData.interest_rate) / 100;
+        let paidInstallmentsCount = 0;
+        let currentInstallmentInterestPaid = 0;
         
-        if (!currentLoanError && currentLoan) {
-          const newCurrentLateFee = (currentLoan.current_late_fee || 0) + payment.late_fee;
-          updateData.current_late_fee = newCurrentLateFee;
-          console.log('🗑️ Nueva mora actual:', newCurrentLateFee);
+        if (remainingPayments && remainingPayments.length > 0) {
+          for (const p of remainingPayments) {
+            currentInstallmentInterestPaid += p.interest_amount || 0;
+            if (currentInstallmentInterestPaid >= interestPerPayment * 0.99) {
+              paidInstallmentsCount++;
+              currentInstallmentInterestPaid = 0;
+            }
+          }
         }
+
+        // Calcular la próxima fecha desde start_date
+        if (!loanData.start_date) {
+          console.warn('🗑️ No hay start_date, usando next_payment_date original');
+          nextPaymentDate = loanData.next_payment_date;
+        } else {
+          const startDateStr = loanData.start_date.split('T')[0];
+          const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+          const startDate = new Date(startYear, startMonth - 1, startDay);
+          
+          const firstPaymentDate = new Date(startDate);
+          const frequency = loanData.payment_frequency || 'monthly';
+          
+          switch (frequency) {
+            case 'daily':
+              firstPaymentDate.setDate(startDate.getDate() + 1);
+              break;
+            case 'weekly':
+              firstPaymentDate.setDate(startDate.getDate() + 7);
+              break;
+            case 'biweekly':
+              firstPaymentDate.setDate(startDate.getDate() + 14);
+              break;
+            case 'monthly':
+            default:
+              const startDay = startDate.getDate();
+              const nextMonth = startDate.getMonth() + 1;
+              const nextYear = startDate.getFullYear();
+              const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
+              const dayToUse = Math.min(startDay, lastDayOfNextMonth);
+              firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
+              break;
+          }
+          
+          const nextDate = new Date(firstPaymentDate);
+          const periodsToAdd = paidInstallmentsCount;
+          
+          switch (frequency) {
+            case 'daily':
+              nextDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
+              break;
+            case 'weekly':
+              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
+              break;
+            case 'biweekly':
+              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
+              break;
+            case 'monthly':
+            default:
+              const paymentDay = firstPaymentDate.getDate();
+              const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
+              const targetYear = firstPaymentDate.getFullYear();
+              const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+              const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
+              nextDate.setFullYear(targetYear, targetMonth, dayToUse);
+              break;
+          }
+          
+          const finalYear = nextDate.getFullYear();
+          const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+          const finalDay = String(nextDate.getDate()).padStart(2, '0');
+          nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
+        }
+
+        // Actualizar paid_installments para préstamos indefinidos
+        for (let i = 1; i <= paidInstallmentsCount; i++) {
+          updatedPaidInstallments.push(i);
+        }
+      } else {
+        // Para préstamos no indefinidos, calcular basándose en la acumulación de interés y capital
+        const interestPerPayment = (loanData.amount * loanData.interest_rate) / 100;
+        const principalPerPayment = loanData.monthly_payment - interestPerPayment;
+        let paidInstallmentsCount = 0;
+        let currentInstallmentInterestPaid = 0;
+        let currentInstallmentPrincipalPaid = 0;
+        
+        if (remainingPayments && remainingPayments.length > 0) {
+          for (const p of remainingPayments) {
+            const paymentInterest = p.interest_amount || 0;
+            const paymentPrincipal = p.principal_amount || 0;
+            
+            currentInstallmentInterestPaid += paymentInterest;
+            currentInstallmentPrincipalPaid += paymentPrincipal;
+            
+            // Verificar si esta cuota está completamente pagada
+            if (currentInstallmentInterestPaid >= interestPerPayment * 0.99 && 
+                currentInstallmentPrincipalPaid >= principalPerPayment * 0.99) {
+              paidInstallmentsCount++;
+              currentInstallmentInterestPaid = 0;
+              currentInstallmentPrincipalPaid = 0;
+            } else {
+              // Limitar a los montos requeridos
+              currentInstallmentInterestPaid = Math.min(currentInstallmentInterestPaid, interestPerPayment);
+              currentInstallmentPrincipalPaid = Math.min(currentInstallmentPrincipalPaid, principalPerPayment);
+            }
+          }
+        }
+
+        // Calcular next_payment_date
+        if (!loanData.start_date) {
+          console.warn('🗑️ No hay start_date, usando next_payment_date original');
+          nextPaymentDate = loanData.next_payment_date;
+        } else {
+          const startDateStr = loanData.start_date.split('T')[0];
+          const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+          const startDate = new Date(startYear, startMonth - 1, startDay);
+          
+          const firstPaymentDate = new Date(startDate);
+          const frequency = loanData.payment_frequency || 'monthly';
+          
+          switch (frequency) {
+            case 'daily':
+              firstPaymentDate.setDate(startDate.getDate() + 1);
+              break;
+            case 'weekly':
+              firstPaymentDate.setDate(startDate.getDate() + 7);
+              break;
+            case 'biweekly':
+              firstPaymentDate.setDate(startDate.getDate() + 14);
+              break;
+            case 'monthly':
+            default:
+              const startDay = startDate.getDate();
+              const nextMonth = startDate.getMonth() + 1;
+              const nextYear = startDate.getFullYear();
+              const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
+              const dayToUse = Math.min(startDay, lastDayOfNextMonth);
+              firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
+              break;
+          }
+          
+          // La próxima cuota no pagada está a (paidInstallmentsCount) períodos de firstPaymentDate
+          // Si se pagaron 0 cuotas, la próxima es la cuota 1 (firstPaymentDate + 0 períodos = firstPaymentDate)
+          // Si se pagó 1 cuota, la próxima es la cuota 2 (firstPaymentDate + 1 período)
+          const nextDate = new Date(firstPaymentDate);
+          const periodsToAdd = paidInstallmentsCount; // Si paidInstallmentsCount = 0, nextDate = firstPaymentDate (correcto)
+          
+          switch (frequency) {
+            case 'daily':
+              nextDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
+              break;
+            case 'weekly':
+              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
+              break;
+            case 'biweekly':
+              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
+              break;
+            case 'monthly':
+            default:
+              const paymentDay = firstPaymentDate.getDate();
+              const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
+              const targetYear = firstPaymentDate.getFullYear();
+              const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+              const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
+              nextDate.setFullYear(targetYear, targetMonth, dayToUse);
+              break;
+          }
+          
+          const finalYear = nextDate.getFullYear();
+          const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+          const finalDay = String(nextDate.getDate()).padStart(2, '0');
+          nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
+        }
+
+        // Actualizar paid_installments para préstamos no indefinidos
+        for (let i = 1; i <= paidInstallmentsCount; i++) {
+          updatedPaidInstallments.push(i);
+        }
+      }
+
+      console.log('🗑️ Próxima fecha de pago recalculada:', nextPaymentDate);
+      console.log('🗑️ Cuotas pagadas recalculadas:', updatedPaidInstallments);
+
+      // PASO 6: Revertir el estado de las cuotas que ya no deberían estar pagadas
+      console.log('🗑️ REVIRTIENDO ESTADO DE CUOTAS...');
+      const { data: allInstallments, error: installmentsError } = await supabase
+        .from('installments')
+        .select('installment_number, is_paid')
+        .eq('loan_id', payment.loan_id);
+
+      if (!installmentsError && allInstallments) {
+        // Revertir todas las cuotas que no están en updatedPaidInstallments
+        for (const installment of allInstallments) {
+          const shouldBePaid = updatedPaidInstallments.includes(installment.installment_number);
+          if (installment.is_paid && !shouldBePaid) {
+            console.log(`🗑️ Revirtiendo cuota ${installment.installment_number} a pendiente`);
+            await supabase
+              .from('installments')
+              .update({
+                is_paid: false,
+                paid_date: null
+              })
+              .eq('loan_id', payment.loan_id)
+              .eq('installment_number', installment.installment_number);
+          } else if (!installment.is_paid && shouldBePaid) {
+            console.log(`🗑️ Marcando cuota ${installment.installment_number} como pagada`);
+            await supabase
+              .from('installments')
+              .update({
+                is_paid: true,
+                paid_date: remainingPayments && remainingPayments.length > 0 
+                  ? remainingPayments[remainingPayments.length - 1].payment_date?.split('T')[0] 
+                  : null
+              })
+              .eq('loan_id', payment.loan_id)
+              .eq('installment_number', installment.installment_number);
+          }
+        }
+      }
+
+      // PASO 7: Recalcular la mora
+      console.log('🗑️ RECALCULANDO MORA...');
+      const loanDataForLateFee = {
+        id: payment.loan_id,
+        remaining_balance: newBalance,
+        next_payment_date: nextPaymentDate,
+        late_fee_rate: loanData.late_fee_rate || 0,
+        grace_period_days: loanData.grace_period_days || 0,
+        max_late_fee: loanData.max_late_fee || 0,
+        late_fee_calculation_type: loanData.late_fee_calculation_type || 'daily',
+        late_fee_enabled: loanData.late_fee_enabled || false,
+        amount: loanData.amount,
+        term: loanData.term_months || 4,
+        payment_frequency: loanData.payment_frequency || 'monthly',
+        interest_rate: loanData.interest_rate,
+        monthly_payment: loanData.monthly_payment,
+        start_date: loanData.start_date,
+        amortization_type: loanData.amortization_type
+      };
+
+      const lateFeeBreakdown = await getLateFeeBreakdownFromInstallments(payment.loan_id, loanDataForLateFee);
+      const newCurrentLateFee = lateFeeBreakdown.totalLateFee;
+
+      console.log('🗑️ Mora recalculada:', newCurrentLateFee);
+
+      // PASO 8: Actualizar el préstamo con todos los datos recalculados
+      console.log('🗑️ ACTUALIZANDO PRÉSTAMO...');
+      const updateData: any = {
+        remaining_balance: newBalance,
+        next_payment_date: nextPaymentDate,
+        paid_installments: updatedPaidInstallments,
+        current_late_fee: newCurrentLateFee,
+        last_late_fee_calculation: new Date().toISOString().split('T')[0],
+        status: newBalance <= 0 ? 'paid' : 'active'
+      };
+
+      // Si el pago eliminado incluía mora, ya está recalculada arriba
+      // Pero si había mora en el pago, asegurarnos de que se restaure correctamente
+      if (payment.late_fee && payment.late_fee > 0) {
+        console.log('🗑️ El pago eliminado incluía mora de:', payment.late_fee);
+        // La mora ya fue recalculada arriba, así que no necesitamos sumarla manualmente
       }
       
       const { error: updateError } = await supabase
@@ -317,10 +592,10 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         throw updateError;
       }
 
-      console.log('🗑️ ✅ Balance actualizado exitosamente');
+      console.log('🗑️ ✅ Préstamo actualizado exitosamente con todos los datos recalculados');
 
-      // PASO 4: Notificar éxito y refrescar
-      toast.success('Pago eliminado exitosamente');
+      // PASO 9: Notificar éxito y refrescar
+      toast.success('Pago eliminado exitosamente. Todos los datos han sido revertidos.');
       setShowDeleteModal(false);
       
       // Refrescar inmediatamente
