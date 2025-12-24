@@ -459,7 +459,7 @@ export const QuickCollectionModule = () => {
       } catch (error) {
         console.error('Error obteniendo teléfono del cliente:', error);
       }
-
+      
       // Guardar datos del pago para el recibo
       setLastPayment({
         ...insertedPayment,
