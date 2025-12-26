@@ -367,6 +367,11 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       'administrative_decision': 'Decisión Administrativa',
       'client_complaint': 'Reclamo del Cliente',
       'system_error': 'Error del Sistema',
+      // Razones para saldar préstamo (settle_loan)
+      'full_payment': 'Pago Completo del Préstamo',
+      'early_settlement': 'Liquidación Anticipada',
+      'client_request': 'Solicitud del Cliente',
+      'refinancing': 'Refinanciamiento',
       // Razón genérica
       'other': 'Otra Razón'
     };
@@ -683,6 +688,30 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                         )}
 
                         {entry.change_type === 'add_charge' && (entry as any).reference_number && (
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Referencia:</span> {(entry as any).reference_number}
+                          </div>
+                        )}
+
+                        {/* Información específica para pagos (settle_loan) */}
+                        {entry.change_type === 'payment' && (entry as any).charge_date && (
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Fecha del Pago:</span>{' '}
+                            {new Date((entry as any).charge_date).toLocaleDateString('es-DO', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          </div>
+                        )}
+
+                        {entry.change_type === 'payment' && (entry as any).payment_method && (
+                          <div className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium">Método de Pago:</span> {getPaymentMethodLabel((entry as any).payment_method)}
+                          </div>
+                        )}
+
+                        {entry.change_type === 'payment' && (entry as any).reference_number && (
                           <div className="text-sm text-gray-600 mb-2">
                             <span className="font-medium">Referencia:</span> {(entry as any).reference_number}
                           </div>

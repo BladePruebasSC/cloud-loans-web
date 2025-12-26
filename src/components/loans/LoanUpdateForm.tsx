@@ -10,12 +10,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
-import { getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
+import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { generateLoanPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { 
   Edit, 
   DollarSign, 
@@ -28,7 +30,10 @@ import {
   Receipt,
   Trash2,
   PlusCircle,
-  MinusCircle
+  MinusCircle,
+  Printer,
+  Download,
+  MessageCircle
 } from 'lucide-react';
 import { LateFeeInfo } from './LateFeeInfo';
 import { PaymentForm } from './PaymentForm';
@@ -44,6 +49,7 @@ const updateSchema = z.object({
   reference_number: z.string().optional(),
   notes: z.string().optional(),
   charge_date: z.string().optional(), // Fecha de creación del cargo
+  charge_due_date: z.string().optional(), // Fecha de vencimiento del cargo
   settle_amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(), // Monto para saldar préstamo (deprecated, usar campos separados)
   settle_capital: z.number().min(0, 'El capital no puede ser negativo').optional(), // Capital a pagar
   settle_interest: z.number().min(0, 'El interés no puede ser negativo').optional(), // Interés a pagar
@@ -176,6 +182,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     totalToSettle: 0
   });
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [pendingFormData, setPendingFormData] = useState<UpdateFormData | null>(null);
+  const [showPrintFormatModal, setShowPrintFormatModal] = useState(false);
+  const [showWhatsAppDialog, setShowWhatsAppDialog] = useState(false);
+  const [isClosingPrintModal, setIsClosingPrintModal] = useState(false);
+  const [lastSettlePaymentData, setLastSettlePaymentData] = useState<any>(null);
+  const [companySettings, setCompanySettings] = useState<any>(null);
   const { user, companyId } = useAuth();
 
   const form = useForm<UpdateFormData>({
@@ -386,6 +399,34 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       setPendingInterestForIndefinite(0);
     }
   }, [isOpen, loan.id, loan.amortization_type, loan.start_date, installments]);
+
+  // Obtener datos de la empresa para el recibo
+  useEffect(() => {
+    const fetchCompanySettings = async () => {
+      if (!companyId) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from('company_settings')
+          .select('*')
+          .eq('user_id', companyId)
+          .maybeSingle();
+        
+        if (error) {
+          console.error('Error obteniendo datos de la empresa:', error);
+          return;
+        }
+        
+        if (data) {
+          setCompanySettings(data);
+        }
+      } catch (error) {
+        console.error('Error obteniendo datos de la empresa:', error);
+      }
+    };
+    
+    fetchCompanySettings();
+  }, [companyId]);
 
   // Función para calcular el interés pendiente total para préstamos indefinidos
   const calculatePendingInterestForIndefinite = async () => {
@@ -785,15 +826,434 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     });
   };
 
+  // Función para generar el HTML del recibo según el formato
+  const generateReceiptHTMLWithFormat = (format: string = 'LETTER'): string => {
+    if (!lastSettlePaymentData) return '';
+    
+    const payment = lastSettlePaymentData.payment;
+    const loan = lastSettlePaymentData.loan;
+    // Manejar tanto 'client' como 'clients' (puede venir de diferentes consultas)
+    const client = loan.client || (loan as any).clients;
+    
+    const getPaymentMethodLabel = (method: string) => {
+      const methods: { [key: string]: string } = {
+        cash: 'Efectivo',
+        bank_transfer: 'Transferencia',
+        check: 'Cheque',
+        card: 'Tarjeta',
+        online: 'En línea'
+      };
+      return methods[method] || method;
+    };
+
+    const getFormatStyles = (format: string) => {
+      switch (format) {
+        case 'POS58':
+          return `
+            * { box-sizing: border-box; }
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0 !important; 
+              padding: 0 !important;
+              font-size: 12px;
+              line-height: 1.2;
+              color: #000;
+              width: 100% !important;
+              min-width: 100% !important;
+            }
+            .receipt-container {
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 5px !important;
+              min-width: 100% !important;
+            }
+            .header { text-align: center; margin-bottom: 10px; width: 100%; }
+            .receipt-title { font-size: 14px; font-weight: bold; margin-bottom: 5px; }
+            .receipt-number { font-size: 10px; }
+            .section { margin-bottom: 10px; width: 100%; }
+            .section-title { font-weight: bold; font-size: 11px; margin-bottom: 5px; text-decoration: underline; }
+            .info-row { margin-bottom: 3px; font-size: 10px; width: 100%; }
+            .amount-section { margin: 10px 0; width: 100%; }
+            .total-amount { font-size: 14px; font-weight: bold; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 15px; text-align: center; font-size: 9px; width: 100%; }
+            @media print { 
+              * { box-sizing: border-box; }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100% !important;
+                min-width: 100% !important;
+              }
+              .receipt-container { 
+                border: none; 
+                width: 100% !important; 
+                max-width: none !important; 
+                margin: 0 !important;
+                min-width: 100% !important;
+              }
+              @page { 
+                margin: 0 !important; 
+                size: auto !important;
+              }
+            }
+          `;
+        
+        case 'POS80':
+          return `
+            * { box-sizing: border-box; }
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0 !important; 
+              padding: 0 !important;
+              font-size: 14px;
+              line-height: 1.3;
+              color: #000;
+              width: 100% !important;
+              min-width: 100% !important;
+            }
+            .receipt-container {
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 8px !important;
+              min-width: 100% !important;
+            }
+            .header { text-align: center; margin-bottom: 15px; width: 100%; }
+            .receipt-title { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
+            .receipt-number { font-size: 12px; }
+            .section { margin-bottom: 15px; width: 100%; }
+            .section-title { font-weight: bold; font-size: 13px; margin-bottom: 8px; text-decoration: underline; }
+            .info-row { margin-bottom: 4px; font-size: 12px; width: 100%; }
+            .amount-section { margin: 15px 0; width: 100%; }
+            .total-amount { font-size: 16px; font-weight: bold; text-align: center; margin-top: 15px; }
+            .footer { margin-top: 20px; text-align: center; font-size: 10px; width: 100%; }
+            @media print { 
+              * { box-sizing: border-box; }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100% !important;
+                min-width: 100% !important;
+              }
+              .receipt-container { 
+                border: none; 
+                width: 100% !important; 
+                max-width: none !important; 
+                margin: 0 !important;
+                min-width: 100% !important;
+              }
+              @page { 
+                margin: 0 !important; 
+                size: auto !important;
+              }
+            }
+          `;
+        
+        case 'LETTER':
+          return `
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              line-height: 1.6;
+              color: #333;
+            }
+            .receipt-container {
+              max-width: 8.5in;
+              margin: 0 auto;
+              padding: 30px;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+            }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+            @media print { 
+              body { margin: 0; }
+              .receipt-container { border: none; max-width: 8.5in; }
+            }
+          `;
+        
+        case 'A4':
+          return `
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              line-height: 1.6;
+              color: #333;
+            }
+            .receipt-container {
+              max-width: 210mm;
+              margin: 0 auto;
+              padding: 30px;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+            }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+            @media print { 
+              body { margin: 0; }
+              .receipt-container { border: none; max-width: 210mm; }
+            }
+          `;
+        
+        default:
+          return '';
+      }
+    };
+
+    const getFormatTitle = (format: string) => {
+      switch (format) {
+        case 'POS58': return 'RECIBO DE PAGO - SALDO - POS58';
+        case 'POS80': return 'RECIBO DE PAGO - SALDO - POS80';
+        case 'LETTER': return 'RECIBO DE PAGO - SALDO';
+        case 'A4': return 'RECIBO DE PAGO - SALDO';
+        default: return 'RECIBO DE PAGO - SALDO';
+      }
+    };
+
+    return `
+      <html>
+        <head>
+          <title>${getFormatTitle(format)} - ${client?.full_name || ''}</title>
+          <style>
+            ${getFormatStyles(format)}
+          </style>
+        </head>
+        <body>
+          <div class="receipt-container">
+            <div class="header">
+              ${companySettings ? `
+                <div style="margin-bottom: 15px; text-align: center;">
+                  <div style="font-size: ${format.includes('POS') ? '14px' : '18px'}; font-weight: bold; margin-bottom: 5px;">
+                    ${companySettings.company_name || 'LA EMPRESA'}
+                  </div>
+                  ${companySettings.address ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 2px;">${companySettings.address}</div>` : ''}
+                  ${companySettings.tax_id ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 5px;">RNC: ${companySettings.tax_id}</div>` : ''}
+                </div>
+                <hr style="border: none; border-top: 1px solid #000; margin: 10px 0;">
+              ` : ''}
+              <div class="receipt-title">${getFormatTitle(format)}</div>
+              <div class="receipt-number">Recibo #${payment.id.slice(0, 8).toUpperCase()}</div>
+              <div style="margin-top: 10px; font-size: ${format.includes('POS') ? '10px' : '14px'};">
+                ${new Date(payment.created_at || payment.payment_date || lastSettlePaymentData.paymentDate).toLocaleDateString('es-ES', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">INFORMACIÓN DEL CLIENTE</div>
+              <div class="info-row">
+                <span>Nombre: ${client?.full_name || 'N/A'}</span>
+              </div>
+              <div class="info-row">
+                <span>Cédula: ${client?.dni || 'N/A'}</span>
+              </div>
+              ${client?.phone ? `<div class="info-row"><span>Teléfono: ${client.phone}</span></div>` : ''}
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL PRÉSTAMO</div>
+              <div class="info-row">
+                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Tasa de Interés: ${loan.interest_rate}%</span>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL PAGO</div>
+              <div class="info-row">
+                <span>Fecha de Pago: ${formatDateStringForSantoDomingo(payment.payment_date)}</span>
+              </div>
+              <div class="info-row">
+                <span>Método de Pago: ${getPaymentMethodLabel(payment.payment_method)}</span>
+              </div>
+              ${payment.reference_number ? `<div class="info-row"><span>Referencia: ${payment.reference_number}</span></div>` : ''}
+            </div>
+
+            <div class="amount-section">
+              <div class="section-title">DESGLOSE DEL PAGO</div>
+              <div class="info-row">
+                <span>Pago a Principal: RD$${(payment.principal_amount || 0).toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Pago a Intereses: RD$${(payment.interest_amount || 0).toLocaleString()}</span>
+              </div>
+              ${(payment.late_fee || 0) > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${(payment.late_fee || 0).toLocaleString()}</span></div>` : ''}
+              <div class="total-amount">
+                TOTAL: RD$${payment.amount.toLocaleString()}
+              </div>
+            </div>
+
+            ${payment.notes ? `
+            <div class="section">
+              <div class="section-title">NOTAS</div>
+              <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px;">
+                ${payment.notes}
+              </div>
+            </div>
+            ` : ''}
+
+            <div class="footer">
+              <p>Este documento es un comprobante oficial de pago. Préstamo saldado.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
+  const printReceipt = (format: string = 'LETTER') => {
+    if (!lastSettlePaymentData) return;
+    
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      const receiptHTML = generateReceiptHTMLWithFormat(format);
+      printWindow.document.write(receiptHTML);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
+  const downloadReceipt = (format: string = 'LETTER') => {
+    if (!lastSettlePaymentData) return;
+    
+    const receiptHTML = generateReceiptHTMLWithFormat(format);
+    const client = lastSettlePaymentData.loan.client;
+
+    const blob = new Blob([receiptHTML], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `recibo_saldo_${client.full_name.replace(/\s+/g, '_')}_${new Date(lastSettlePaymentData.paymentDate || lastSettlePaymentData.payment.payment_date).toISOString().split('T')[0]}_${format}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleClosePrintModalAndShowWhatsApp = (action?: (() => void) | React.MouseEvent) => {
+    setIsClosingPrintModal(true);
+    // Ejecutar la acción primero si existe y es una función (no un evento de React)
+    if (action && typeof action === 'function' && !('target' in action)) {
+      action();
+    }
+    // Cerrar el modal
+    setShowPrintFormatModal(false);
+    // Mostrar el diálogo de WhatsApp después de un delay para asegurar que el modal se cierre
+    setTimeout(() => {
+      setShowWhatsAppDialog(true);
+      setIsClosingPrintModal(false);
+    }, 300);
+  };
+
+  const executeDeleteLoan = async (data: UpdateFormData) => {
+    if (!user || !companyId) return;
+    
+    setLoading(true);
+    try {
+      const loanUpdates: any = {
+        status: 'deleted',
+        deleted_at: new Date().toISOString(),
+        deleted_reason: data.adjustment_reason,
+      };
+
+      // Agregar notas de auditoría
+      const auditNote = `${new Date().toLocaleDateString()} - delete_loan: ${data.adjustment_reason}`;
+      loanUpdates.purpose = auditNote;
+      
+      // CRÍTICO: Preservar la fecha de inicio original
+      loanUpdates.start_date = loan.start_date;
+
+      const { error: loanError } = await supabase
+        .from('loans')
+        .update(loanUpdates)
+        .eq('id', loan.id);
+
+      if (loanError) throw loanError;
+
+      // Registrar en historial de cambios (si existe la tabla)
+      try {
+        const historyData: any = {
+          loan_id: loan.id,
+          change_type: 'status_change', // delete_loan no está permitido, usar status_change
+          old_values: {
+            balance: loan.remaining_balance,
+            payment: loan.monthly_payment,
+            rate: loan.interest_rate
+          },
+          new_values: {
+            balance: loan.remaining_balance,
+            payment: loan.monthly_payment,
+            rate: loan.interest_rate
+          },
+          reason: data.adjustment_reason,
+          created_by: companyId,
+        };
+        
+        const { error: historyInsertError } = await supabase
+          .from('loan_history')
+          .insert([historyData]);
+        
+        if (historyInsertError) {
+          // Ignorar error si la tabla no existe
+          console.log('Historial no disponible:', historyInsertError);
+        }
+      } catch (historyError) {
+        console.error('Error registrando en historial:', historyError);
+        // No fallar si el historial falla
+      }
+
+      toast.success('Préstamo eliminado exitosamente (recuperable por 2 meses)');
+      onUpdate();
+      onClose();
+    } catch (error: any) {
+      console.error('Error eliminando préstamo:', error);
+      toast.error(`Error al eliminar préstamo: ${error.message || 'Error desconocido'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const onSubmit = async (data: UpdateFormData) => {
     if (!user || !companyId) return;
 
     // Evitar múltiples envíos
     if (loading) return;
     
+    const updateType = data.update_type;
+    // Variable para guardar la fecha del pago cuando se salda un préstamo
+    let settlePaymentDate: string | null = null;
+    
+    // Si es eliminar préstamo, primero verificar contraseña
+    if (updateType === 'delete_loan') {
+      setPendingFormData(data);
+      setShowPasswordVerification(true);
+      return;
+    }
+    
     setLoading(true);
     try {
-      const updateType = data.update_type;
       
       // Actualizar el préstamo según el tipo de actualización
       let loanUpdates: any = {};
@@ -835,22 +1295,49 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             return;
           }
 
-          const chargeDate = new Date(data.charge_date);
+          // CORRECCIÓN: Parsear la fecha como fecha local (no UTC) para evitar problemas de zona horaria
+          // Parsear manualmente YYYY-MM-DD para crear fecha local en Santo Domingo
+          const [chargeYear, chargeMonth, chargeDay] = data.charge_date.split('-').map(Number);
+          const chargeDate = new Date(chargeYear, chargeMonth - 1, chargeDay); // month es 0-indexado, crear como fecha local
+          
           if (isNaN(chargeDate.getTime())) {
             toast.error('La fecha del cargo no es válida');
             setLoading(false);
             return;
           }
 
-          // Calcular la fecha de vencimiento como un día después de la fecha del cargo
-          const newDueDate = new Date(chargeDate);
-          newDueDate.setDate(newDueDate.getDate() + 1);
+          // Usar la fecha de vencimiento proporcionada, o calcularla como un día después de la fecha del cargo
+          let dueDateString: string;
+          if (data.charge_due_date) {
+            // Parsear la fecha de vencimiento como fecha local
+            const [dueYear, dueMonth, dueDay] = data.charge_due_date.split('-').map(Number);
+            const dueDate = new Date(dueYear, dueMonth - 1, dueDay); // month es 0-indexado, crear como fecha local
+            
+            if (isNaN(dueDate.getTime())) {
+              toast.error('La fecha de vencimiento no es válida');
+              setLoading(false);
+              return;
+            }
+            
+            // Formatear como YYYY-MM-DD (fecha local, no UTC)
+            dueDateString = `${dueYear}-${String(dueMonth).padStart(2, '0')}-${String(dueDay).padStart(2, '0')}`;
+          } else {
+            // Calcular la fecha de vencimiento como un día después de la fecha del cargo
+            const newDueDate = new Date(chargeDate);
+            newDueDate.setDate(newDueDate.getDate() + 1);
+            
+            // Formatear como YYYY-MM-DD (fecha local, no UTC)
+            const dueYear = newDueDate.getFullYear();
+            const dueMonth = String(newDueDate.getMonth() + 1).padStart(2, '0');
+            const dueDay = String(newDueDate.getDate()).padStart(2, '0');
+            dueDateString = `${dueYear}-${dueMonth}-${dueDay}`;
+          }
 
           // Crear la nueva cuota con el cargo
           const newChargeInstallment = {
             loan_id: loan.id,
             installment_number: nextInstallmentNumber,
-            due_date: newDueDate.toISOString().split('T')[0],
+            due_date: dueDateString,
             total_amount: data.amount,
             principal_amount: data.amount,
             interest_amount: 0,
@@ -1034,6 +1521,39 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               const actualInterestPayment = interestPayment;
               const actualLateFeePayment = lateFeePayment;
 
+              // OBTENER EL CLIENTE ANTES DE INSERTAR EL PAGO Y ACTUALIZAR EL PRÉSTAMO
+              // Esto asegura que tengamos el cliente completo incluso después de que el préstamo se actualice
+              console.log('🔍 Obteniendo cliente completo desde BD ANTES de saldar préstamo...');
+              console.log('🔍 Loan client_id:', (loan as any).client_id);
+              
+              let clientData = null;
+              
+              // Obtener el cliente directamente desde la tabla clients usando client_id
+              // Guardar el client_id en una variable para asegurarnos de tenerlo
+              const clientIdToUse = (loan as any).client_id;
+              
+              const { data: clientInfo, error: clientError } = await supabase
+                .from('clients')
+                .select('id, full_name, dni, phone, email')
+                .eq('id', clientIdToUse)
+                .single();
+              
+              if (!clientError && clientInfo) {
+                console.log('🔍 Cliente obtenido desde BD:', clientInfo);
+                console.log('🔍 Teléfono obtenido:', clientInfo.phone);
+                clientData = clientInfo;
+              } else {
+                console.error('❌ Error obteniendo cliente:', clientError);
+                console.error('❌ Loan client_id era:', clientIdToUse);
+                
+                // Fallback: usar el cliente del préstamo si existe
+                const fallbackClient = loan.client || (loan as any).clients;
+                if (fallbackClient) {
+                  console.log('🔍 Usando cliente del préstamo como fallback:', fallbackClient);
+                  clientData = Array.isArray(fallbackClient) ? fallbackClient[0] : fallbackClient;
+                }
+              }
+
               // Crear fecha de pago en zona horaria de Santo Domingo
               const now = new Date();
               const santoDomingoFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -1052,6 +1572,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               const month = parts.find(part => part.type === 'month')?.value;
               const day = parts.find(part => part.type === 'day')?.value;
               const paymentDate = `${year}-${month}-${day}`;
+              // Guardar la fecha del pago para usarla en loan_history
+              settlePaymentDate = paymentDate;
 
               // Registrar el pago en la tabla payments
               // Usar user?.id del usuario actual, o loan_officer_id del préstamo, o companyId como último recurso
@@ -1079,6 +1601,28 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               if (paymentError) {
                 console.error('Error insertando pago:', paymentError);
                 throw paymentError;
+              }
+
+              // Guardar los datos del pago para mostrar el recibo
+              // Usar el cliente que ya obtuvimos ANTES de actualizar el préstamo
+              if (insertedPayment && insertedPayment.length > 0) {
+                // Crear un objeto loan con el cliente ya obtenido
+                const loanWithClient = {
+                  ...loan,
+                  client: clientData,
+                  client_id: clientIdToUse // Asegurar que el client_id esté presente
+                };
+                
+                console.log('🔍 Cliente final para lastSettlePaymentData:', clientData);
+                console.log('🔍 Teléfono del cliente:', clientData?.phone);
+                console.log('🔍 Client ID guardado:', clientIdToUse);
+                
+                setLastSettlePaymentData({
+                  payment: insertedPayment[0],
+                  loan: loanWithClient,
+                  paymentDate: paymentDate,
+                  clientId: clientIdToUse // Guardar también el client_id por separado como respaldo
+                });
               }
 
               // En "Saldar Préstamo", NO marcar todas las cuotas como pagadas
@@ -1280,14 +1824,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           
           break;
           
-        case 'delete_loan':
-          loanUpdates = {
-            status: 'deleted',
-            deleted_at: new Date().toISOString(),
-            deleted_reason: data.adjustment_reason,
-          };
-          break;
-          
         case 'remove_late_fee':
           {
             const lateFeeToRemove = data.late_fee_amount || 0;
@@ -1424,9 +1960,31 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
       // Registrar en historial de cambios (si existe la tabla)
       try {
+        // Mapear updateType a valores permitidos en loan_history.change_type
+        const mapChangeType = (type: string): string => {
+          switch (type) {
+            case 'settle_loan':
+              return 'payment'; // Pago completo del préstamo
+            case 'add_charge':
+              return 'balance_adjustment';
+            case 'remove_late_fee':
+              return 'balance_adjustment';
+            case 'term_extension':
+              return 'term_extension';
+            case 'edit_loan':
+              return 'balance_adjustment';
+            case 'payment_agreement':
+              return 'balance_adjustment';
+            case 'delete_loan':
+              return 'status_change'; // Eliminación de préstamo
+            default:
+              return 'balance_adjustment';
+          }
+        };
+
         const historyData: any = {
           loan_id: loan.id,
-          change_type: updateType,
+          change_type: mapChangeType(updateType),
           old_values: {
             balance: loan.remaining_balance,
             payment: loan.monthly_payment,
@@ -1458,7 +2016,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             historyData.reference_number = data.reference_number;
           }
           if (data.charge_date) {
+            // CORRECCIÓN: Guardar la fecha del cargo como está (ya está en formato YYYY-MM-DD)
+            // No usar toISOString() que puede cambiar la fecha por zona horaria
             historyData.charge_date = data.charge_date;
+          }
+          if (data.charge_due_date) {
+            // Guardar también la fecha de vencimiento si fue especificada
+            historyData.charge_due_date = data.charge_due_date;
           }
         } else if (updateType === 'edit_loan') {
           historyData.old_values = {
@@ -1480,6 +2044,22 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             amortization_type: data.edit_amortization_type || loan.amortization_type || 'simple'
           };
           historyData.amount = finalAmountForHistory;
+        } else if (updateType === 'settle_loan') {
+          // Para settle_loan, incluir el método de pago, el monto y la fecha del pago
+          historyData.amount = (data.settle_capital || 0) + (data.settle_interest || 0) + (data.settle_late_fee || 0);
+          // Usar charge_date para guardar la fecha del pago (ya existe en loan_history)
+          if (settlePaymentDate) {
+            historyData.charge_date = settlePaymentDate;
+          }
+          if (data.payment_method) {
+            historyData.payment_method = data.payment_method;
+          }
+          if (data.reference_number) {
+            historyData.reference_number = data.reference_number;
+          }
+          if (data.notes) {
+            historyData.notes = data.notes;
+          }
         } else {
           historyData.amount = data.amount;
         }
@@ -1516,6 +2096,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         remove_late_fee: `Mora eliminada exitosamente`,
         edit_loan: 'Préstamo editado exitosamente. Las cuotas han sido recalculadas.'
       };
+
+      // Si es settle_loan, mostrar modal de impresión en lugar de cerrar
+      if (updateType === 'settle_loan') {
+        // Mostrar primero el modal de impresión
+        setShowPrintFormatModal(true);
+        setLoading(false);
+        // No cerrar el modal ni llamar a onUpdate todavía, esperar a que el usuario imprima/envíe por WhatsApp
+        return;
+      }
 
       const message = updateType === 'remove_late_fee' 
         ? `Mora eliminada exitosamente. Nueva mora: RD$${((currentLateFee || 0) - (data.late_fee_amount || 0)).toLocaleString()}`
@@ -1950,6 +2539,31 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           )}
                         />
 
+                        <FormField
+                          control={form.control}
+                          name="payment_method"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Método de Pago</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value || 'cash'}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Seleccionar método" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent className="bg-white">
+                                  <SelectItem value="cash">Efectivo</SelectItem>
+                                  <SelectItem value="bank_transfer">Transferencia Bancaria</SelectItem>
+                                  <SelectItem value="check">Cheque</SelectItem>
+                                  <SelectItem value="card">Tarjeta</SelectItem>
+                                  <SelectItem value="online">Pago en línea</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
                         <Button
                           type="button"
                           variant="outline"
@@ -2263,7 +2877,28 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               </FormControl>
                               <FormMessage />
                               <p className="text-xs text-gray-500">
-                                La fecha de vencimiento se calculará automáticamente como un día después. La mora se calculará desde la fecha de vencimiento, no desde el inicio del préstamo.
+                                Si no se especifica una fecha de vencimiento, se calculará automáticamente como un día después. La mora se calculará desde la fecha de vencimiento, no desde el inicio del préstamo.
+                              </p>
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={form.control}
+                          name="charge_due_date"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Fecha de Vencimiento</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="date"
+                                  {...field}
+                                  value={field.value || ''}
+                                  min={form.watch('charge_date') || undefined}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                              <p className="text-xs text-gray-500">
+                                Si no se especifica, se calculará automáticamente como un día después de la fecha del cargo.
                               </p>
                             </FormItem>
                           )}
@@ -2271,16 +2906,31 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         {form.watch('charge_date') && (
                           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                             <div className="text-sm text-blue-800">
-                              <strong>Fecha de Vencimiento Calculada:</strong>{' '}
+                              <strong>Fecha de Vencimiento:</strong>{' '}
                               {(() => {
-                                const chargeDate = new Date(form.watch('charge_date') || '');
-                                const dueDate = new Date(chargeDate);
-                                dueDate.setDate(dueDate.getDate() + 1);
-                                return dueDate.toLocaleDateString('es-DO', {
-                                  year: 'numeric',
-                                  month: 'long',
-                                  day: 'numeric'
-                                });
+                                const dueDateValue = form.watch('charge_due_date');
+                                if (dueDateValue) {
+                                  // Parsear como fecha local para evitar problemas de zona horaria
+                                  const [year, month, day] = dueDateValue.split('-').map(Number);
+                                  const dueDate = new Date(year, month - 1, day);
+                                  return dueDate.toLocaleDateString('es-DO', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                  });
+                                } else {
+                                  // Parsear la fecha del cargo como fecha local
+                                  const chargeDateStr = form.watch('charge_date') || '';
+                                  const [year, month, day] = chargeDateStr.split('-').map(Number);
+                                  const chargeDate = new Date(year, month - 1, day);
+                                  const dueDate = new Date(chargeDate);
+                                  dueDate.setDate(dueDate.getDate() + 1);
+                                  return dueDate.toLocaleDateString('es-DO', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                  }) + ' (calculada automáticamente)';
+                                }
                               })()}
                             </div>
                           </div>
@@ -2406,25 +3056,47 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             <div className="flex justify-between">
                               <span className="text-gray-600">Fecha del Cargo:</span>
                               <span className="font-semibold text-blue-600">
-                                {new Date(form.watch('charge_date') || '').toLocaleDateString('es-DO', {
-                                  year: 'numeric',
-                                  month: 'long',
-                                  day: 'numeric'
-                                })}
+                                {(() => {
+                                  const chargeDateStr = form.watch('charge_date');
+                                  if (!chargeDateStr) return '-';
+                                  // Parsear como fecha local para evitar problemas de zona horaria
+                                  const [year, month, day] = chargeDateStr.split('-').map(Number);
+                                  const date = new Date(year, month - 1, day);
+                                  return date.toLocaleDateString('es-DO', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                  });
+                                })()}
                               </span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Fecha de Vencimiento:</span>
                               <span className="font-semibold text-green-600">
                                 {(() => {
-                                  const chargeDate = new Date(form.watch('charge_date') || '');
-                                  const dueDate = new Date(chargeDate);
-                                  dueDate.setDate(dueDate.getDate() + 1);
-                                  return dueDate.toLocaleDateString('es-DO', {
-                                    year: 'numeric',
-                                    month: 'long',
-                                    day: 'numeric'
-                                  });
+                                  const dueDateValue = form.watch('charge_due_date');
+                                  if (dueDateValue) {
+                                    // Parsear como fecha local para evitar problemas de zona horaria
+                                    const [year, month, day] = dueDateValue.split('-').map(Number);
+                                    const dueDate = new Date(year, month - 1, day);
+                                    return dueDate.toLocaleDateString('es-DO', {
+                                      year: 'numeric',
+                                      month: 'long',
+                                      day: 'numeric'
+                                    });
+                                  } else {
+                                    // Parsear la fecha del cargo como fecha local
+                                    const chargeDateStr = form.watch('charge_date') || '';
+                                    const [year, month, day] = chargeDateStr.split('-').map(Number);
+                                    const chargeDate = new Date(year, month - 1, day);
+                                    const dueDate = new Date(chargeDate);
+                                    dueDate.setDate(dueDate.getDate() + 1);
+                                    return dueDate.toLocaleDateString('es-DO', {
+                                      year: 'numeric',
+                                      month: 'long',
+                                      day: 'numeric'
+                                    });
+                                  }
                                 })()}
                               </span>
                             </div>
@@ -2799,6 +3471,334 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         </div>
       </div>
     )}
+
+    {/* Diálogo de Verificación de Contraseña */}
+    <PasswordVerificationDialog
+      isOpen={showPasswordVerification}
+      onClose={() => {
+        setShowPasswordVerification(false);
+        setPendingFormData(null);
+      }}
+      onVerify={() => {
+        if (pendingFormData) {
+          executeDeleteLoan(pendingFormData);
+        }
+        setShowPasswordVerification(false);
+        setPendingFormData(null);
+      }}
+      title="Verificar Contraseña"
+      description="Por seguridad, ingresa tu contraseña para confirmar la eliminación del préstamo."
+      entityName="préstamo"
+    />
+
+    {/* Modal de Formato de Impresión */}
+    <Dialog open={showPrintFormatModal} onOpenChange={(open) => {
+      if (!open && !isClosingPrintModal) {
+        // Cuando se cierra el modal (X o clic fuera) y no se está cerrando desde un botón, mostrar el diálogo de WhatsApp
+        setShowPrintFormatModal(false);
+        setTimeout(() => {
+          setShowWhatsAppDialog(true);
+        }, 300);
+      }
+    }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Printer className="h-5 w-5" />
+            Seleccionar Formato de Impresión
+          </DialogTitle>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Selecciona el formato de impresión según tu impresora:
+          </p>
+          
+          <div className="grid grid-cols-1 gap-3">
+            {/* POS58 - Impresoras portátiles Verifone */}
+            <Button 
+              variant="outline" 
+              className="h-auto p-4 flex flex-col items-start"
+              onClick={() => {
+                handleClosePrintModalAndShowWhatsApp(() => {
+                  printReceipt('POS58');
+                });
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-blue-100 rounded flex items-center justify-center">
+                  <span className="text-xs font-bold">58</span>
+                </div>
+                <div className="text-left">
+                  <div className="font-medium">POS58</div>
+                  <div className="text-xs text-gray-500">Verifone / Impresoras Portátiles</div>
+                </div>
+              </div>
+              <div className="text-xs text-gray-400">
+                Ancho: 58mm - Ideal para impresoras portátiles
+              </div>
+            </Button>
+
+            {/* POS80 - Punto de venta */}
+            <Button 
+              variant="outline" 
+              className="h-auto p-4 flex flex-col items-start"
+              onClick={() => {
+                handleClosePrintModalAndShowWhatsApp(() => {
+                  printReceipt('POS80');
+                });
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-green-100 rounded flex items-center justify-center">
+                  <span className="text-xs font-bold">80</span>
+                </div>
+                <div className="text-left">
+                  <div className="font-medium">POS80</div>
+                  <div className="text-xs text-gray-500">Punto de Venta</div>
+                </div>
+              </div>
+              <div className="text-xs text-gray-400">
+                Ancho: 80mm - Para impresoras de punto de venta
+              </div>
+            </Button>
+
+            {/* Carta 8½ x 11 */}
+            <Button 
+              variant="outline" 
+              className="h-auto p-4 flex flex-col items-start"
+              onClick={() => {
+                handleClosePrintModalAndShowWhatsApp(() => {
+                  printReceipt('LETTER');
+                });
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-purple-100 rounded flex items-center justify-center">
+                  <span className="text-xs font-bold">8½</span>
+                </div>
+                <div className="text-left">
+                  <div className="font-medium">Carta (8½ x 11)</div>
+                  <div className="text-xs text-gray-500">Impresoras de Escritorio</div>
+                </div>
+              </div>
+              <div className="text-xs text-gray-400">
+                Formato: 8.5 x 11 pulgadas - Estándar americano
+              </div>
+            </Button>
+
+            {/* A4 */}
+            <Button 
+              variant="outline" 
+              className="h-auto p-4 flex flex-col items-start"
+              onClick={() => {
+                handleClosePrintModalAndShowWhatsApp(() => {
+                  printReceipt('A4');
+                });
+              }}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-orange-100 rounded flex items-center justify-center">
+                  <span className="text-xs font-bold">A4</span>
+                </div>
+                <div className="text-left">
+                  <div className="font-medium">A4</div>
+                  <div className="text-xs text-gray-500">Formato Internacional</div>
+                </div>
+              </div>
+              <div className="text-xs text-gray-400">
+                Formato: 210 x 297mm - Estándar internacional
+              </div>
+            </Button>
+          </div>
+
+          {/* Botones de descarga rápida */}
+          <div className="pt-4 border-t">
+            <p className="text-sm font-medium mb-2">Descargar en formato:</p>
+            <div className="flex flex-wrap gap-2">
+              <Button 
+                size="sm" 
+                variant="secondary"
+                onClick={() => {
+                  handleClosePrintModalAndShowWhatsApp(() => {
+                    downloadReceipt('POS58');
+                  });
+                }}
+              >
+                <Download className="h-3 w-3 mr-1" />
+                POS58
+              </Button>
+              <Button 
+                size="sm" 
+                variant="secondary"
+                onClick={() => {
+                  handleClosePrintModalAndShowWhatsApp(() => {
+                    downloadReceipt('POS80');
+                  });
+                }}
+              >
+                <Download className="h-3 w-3 mr-1" />
+                POS80
+              </Button>
+              <Button 
+                size="sm" 
+                variant="secondary"
+                onClick={() => {
+                  handleClosePrintModalAndShowWhatsApp(() => {
+                    downloadReceipt('LETTER');
+                  });
+                }}
+              >
+                <Download className="h-3 w-3 mr-1" />
+                Carta
+              </Button>
+              <Button 
+                size="sm" 
+                variant="secondary"
+                onClick={() => {
+                  handleClosePrintModalAndShowWhatsApp(() => {
+                    downloadReceipt('A4');
+                  });
+                }}
+              >
+                <Download className="h-3 w-3 mr-1" />
+                A4
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-4">
+          <Button variant="outline" onClick={() => handleClosePrintModalAndShowWhatsApp()}>
+            Cerrar
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Modal de WhatsApp */}
+    <Dialog open={showWhatsAppDialog} onOpenChange={(open) => {
+      if (!open) {
+        setShowWhatsAppDialog(false);
+        onUpdate();
+        onClose();
+      }
+    }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>¿Enviar recibo por WhatsApp?</DialogTitle>
+        </DialogHeader>
+        <div className="py-4">
+          <p>¿Deseas enviar el recibo del pago al cliente por WhatsApp?</p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setShowWhatsAppDialog(false);
+              onUpdate();
+              onClose();
+            }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            onClick={async () => {
+              if (!lastSettlePaymentData || !companySettings) {
+                toast.error('Error: No se encontraron los datos necesarios');
+                return;
+              }
+
+              try {
+                const payment = lastSettlePaymentData.payment;
+                const loan = lastSettlePaymentData.loan;
+                // Manejar tanto 'client' como 'clients' (puede venir de diferentes consultas)
+                let client = loan.client || (loan as any).clients;
+                
+                // Si es un array, tomar el primer elemento
+                if (Array.isArray(client)) {
+                  client = client[0];
+                }
+                
+                // Si el cliente no está disponible o no tiene teléfono, intentar obtenerlo desde la BD
+                const clientIdToUse = lastSettlePaymentData.clientId || (loan as any).client_id;
+                
+                if (!client || !client.phone) {
+                  console.log('🔍 WhatsApp - Cliente no disponible o sin teléfono, obteniendo desde BD...');
+                  console.log('🔍 WhatsApp - Client ID a usar:', clientIdToUse);
+                  
+                  if (clientIdToUse) {
+                    const { data: clientInfo, error: clientError } = await supabase
+                      .from('clients')
+                      .select('id, full_name, dni, phone, email')
+                      .eq('id', clientIdToUse)
+                      .single();
+                    
+                    if (!clientError && clientInfo) {
+                      console.log('🔍 WhatsApp - Cliente obtenido desde BD:', clientInfo);
+                      client = clientInfo;
+                    } else {
+                      console.error('❌ WhatsApp - Error obteniendo cliente desde BD:', clientError);
+                    }
+                  }
+                }
+                
+                console.log('🔍 WhatsApp - Cliente final:', client);
+                console.log('🔍 WhatsApp - Teléfono del cliente:', client?.phone);
+                
+                if (!client) {
+                  console.error('❌ WhatsApp - No se pudo obtener el cliente');
+                  toast.error('No se pudo obtener la información del cliente');
+                  return;
+                }
+                
+                const receiptData = {
+                  companyName: companySettings?.company_name || 'LA EMPRESA',
+                  clientName: client?.full_name || 'Cliente',
+                  clientDni: client?.dni,
+                  paymentDate: formatDateStringForSantoDomingo(payment.payment_date),
+                  paymentAmount: payment.amount,
+                  principalAmount: payment.principal_amount || 0,
+                  interestAmount: payment.interest_amount || 0,
+                  lateFeeAmount: payment.late_fee || 0,
+                  paymentMethod: payment.payment_method || 'cash',
+                  loanAmount: loan.amount,
+                  remainingBalance: 0, // Préstamo saldado
+                  interestRate: loan.interest_rate,
+                  referenceNumber: payment.reference_number
+                };
+
+                const receiptMessage = generateLoanPaymentReceipt(receiptData);
+                const clientPhone = client?.phone;
+                
+                console.log('🔍 WhatsApp - Teléfono a usar:', clientPhone);
+                
+                if (!clientPhone) {
+                  console.error('❌ WhatsApp - El cliente no tiene teléfono:', client);
+                  toast.error('El cliente no tiene número de teléfono registrado');
+                  return;
+                }
+
+                const formattedPhone = formatPhoneForWhatsApp(clientPhone);
+                console.log('🔍 WhatsApp - Teléfono formateado:', formattedPhone);
+                await openWhatsApp(formattedPhone, receiptMessage);
+                toast.success('Recibo enviado por WhatsApp');
+              } catch (error) {
+                console.error('Error enviando recibo por WhatsApp:', error);
+                toast.error('Error al enviar recibo por WhatsApp');
+              }
+
+              setShowWhatsAppDialog(false);
+              onUpdate();
+              onClose();
+            }}
+          >
+            <MessageCircle className="h-4 w-4 mr-2" />
+            Enviar por WhatsApp
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
     </>
   );
 };

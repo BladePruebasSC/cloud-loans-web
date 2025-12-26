@@ -26,6 +26,7 @@ import { generateLoanPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 
 interface Payment {
   id: string;
@@ -110,6 +111,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showPrintFormatModal, setShowPrintFormatModal] = useState(false);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
   const [loan, setLoan] = useState<Loan | null>(null);
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1068,7 +1070,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <DropdownMenuItem 
               onClick={() => {
                 setForceDelete(false);
-                setShowDeleteModal(true);
+                setShowPasswordVerification(true);
               }}
               className="text-red-600"
             >
@@ -1513,6 +1515,19 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
            </div>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => setShowPasswordVerification(false)}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          setShowDeleteModal(true);
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación del pago."
+        entityName="pago"
+      />
     </>
   );
 };

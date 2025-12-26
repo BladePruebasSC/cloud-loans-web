@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { formatDateTimeWithOffset, calculateDueDateInSantoDomingo, getCurrentDateStringForSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { 
   DollarSign, 
@@ -329,6 +330,7 @@ export const PawnShopModule = () => {
   const [showInterestPreview, setShowInterestPreview] = useState(false);
   const [showExtendForm, setShowExtendForm] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
   const [showAddChargeForm, setShowAddChargeForm] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [extendDays, setExtendDays] = useState<number>(30);
@@ -4949,7 +4951,7 @@ export const PawnShopModule = () => {
                   className="w-full"
                   onClick={() => {
                     setShowQuickUpdate(false);
-                    setShowDeleteDialog(true);
+                    setShowPasswordVerification(true);
                   }}
                 >
                   <XCircle className="h-4 w-4 mr-2" />
@@ -5551,6 +5553,19 @@ export const PawnShopModule = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => setShowPasswordVerification(false)}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          setShowDeleteDialog(true);
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación de la transacción."
+        entityName="transacción"
+      />
     </div>
   );
 };

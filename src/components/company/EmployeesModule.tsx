@@ -16,6 +16,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   Plus, 
   Users, 
@@ -219,6 +220,8 @@ export const EmployeesModule = () => {
   const [employeeForPasswordChange, setEmployeeForPasswordChange] = useState<Employee | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [employeeIdToDelete, setEmployeeIdToDelete] = useState<string | null>(null);
   const { user, companyId } = useAuth();
 
   const form = useForm<EmployeeFormData | EmployeeEditFormData>({
@@ -499,14 +502,19 @@ export const EmployeesModule = () => {
     setIsDialogOpen(true);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('¿Está seguro de eliminar este empleado?')) return;
+  const handleDelete = (id: string) => {
+    setEmployeeIdToDelete(id);
+    setShowPasswordVerification(true);
+  };
+
+  const executeDelete = async () => {
+    if (!employeeIdToDelete) return;
 
     try {
       const { error } = await (supabase as any)
         .from('employees')
         .delete()
-        .eq('id', id);
+        .eq('id', employeeIdToDelete);
 
       if (error) {
         throw error;
@@ -514,9 +522,11 @@ export const EmployeesModule = () => {
 
       toast.success('Empleado eliminado exitosamente');
       fetchEmployees();
+      setEmployeeIdToDelete(null);
     } catch (error) {
       console.error('Error deleting employee:', error);
       toast.error('Error al eliminar empleado');
+      setEmployeeIdToDelete(null);
     }
   };
 
@@ -1287,6 +1297,19 @@ export const EmployeesModule = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setEmployeeIdToDelete(null);
+        }}
+        onVerify={executeDelete}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación del empleado."
+        entityName="empleado"
+      />
     </div>
   );
 };

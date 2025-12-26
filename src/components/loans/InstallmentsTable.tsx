@@ -166,7 +166,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       if (isIndefinite && loanInfo) {
         // CORRECCIÓN: Usar next_payment_date o first_payment_date directamente si está disponible
         // Solo calcular desde start_date si no están disponibles
-        const firstPaymentDateStr = loanInfo.first_payment_date?.split('T')[0] || loanInfo.next_payment_date?.split('T')[0];
+        const firstPaymentDateStr = loanInfo.first_payment_date?.split('T')[0] || (loanInfo as any).next_payment_date?.split('T')[0];
         let firstPaymentDateBase: Date;
         const today = getCurrentDateInSantoDomingo();
         const frequency = loanInfo.payment_frequency || 'monthly';
@@ -430,14 +430,26 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           correctedAmount = loanData.monthly_payment;
         }
 
-        // Si no hay interés, calcularlo
-        if (!correctedInterest || correctedInterest === 0) {
+        // Verificar si es un cargo (cuando principal_amount es igual a total_amount y interest_amount es 0)
+        // Los cargos no tienen interés, solo capital
+        const isCharge = correctedInterest === 0 && 
+                         correctedPrincipal > 0 && 
+                         Math.abs(correctedPrincipal - correctedAmount) < 0.01; // Permitir pequeñas diferencias por redondeo
+
+        // Si no es un cargo y no hay interés, calcularlo
+        if (!isCharge && (!correctedInterest || correctedInterest === 0)) {
           correctedInterest = (loanData.amount * loanData.interest_rate) / 100;
         }
 
-        // Si no hay capital, calcularlo
-        if (!correctedPrincipal || correctedPrincipal === 0) {
+        // Si no es un cargo y no hay capital, calcularlo
+        if (!isCharge && (!correctedPrincipal || correctedPrincipal === 0)) {
           correctedPrincipal = correctedAmount - correctedInterest;
+        }
+        
+        // Si es un cargo, asegurar que el monto sea igual al capital y el interés sea 0
+        if (isCharge) {
+          correctedAmount = correctedPrincipal;
+          correctedInterest = 0;
         }
 
         // Usar total_amount de la BD como fuente de verdad para el amount
@@ -634,12 +646,17 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       const paidInstallments = installments.filter(inst => inst.is_paid).length;
       totalPaid = interestPerPayment * paidInstallments;
     } else {
-      // Para préstamos con plazo definido: usar total_amount del préstamo si está disponible
-      // Si no, calcular usando la fórmula original sin redondear
-      if ((loanInfo as any).total_amount && (loanInfo as any).total_amount > 0) {
-        // Usar total_amount directamente del préstamo (valor real sin redondear)
+      // Para préstamos con plazo definido: sumar todas las cuotas (incluyendo cargos)
+      // Esto asegura que los cargos adicionales se incluyan en el total
+      totalAmount = installments.reduce((sum, inst) => {
+        const amount = (inst as any).total_amount || inst.amount || 0;
+        return sum + amount;
+      }, 0);
+      
+      // Si no hay cuotas o el total es 0, usar total_amount del préstamo como fallback
+      if (totalAmount === 0 && (loanInfo as any).total_amount && (loanInfo as any).total_amount > 0) {
         totalAmount = (loanInfo as any).total_amount;
-      } else {
+      } else if (totalAmount === 0) {
         // Calcular usando la fórmula original: amount + (amount × interest_rate × term_months) / 100
         const totalInterest = (loanInfo.amount * loanInfo.interest_rate * (loanInfo.term_months || installments.length)) / 100;
         totalAmount = loanInfo.amount + totalInterest;

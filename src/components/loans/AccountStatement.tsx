@@ -948,9 +948,24 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       
       // Usar datos calculados según el tipo de amortización
       const installmentData = amortizationData[i - 1];
-      const originalPrincipal = installmentData.principalPayment;
-      const originalInterest = installmentData.interestPayment;
-      const monthlyPayment = installmentData.monthlyPayment;
+      
+      // CORRECCIÓN: Para cargos (cuando interest_amount es 0 y principal_amount es igual a total_amount),
+      // usar los valores reales de la cuota en lugar de los calculados
+      const isCharge = realInstallment && 
+                       realInstallment.interest_amount === 0 && 
+                       realInstallment.principal_amount > 0 && 
+                       Math.abs(realInstallment.principal_amount - (realInstallment.amount || (realInstallment as any).total_amount || 0)) < 0.01;
+      
+      // Si es un cargo, usar los valores reales de la cuota
+      const originalPrincipal = isCharge && realInstallment 
+        ? realInstallment.principal_amount 
+        : installmentData.principalPayment;
+      const originalInterest = isCharge && realInstallment 
+        ? 0 
+        : installmentData.interestPayment;
+      const monthlyPayment = isCharge && realInstallment 
+        ? (realInstallment.amount || (realInstallment as any).total_amount || realInstallment.principal_amount)
+        : installmentData.monthlyPayment;
 
       // Calcular fecha de vencimiento correctamente en zona horaria de Santo Domingo
       // Usar la fecha real de la cuota si existe, de lo contrario calcularla

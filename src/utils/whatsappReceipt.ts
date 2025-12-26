@@ -118,8 +118,18 @@ export const generateLoanPaymentReceipt = (receipt: LoanPaymentReceipt): string 
 
   const paymentMethod = paymentMethodLabels[receipt.paymentMethod] || receipt.paymentMethod;
   
+  // Verificar si el préstamo fue saldado (remainingBalance === 0)
+  const isSettled = receipt.remainingBalance !== undefined && receipt.remainingBalance === 0;
+  
   let message = `*Notificación de ${receipt.companyName}*\n\n`;
-  message += `${receipt.clientName}${receipt.clientDni ? ` (${receipt.clientDni})` : ''} le informamos que su pago fue registrado exitosamente.\n\n`;
+  
+  if (isSettled) {
+    // Mensaje para préstamo saldado
+    message += `${receipt.clientName}${receipt.clientDni ? ` (${receipt.clientDni})` : ''} le informamos que su préstamo ha sido saldado exitosamente.\n\n`;
+  } else {
+    // Mensaje para pago regular
+    message += `${receipt.clientName}${receipt.clientDni ? ` (${receipt.clientDni})` : ''} le informamos que su pago fue registrado exitosamente.\n\n`;
+  }
   
   message += `*Información del Préstamo*\n`;
   if (receipt.loanAmount) {
@@ -128,7 +138,7 @@ export const generateLoanPaymentReceipt = (receipt: LoanPaymentReceipt): string 
   if (receipt.interestRate) {
     message += `Tasa de interés: ${receipt.interestRate}% mensual\n`;
   }
-  if (receipt.nextPaymentDate) {
+  if (receipt.nextPaymentDate && !isSettled) {
     message += `Próxima fecha de pago: ${receipt.nextPaymentDate}\n`;
   }
   message += `\n`;
@@ -147,7 +157,12 @@ export const generateLoanPaymentReceipt = (receipt: LoanPaymentReceipt): string 
     message += `Número de referencia: ${receipt.referenceNumber}\n`;
   }
   if (receipt.remainingBalance !== undefined) {
-    message += `Balance restante: ${formatCurrency(receipt.remainingBalance)}\n`;
+    if (isSettled) {
+      message += `Balance restante: ${formatCurrency(receipt.remainingBalance)}\n`;
+      message += `\n*¡Préstamo saldado completamente!*\n`;
+    } else {
+      message += `Balance restante: ${formatCurrency(receipt.remainingBalance)}\n`;
+    }
   }
   
   return message;
