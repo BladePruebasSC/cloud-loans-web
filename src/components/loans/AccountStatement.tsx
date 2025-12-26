@@ -340,7 +340,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         .from('installments')
         .select('*, is_settled')
         .eq('loan_id', loanId)
-        .order('installment_number', { ascending: true });
+        .order('due_date', { ascending: true })
+        .order('installment_number', { ascending: true }); // Orden secundario por número de cuota
       
       const { data: installmentsDataRaw, error: installmentsError } = await installmentsQuery;
       
@@ -1241,7 +1242,25 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     }
 
     console.log('🔍 AccountStatement: Tabla de amortización generada:', schedule);
-    return schedule;
+    
+    // Ordenar las cuotas por fecha de vencimiento (y por número de cuota como orden secundario)
+    const sortedSchedule = schedule.sort((a, b) => {
+      // Primero ordenar por fecha de vencimiento
+      if (a.dueDate && b.dueDate) {
+        const dateA = new Date(a.dueDate);
+        const dateB = new Date(b.dueDate);
+        const dateDiff = dateA.getTime() - dateB.getTime();
+        if (dateDiff !== 0) {
+          return dateDiff;
+        }
+      }
+      // Si las fechas son iguales o no hay fecha, ordenar por número de cuota
+      const numA = typeof a.installment === 'number' ? a.installment : parseInt(a.installment.toString().split('/')[0]) || 0;
+      const numB = typeof b.installment === 'number' ? b.installment : parseInt(b.installment.toString().split('/')[0]) || 0;
+      return numA - numB;
+    });
+    
+    return sortedSchedule;
   };
 
 

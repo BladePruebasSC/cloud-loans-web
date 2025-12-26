@@ -150,7 +150,8 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         .from('installments')
         .select('*, is_settled, total_amount')
         .eq('loan_id', loanId)
-        .order('installment_number', { ascending: true });
+        .order('due_date', { ascending: true })
+        .order('installment_number', { ascending: true }); // Orden secundario por número de cuota
       
       if (isIndefinite) {
         installmentsQuery = installmentsQuery.limit(1);
@@ -470,8 +471,23 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         };
       });
 
+      // Ordenar las cuotas por fecha de vencimiento (y por número de cuota como orden secundario)
+      const sortedInstallments = correctedInstallments.sort((a, b) => {
+        // Primero ordenar por fecha de vencimiento
+        if (a.due_date && b.due_date) {
+          const dateA = new Date(a.due_date);
+          const dateB = new Date(b.due_date);
+          const dateDiff = dateA.getTime() - dateB.getTime();
+          if (dateDiff !== 0) {
+            return dateDiff;
+          }
+        }
+        // Si las fechas son iguales o no hay fecha, ordenar por número de cuota
+        return a.installment_number - b.installment_number;
+      });
+
       // Establecer las cuotas inmediatamente para mostrar los datos
-      setInstallments(correctedInstallments);
+      setInstallments(sortedInstallments);
 
       // Calcular el total pagado desde los pagos reales (no desde cuotas marcadas como pagadas)
       const { data: payments, error: paymentsError } = await supabase

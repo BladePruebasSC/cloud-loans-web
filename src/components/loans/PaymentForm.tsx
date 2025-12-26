@@ -38,6 +38,9 @@ const paymentSchema = z.object({
   return data.amount > 0 || (data.late_fee_amount && data.late_fee_amount > 0);
 }, {
   message: "Debe pagar al menos algo de la cuota o de la mora"
+}).superRefine((data, ctx) => {
+  // Esta validación se aplicará dinámicamente en el componente
+  // cuando nextPaymentInfo esté disponible
 });
 
 type PaymentFormData = z.infer<typeof paymentSchema>;
@@ -917,11 +920,64 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     },
   });
 
+  // Estado para almacenar información del próximo pago (cuota o cargo)
+  const [nextPaymentInfo, setNextPaymentInfo] = React.useState<{
+    isCharge: boolean;
+    amount: number;
+    dueDate: string | null;
+  } | null>(null);
+
+  // Detectar si el próximo pago es un cargo
+  React.useEffect(() => {
+    const fetchNextPaymentInfo = async () => {
+      if (!selectedLoan) {
+        setNextPaymentInfo(null);
+        return;
+      }
+
+      try {
+        // Buscar la primera cuota/cargo pendiente ordenada por fecha de vencimiento
+        const { data: installments, error } = await supabase
+          .from('installments')
+          .select('due_date, is_paid, total_amount, principal_amount, interest_amount')
+          .eq('loan_id', selectedLoan.id)
+          .eq('is_paid', false)
+          .order('due_date', { ascending: true })
+          .limit(1);
+
+        if (!error && installments && installments.length > 0) {
+          const firstUnpaid = installments[0];
+          // Un cargo es una cuota donde interest_amount es 0 y principal_amount es igual a total_amount
+          const isCharge = firstUnpaid.interest_amount === 0 && 
+                          firstUnpaid.principal_amount === firstUnpaid.total_amount;
+          
+          setNextPaymentInfo({
+            isCharge,
+            amount: firstUnpaid.total_amount,
+            dueDate: firstUnpaid.due_date
+          });
+        } else {
+          setNextPaymentInfo(null);
+        }
+      } catch (error) {
+        console.error('Error buscando información del próximo pago:', error);
+        setNextPaymentInfo(null);
+      }
+    };
+
+    fetchNextPaymentInfo();
+  }, [selectedLoan]);
+
   // Actualizar automáticamente el monto del pago cuando cambie el estado
   React.useEffect(() => {
     if (selectedLoan && paymentStatus.currentPaymentRemaining > 0) {
-      // Si hay un saldo pendiente menor a la cuota mensual, pre-llenar con ese monto
-      if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
+      // Si el próximo pago es un cargo, usar el monto del cargo
+      if (nextPaymentInfo?.isCharge) {
+        const roundedAmount = Math.round(nextPaymentInfo.amount);
+        form.setValue('amount', roundedAmount);
+        setPaymentAmount(roundedAmount);
+      } else if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
+        // Si hay un saldo pendiente menor a la cuota mensual, pre-llenar con ese monto
         const roundedAmount = Math.round(paymentStatus.currentPaymentRemaining);
         form.setValue('amount', roundedAmount);
         setPaymentAmount(roundedAmount);
@@ -932,7 +988,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         setPaymentAmount(roundedAmount);
       }
     }
-  }, [paymentStatus.currentPaymentRemaining, selectedLoan, form]);
+  }, [paymentStatus.currentPaymentRemaining, selectedLoan, form, nextPaymentInfo]);
 
   // Obtener datos de la empresa
   React.useEffect(() => {
@@ -1194,6 +1250,17 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       return { interestPayment: 0, principalPayment: 0, monthlyInterestAmount: 0, remainingInterest: 0 };
     }
 
+    // Si el próximo pago es un cargo, todo va al capital (sin interés)
+    if (nextPaymentInfo?.isCharge) {
+      return {
+        interestPayment: 0,
+        principalPayment: amount,
+        monthlyInterestAmount: 0,
+        remainingInterest: 0,
+        alreadyPaidInterest: 0
+      };
+    }
+
     // Calcular el interés fijo por cuota (amortización simple)
     // Fórmula: Interés por cuota = (Monto Original × Tasa × Plazo) ÷ Plazo
     // Simplificado: Interés por cuota = Monto Original × Tasa ÷ 100
@@ -1269,7 +1336,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       const currentPaymentRemaining = paymentStatus.currentPaymentRemaining;
       const interestRate = selectedLoan.interest_rate; // Tasa de interés mensual [[memory:6311805]]
       
-      // Validación 1: No permitir que la cuota exceda el balance restante
+      // Validación 1a: Si el próximo pago es un cargo, no permitir pagar más del monto del cargo
+      if (nextPaymentInfo?.isCharge && data.amount > nextPaymentInfo.amount) {
+        toast.error(`El pago no puede exceder el monto del cargo de ${formatCurrency(nextPaymentInfo.amount)}`);
+        setLoading(false);
+        return;
+      }
+      
+      // Validación 1b: No permitir que la cuota exceda el balance restante
       if (data.amount > remainingBalance) {
         toast.error(`El pago de cuota no puede exceder el balance restante de ${formatCurrency(remainingBalance)}`);
         setLoading(false);
@@ -1300,13 +1374,25 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       }
 
       // Validación 3: No permitir pagos que excedan lo que falta de la cuota actual (solo si hay pago de cuota)
+      // EXCEPCIÓN: Si el próximo pago es un cargo, permitir pagar el monto completo del cargo
       if (data.amount > 0) {
-        const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
-        const roundedMaxAllowed = Math.round(maxAllowedPayment);
-        if (data.amount > roundedMaxAllowed) {
-          toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: ${formatCurrency(roundedMaxAllowed)}`);
-          setLoading(false);
-          return;
+        // Si es un cargo, permitir pagar hasta el monto del cargo
+        if (nextPaymentInfo?.isCharge) {
+          const maxAllowedForCharge = nextPaymentInfo.amount;
+          if (data.amount > maxAllowedForCharge) {
+            toast.error(`El pago no puede exceder el monto del cargo de ${formatCurrency(maxAllowedForCharge)}`);
+            setLoading(false);
+            return;
+          }
+        } else {
+          // Para cuotas regulares, usar la validación original
+          const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
+          const roundedMaxAllowed = Math.round(maxAllowedPayment);
+          if (data.amount > roundedMaxAllowed) {
+            toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: ${formatCurrency(roundedMaxAllowed)}`);
+            setLoading(false);
+            return;
+          }
         }
       }
 
@@ -1325,7 +1411,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         remainingInterest = distribution.remainingInterest;
         
         // Determinar si es un pago completo o parcial
-        const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
+        // Si es un cargo, usar el monto del cargo como referencia
+        let maxAllowedPayment: number;
+        if (nextPaymentInfo?.isCharge) {
+          maxAllowedPayment = nextPaymentInfo.amount;
+        } else {
+          maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
+        }
         const roundedMaxAllowed = Math.round(maxAllowedPayment);
         isFullPayment = Math.round(data.amount) >= roundedMaxAllowed;
         paymentStatusValue = isFullPayment ? 'completed' : 'pending';
@@ -1333,7 +1425,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         // Si es pago parcial, mostrar advertencia
         if (!isFullPayment) {
           const remainingAmount = roundedMaxAllowed - Math.round(data.amount);
-          toast.warning(`Pago parcial registrado. Queda pendiente ${formatCurrency(remainingAmount)} de la cuota mensual.`);
+          const paymentType = nextPaymentInfo?.isCharge ? 'del cargo' : 'de la cuota mensual';
+          toast.warning(`Pago parcial registrado. Queda pendiente ${formatCurrency(remainingAmount)} ${paymentType}.`);
         }
 
         // Mostrar información sobre la distribución del pago
@@ -1689,46 +1782,121 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
         }
 
-        // CORRECCIÓN FUNDAMENTAL: Marcar la PRIMERA cuota NO pagada
-        // NO calcular basándose en fechas, sino en el array paid_installments
-
-        // Encontrar la primera cuota NO pagada (de 1 a term_months)
-        const totalInstallments = selectedLoan.term_months || 4;
+        // CORRECCIÓN: Marcar la PRIMERA cuota NO pagada ordenada por fecha de vencimiento
+        // Buscar la primera cuota pendiente ordenada por due_date para priorizar cargos
         let firstUnpaidInstallment = null;
+        let firstUnpaidInstallmentNumber = null;
 
-        for (let i = 1; i <= totalInstallments; i++) {
-          if (!updatedPaidInstallments.includes(i)) {
-            firstUnpaidInstallment = i;
-            break;
-          }
-        }
+        // Obtener todas las cuotas pendientes ordenadas por fecha de vencimiento
+        const { data: unpaidInstallments, error: unpaidError } = await supabase
+          .from('installments')
+          .select('installment_number, due_date, is_paid, principal_amount, interest_amount, total_amount')
+          .eq('loan_id', data.loan_id)
+          .eq('is_paid', false)
+          .order('due_date', { ascending: true })
+          .limit(1);
 
-        if (firstUnpaidInstallment) {
-          // Agregar esta cuota a las pagadas
-          updatedPaidInstallments.push(firstUnpaidInstallment);
-          updatedPaidInstallments.sort((a, b) => a - b); // Mantener ordenado
-
-          console.log('🔍 PaymentForm: Cuota marcada como pagada:', {
-            paidInstallment: firstUnpaidInstallment,
-            updatedPaidInstallments,
-            totalInstallments
-          });
-
-          // Marcar la cuota como pagada en la tabla installments y resetear late_fee_paid
-          const { error: installmentError } = await supabase
-            .from('installments')
-            .update({
-              is_paid: true,
-              paid_date: new Date().toISOString().split('T')[0],
-              late_fee_paid: 0 // Resetear mora pagada cuando se marca como pagada
-            })
-            .eq('loan_id', data.loan_id)
-            .eq('installment_number', firstUnpaidInstallment);
-
-          if (installmentError) {
-            console.error('Error marcando cuota como pagada en installments:', installmentError);
+        if (!unpaidError && unpaidInstallments && unpaidInstallments.length > 0) {
+          firstUnpaidInstallment = unpaidInstallments[0];
+          firstUnpaidInstallmentNumber = firstUnpaidInstallment.installment_number;
+          
+          // Verificar si el pago cubre esta cuota
+          const installmentAmount = firstUnpaidInstallment.total_amount;
+          const isCharge = firstUnpaidInstallment.interest_amount === 0 && 
+                          firstUnpaidInstallment.principal_amount === firstUnpaidInstallment.total_amount;
+          
+          // Si es un cargo, el pago debe cubrir el monto completo del cargo
+          // Si es una cuota regular, verificar si el pago cubre suficiente capital e interés
+          let paymentCoversInstallment = false;
+          
+          if (isCharge) {
+            // Para cargos, el pago debe cubrir el monto completo (solo capital)
+            // Como los cargos son solo capital y calculatePaymentDistribution ya asigna todo al capital,
+            // verificar si el pago total cubre el cargo
+            paymentCoversInstallment = data.amount >= installmentAmount * 0.99; // 99% para tolerancia de redondeo
+            console.log('🔍 PaymentForm: Verificando cargo:', {
+              paymentAmount: data.amount,
+              installmentAmount,
+              principalPayment,
+              paymentCoversInstallment
+            });
           } else {
-            console.log(`✅ Cuota ${firstUnpaidInstallment} marcada como pagada en la tabla installments`);
+            // Para cuotas regulares, verificar si el pago acumulado cubre esta cuota
+            const interestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
+            const principalPerPayment = monthlyPayment - interestPerPayment;
+            
+            // Obtener todos los pagos anteriores para calcular el acumulado
+            const { data: allPreviousPayments } = await supabase
+              .from('payments')
+              .select('principal_amount, interest_amount, payment_date')
+              .eq('loan_id', data.loan_id)
+              .order('payment_date', { ascending: true });
+            
+            // Calcular cuánto se ha pagado acumulado (incluyendo este pago)
+            let totalPrincipalPaid = allPreviousPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
+            let totalInterestPaid = allPreviousPayments?.reduce((sum, p) => sum + (p.interest_amount || 0), 0) || 0;
+            
+            // Agregar el pago actual
+            totalPrincipalPaid += principalPayment;
+            totalInterestPaid += interestPayment;
+            
+            // Calcular cuántas cuotas completas se han pagado
+            const completedInstallments = Math.min(
+              Math.floor(totalInterestPaid / interestPerPayment),
+              Math.floor(totalPrincipalPaid / principalPerPayment)
+            );
+            
+            // Verificar si esta cuota específica está cubierta
+            // Si el pago acumulado cubre al menos una cuota completa, marcar como pagada
+            paymentCoversInstallment = completedInstallments >= 1 && 
+                                      totalPrincipalPaid >= principalPerPayment * 0.99 && 
+                                      totalInterestPaid >= interestPerPayment * 0.99;
+            
+            console.log('🔍 PaymentForm: Verificando cuota regular:', {
+              totalPrincipalPaid,
+              totalInterestPaid,
+              principalPerPayment,
+              interestPerPayment,
+              completedInstallments,
+              paymentCoversInstallment
+            });
+          }
+          
+          if (paymentCoversInstallment) {
+            // Agregar esta cuota a las pagadas
+            if (!updatedPaidInstallments.includes(firstUnpaidInstallmentNumber)) {
+              updatedPaidInstallments.push(firstUnpaidInstallmentNumber);
+              updatedPaidInstallments.sort((a, b) => a - b); // Mantener ordenado
+            }
+
+            console.log('🔍 PaymentForm: Cuota marcada como pagada (por fecha de vencimiento):', {
+              paidInstallment: firstUnpaidInstallmentNumber,
+              dueDate: firstUnpaidInstallment.due_date,
+              isCharge,
+              installmentAmount,
+              principalPayment,
+              interestPayment,
+              updatedPaidInstallments
+            });
+
+            // Marcar la cuota como pagada en la tabla installments y resetear late_fee_paid
+            const { error: installmentError } = await supabase
+              .from('installments')
+              .update({
+                is_paid: true,
+                paid_date: new Date().toISOString().split('T')[0],
+                late_fee_paid: 0 // Resetear mora pagada cuando se marca como pagada
+              })
+              .eq('loan_id', data.loan_id)
+              .eq('installment_number', firstUnpaidInstallmentNumber);
+
+            if (installmentError) {
+              console.error('Error marcando cuota como pagada en installments:', installmentError);
+            } else {
+              console.log(`✅ Cuota ${firstUnpaidInstallmentNumber} marcada como pagada en la tabla installments`);
+            }
+          } else {
+            console.log('⚠️ El pago no cubre completamente la primera cuota pendiente');
           }
         } else {
           console.log('⚠️ No se encontró ninguna cuota sin pagar para marcar');

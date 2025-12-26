@@ -98,6 +98,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [documents, setDocuments] = useState<any[]>([]);
   const [previewDocument, setPreviewDocument] = useState<any | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [nextPaymentDate, setNextPaymentDate] = useState<string | null>(null);
   const [showUploadDocument, setShowUploadDocument] = useState(false);
   const [documentForm, setDocumentForm] = useState({
     title: '',
@@ -293,6 +294,30 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
 
       if (error) throw error;
       setInstallments(data || []);
+      
+      // Buscar la primera cuota/cargo pendiente ordenada por fecha de vencimiento
+      const { data: firstUnpaid, error: unpaidError } = await supabase
+        .from('installments')
+        .select('due_date, is_paid')
+        .eq('loan_id', loanId)
+        .eq('is_paid', false)
+        .order('due_date', { ascending: true })
+        .limit(1);
+      
+      if (!unpaidError && firstUnpaid && firstUnpaid.length > 0) {
+        const first = firstUnpaid[0];
+        if (first.due_date) {
+          setNextPaymentDate(first.due_date.split('T')[0]);
+          return;
+        }
+      }
+      
+      // Si no se encontró, usar next_payment_date del préstamo
+      if (loan?.next_payment_date) {
+        setNextPaymentDate(loan.next_payment_date.split('T')[0]);
+      } else {
+        setNextPaymentDate(null);
+      }
     } catch (error) {
       console.error('Error fetching installments:', error);
     }
@@ -974,107 +999,13 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       <div>
                         <span className="text-gray-600">Próxima cuota:</span>
                         <div className="font-semibold">
-                          {(loan.status === 'paid' || remainingBalance === 0 || !loan.next_payment_date) 
+                          {(loan.status === 'paid' || remainingBalance === 0) 
                             ? 'N/A' 
-                            : (() => {
-                                // CORRECCIÓN: Para préstamos indefinidos, calcular la primera cuota NO PAGADA
-                                if (loan.amortization_type === 'indefinite' && loan.start_date) {
-                                  try {
-                                    // Calcular cuántas cuotas se han pagado basándose en los pagos
-                                    const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
-                                    let paidInstallmentsCount = 0;
-                                    let currentInstallmentInterestPaid = 0;
-                                    
-                                    if (payments && payments.length > 0) {
-                                      for (const payment of payments) {
-                                        currentInstallmentInterestPaid += payment.interest_amount || 0;
-                                        if (currentInstallmentInterestPaid >= interestPerPayment) {
-                                          paidInstallmentsCount++;
-                                          currentInstallmentInterestPaid = 0;
-                                        }
-                                      }
-                                    }
-                                    
-                                    // Calcular la primera fecha de pago
-                                    const startDateStr = loan.start_date.split('T')[0];
-                                    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-                                    const startDate = new Date(startYear, startMonth - 1, startDay);
-                                    const firstPaymentDate = new Date(startDate);
-                                    const frequency = loan.payment_frequency || 'monthly';
-                                    
-                                    switch (frequency) {
-                                      case 'daily':
-                                        firstPaymentDate.setDate(startDate.getDate() + 1);
-                                        break;
-                                      case 'weekly':
-                                        firstPaymentDate.setDate(startDate.getDate() + 7);
-                                        break;
-                                      case 'biweekly':
-                                        firstPaymentDate.setDate(startDate.getDate() + 14);
-                                        break;
-                                      case 'monthly':
-                                      default:
-                                        // Preservar el día del mes de start_date
-                                        const startDay = startDate.getDate();
-                                        const nextMonth = startDate.getMonth() + 1;
-                                        const nextYear = startDate.getFullYear();
-                                        // Verificar si el día existe en el mes siguiente
-                                        const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-                                        const dayToUse = Math.min(startDay, lastDayOfNextMonth);
-                                        firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
-                                        break;
-                                    }
-                                    
-                                    // La próxima cuota no pagada está a 'paidInstallmentsCount' períodos de la primera cuota
-                                    const nextDate = new Date(firstPaymentDate);
-                                    const periodsToAdd = paidInstallmentsCount;
-                                    
-                                    switch (frequency) {
-                                      case 'daily':
-                                        nextDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
-                                        break;
-                                      case 'weekly':
-                                        nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
-                                        break;
-                                      case 'biweekly':
-                                        nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
-                                        break;
-                                      case 'monthly':
-                                      default:
-                                        // Preservar el día del mes de firstPaymentDate
-                                        const paymentDay = firstPaymentDate.getDate();
-                                        const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
-                                        const targetYear = firstPaymentDate.getFullYear();
-                                        // Verificar si el día existe en el mes objetivo
-                                        const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-                                        const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
-                                        nextDate.setFullYear(targetYear, targetMonth, dayToUse);
-                                        break;
-                                    }
-                                    
-                                    const correctedYear = nextDate.getFullYear();
-                                    const correctedMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
-                                    const correctedDay = String(nextDate.getDate()).padStart(2, '0');
-                                    return formatDateStringForSantoDomingo(`${correctedYear}-${correctedMonth}-${correctedDay}`);
-                                  } catch (error) {
-                                    // Si hay error, usar la fecha original pero corregir el día
-                                    const date = new Date(loan.next_payment_date);
-                                    const year = date.getFullYear();
-                                    const month = date.getMonth();
-                                    const day = date.getDate();
-                                    const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
-                                    
-                                    if (day === lastDayOfMonth || day !== 1) {
-                                      const correctedDate = day === lastDayOfMonth 
-                                        ? new Date(year, month + 1, 1)
-                                        : new Date(year, month, 1);
-                                      return formatDateStringForSantoDomingo(correctedDate.toISOString().split('T')[0]);
-                                    }
-                                    return formatDateStringForSantoDomingo(loan.next_payment_date);
-                                  }
-                                }
-                                return formatDateStringForSantoDomingo(loan.next_payment_date);
-                              })()}
+                            : nextPaymentDate 
+                              ? formatDateStringForSantoDomingo(nextPaymentDate)
+                              : loan.next_payment_date 
+                                ? formatDateStringForSantoDomingo(loan.next_payment_date.split('T')[0])
+                                : 'N/A'}
                         </div>
                       </div>
                       {loan.amortization_type !== 'indefinite' && (

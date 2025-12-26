@@ -86,7 +86,33 @@ export const LoansModule = () => {
   const [loanAgreements, setLoanAgreements] = useState<{[key: string]: any[]}>({});
   
   // Función helper para calcular la fecha ISO de la próxima cuota no pagada (para LateFeeInfo)
-  const calculateNextPaymentDateISO = (loan: any): string | null => {
+  const calculateNextPaymentDateISO = async (loan: any): Promise<string | null> => {
+    // SIEMPRE buscar la primera cuota/cargo pendiente ordenada por fecha de vencimiento
+    try {
+      const { data: installments, error } = await supabase
+        .from('installments')
+        .select('due_date, is_paid, total_amount, principal_amount, interest_amount')
+        .eq('loan_id', loan.id)
+        .eq('is_paid', false)
+        .order('due_date', { ascending: true })
+        .limit(1);
+      
+      if (!error && installments && installments.length > 0) {
+        const firstUnpaid = installments[0];
+        if (firstUnpaid.due_date) {
+          console.log('🔍 calculateNextPaymentDateISO: Primera cuota pendiente encontrada:', {
+            loanId: loan.id,
+            dueDate: firstUnpaid.due_date,
+            isCharge: firstUnpaid.interest_amount === 0 && firstUnpaid.principal_amount === firstUnpaid.total_amount
+          });
+          return firstUnpaid.due_date.split('T')[0];
+        }
+      }
+    } catch (error) {
+      console.error('Error buscando primera cuota pendiente:', error);
+    }
+    
+    // Si no se encontró ninguna cuota pendiente, usar la lógica de respaldo
     if (!loan.next_payment_date) return null;
     
     // CORRECCIÓN: Para préstamos indefinidos, calcular la primera cuota NO PAGADA (vencida o no)
@@ -251,10 +277,14 @@ export const LoansModule = () => {
 
   // Función helper para formatear la visualización de next_payment_date
   const formatNextPaymentDate = (loan: any) => {
-    const isoDate = calculateNextPaymentDateISO(loan);
+    // Usar la fecha calculada si está disponible, sino usar la fecha almacenada
+    const isoDate = nextPaymentDates[loan.id] || loan.next_payment_date?.split('T')[0] || null;
     if (!isoDate) return 'N/A';
     return formatDateStringForSantoDomingo(isoDate);
   };
+  
+  // Estado para almacenar las fechas de próximo pago calculadas
+  const [nextPaymentDates, setNextPaymentDates] = useState<{ [loanId: string]: string | null }>({});
   
      // Estados para filtros y búsqueda
    const [searchTerm, setSearchTerm] = useState('');
@@ -304,6 +334,22 @@ export const LoansModule = () => {
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
+  
+  // Calcular fechas de próximo pago para todos los préstamos
+  useEffect(() => {
+    const calculateAllNextPaymentDates = async () => {
+      if (!loans || loans.length === 0) return;
+      
+      const dates: { [loanId: string]: string | null } = {};
+      for (const loan of loans) {
+        const date = await calculateNextPaymentDateISO(loan);
+        dates[loan.id] = date;
+      }
+      setNextPaymentDates(dates);
+    };
+    
+    calculateAllNextPaymentDates();
+  }, [loans]);
 
   // Función para calcular el interés pendiente total para préstamos indefinidos
   // Ahora también devuelve el número de cuotas pagadas
@@ -334,7 +380,7 @@ export const LoansModule = () => {
       
       if (!loan.start_date) {
         console.warn('🔍 calculatePendingInterestForIndefinite: Falta start_date, no se puede calcular');
-        return 0;
+        return { pendingInterest: 0, paidCount: 0 };
       }
       
       // SIEMPRE calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
@@ -1507,7 +1553,7 @@ export const LoansModule = () => {
                         {loan.status !== 'paid' && (
                           <LateFeeInfo
                             loanId={loan.id}
-                            nextPaymentDate={calculateNextPaymentDateISO(loan) || loan.next_payment_date?.split('T')[0] || ''}
+                            nextPaymentDate={nextPaymentDates[loan.id] || loan.next_payment_date?.split('T')[0] || ''}
                             currentLateFee={loan.current_late_fee || 0}
                             lateFeeEnabled={loan.late_fee_enabled || false}
                             lateFeeRate={loan.late_fee_rate || 2.0}
