@@ -927,7 +927,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     dueDate: string | null;
   } | null>(null);
 
-  // Detectar si el próximo pago es un cargo
+  // Detectar si el próximo pago es un cargo y calcular cuánto falta
   React.useEffect(() => {
     const fetchNextPaymentInfo = async () => {
       if (!selectedLoan) {
@@ -939,7 +939,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         // Buscar la primera cuota/cargo pendiente ordenada por fecha de vencimiento
         const { data: installments, error } = await supabase
           .from('installments')
-          .select('due_date, is_paid, total_amount, principal_amount, interest_amount')
+          .select('due_date, is_paid, total_amount, principal_amount, interest_amount, installment_number')
           .eq('loan_id', selectedLoan.id)
           .eq('is_paid', false)
           .order('due_date', { ascending: true })
@@ -951,9 +951,31 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           const isCharge = firstUnpaid.interest_amount === 0 && 
                           firstUnpaid.principal_amount === firstUnpaid.total_amount;
           
+          // Si es un cargo, calcular cuánto se ha pagado ya y cuánto falta
+          let remainingAmount = firstUnpaid.total_amount;
+          if (isCharge) {
+            // Buscar todos los pagos que se han hecho para este cargo (mismo due_date)
+            const { data: paymentsForCharge } = await supabase
+              .from('payments')
+              .select('amount, principal_amount')
+              .eq('loan_id', selectedLoan.id)
+              .eq('due_date', firstUnpaid.due_date);
+            
+            // Calcular el total pagado para este cargo
+            const totalPaidForCharge = paymentsForCharge?.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0) || 0;
+            remainingAmount = Math.max(0, firstUnpaid.total_amount - totalPaidForCharge);
+            
+            console.log('🔍 PaymentForm: Cargo detectado:', {
+              installmentNumber: firstUnpaid.installment_number,
+              totalAmount: firstUnpaid.total_amount,
+              totalPaid: totalPaidForCharge,
+              remainingAmount
+            });
+          }
+          
           setNextPaymentInfo({
             isCharge,
-            amount: firstUnpaid.total_amount,
+            amount: remainingAmount, // Usar el monto restante, no el total
             dueDate: firstUnpaid.due_date
           });
         } else {
@@ -966,7 +988,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     };
 
     fetchNextPaymentInfo();
-  }, [selectedLoan]);
+  }, [selectedLoan, paymentStatus.currentPaymentPaid]); // Agregar dependencia para recalcular cuando cambie el pago
 
   // Actualizar automáticamente el monto del pago cuando cambie el estado
   React.useEffect(() => {
@@ -1483,13 +1505,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         parts: { year, month, day, hour, minute, second }
       });
       
+      // Determinar el due_date correcto: si es un cargo, usar el due_date del cargo; de lo contrario, usar el next_payment_date del préstamo
+      let paymentDueDate = selectedLoan.next_payment_date;
+      if (nextPaymentInfo?.isCharge && nextPaymentInfo.dueDate) {
+        paymentDueDate = nextPaymentInfo.dueDate.split('T')[0]; // Asegurar formato YYYY-MM-DD
+        console.log('🔍 PaymentForm: Usando due_date del cargo:', paymentDueDate);
+      } else {
+        console.log('🔍 PaymentForm: Usando next_payment_date del préstamo:', paymentDueDate);
+      }
+      
       const paymentData = {
         loan_id: data.loan_id,
         amount: Math.round(data.amount), // Solo el monto de la cuota, sin incluir la mora (redondeado)
         principal_amount: Math.round(principalPayment),
         interest_amount: Math.round(interestPayment),
         late_fee: roundToTwoDecimals(data.late_fee_amount || 0), // Mora como concepto separado (redondeado a 2 decimales)
-        due_date: selectedLoan.next_payment_date,
+        due_date: paymentDueDate, // Usar el due_date del cargo si es un cargo, de lo contrario el next_payment_date del préstamo
         payment_date: paymentDate, // Usar fecha actual en zona horaria de Santo Domingo
         payment_time_local: paymentTimeLocal, // Timestamp con zona horaria local
         payment_timezone: paymentTimezone, // Zona horaria del pago
@@ -1624,11 +1655,45 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         ? selectedLoan.amount  // Para indefinidos, el balance siempre es el monto original
         : Math.max(0, remainingBalance - Math.round(principalPayment));
       
-      // Solo actualizar la fecha del próximo pago si es un pago completo
+      // Actualizar la fecha del próximo pago
+      // Para cargos, mantener el due_date del cargo hasta que se complete completamente
       let nextPaymentDate = selectedLoan.next_payment_date;
       let updatedPaidInstallments = selectedLoan.paid_installments || [];
 
-      if (isFullPayment) {
+      // Verificar si se completó un cargo (incluso con pagos parciales)
+      let chargeCompleted = false;
+      let currentChargeDueDate = null;
+      if (nextPaymentInfo?.isCharge && nextPaymentInfo.dueDate) {
+        currentChargeDueDate = nextPaymentInfo.dueDate.split('T')[0];
+        // Buscar la primera cuota pendiente para verificar si es el cargo que estamos pagando
+        const { data: firstUnpaid } = await supabase
+          .from('installments')
+          .select('due_date, total_amount, installment_number, principal_amount, interest_amount')
+          .eq('loan_id', data.loan_id)
+          .eq('is_paid', false)
+          .order('due_date', { ascending: true })
+          .limit(1);
+        
+        if (firstUnpaid && firstUnpaid.length > 0 && firstUnpaid[0].due_date.split('T')[0] === currentChargeDueDate) {
+          // Buscar todos los pagos para este cargo (incluyendo el actual)
+          const { data: allPaymentsForCharge } = await supabase
+            .from('payments')
+            .select('amount, principal_amount')
+            .eq('loan_id', data.loan_id)
+            .eq('due_date', firstUnpaid[0].due_date.split('T')[0]);
+          
+          const totalPaidForCharge = (allPaymentsForCharge?.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0) || 0) + data.amount;
+          chargeCompleted = totalPaidForCharge >= firstUnpaid[0].total_amount * 0.99;
+          
+          // Si el cargo no se completó, mantener el due_date del cargo como next_payment_date
+          if (!chargeCompleted && currentChargeDueDate) {
+            nextPaymentDate = currentChargeDueDate;
+            console.log('🔍 PaymentForm: Cargo parcialmente pagado, manteniendo due_date del cargo:', nextPaymentDate);
+          }
+        }
+      }
+
+      if (isFullPayment || chargeCompleted) {
         // CORRECCIÓN: Para préstamos indefinidos, calcular la próxima fecha desde start_date
         // basándose en el número de cuotas pagadas, no desde next_payment_date
         if (selectedLoan.amortization_type === 'indefinite') {
@@ -1744,6 +1809,20 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
           const finalDay = String(nextDate.getDate()).padStart(2, '0');
           nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
+        } else if (chargeCompleted) {
+          // Si se completó un cargo, buscar la siguiente cuota/cargo pendiente
+          const { data: nextUnpaid } = await supabase
+            .from('installments')
+            .select('due_date')
+            .eq('loan_id', data.loan_id)
+            .eq('is_paid', false)
+            .order('due_date', { ascending: true })
+            .limit(1);
+          
+          if (nextUnpaid && nextUnpaid.length > 0) {
+            nextPaymentDate = nextUnpaid[0].due_date.split('T')[0];
+            console.log('🔍 PaymentForm: Cargo completado, próxima fecha actualizada a:', nextPaymentDate);
+          }
         } else {
           // Para otros tipos de préstamos, usar la lógica original
           const [year, month, day] = selectedLoan.next_payment_date.split('-').map(Number);
@@ -1805,18 +1884,33 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           const isCharge = firstUnpaidInstallment.interest_amount === 0 && 
                           firstUnpaidInstallment.principal_amount === firstUnpaidInstallment.total_amount;
           
-          // Si es un cargo, el pago debe cubrir el monto completo del cargo
+          // Si es un cargo, el pago debe cubrir el monto completo del cargo (acumulando pagos parciales)
           // Si es una cuota regular, verificar si el pago cubre suficiente capital e interés
           let paymentCoversInstallment = false;
           
           if (isCharge) {
-            // Para cargos, el pago debe cubrir el monto completo (solo capital)
-            // Como los cargos son solo capital y calculatePaymentDistribution ya asigna todo al capital,
-            // verificar si el pago total cubre el cargo
-            paymentCoversInstallment = data.amount >= installmentAmount * 0.99; // 99% para tolerancia de redondeo
-            console.log('🔍 PaymentForm: Verificando cargo:', {
+            // Para cargos, acumular todos los pagos (incluyendo el actual) y verificar si cubren el cargo completo
+            // Buscar todos los pagos previos para este cargo (mismo due_date)
+            const { data: previousPaymentsForCharge } = await supabase
+              .from('payments')
+              .select('amount, principal_amount')
+              .eq('loan_id', data.loan_id)
+              .eq('due_date', firstUnpaidInstallment.due_date);
+            
+            // Calcular el total pagado ANTES del pago actual
+            const totalPaidBefore = previousPaymentsForCharge?.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0) || 0;
+            
+            // Agregar el pago actual
+            const totalPaidAfter = totalPaidBefore + data.amount;
+            
+            // El cargo está cubierto si el total pagado (incluyendo este pago) cubre el monto del cargo
+            paymentCoversInstallment = totalPaidAfter >= installmentAmount * 0.99; // 99% para tolerancia de redondeo
+            
+            console.log('🔍 PaymentForm: Verificando cargo (con acumulación):', {
               paymentAmount: data.amount,
               installmentAmount,
+              totalPaidBefore,
+              totalPaidAfter,
               principalPayment,
               paymentCoversInstallment
             });

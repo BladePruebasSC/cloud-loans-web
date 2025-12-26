@@ -957,6 +957,9 @@ export const PointOfSaleModule = () => {
               nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
               const firstPaymentDate = new Date(nextPaymentDate); // first_payment_date es la fecha base fija
               
+              // Calcular el total del préstamo (capital + interés total)
+              const totalLoanAmount = loanAmount + (monthlyInterest * termMonths);
+              
               // Crear el préstamo
               const { data: loanData, error: loanError } = await supabase
                 .from('loans')
@@ -968,8 +971,8 @@ export const PointOfSaleModule = () => {
                     interest_rate: interestRate,
                     term_months: termMonths,
                     monthly_payment: Math.round(monthlyPayment * 100) / 100,
-                    total_amount: loanAmount + (monthlyInterest * termMonths),
-                    remaining_balance: loanAmount,
+                    total_amount: totalLoanAmount,
+                    remaining_balance: totalLoanAmount, // Balance pendiente incluye capital + interés total
                     start_date: startDate.toISOString().split('T')[0],
                     end_date: endDate.toISOString().split('T')[0],
                     next_payment_date: nextPaymentDate.toISOString().split('T')[0],

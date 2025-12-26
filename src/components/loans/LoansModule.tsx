@@ -84,7 +84,55 @@ export const LoansModule = () => {
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<{[key: string]: number}>({});
   const [paidInstallmentsCountForIndefinite, setPaidInstallmentsCountForIndefinite] = useState<{[key: string]: number}>({});
   const [loanAgreements, setLoanAgreements] = useState<{[key: string]: any[]}>({});
+  const [calculatedTotalAmounts, setCalculatedTotalAmounts] = useState<{[key: string]: number}>({});
+  const [calculatedRemainingBalances, setCalculatedRemainingBalances] = useState<{[key: string]: number}>({});
   
+  // Función helper para calcular el monto total correcto (capital + interés total)
+  const calculateTotalAmount = (loan: any): number => {
+    // Si total_amount está disponible y es mayor que amount, usarlo
+    if (loan.total_amount && loan.total_amount > loan.amount) {
+      return loan.total_amount;
+    }
+    // Si no, calcularlo: capital + interés total
+    const totalInterest = loan.amount * (loan.interest_rate / 100) * loan.term_months;
+    return loan.amount + totalInterest;
+  };
+
+  // Función helper para calcular el balance pendiente correcto
+  const calculateRemainingBalance = async (loan: any): Promise<number> => {
+    // Para préstamos indefinidos, usar la lógica existente
+    if (loan.amortization_type === 'indefinite') {
+      const baseAmount = loan.amount || 0;
+      const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
+      return baseAmount + pendingInterest;
+    }
+    
+    // Para otros tipos, calcular el total correcto y restar los pagos
+    const correctTotalAmount = calculateTotalAmount(loan);
+    
+    // Obtener todos los pagos del préstamo
+    try {
+      const { data: payments, error } = await supabase
+        .from('payments')
+        .select('principal_amount, interest_amount')
+        .eq('loan_id', loan.id);
+      
+      if (error) {
+        console.error('Error obteniendo pagos para calcular balance:', error);
+        return loan.remaining_balance; // Fallback al valor de BD
+      }
+      
+      // Calcular el total pagado (capital + interés)
+      const totalPaid = (payments || []).reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
+      
+      // El balance restante es el total menos lo pagado
+      return Math.max(0, correctTotalAmount - totalPaid);
+    } catch (error) {
+      console.error('Error calculando balance pendiente:', error);
+      return loan.remaining_balance; // Fallback al valor de BD
+    }
+  };
+
   // Función helper para calcular la fecha ISO de la próxima cuota no pagada (para LateFeeInfo)
   const calculateNextPaymentDateISO = async (loan: any): Promise<string | null> => {
     // SIEMPRE buscar la primera cuota/cargo pendiente ordenada por fecha de vencimiento
@@ -350,6 +398,29 @@ export const LoansModule = () => {
     
     calculateAllNextPaymentDates();
   }, [loans]);
+
+  // Calcular montos totales y balances pendientes correctos para todos los préstamos
+  useEffect(() => {
+    const calculateAllAmounts = async () => {
+      if (!loans || loans.length === 0) return;
+      
+      const totalAmounts: { [loanId: string]: number } = {};
+      const remainingBalances: { [loanId: string]: number } = {};
+      
+      for (const loan of loans) {
+        // Calcular monto total
+        totalAmounts[loan.id] = calculateTotalAmount(loan);
+        
+        // Calcular balance pendiente
+        remainingBalances[loan.id] = await calculateRemainingBalance(loan);
+      }
+      
+      setCalculatedTotalAmounts(totalAmounts);
+      setCalculatedRemainingBalances(remainingBalances);
+    };
+    
+    calculateAllAmounts();
+  }, [loans, pendingInterestForIndefinite]);
 
   // Función para calcular el interés pendiente total para préstamos indefinidos
   // Ahora también devuelve el número de cuotas pagadas
@@ -1446,7 +1517,7 @@ export const LoansModule = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
                           <div className="text-center p-4 bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-100">
                             <div className="text-2xl font-bold text-green-700 mb-1">
-                              ${formatCurrencyNumber(loan.amount)}
+                              ${formatCurrencyNumber(calculatedTotalAmounts[loan.id] || calculateTotalAmount(loan))}
                             </div>
                             <div className="text-sm text-green-600 font-medium">Monto Total</div>
                           </div>
@@ -1454,21 +1525,15 @@ export const LoansModule = () => {
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
                               ${formatCurrencyNumber(
-                                loan.amortization_type === 'indefinite' 
-                                  ? (() => {
-                                      const baseAmount = loan.amount || 0;
-                                      const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
-                                      const total = baseAmount + pendingInterest;
-                                      console.log('🔍 Balance Pendiente para préstamo indefinido:', {
-                                        loanId: loan.id,
-                                        amount: baseAmount,
-                                        pendingInterest,
-                                        total,
-                                        amortization_type: loan.amortization_type
-                                      });
-                                      return total;
-                                    })()
-                                  : loan.remaining_balance
+                                calculatedRemainingBalances[loan.id] !== undefined
+                                  ? calculatedRemainingBalances[loan.id]
+                                  : (loan.amortization_type === 'indefinite' 
+                                      ? (() => {
+                                          const baseAmount = loan.amount || 0;
+                                          const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
+                                          return baseAmount + pendingInterest;
+                                        })()
+                                      : loan.remaining_balance)
                               )}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
@@ -1484,8 +1549,11 @@ export const LoansModule = () => {
                               ${formatCurrencyNumber(
                                 loan.status === 'paid' 
                                   ? 0 
-                                  : ((loan.amortization_type === 'indefinite' ? loan.amount : loan.remaining_balance) + 
-                                     (loan.amortization_type === 'indefinite' ? (pendingInterestForIndefinite[loan.id] || 0) : 0) +
+                                  : ((calculatedRemainingBalances[loan.id] !== undefined
+                                      ? calculatedRemainingBalances[loan.id]
+                                      : (loan.amortization_type === 'indefinite' 
+                                          ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
+                                          : loan.remaining_balance)) + 
                                      (dynamicLateFees[loan.id] || loan.current_late_fee || 0))
                               )}
                             </div>

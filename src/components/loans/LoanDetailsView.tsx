@@ -49,6 +49,7 @@ interface LoanDetails {
   id: string;
   amount: number;
   remaining_balance: number;
+  total_amount?: number;
   monthly_payment: number;
   interest_rate: number;
   term_months: number;
@@ -65,6 +66,8 @@ interface LoanDetails {
   late_fee_rate: number;
   grace_period_days: number;
   current_late_fee: number;
+  late_fee_calculation_type?: string;
+  max_late_fee?: number;
   client: {
     full_name: string;
     dni: string;
@@ -793,10 +796,25 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   
   // Calcular balance restante
   // Para préstamos indefinidos: amount + interés pendiente total
-  // Para otros tipos: remaining_balance de la BD
-  const remainingBalance = loan.amortization_type === 'indefinite'
-    ? loan.amount + pendingInterestForIndefinite
-    : loan.remaining_balance;
+  // Para otros tipos: calcular basándose en total_amount o calcularlo
+  let remainingBalance: number;
+  if (loan.amortization_type === 'indefinite') {
+    remainingBalance = loan.amount + pendingInterestForIndefinite;
+  } else {
+    // Calcular el total correcto (capital + interés total)
+    let correctTotalAmount = (loan as any).total_amount;
+    if (!correctTotalAmount || correctTotalAmount <= loan.amount) {
+      // Calcular total_amount: capital + interés total
+      const totalInterest = loan.amount * (loan.interest_rate / 100) * loan.term_months;
+      correctTotalAmount = loan.amount + totalInterest;
+    }
+    
+    // Calcular el total pagado (capital + interés)
+    const totalPaid = payments.reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
+    
+    // El balance restante es el total menos lo pagado
+    remainingBalance = Math.max(0, correctTotalAmount - totalPaid);
+  }
   
   // Si el préstamo está saldado, la mora debe ser 0
   const isLoanSettled = loan.status === 'paid';

@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 export interface Loan {
   id: string;
   amount: number;
+  total_amount?: number;
   interest_rate: number;
   term_months: number;
   monthly_payment: number;
