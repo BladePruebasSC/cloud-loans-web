@@ -55,7 +55,13 @@ const CompanySettings = () => {
     default_pawn_period_days: 90,
     auto_backup_enabled: false,
     auto_backup_interval_hours: 24,
-    auto_backup_format: 'excel' as 'excel' | 'csv' | 'pdf'
+    auto_backup_format: 'excel' as 'excel' | 'csv' | 'pdf',
+    notify_late_fees: true,
+    notify_rate_changes: true,
+    notify_payment_reminders: true,
+    notify_loan_approvals: true,
+    notify_loan_rejections: true,
+    ask_whatsapp_before_send: true
   });
 
   useEffect(() => {
@@ -93,6 +99,12 @@ const CompanySettings = () => {
           auto_backup_enabled: data.auto_backup_enabled ?? false,
           auto_backup_interval_hours: sanitizeNumber(data.auto_backup_interval_hours, 24),
           auto_backup_format: data.auto_backup_format || 'excel',
+          notify_late_fees: data.notify_late_fees ?? true,
+          notify_rate_changes: data.notify_rate_changes ?? true,
+          notify_payment_reminders: data.notify_payment_reminders ?? true,
+          notify_loan_approvals: data.notify_loan_approvals ?? true,
+          notify_loan_rejections: data.notify_loan_rejections ?? true,
+          ask_whatsapp_before_send: data.ask_whatsapp_before_send ?? true,
         }));
       } else {
         // Solo crear configuración si es el dueño de la empresa, no empleados
@@ -1081,291 +1093,184 @@ const CompanySettings = () => {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-3">
-                  <Label className="text-sm font-medium">Tipos de Notificaciones</Label>
+                  <Label className="text-sm font-medium">Eventos a Notificar</Label>
+                  <p className="text-xs text-gray-600">
+                    Selecciona los eventos que deseas que aparezcan en el apartado de notificaciones del sistema.
+                  </p>
                   <div className="space-y-2">
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <Label className="text-sm">Notificaciones por email</Label>
+                      <input 
+                        type="checkbox" 
+                        checked={formData.notify_late_fees}
+                        onChange={(e) => handleInputChange('notify_late_fees', e.target.checked)}
+                        className="rounded" 
+                      />
+                      <Label className="text-sm">Notificar moras</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <Label className="text-sm">Recordatorios de pago</Label>
+                      <input 
+                        type="checkbox" 
+                        checked={formData.notify_rate_changes}
+                        onChange={(e) => handleInputChange('notify_rate_changes', e.target.checked)}
+                        className="rounded" 
+                      />
+                      <Label className="text-sm">Notificar cambios de tasa de interés</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <Label className="text-sm">Alertas de mora</Label>
+                      <input 
+                        type="checkbox" 
+                        checked={formData.notify_payment_reminders}
+                        onChange={(e) => handleInputChange('notify_payment_reminders', e.target.checked)}
+                        className="rounded" 
+                      />
+                      <Label className="text-sm">Notificar recordatorios de pago</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" className="rounded" />
-                      <Label className="text-sm">Notificaciones SMS</Label>
+                      <input 
+                        type="checkbox" 
+                        checked={formData.notify_loan_approvals}
+                        onChange={(e) => handleInputChange('notify_loan_approvals', e.target.checked)}
+                        className="rounded" 
+                      />
+                      <Label className="text-sm">Notificar aprobaciones de préstamos</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <Label className="text-sm">Reportes automáticos</Label>
+                      <input 
+                        type="checkbox" 
+                        checked={formData.notify_loan_rejections}
+                        onChange={(e) => handleInputChange('notify_loan_rejections', e.target.checked)}
+                        className="rounded" 
+                      />
+                      <Label className="text-sm">Notificar rechazos de préstamos</Label>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" className="rounded" />
-                      <Label className="text-sm">Alertas de seguridad</Label>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-4">
-                  <div>
-                    <Label htmlFor="payment_reminder_days">Días de Recordatorio de Pago</Label>
-                    <Input
-                      id="payment_reminder_days"
-                      type="number"
-                      defaultValue="3"
-                      placeholder="Días antes del vencimiento"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="overdue_notification_frequency">Frecuencia de Notificación de Mora</Label>
-                    <Select defaultValue="daily">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="daily">Diario</SelectItem>
-                        <SelectItem value="weekly">Semanal</SelectItem>
-                        <SelectItem value="monthly">Mensual</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            {/* Configuraciones de Cobranza */}
+            {/* Configuración de WhatsApp */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Phone className="h-5 w-5 mr-2" />
-                  Configuraciones de Cobranza
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="collection_strategy">Estrategia de Cobranza</Label>
-                    <Select defaultValue="standard">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="standard">Estándar</SelectItem>
-                        <SelectItem value="aggressive">Agresiva</SelectItem>
-                        <SelectItem value="soft">Suave</SelectItem>
-                        <SelectItem value="custom">Personalizada</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="auto_late_fees">Aplicar Moras Automáticamente</Label>
-                    <Select defaultValue="yes">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="yes">Sí</SelectItem>
-                        <SelectItem value="no">No</SelectItem>
-                        <SelectItem value="after_grace">Después del período de gracia</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="collection_calls_per_day">Llamadas de Cobranza por Día</Label>
-                    <Input
-                      id="collection_calls_per_day"
-                      type="number"
-                      defaultValue="3"
-                      placeholder="Máximo de llamadas diarias"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="collection_start_time">Hora de Inicio de Cobranza</Label>
-                    <Input
-                      id="collection_start_time"
-                      type="time"
-                      defaultValue="08:00"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="collection_end_time">Hora de Fin de Cobranza</Label>
-                    <Input
-                      id="collection_end_time"
-                      type="time"
-                      defaultValue="18:00"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="weekend_collections">Cobranza en Fines de Semana</Label>
-                    <Select defaultValue="no">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="yes">Sí</SelectItem>
-                        <SelectItem value="no">No</SelectItem>
-                        <SelectItem value="saturday_only">Solo sábados</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Configuraciones de Riesgo */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <TrendingUp className="h-5 w-5 mr-2" />
-                  Configuraciones de Riesgo
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="max_debt_to_income">Máximo Deuda/Ingreso (%)</Label>
-                    <Input
-                      id="max_debt_to_income"
-                      type="number"
-                      defaultValue="40"
-                      placeholder="Porcentaje máximo de endeudamiento"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="min_credit_score_required">Score Mínimo Requerido</Label>
-                    <Input
-                      id="min_credit_score_required"
-                      type="number"
-                      defaultValue="600"
-                      placeholder="Score crediticio mínimo"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="max_loans_per_client">Máximo Préstamos por Cliente</Label>
-                    <Input
-                      id="max_loans_per_client"
-                      type="number"
-                      defaultValue="3"
-                      placeholder="Número máximo de préstamos simultáneos"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="risk_assessment_model">Modelo de Evaluación de Riesgo</Label>
-                    <Select defaultValue="basic">
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="basic">Básico</SelectItem>
-                        <SelectItem value="advanced">Avanzado</SelectItem>
-                        <SelectItem value="ai_powered">Con IA</SelectItem>
-                        <SelectItem value="custom">Personalizado</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="auto_approval_limit">Límite de Aprobación Automática</Label>
-                    <Input
-                      id="auto_approval_limit"
-                      type="number"
-                      defaultValue="25000"
-                      placeholder="Monto máximo para aprobación automática"
-                    />
-                  </div>
-                  
-                  <div>
-                    <Label htmlFor="require_guarantor_above">Requerir Garante Arriba de</Label>
-                    <Input
-                      id="require_guarantor_above"
-                      type="number"
-                      defaultValue="100000"
-                      placeholder="Monto que requiere garante"
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Configuraciones de Documentación */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <FileText className="h-5 w-5 mr-2" />
-                  Configuraciones de Documentación
+                  Configuración de WhatsApp
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-3">
-                  <Label className="text-sm font-medium">Documentos Requeridos</Label>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <Label className="text-sm">Cédula de Identidad</Label>
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div className="flex-1">
+                      <Label htmlFor="ask_whatsapp_before_send" className="text-base font-semibold">
+                        Preguntar antes de enviar por WhatsApp
+                      </Label>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Si está desactivado, después de cerrar el modal de impresión se enviará automáticamente a WhatsApp sin preguntar.
+                      </p>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <Label className="text-sm">Certificación de Ingresos</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <Label className="text-sm">Estados Bancarios</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" className="rounded" />
-                      <Label className="text-sm">Referencias Comerciales</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" className="rounded" />
-                      <Label className="text-sm">Garantías/Colateral</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <Label className="text-sm">Foto del Cliente</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" className="rounded" />
-                      <Label className="text-sm">Firma Digital</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input type="checkbox" className="rounded" />
-                      <Label className="text-sm">Referencias Laborales</Label>
+                      <input
+                        type="checkbox"
+                        id="ask_whatsapp_before_send"
+                        checked={formData.ask_whatsapp_before_send}
+                        onChange={(e) => handleInputChange('ask_whatsapp_before_send', e.target.checked)}
+                        className="w-5 h-5 rounded"
+                      />
                     </div>
                   </div>
+                  {!formData.ask_whatsapp_before_send && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <p className="text-sm text-blue-800">
+                        <strong>Modo automático:</strong> Después de imprimir un recibo, se abrirá WhatsApp automáticamente sin mostrar el diálogo de confirmación.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Configuraciones de Almacenamiento de Documentos */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <FileText className="h-5 w-5 mr-2" />
+                  Configuraciones de Almacenamiento de Documentos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-sm text-blue-800">
+                    <strong>Nota:</strong> Los documentos requeridos para solicitudes de préstamo se configuran en el módulo de Solicitudes, pestaña "Config".
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="document_retention_years">Años de Retención de Documentos</Label>
-                    <Input
-                      id="document_retention_years"
-                      type="number"
-                      defaultValue="7"
-                      placeholder="Años para mantener documentos"
-                    />
-                  </div>
-                  
                   <div>
                     <Label htmlFor="max_file_size">Tamaño Máximo de Archivo (MB)</Label>
                     <Input
                       id="max_file_size"
                       type="number"
+                      min="1"
+                      max="100"
                       defaultValue="10"
                       placeholder="Tamaño máximo por archivo"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Límite de tamaño para subir documentos (1-100 MB)
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="document_retention_years">Años de Retención de Documentos</Label>
+                    <Input
+                      id="document_retention_years"
+                      type="number"
+                      min="1"
+                      max="30"
+                      defaultValue="7"
+                      placeholder="Años para mantener documentos"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Tiempo que se conservarán los documentos antes de poder eliminarlos (1-30 años)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Formatos de Archivo Permitidos</Label>
+                  <p className="text-xs text-gray-600">
+                    Selecciona los formatos de archivo que se pueden subir como documentos.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <div className="flex items-center space-x-2">
+                      <input type="checkbox" defaultChecked className="rounded" disabled />
+                      <Label className="text-sm">PDF (Recomendado)</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <input type="checkbox" defaultChecked className="rounded" disabled />
+                      <Label className="text-sm">Imágenes (JPG, PNG)</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <input type="checkbox" defaultChecked className="rounded" disabled />
+                      <Label className="text-sm">Documentos (DOC, DOCX)</Label>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Los formatos están predefinidos para garantizar compatibilidad y seguridad.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Política de Almacenamiento</Label>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <p className="text-sm text-gray-700 mb-2">
+                      <strong>Información sobre almacenamiento:</strong>
+                    </p>
+                    <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside">
+                      <li>Los documentos se almacenan de forma segura en la nube</li>
+                      <li>Cada documento está asociado a un préstamo o cliente específico</li>
+                      <li>Los documentos se pueden visualizar y descargar desde el módulo de Documentos</li>
+                      <li>Se recomienda mantener los documentos durante el período de retención configurado</li>
+                    </ul>
                   </div>
                 </div>
               </CardContent>

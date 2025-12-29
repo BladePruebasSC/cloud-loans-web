@@ -414,6 +414,68 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     }
   };
 
+  const sendWhatsAppDirectly = async () => {
+    if (!lastPaymentData) return;
+    
+    // Obtener el teléfono del cliente si no está disponible
+    let clientPhone = lastPaymentData?.loan?.client?.phone;
+    
+    if (!clientPhone && lastPaymentData?.loan?.id) {
+      try {
+        const { data: loanData } = await supabase
+          .from('loans')
+          .select('client_id')
+          .eq('id', lastPaymentData.loan.id)
+          .single();
+        
+        if (loanData?.client_id) {
+          const { data: clientData } = await supabase
+            .from('clients')
+            .select('phone')
+            .eq('id', loanData.client_id)
+            .maybeSingle();
+          
+          if (clientData?.phone) {
+            clientPhone = clientData.phone;
+          }
+        }
+      } catch (error) {
+        console.error('Error obteniendo teléfono del cliente:', error);
+      }
+    }
+    
+    if (!clientPhone) {
+      toast.error('No se encontró el número de teléfono del cliente.');
+      return;
+    }
+
+    try {
+      const companyName = companySettings?.company_name || 'LA EMPRESA';
+      const receiptMessage = generateLoanPaymentReceipt({
+        companyName,
+        clientName: lastPaymentData.loan.client.full_name,
+        clientDni: lastPaymentData.loan.client.dni,
+        paymentDate: lastPaymentData.paymentDate,
+        paymentAmount: lastPaymentData.payment.amount + (lastPaymentData.lateFeeAmount || 0),
+        principalAmount: lastPaymentData.principalPayment,
+        interestAmount: lastPaymentData.interestAmount || lastPaymentData.interestPayment || 0,
+        lateFeeAmount: lastPaymentData.lateFeeAmount > 0 ? lastPaymentData.lateFeeAmount : undefined,
+        paymentMethod: lastPaymentData.paymentMethod,
+        loanAmount: lastPaymentData.loan.amount,
+        remainingBalance: lastPaymentData.remainingBalance,
+        interestRate: lastPaymentData.loan.interest_rate,
+        nextPaymentDate: lastPaymentData.nextPaymentDate,
+        referenceNumber: lastPaymentData.referenceNumber
+      });
+
+      openWhatsApp(clientPhone, receiptMessage);
+      toast.success('Abriendo WhatsApp...');
+    } catch (error: any) {
+      console.error('Error abriendo WhatsApp:', error);
+      toast.error(error.message || 'Error al abrir WhatsApp');
+    }
+  };
+
   const handleClosePrintModalAndShowWhatsApp = (action?: () => void) => {
     setIsClosingPrintModal(true);
     // Ejecutar la acción primero si existe
@@ -422,9 +484,18 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     }
     // Cerrar el modal
     setShowPrintFormatModal(false);
-    // Mostrar el diálogo de WhatsApp después de un delay para asegurar que el modal se cierre
+    
+    // Verificar si debe preguntar antes de enviar
+    const askBeforeSend = companySettings?.ask_whatsapp_before_send !== false; // Por defecto true
+    
     setTimeout(() => {
-      setShowWhatsAppDialog(true);
+      if (askBeforeSend) {
+        // Mostrar el diálogo de WhatsApp
+        setShowWhatsAppDialog(true);
+      } else {
+        // Enviar directamente a WhatsApp
+        sendWhatsAppDirectly();
+      }
       setIsClosingPrintModal(false);
     }, 300);
   };
@@ -999,7 +1070,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         form.setValue('amount', roundedAmount);
         setPaymentAmount(roundedAmount);
       } else if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
-        // Si hay un saldo pendiente menor a la cuota mensual, pre-llenar con ese monto
+      // Si hay un saldo pendiente menor a la cuota mensual, pre-llenar con ese monto
         const roundedAmount = Math.round(paymentStatus.currentPaymentRemaining);
         form.setValue('amount', roundedAmount);
         setPaymentAmount(roundedAmount);
@@ -1408,12 +1479,12 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           }
         } else {
           // Para cuotas regulares, usar la validación original
-          const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
-          const roundedMaxAllowed = Math.round(maxAllowedPayment);
-          if (data.amount > roundedMaxAllowed) {
-            toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: ${formatCurrency(roundedMaxAllowed)}`);
+        const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
+        const roundedMaxAllowed = Math.round(maxAllowedPayment);
+        if (data.amount > roundedMaxAllowed) {
+          toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: ${formatCurrency(roundedMaxAllowed)}`);
             setLoading(false);
-            return;
+          return;
           }
         }
       }
@@ -1825,40 +1896,40 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           }
         } else {
           // Para otros tipos de préstamos, usar la lógica original
-          const [year, month, day] = selectedLoan.next_payment_date.split('-').map(Number);
+        const [year, month, day] = selectedLoan.next_payment_date.split('-').map(Number);
           const nextDate = new Date(year, month - 1, day);
 
-          switch (selectedLoan.payment_frequency) {
-            case 'daily':
-              nextDate.setDate(nextDate.getDate() + 1);
-              break;
-            case 'weekly':
-              nextDate.setDate(nextDate.getDate() + 7);
-              break;
-            case 'biweekly':
-              nextDate.setDate(nextDate.getDate() + 14);
-              break;
-            case 'monthly':
+        switch (selectedLoan.payment_frequency) {
+          case 'daily':
+            nextDate.setDate(nextDate.getDate() + 1);
+            break;
+          case 'weekly':
+            nextDate.setDate(nextDate.getDate() + 7);
+            break;
+          case 'biweekly':
+            nextDate.setDate(nextDate.getDate() + 14);
+            break;
+          case 'monthly':
               const originalDay = nextDate.getDate();
-              nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDay);
-              break;
-            case 'quarterly':
-              const originalDayQuarterly = nextDate.getDate();
-              nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 3, originalDayQuarterly);
-              break;
-            case 'yearly':
-              const originalDayYearly = nextDate.getDate();
-              nextDate.setFullYear(nextDate.getFullYear() + 1, nextDate.getMonth(), originalDayYearly);
-              break;
-            default:
-              const originalDayDefault = nextDate.getDate();
-              nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDayDefault);
-          }
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDay);
+            break;
+          case 'quarterly':
+            const originalDayQuarterly = nextDate.getDate();
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 3, originalDayQuarterly);
+            break;
+          case 'yearly':
+            const originalDayYearly = nextDate.getDate();
+            nextDate.setFullYear(nextDate.getFullYear() + 1, nextDate.getMonth(), originalDayYearly);
+            break;
+          default:
+            const originalDayDefault = nextDate.getDate();
+            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDayDefault);
+        }
 
-          const finalYear = nextDate.getFullYear();
-          const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
-          const finalDay = String(nextDate.getDate()).padStart(2, '0');
-          nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
+        const finalYear = nextDate.getFullYear();
+        const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+        const finalDay = String(nextDate.getDate()).padStart(2, '0');
+        nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
         }
 
         // CORRECCIÓN: Marcar la PRIMERA cuota NO pagada ordenada por fecha de vencimiento
@@ -1957,10 +2028,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           }
           
           if (paymentCoversInstallment) {
-            // Agregar esta cuota a las pagadas
+          // Agregar esta cuota a las pagadas
             if (!updatedPaidInstallments.includes(firstUnpaidInstallmentNumber)) {
               updatedPaidInstallments.push(firstUnpaidInstallmentNumber);
-              updatedPaidInstallments.sort((a, b) => a - b); // Mantener ordenado
+          updatedPaidInstallments.sort((a, b) => a - b); // Mantener ordenado
             }
 
             console.log('🔍 PaymentForm: Cuota marcada como pagada (por fecha de vencimiento):', {
@@ -1971,22 +2042,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               principalPayment,
               interestPayment,
               updatedPaidInstallments
-            });
+          });
 
-            // Marcar la cuota como pagada en la tabla installments y resetear late_fee_paid
-            const { error: installmentError } = await supabase
-              .from('installments')
-              .update({
-                is_paid: true,
-                paid_date: new Date().toISOString().split('T')[0],
-                late_fee_paid: 0 // Resetear mora pagada cuando se marca como pagada
-              })
-              .eq('loan_id', data.loan_id)
+          // Marcar la cuota como pagada en la tabla installments y resetear late_fee_paid
+          const { error: installmentError } = await supabase
+            .from('installments')
+            .update({
+              is_paid: true,
+              paid_date: new Date().toISOString().split('T')[0],
+              late_fee_paid: 0 // Resetear mora pagada cuando se marca como pagada
+            })
+            .eq('loan_id', data.loan_id)
               .eq('installment_number', firstUnpaidInstallmentNumber);
 
-            if (installmentError) {
-              console.error('Error marcando cuota como pagada en installments:', installmentError);
-            } else {
+          if (installmentError) {
+            console.error('Error marcando cuota como pagada en installments:', installmentError);
+          } else {
               console.log(`✅ Cuota ${firstUnpaidInstallmentNumber} marcada como pagada en la tabla installments`);
             }
           } else {
@@ -2714,10 +2785,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       {/* Modal de Selección de Formato de Impresión */}
       <Dialog open={showPrintFormatModal} onOpenChange={(open) => {
         if (!open && !isClosingPrintModal) {
-          // Cuando se cierra el modal (X o clic fuera) y no se está cerrando desde un botón, mostrar el diálogo de WhatsApp
+          // Cuando se cierra el modal (X o clic fuera) y no se está cerrando desde un botón
           setShowPrintFormatModal(false);
+          const askBeforeSend = companySettings?.ask_whatsapp_before_send !== false; // Por defecto true
           setTimeout(() => {
-            setShowWhatsAppDialog(true);
+            if (askBeforeSend) {
+              setShowWhatsAppDialog(true);
+            } else {
+              sendWhatsAppDirectly();
+            }
           }, 300);
         }
       }}>

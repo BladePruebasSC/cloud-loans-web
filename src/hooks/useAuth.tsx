@@ -41,6 +41,12 @@ interface CompanySettings {
   default_pawn_period_days: number | null;
   document_templates?: any;
   company_name?: string;
+  notify_late_fees?: boolean | null;
+  notify_rate_changes?: boolean | null;
+  notify_payment_reminders?: boolean | null;
+  notify_loan_approvals?: boolean | null;
+  notify_loan_rejections?: boolean | null;
+  ask_whatsapp_before_send?: boolean | null;
 }
 
 interface AuthContextType {
@@ -132,7 +138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const { data, error } = await supabase
         .from('company_settings')
-        .select('currency, interest_rate_default, late_fee_percentage, grace_period_days, default_grace_period_days, min_loan_amount, max_loan_amount, min_term_months, max_term_months, default_late_fee_rate, default_pawn_period_days, document_templates, company_name')
+        .select('currency, interest_rate_default, late_fee_percentage, grace_period_days, default_grace_period_days, min_loan_amount, max_loan_amount, min_term_months, max_term_months, default_late_fee_rate, default_pawn_period_days, document_templates, company_name, notify_late_fees, notify_rate_changes, notify_payment_reminders, notify_loan_approvals, notify_loan_rejections, ask_whatsapp_before_send')
         .eq('user_id', ownerId)
         .maybeSingle();
       if (error && error.code !== 'PGRST116') {

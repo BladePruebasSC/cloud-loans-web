@@ -1152,6 +1152,78 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const sendWhatsAppDirectly = async () => {
+    if (!lastSettlePaymentData || !companySettings) {
+      toast.error('Error: No se encontraron los datos necesarios');
+      return;
+    }
+
+    try {
+      const payment = lastSettlePaymentData.payment;
+      const loan = lastSettlePaymentData.loan;
+      // Manejar tanto 'client' como 'clients' (puede venir de diferentes consultas)
+      let client = loan.client || (loan as any).clients;
+      
+      // Si es un array, tomar el primer elemento
+      if (Array.isArray(client)) {
+        client = client[0];
+      }
+      
+      // Si el cliente no está disponible o no tiene teléfono, intentar obtenerlo desde la BD
+      const clientIdToUse = lastSettlePaymentData.clientId || (loan as any).client_id;
+      
+      if (!client || !client.phone) {
+        if (clientIdToUse) {
+          const { data: clientInfo, error: clientError } = await supabase
+            .from('clients')
+            .select('id, full_name, dni, phone, email')
+            .eq('id', clientIdToUse)
+            .single();
+          
+          if (!clientError && clientInfo) {
+            client = clientInfo;
+          }
+        }
+      }
+      
+      if (!client) {
+        toast.error('No se pudo obtener la información del cliente');
+        return;
+      }
+      
+      const receiptData = {
+        companyName: companySettings?.company_name || 'LA EMPRESA',
+        clientName: client?.full_name || 'Cliente',
+        clientDni: client?.dni,
+        paymentDate: formatDateStringForSantoDomingo(payment.payment_date),
+        paymentAmount: payment.amount,
+        principalAmount: payment.principal_amount || 0,
+        interestAmount: payment.interest_amount || 0,
+        lateFeeAmount: payment.late_fee || 0,
+        paymentMethod: payment.payment_method || 'cash',
+        loanAmount: loan.amount,
+        remainingBalance: 0, // Préstamo saldado
+        interestRate: loan.interest_rate,
+        referenceNumber: payment.reference_number
+      };
+
+      const receiptMessage = generateLoanPaymentReceipt(receiptData);
+      const clientPhone = client?.phone;
+      
+      if (!clientPhone) {
+        toast.error('El cliente no tiene número de teléfono registrado');
+        return;
+      }
+
+      const formattedPhone = formatPhoneForWhatsApp(clientPhone);
+      await openWhatsApp(formattedPhone, receiptMessage);
+      toast.success('Recibo enviado por WhatsApp');
+    } catch (error: any) {
+      console.error('Error enviando recibo por WhatsApp:', error);
+      toast.error('Error al enviar recibo por WhatsApp');
+    }
+  };
+
   const handleClosePrintModalAndShowWhatsApp = (action?: (() => void) | React.MouseEvent) => {
     setIsClosingPrintModal(true);
     // Ejecutar la acción primero si existe y es una función (no un evento de React)
@@ -1160,9 +1232,18 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     }
     // Cerrar el modal
     setShowPrintFormatModal(false);
-    // Mostrar el diálogo de WhatsApp después de un delay para asegurar que el modal se cierre
+    
+    // Verificar si debe preguntar antes de enviar
+    const askBeforeSend = companySettings?.ask_whatsapp_before_send !== false; // Por defecto true
+    
     setTimeout(() => {
-      setShowWhatsAppDialog(true);
+      if (askBeforeSend) {
+        // Mostrar el diálogo de WhatsApp
+        setShowWhatsAppDialog(true);
+      } else {
+        // Enviar directamente a WhatsApp
+        sendWhatsAppDirectly();
+      }
       setIsClosingPrintModal(false);
     }, 300);
   };
@@ -3494,10 +3575,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     {/* Modal de Formato de Impresión */}
     <Dialog open={showPrintFormatModal} onOpenChange={(open) => {
       if (!open && !isClosingPrintModal) {
-        // Cuando se cierra el modal (X o clic fuera) y no se está cerrando desde un botón, mostrar el diálogo de WhatsApp
+        // Cuando se cierra el modal (X o clic fuera) y no se está cerrando desde un botón
         setShowPrintFormatModal(false);
+        const askBeforeSend = companySettings?.ask_whatsapp_before_send !== false; // Por defecto true
         setTimeout(() => {
-          setShowWhatsAppDialog(true);
+          if (askBeforeSend) {
+            setShowWhatsAppDialog(true);
+          } else {
+            sendWhatsAppDirectly();
+          }
         }, 300);
       }
     }}>
