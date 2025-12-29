@@ -460,6 +460,32 @@ const RequestsModule = () => {
       return;
     }
 
+    // Validar documentos requeridos
+    if (configData.required_documents) {
+      const requiredDocs = Object.entries(configData.required_documents)
+        .filter(([_, required]) => required === true)
+        .map(([docType, _]) => docType);
+      
+      if (requiredDocs.length > 0) {
+        const uploadedDocTypes = pendingDocuments.map(doc => doc.type);
+        const missingDocs = requiredDocs.filter(docType => !uploadedDocTypes.includes(docType));
+        
+        if (missingDocs.length > 0) {
+          const docNames: { [key: string]: string } = {
+            identity_card: 'Cédula de Identidad',
+            income_certificate: 'Certificación de Ingresos',
+            bank_statements: 'Estados Bancarios',
+            commercial_references: 'Referencias Comerciales',
+            guarantees: 'Garantías/Colateral'
+          };
+          
+          const missingDocNames = missingDocs.map(docType => docNames[docType] || docType).join(', ');
+          toast.error(`Debes subir los siguientes documentos requeridos: ${missingDocNames}`);
+          return;
+        }
+      }
+    }
+
     try {
       const requestData = {
         ...formData,
@@ -1857,6 +1883,35 @@ const RequestsModule = () => {
               <form onSubmit={async (e) => {
                 e.preventDefault();
                 if (!user || !editingRequest) return;
+
+                // Validar documentos requeridos
+                if (configData.required_documents) {
+                  const requiredDocs = Object.entries(configData.required_documents)
+                    .filter(([_, required]) => required === true)
+                    .map(([docType, _]) => docType);
+                  
+                  if (requiredDocs.length > 0) {
+                    // Obtener documentos existentes de la solicitud
+                    const existingDocs = requestDocuments[editingRequest.id] || [];
+                    const existingDocTypes = existingDocs.map((doc: any) => doc.document_type);
+                    
+                    const missingDocs = requiredDocs.filter(docType => !existingDocTypes.includes(docType));
+                    
+                    if (missingDocs.length > 0) {
+                      const docNames: { [key: string]: string } = {
+                        identity_card: 'Cédula de Identidad',
+                        income_certificate: 'Certificación de Ingresos',
+                        bank_statements: 'Estados Bancarios',
+                        commercial_references: 'Referencias Comerciales',
+                        guarantees: 'Garantías/Colateral'
+                      };
+                      
+                      const missingDocNames = missingDocs.map(docType => docNames[docType] || docType).join(', ');
+                      toast.error(`Debes subir los siguientes documentos requeridos: ${missingDocNames}`);
+                      return;
+                    }
+                  }
+                }
 
                 try {
                   const updateData: any = {
