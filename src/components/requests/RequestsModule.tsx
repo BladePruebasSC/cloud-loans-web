@@ -23,7 +23,8 @@ import {
   Settings,
   Eye,
   ArrowRight,
-  Trash2
+  Trash2,
+  Shield
 } from 'lucide-react';
 
 interface LoanRequest {
@@ -45,6 +46,11 @@ interface LoanRequest {
   first_payment_date: string | null;
   closing_costs: number | null;
   late_fee: boolean | null;
+  late_fee_enabled?: boolean | null;
+  late_fee_rate?: number | null;
+  grace_period_days?: number | null;
+  max_late_fee?: number | null;
+  late_fee_calculation_type?: string | null;
   minimum_payment_type: string | null;
   minimum_payment_percentage: number | null;
   guarantor_required: boolean | null;
@@ -224,12 +230,17 @@ const RequestsModule = () => {
     try {
       const requestData = {
         ...formData,
-        user_id: user.id
+        user_id: user.id,
+        // Mapear late_fee_enabled a late_fee para compatibilidad
+        late_fee: formData.late_fee_enabled
       };
+
+      // Remover late_fee_enabled del objeto ya que se mapea a late_fee
+      const { late_fee_enabled, ...dataToInsert } = requestData;
 
       const { error } = await supabase
         .from('loan_requests')
-        .insert([requestData]);
+        .insert([dataToInsert]);
 
       if (error) throw error;
 
@@ -829,59 +840,388 @@ const RequestsModule = () => {
       {/* Request Details Dialog */}
       {selectedRequest && (
         <Dialog open={!!selectedRequest} onOpenChange={() => setSelectedRequest(null)}>
-          <DialogContent className="w-[95vw] max-w-2xl max-h-[90vh] overflow-y-auto sm:w-[90vw]">
+          <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto sm:w-[90vw]">
             <DialogHeader>
-              <DialogTitle className="text-lg sm:text-xl">Detalles de la Solicitud</DialogTitle>
+              <DialogTitle className="text-xl sm:text-2xl font-bold flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Detalles de la Solicitud
+              </DialogTitle>
             </DialogHeader>
-            <div className="space-y-3 sm:space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Cliente</Label>
-                  <p className="text-lg font-semibold">{selectedRequest.clients?.full_name}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Estado</Label>
-                  <div className="mt-1">{getStatusBadge(selectedRequest.status)}</div>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Monto Solicitado</Label>
-                  <p className="text-lg">${selectedRequest.requested_amount.toLocaleString()}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Fecha de Solicitud</Label>
-                  <p className="text-lg">{new Date(selectedRequest.created_at).toLocaleDateString()}</p>
-                </div>
-                {selectedRequest.monthly_income && (
-                  <div>
-                    <Label className="text-sm font-medium text-gray-500">Ingresos Mensuales</Label>
-                    <p className="text-lg">${selectedRequest.monthly_income.toLocaleString()}</p>
+            
+            <div className="space-y-6">
+              {/* Información del Cliente */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                    <User className="h-4 w-4" />
+                    Información del Cliente
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                      <Label className="text-xs font-medium text-gray-500 uppercase">Nombre Completo</Label>
+                      <p className="text-sm font-semibold mt-1">{selectedRequest.clients?.full_name || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs font-medium text-gray-500 uppercase">DNI</Label>
+                      <p className="text-sm mt-1">{selectedRequest.clients?.dni || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs font-medium text-gray-500 uppercase">Teléfono</Label>
+                      <p className="text-sm mt-1">{selectedRequest.clients?.phone || 'N/A'}</p>
+                    </div>
+                    {selectedRequest.clients?.email && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Email</Label>
+                        <p className="text-sm mt-1">{selectedRequest.clients.email}</p>
+                      </div>
+                    )}
+                    <div>
+                      <Label className="text-xs font-medium text-gray-500 uppercase">Score Crediticio</Label>
+                      <p className="text-sm font-semibold mt-1">
+                        {selectedRequest.clients?.credit_score ? (
+                          <span className={selectedRequest.clients.credit_score >= 700 ? 'text-green-600' : selectedRequest.clients.credit_score >= 600 ? 'text-yellow-600' : 'text-red-600'}>
+                            {selectedRequest.clients.credit_score}
+                          </span>
+                        ) : 'N/A'}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-xs font-medium text-gray-500 uppercase">Estado</Label>
+                      <div className="mt-1">{getStatusBadge(selectedRequest.status)}</div>
+                    </div>
                   </div>
-                )}
-                {selectedRequest.existing_debts && (
-                  <div>
-                    <Label className="text-sm font-medium text-gray-500">Deudas Existentes</Label>
-                    <p className="text-lg">${selectedRequest.existing_debts.toLocaleString()}</p>
+                </CardContent>
+              </Card>
+
+              {/* Información Financiera */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                    <DollarSign className="h-4 w-4" />
+                    Información Financiera
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                      <Label className="text-xs font-medium text-gray-500 uppercase">Monto Solicitado</Label>
+                      <p className="text-lg font-bold text-blue-600 mt-1">RD$ {selectedRequest.requested_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
+                    {selectedRequest.monthly_income && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Ingresos Mensuales</Label>
+                        <p className="text-sm font-semibold mt-1">RD$ {selectedRequest.monthly_income.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      </div>
+                    )}
+                    {selectedRequest.existing_debts && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Deudas Existentes</Label>
+                        <p className="text-sm font-semibold mt-1">RD$ {selectedRequest.existing_debts.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      </div>
+                    )}
+                    {selectedRequest.closing_costs && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Costos de Cierre</Label>
+                        <p className="text-sm font-semibold mt-1">RD$ {selectedRequest.closing_costs.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              {selectedRequest.purpose && (
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Propósito</Label>
-                  <p className="text-base">{selectedRequest.purpose}</p>
-                </div>
+                </CardContent>
+              </Card>
+
+              {/* Detalles del Préstamo */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                    <Settings className="h-4 w-4" />
+                    Detalles del Préstamo
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {selectedRequest.interest_rate !== null && selectedRequest.interest_rate !== undefined && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Tasa de Interés</Label>
+                        <p className="text-sm font-semibold mt-1">{selectedRequest.interest_rate}%</p>
+                      </div>
+                    )}
+                    {selectedRequest.term_months && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Plazo (meses)</Label>
+                        <p className="text-sm font-semibold mt-1">{selectedRequest.term_months} meses</p>
+                      </div>
+                    )}
+                    {selectedRequest.loan_type && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Tipo de Préstamo</Label>
+                        <p className="text-sm font-semibold mt-1 capitalize">{selectedRequest.loan_type}</p>
+                      </div>
+                    )}
+                    {selectedRequest.amortization_type && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Tipo de Amortización</Label>
+                        <p className="text-sm font-semibold mt-1 capitalize">{selectedRequest.amortization_type}</p>
+                      </div>
+                    )}
+                    {selectedRequest.payment_frequency && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Frecuencia de Pago</Label>
+                        <p className="text-sm font-semibold mt-1 capitalize">
+                          {selectedRequest.payment_frequency === 'monthly' ? 'Mensual' :
+                           selectedRequest.payment_frequency === 'biweekly' ? 'Quincenal' :
+                           selectedRequest.payment_frequency === 'weekly' ? 'Semanal' :
+                           selectedRequest.payment_frequency === 'daily' ? 'Diario' :
+                           selectedRequest.payment_frequency}
+                        </p>
+                      </div>
+                    )}
+                    {selectedRequest.first_payment_date && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Fecha del Primer Pago</Label>
+                        <p className="text-sm font-semibold mt-1">{new Date(selectedRequest.first_payment_date).toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                      </div>
+                    )}
+                    {selectedRequest.minimum_payment_type && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Tipo de Pago Mínimo</Label>
+                        <p className="text-sm font-semibold mt-1 capitalize">
+                          {selectedRequest.minimum_payment_type === 'interest' ? 'Interés' :
+                           selectedRequest.minimum_payment_type === 'principal' ? 'Capital' :
+                           selectedRequest.minimum_payment_type === 'both' ? 'Ambos' :
+                           selectedRequest.minimum_payment_type}
+                        </p>
+                      </div>
+                    )}
+                    {selectedRequest.minimum_payment_percentage && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Porcentaje de Pago Mínimo</Label>
+                        <p className="text-sm font-semibold mt-1">{selectedRequest.minimum_payment_percentage}%</p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Configuración de Mora */}
+              {(selectedRequest.late_fee || selectedRequest.late_fee_rate || selectedRequest.grace_period_days) && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      Configuración de Mora
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Mora Habilitada</Label>
+                        <p className="text-sm font-semibold mt-1">
+                          {selectedRequest.late_fee ? (
+                            <span className="text-green-600">Sí</span>
+                          ) : (
+                            <span className="text-gray-400">No</span>
+                          )}
+                        </p>
+                      </div>
+                      {selectedRequest.late_fee_rate && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Tasa de Mora</Label>
+                          <p className="text-sm font-semibold mt-1">{selectedRequest.late_fee_rate}%</p>
+                        </div>
+                      )}
+                      {selectedRequest.grace_period_days !== null && selectedRequest.grace_period_days !== undefined && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Días de Gracia</Label>
+                          <p className="text-sm font-semibold mt-1">{selectedRequest.grace_period_days} días</p>
+                        </div>
+                      )}
+                      {selectedRequest.max_late_fee && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Mora Máxima</Label>
+                          <p className="text-sm font-semibold mt-1">RD$ {selectedRequest.max_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                        </div>
+                      )}
+                      {selectedRequest.late_fee_calculation_type && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Tipo de Cálculo</Label>
+                          <p className="text-sm font-semibold mt-1 capitalize">
+                            {selectedRequest.late_fee_calculation_type === 'daily' ? 'Diario' :
+                             selectedRequest.late_fee_calculation_type === 'monthly' ? 'Mensual' :
+                             selectedRequest.late_fee_calculation_type === 'compound' ? 'Compuesto' :
+                             selectedRequest.late_fee_calculation_type}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
               )}
-              {selectedRequest.collateral_description && (
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Garantía</Label>
-                  <p className="text-base">{selectedRequest.collateral_description}</p>
-                </div>
+
+              {/* Información Laboral y Verificación */}
+              {(selectedRequest.employment_status || selectedRequest.income_verification) && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                      <User className="h-4 w-4" />
+                      Información Laboral
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {selectedRequest.employment_status && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Estado de Empleo</Label>
+                          <p className="text-sm font-semibold mt-1 capitalize">{selectedRequest.employment_status}</p>
+                        </div>
+                      )}
+                      {selectedRequest.income_verification && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Verificación de Ingresos</Label>
+                          <p className="text-sm mt-1">{selectedRequest.income_verification}</p>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
               )}
-              {selectedRequest.review_notes && (
-                <div>
-                  <Label className="text-sm font-medium text-gray-500">Notas de Revisión</Label>
-                  <p className="text-base">{selectedRequest.review_notes}</p>
-                </div>
+
+              {/* Garantía y Codeudor */}
+              {(selectedRequest.collateral_description || selectedRequest.guarantor_required) && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                      <Shield className="h-4 w-4" />
+                      Garantía y Codeudor
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {selectedRequest.collateral_description && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Descripción de Garantía</Label>
+                          <p className="text-sm mt-1 whitespace-pre-wrap">{selectedRequest.collateral_description}</p>
+                        </div>
+                      )}
+                      {selectedRequest.guarantor_required && (
+                        <>
+                          <div>
+                            <Label className="text-xs font-medium text-gray-500 uppercase">Codeudor Requerido</Label>
+                            <p className="text-sm font-semibold mt-1 text-green-600">Sí</p>
+                          </div>
+                          {selectedRequest.guarantor_name && (
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t">
+                              <div>
+                                <Label className="text-xs font-medium text-gray-500 uppercase">Nombre del Codeudor</Label>
+                                <p className="text-sm font-semibold mt-1">{selectedRequest.guarantor_name}</p>
+                              </div>
+                              {selectedRequest.guarantor_phone && (
+                                <div>
+                                  <Label className="text-xs font-medium text-gray-500 uppercase">Teléfono</Label>
+                                  <p className="text-sm mt-1">{selectedRequest.guarantor_phone}</p>
+                                </div>
+                              )}
+                              {selectedRequest.guarantor_dni && (
+                                <div>
+                                  <Label className="text-xs font-medium text-gray-500 uppercase">DNI</Label>
+                                  <p className="text-sm mt-1">{selectedRequest.guarantor_dni}</p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
               )}
+
+              {/* Propósito y Notas */}
+              {(selectedRequest.purpose || selectedRequest.notes) && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Información Adicional
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {selectedRequest.purpose && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Propósito del Préstamo</Label>
+                          <p className="text-sm mt-1 whitespace-pre-wrap">{selectedRequest.purpose}</p>
+                        </div>
+                      )}
+                      {selectedRequest.notes && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Notas</Label>
+                          <p className="text-sm mt-1 whitespace-pre-wrap">{selectedRequest.notes}</p>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Información de Revisión */}
+              {selectedRequest.reviewed_by && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4" />
+                      Información de Revisión
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {selectedRequest.reviewed_at && (
+                        <div>
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Fecha de Revisión</Label>
+                          <p className="text-sm font-semibold mt-1">
+                            {new Date(selectedRequest.reviewed_at).toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                      )}
+                      {selectedRequest.review_notes && (
+                        <div className="sm:col-span-2">
+                          <Label className="text-xs font-medium text-gray-500 uppercase">Notas de Revisión</Label>
+                          <p className="text-sm mt-1 whitespace-pre-wrap bg-gray-50 p-3 rounded-md">{selectedRequest.review_notes}</p>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Fechas */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                    <Clock className="h-4 w-4" />
+                    Fechas
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-xs font-medium text-gray-500 uppercase">Fecha de Creación</Label>
+                      <p className="text-sm font-semibold mt-1">
+                        {new Date(selectedRequest.created_at).toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    {selectedRequest.updated_at && (
+                      <div>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Última Actualización</Label>
+                        <p className="text-sm font-semibold mt-1">
+                          {new Date(selectedRequest.updated_at).toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           </DialogContent>
         </Dialog>
