@@ -1092,6 +1092,8 @@ interface LoanFormProps {
     guarantor_phone?: string;
     guarantor_dni?: string;
     notes?: string;
+    // ID de la solicitud para copiar documentos
+    request_id?: string;
   };
 }
 
@@ -2306,6 +2308,57 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       // Generar las cuotas originales del préstamo
       console.log('Generando cuotas originales para el préstamo:', insertedLoan.id);
       await generateOriginalInstallments(insertedLoan, data);
+
+      // Copiar documentos de la solicitud al préstamo si viene de una solicitud
+      if (initialData?.request_id) {
+        try {
+          console.log('📄 Copiando documentos de la solicitud al préstamo...');
+          
+          // Obtener todos los documentos de la solicitud
+          const { data: requestDocuments, error: fetchError } = await supabase
+            .from('documents')
+            .select('*')
+            .eq('request_id', initialData.request_id);
+          
+          if (fetchError) {
+            console.error('Error obteniendo documentos de la solicitud:', fetchError);
+            toast.warning('Préstamo creado pero hubo un error al copiar los documentos');
+          } else if (requestDocuments && requestDocuments.length > 0) {
+            // Copiar cada documento al préstamo
+            const documentCopies = requestDocuments.map(doc => ({
+              user_id: doc.user_id,
+              loan_id: insertedLoan.id,
+              request_id: null, // Remover la asociación con la solicitud
+              client_id: doc.client_id,
+              title: doc.title,
+              file_name: doc.file_name,
+              file_url: doc.file_url,
+              description: doc.description,
+              document_type: doc.document_type,
+              mime_type: doc.mime_type,
+              file_size: doc.file_size,
+              status: doc.status,
+            }));
+            
+            const { error: copyError } = await supabase
+              .from('documents')
+              .insert(documentCopies);
+            
+            if (copyError) {
+              console.error('Error copiando documentos:', copyError);
+              toast.warning('Préstamo creado pero hubo un error al copiar los documentos');
+            } else {
+              console.log(`✅ ${documentCopies.length} documento(s) copiado(s) exitosamente al préstamo`);
+              toast.success(`Préstamo creado con ${documentCopies.length} documento(s) adjunto(s)`);
+            }
+          } else {
+            console.log('No hay documentos en la solicitud para copiar');
+          }
+        } catch (docError) {
+          console.error('Error al copiar documentos:', docError);
+          toast.warning('Préstamo creado pero hubo un error al copiar los documentos');
+        }
+      }
 
       // Si hay garantía, guardarla
       if (data.guarantor_required && guaranteeData.guarantee_type) {

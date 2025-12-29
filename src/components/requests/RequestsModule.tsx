@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { 
   FileText, 
   Plus, 
@@ -24,7 +25,13 @@ import {
   Eye,
   ArrowRight,
   Trash2,
-  Shield
+  Shield,
+  Search,
+  Pencil,
+  X,
+  Upload,
+  Download,
+  File
 } from 'lucide-react';
 
 interface LoanRequest {
@@ -95,7 +102,76 @@ const RequestsModule = () => {
   const [activeTab, setActiveTab] = useState('lista-solicitudes');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [requestToDelete, setRequestToDelete] = useState<LoanRequest | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [editingRequest, setEditingRequest] = useState<LoanRequest | null>(null);
+  const [editFormData, setEditFormData] = useState<any>(null);
+  const [requestDocuments, setRequestDocuments] = useState<{[key: string]: any[]}>({});
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [selectedDocumentType, setSelectedDocumentType] = useState<string>('');
+  const [pendingDocuments, setPendingDocuments] = useState<Array<{file: File, type: string, title: string}>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const newRequestFileInputRef = useRef<HTMLInputElement>(null);
+  const [configData, setConfigData] = useState({
+    min_credit_score: 650,
+    min_income: 25000,
+    min_employment_years: 1,
+    required_documents: {
+      identity_card: true,
+      income_certificate: true,
+      bank_statements: true,
+      commercial_references: false,
+      guarantees: false
+    }
+  });
   const { user, companyId, companySettings } = useAuth();
+
+  // Función helper para formatear fechas con hora (timestamps)
+  const formatDateTimeForSantoDomingo = (dateString: string): string => {
+    if (!dateString) return '-';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('es-DO', {
+        timeZone: 'America/Santo_Domingo',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return '-';
+    }
+  };
+
+  // Función helper para formatear fechas sin hora (YYYY-MM-DD)
+  const formatDateOnlyForSantoDomingo = (dateString: string): string => {
+    if (!dateString) return '-';
+    try {
+      // Si es una fecha en formato YYYY-MM-DD, parsearla como fecha local
+      if (dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        const [year, month, day] = dateString.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+        return date.toLocaleDateString('es-DO', {
+          timeZone: 'America/Santo_Domingo',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        });
+      }
+      // Si es un timestamp, usar formatDateTimeForSantoDomingo pero sin hora
+      const date = new Date(dateString);
+      return date.toLocaleDateString('es-DO', {
+        timeZone: 'America/Santo_Domingo',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return '-';
+    }
+  };
 
   const [formData, setFormData] = useState({
     client_id: '',
@@ -108,11 +184,11 @@ const RequestsModule = () => {
     collateral_description: '',
     // Nuevos campos para préstamos
     interest_rate: 0,
-    term_months: 12,
+    term_months: 6, // Valor por defecto, se actualizará con min_term_months de companySettings
     loan_type: 'personal',
     amortization_type: 'simple',
     payment_frequency: 'monthly',
-    first_payment_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
+    first_payment_date: new Date().toISOString().split('T')[0], // Fecha actual por defecto
     closing_costs: 0,
     late_fee_enabled: false,
     late_fee_rate: 2.0,
@@ -134,6 +210,7 @@ const RequestsModule = () => {
       setFormData(prev => ({
         ...prev,
         interest_rate: companySettings.interest_rate_default ?? prev.interest_rate,
+        term_months: companySettings.min_term_months ?? prev.term_months,
         late_fee_rate: companySettings.default_late_fee_rate ?? prev.late_fee_rate,
         grace_period_days: companySettings.default_grace_period_days ?? companySettings.grace_period_days ?? prev.grace_period_days,
         late_fee_enabled: companySettings.default_late_fee_rate ? true : prev.late_fee_enabled
@@ -145,8 +222,158 @@ const RequestsModule = () => {
     if (user) {
       fetchRequests();
       fetchClients();
+      fetchRequestConfig();
     }
   }, [user]);
+
+  // Cargar documentos cuando se selecciona una solicitud
+  useEffect(() => {
+    if (selectedRequest) {
+      fetchRequestDocuments(selectedRequest.id);
+    }
+  }, [selectedRequest]);
+
+  // Cargar documentos cuando se abre el modal de edición
+  useEffect(() => {
+    if (editingRequest) {
+      fetchRequestDocuments(editingRequest.id);
+    }
+  }, [editingRequest]);
+
+  // Cargar documentos de una solicitud
+  const fetchRequestDocuments = async (requestId: string) => {
+    try {
+      console.log('🔍 Cargando documentos para solicitud:', requestId);
+      const { data, error } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('request_id', requestId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('❌ Error en query de documentos:', error);
+        throw error;
+      }
+      
+      console.log('✅ Documentos encontrados:', data?.length || 0, data);
+      
+      setRequestDocuments(prev => ({
+        ...prev,
+        [requestId]: data || []
+      }));
+    } catch (error) {
+      console.error('Error fetching request documents:', error);
+      toast.error('Error al cargar documentos');
+    }
+  };
+
+  // Subir documento para una solicitud
+  const handleUploadDocument = async (requestId: string, file: File, documentType: string, title: string) => {
+    if (!user || !companyId) {
+      toast.error('Debes iniciar sesión para subir documentos');
+      return;
+    }
+
+    try {
+      setUploadingDocument(true);
+      toast.loading('Subiendo documento...', { id: 'upload-doc' });
+
+      // Subir archivo a storage
+      const filePath = `user-${companyId}/requests/${requestId}/${Date.now()}-${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, file, {
+          upsert: false,
+        });
+
+      if (uploadError) throw uploadError;
+
+      // Obtener URL pública del archivo
+      const { data: urlData } = supabase.storage
+        .from('documents')
+        .getPublicUrl(filePath);
+
+      // Guardar metadata en la tabla documents
+      const { error: insertError } = await supabase
+        .from('documents')
+        .insert({
+          user_id: companyId,
+          request_id: requestId,
+          loan_id: null,
+          client_id: null,
+          title: title || file.name,
+          file_name: file.name,
+          file_url: urlData.publicUrl,
+          description: null,
+          document_type: documentType,
+          mime_type: file.type || null,
+          file_size: file.size || null,
+          status: 'active',
+        });
+
+      if (insertError) throw insertError;
+
+      toast.success('Documento subido correctamente', { id: 'upload-doc' });
+      
+      // Recargar documentos para actualizar la lista
+      await fetchRequestDocuments(requestId);
+      
+      // Limpiar el selector de tipo de documento
+      setSelectedDocumentType('');
+    } catch (error: any) {
+      console.error('Error al subir documento:', error);
+      toast.error(error.message || 'Error al subir documento', { id: 'upload-doc' });
+    } finally {
+      setUploadingDocument(false);
+    }
+  };
+
+  // Cargar configuración de solicitudes
+  const fetchRequestConfig = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('system_settings')
+        .select('value')
+        .eq('key', 'request_approval_criteria')
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error fetching request config:', error);
+        return;
+      }
+
+      if (data) {
+        const config = JSON.parse(data.value);
+        setConfigData(config);
+      }
+    } catch (error) {
+      console.error('Error parsing request config:', error);
+    }
+  };
+
+  // Guardar configuración de solicitudes
+  const saveRequestConfig = async () => {
+    try {
+      const configValue = JSON.stringify(configData);
+      
+      const { error } = await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'request_approval_criteria',
+          value: configValue,
+          description: 'Configuración de criterios de aprobación y documentos requeridos para solicitudes de préstamo'
+        }, {
+          onConflict: 'key'
+        });
+
+      if (error) throw error;
+
+      toast.success('Configuración guardada exitosamente');
+    } catch (error) {
+      console.error('Error saving request config:', error);
+      toast.error('Error al guardar configuración');
+    }
+  };
 
   const fetchRequests = async () => {
     try {
@@ -227,6 +454,12 @@ const RequestsModule = () => {
     e.preventDefault();
     if (!user) return;
 
+    // Validar que el cliente esté seleccionado
+    if (!formData.client_id || formData.client_id === '') {
+      toast.error('Debes seleccionar un cliente');
+      return;
+    }
+
     try {
       const requestData = {
         ...formData,
@@ -238,14 +471,27 @@ const RequestsModule = () => {
       // Remover late_fee_enabled del objeto ya que se mapea a late_fee
       const { late_fee_enabled, ...dataToInsert } = requestData;
 
-      const { error } = await supabase
+      const { data: newRequest, error } = await supabase
         .from('loan_requests')
-        .insert([dataToInsert]);
+        .insert([dataToInsert])
+        .select()
+        .single();
 
       if (error) throw error;
 
-      toast.success('Solicitud creada exitosamente');
+      // Subir documentos pendientes si hay
+      if (pendingDocuments.length > 0 && newRequest) {
+        toast.loading('Subiendo documentos...', { id: 'upload-docs' });
+        for (const doc of pendingDocuments) {
+          await handleUploadDocument(newRequest.id, doc.file, doc.type, doc.title);
+        }
+        toast.success('Solicitud y documentos creados exitosamente', { id: 'upload-docs' });
+      } else {
+        toast.success('Solicitud creada exitosamente');
+      }
+
       setShowRequestForm(false);
+      setPendingDocuments([]);
       resetForm();
       fetchRequests();
     } catch (error) {
@@ -262,11 +508,11 @@ const RequestsModule = () => {
       purpose: request.purpose || '',
       // Campos de préstamo
       interest_rate: (request.interest_rate || 0).toString(),
-      term_months: (request.term_months || 12).toString(),
+      term_months: (request.term_months || companySettings?.min_term_months || 6).toString(),
       loan_type: request.loan_type || 'personal',
       amortization_type: request.amortization_type || 'simple',
       payment_frequency: request.payment_frequency || 'monthly',
-      first_payment_date: request.first_payment_date || new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
+      first_payment_date: request.first_payment_date || new Date().toISOString().split('T')[0], // Fecha actual por defecto
       closing_costs: (request.closing_costs || 0).toString(),
       late_fee: (request.late_fee || false).toString(),
       minimum_payment_type: request.minimum_payment_type || 'interest',
@@ -280,6 +526,8 @@ const RequestsModule = () => {
       monthly_income: (request.monthly_income || 0).toString(),
       existing_debts: (request.existing_debts || 0).toString(),
       employment_status: request.employment_status || '',
+      // ID de la solicitud para copiar documentos
+      request_id: request.id,
     });
     
     // Navegar al formulario de préstamos con los datos pre-llenados
@@ -350,11 +598,11 @@ const RequestsModule = () => {
       collateral_description: '',
       // Resetear nuevos campos con valores por defecto de la configuración
       interest_rate: companySettings?.interest_rate_default ?? 0,
-      term_months: 12,
+      term_months: companySettings?.min_term_months ?? 6, // Usar mínimo de configuración
       loan_type: 'personal',
       amortization_type: 'simple',
       payment_frequency: 'monthly',
-      first_payment_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
+      first_payment_date: new Date().toISOString().split('T')[0], // Fecha actual por defecto
       closing_costs: 0,
       late_fee_enabled: companySettings?.default_late_fee_rate ? true : false,
       late_fee_rate: companySettings?.default_late_fee_rate ?? 2.0,
@@ -372,6 +620,8 @@ const RequestsModule = () => {
     setClientSearch('');
     setSelectedClient(null);
     setShowClientDropdown(false);
+    setPendingDocuments([]);
+    setSelectedDocumentType('');
   };
 
   // Cargar valores por defecto cuando se abre el formulario
@@ -400,9 +650,21 @@ const RequestsModule = () => {
     }
   };
 
-  const pendingRequests = requests.filter(r => r.status === 'pending');
-  const approvedRequests = requests.filter(r => r.status === 'approved');
-  const rejectedRequests = requests.filter(r => r.status === 'rejected');
+  // Filtrar solicitudes por término de búsqueda
+  const filteredRequests = requests.filter(request => {
+    if (!searchTerm) return true;
+    const searchLower = searchTerm.toLowerCase();
+    return (
+      request.clients?.full_name?.toLowerCase().includes(searchLower) ||
+      request.clients?.dni?.includes(searchTerm) ||
+      request.clients?.phone?.includes(searchTerm) ||
+      request.purpose?.toLowerCase().includes(searchLower)
+    );
+  });
+
+  const pendingRequests = filteredRequests.filter(r => r.status === 'pending');
+  const approvedRequests = filteredRequests.filter(r => r.status === 'approved');
+  const rejectedRequests = filteredRequests.filter(r => r.status === 'rejected');
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -611,6 +873,107 @@ const RequestsModule = () => {
                   />
                 </div>
 
+                {/* Sección de Documentos */}
+                <div className="border-t pt-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <Label className="text-base font-semibold flex items-center gap-2">
+                      <File className="h-5 w-5" />
+                      Documentos
+                    </Label>
+                    <div className="flex items-center gap-2">
+                      <Select 
+                        value={selectedDocumentType} 
+                        onValueChange={setSelectedDocumentType}
+                      >
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue placeholder="Tipo de documento" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="identity_card">Cédula de Identidad</SelectItem>
+                          <SelectItem value="income_certificate">Certificación de Ingresos</SelectItem>
+                          <SelectItem value="bank_statements">Estados Bancarios</SelectItem>
+                          <SelectItem value="commercial_references">Referencias Comerciales</SelectItem>
+                          <SelectItem value="guarantees">Garantías/Colateral</SelectItem>
+                          <SelectItem value="other">Otro</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <input
+                        ref={newRequestFileInputRef}
+                        type="file"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file && selectedDocumentType) {
+                            setPendingDocuments(prev => [...prev, {
+                              file,
+                              type: selectedDocumentType,
+                              title: file.name
+                            }]);
+                            setSelectedDocumentType('');
+                            if (newRequestFileInputRef.current) {
+                              newRequestFileInputRef.current.value = '';
+                            }
+                            toast.success('Documento agregado. Se subirá al crear la solicitud.');
+                          }
+                        }}
+                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          if (!selectedDocumentType) {
+                            toast.error('Selecciona un tipo de documento primero');
+                            return;
+                          }
+                          newRequestFileInputRef.current?.click();
+                        }}
+                        disabled={!selectedDocumentType}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Agregar
+                      </Button>
+                    </div>
+                  </div>
+                  {pendingDocuments.length > 0 ? (
+                    <div className="space-y-2">
+                      {pendingDocuments.map((doc, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div className="flex items-center gap-3">
+                            <File className="h-5 w-5 text-blue-600" />
+                            <div>
+                              <p className="text-sm font-medium">{doc.title}</p>
+                              <p className="text-xs text-gray-500">
+                                {doc.type === 'identity_card' ? 'Cédula de Identidad' :
+                                 doc.type === 'income_certificate' ? 'Certificación de Ingresos' :
+                                 doc.type === 'bank_statements' ? 'Estados Bancarios' :
+                                 doc.type === 'commercial_references' ? 'Referencias Comerciales' :
+                                 doc.type === 'guarantees' ? 'Garantías/Colateral' :
+                                 doc.type}
+                              </p>
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setPendingDocuments(prev => prev.filter((_, i) => i !== index));
+                            }}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 text-center py-4">
+                      No hay documentos agregados. Selecciona un tipo y haz clic en "Agregar" para subir documentos.
+                    </p>
+                  )}
+                </div>
+
                 <div className="flex flex-col sm:flex-row justify-end gap-2">
                   <Button 
                     type="submit" 
@@ -628,7 +991,27 @@ const RequestsModule = () => {
         <TabsContent value="lista-solicitudes" className="space-y-4 sm:space-y-6">
           <Card>
             <CardHeader className="pb-3 sm:pb-6">
-              <CardTitle className="text-base sm:text-lg">Solicitudes Recientes</CardTitle>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <CardTitle className="text-base sm:text-lg">Solicitudes Recientes</CardTitle>
+                <div className="relative w-full sm:w-auto sm:min-w-[300px]">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Input
+                    type="text"
+                    placeholder="Buscar por nombre, DNI, teléfono o propósito..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 w-full"
+                  />
+                  {searchTerm && (
+                    <button
+                      onClick={() => setSearchTerm('')}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="pt-0">
               {loading ? (
@@ -638,9 +1021,14 @@ const RequestsModule = () => {
                   <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>No hay solicitudes registradas</p>
                 </div>
+              ) : filteredRequests.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No se encontraron solicitudes con el término de búsqueda "{searchTerm}"</p>
+                </div>
               ) : (
                 <div className="space-y-4">
-                  {requests.map((request) => (
+                  {filteredRequests.map((request) => (
                     <div key={request.id} className="border rounded-lg p-3 sm:p-4 hover:bg-gray-50 transition-colors">
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 sm:gap-4">
                         <div className="space-y-2 flex-1 min-w-0">
@@ -718,9 +1106,48 @@ const RequestsModule = () => {
                             </Button>
                           )}
                           
-                          {/* Botones de Aprobación/Rechazo - Solo para solicitudes pendientes */}
+                          {/* Botones de Edición, Aprobación/Rechazo - Solo para solicitudes pendientes */}
                           {request.status === 'pending' && (
                             <>
+                              <Button 
+                                size="sm" 
+                                variant="outline" 
+                                className="text-blue-600 hover:bg-blue-50 w-full sm:w-auto min-h-[36px] touch-manipulation"
+                                onClick={() => {
+                                  setEditingRequest(request);
+                                  setEditFormData({
+                                    requested_amount: request.requested_amount,
+                                    purpose: request.purpose || '',
+                                    monthly_income: request.monthly_income || 0,
+                                    existing_debts: request.existing_debts || 0,
+                                    employment_status: request.employment_status || '',
+                                    income_verification: request.income_verification || '',
+                                    collateral_description: request.collateral_description || '',
+                                    interest_rate: request.interest_rate || 0,
+                                    term_months: request.term_months || companySettings?.min_term_months || 6,
+                                    loan_type: request.loan_type || 'personal',
+                                    amortization_type: request.amortization_type || 'simple',
+                                    payment_frequency: request.payment_frequency || 'monthly',
+                                    first_payment_date: request.first_payment_date || new Date().toISOString().split('T')[0], // Fecha actual por defecto
+                                    closing_costs: request.closing_costs || 0,
+                                    late_fee_enabled: request.late_fee || false,
+                                    late_fee_rate: request.late_fee_rate || 2.0,
+                                    grace_period_days: request.grace_period_days || 0,
+                                    max_late_fee: request.max_late_fee || 0,
+                                    late_fee_calculation_type: request.late_fee_calculation_type || 'daily',
+                                    minimum_payment_type: request.minimum_payment_type || 'interest',
+                                    minimum_payment_percentage: request.minimum_payment_percentage || 100,
+                                    guarantor_required: request.guarantor_required || false,
+                                    guarantor_name: request.guarantor_name || '',
+                                    guarantor_phone: request.guarantor_phone || '',
+                                    guarantor_dni: request.guarantor_dni || '',
+                                    notes: request.notes || ''
+                                  });
+                                }}
+                              >
+                                <Pencil className="h-4 w-4 mr-1 sm:mr-2" />
+                                Editar
+                              </Button>
                               <Button 
                                 size="sm" 
                                 variant="outline" 
@@ -772,7 +1199,8 @@ const RequestsModule = () => {
                       <Input 
                         id="min_credit_score"
                         type="number" 
-                        defaultValue="650"
+                        value={configData.min_credit_score}
+                        onChange={(e) => setConfigData({...configData, min_credit_score: Number(e.target.value)})}
                         placeholder="Score mínimo requerido"
                       />
                     </div>
@@ -781,7 +1209,8 @@ const RequestsModule = () => {
                       <Input 
                         id="min_income"
                         type="number" 
-                        defaultValue="25000"
+                        value={configData.min_income}
+                        onChange={(e) => setConfigData({...configData, min_income: Number(e.target.value)})}
                         placeholder="Ingresos mínimos en pesos"
                       />
                     </div>
@@ -790,7 +1219,8 @@ const RequestsModule = () => {
                       <Input 
                         id="min_employment"
                         type="number" 
-                        defaultValue="1"
+                        value={configData.min_employment_years}
+                        onChange={(e) => setConfigData({...configData, min_employment_years: Number(e.target.value)})}
                         placeholder="Años mínimos trabajando"
                       />
                     </div>
@@ -803,23 +1233,63 @@ const RequestsModule = () => {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
+                      <input 
+                        type="checkbox" 
+                        checked={configData.required_documents.identity_card}
+                        onChange={(e) => setConfigData({
+                          ...configData, 
+                          required_documents: {...configData.required_documents, identity_card: e.target.checked}
+                        })}
+                        className="rounded" 
+                      />
                       <Label className="text-sm">Cédula de Identidad</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
+                      <input 
+                        type="checkbox" 
+                        checked={configData.required_documents.income_certificate}
+                        onChange={(e) => setConfigData({
+                          ...configData, 
+                          required_documents: {...configData.required_documents, income_certificate: e.target.checked}
+                        })}
+                        className="rounded" 
+                      />
                       <Label className="text-sm">Certificación de Ingresos</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
+                      <input 
+                        type="checkbox" 
+                        checked={configData.required_documents.bank_statements}
+                        onChange={(e) => setConfigData({
+                          ...configData, 
+                          required_documents: {...configData.required_documents, bank_statements: e.target.checked}
+                        })}
+                        className="rounded" 
+                      />
                       <Label className="text-sm">Estados Bancarios</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" className="rounded" />
+                      <input 
+                        type="checkbox" 
+                        checked={configData.required_documents.commercial_references}
+                        onChange={(e) => setConfigData({
+                          ...configData, 
+                          required_documents: {...configData.required_documents, commercial_references: e.target.checked}
+                        })}
+                        className="rounded" 
+                      />
                       <Label className="text-sm">Referencias Comerciales</Label>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <input type="checkbox" className="rounded" />
+                      <input 
+                        type="checkbox" 
+                        checked={configData.required_documents.guarantees}
+                        onChange={(e) => setConfigData({
+                          ...configData, 
+                          required_documents: {...configData.required_documents, guarantees: e.target.checked}
+                        })}
+                        className="rounded" 
+                      />
                       <Label className="text-sm">Garantías/Colateral</Label>
                     </div>
                   </CardContent>
@@ -827,7 +1297,10 @@ const RequestsModule = () => {
               </div>
 
               <div className="flex justify-end">
-                <Button className="w-full sm:w-auto min-h-[44px] touch-manipulation">
+                <Button 
+                  onClick={saveRequestConfig}
+                  className="w-full sm:w-auto min-h-[44px] touch-manipulation"
+                >
                   <Settings className="h-4 w-4 mr-2" />
                   Guardar Configuración
                 </Button>
@@ -839,7 +1312,10 @@ const RequestsModule = () => {
 
       {/* Request Details Dialog */}
       {selectedRequest && (
-        <Dialog open={!!selectedRequest} onOpenChange={() => setSelectedRequest(null)}>
+        <Dialog open={!!selectedRequest} onOpenChange={() => {
+          setSelectedRequest(null);
+          setSelectedDocumentType('');
+        }}>
           <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto sm:w-[90vw]">
             <DialogHeader>
               <DialogTitle className="text-xl sm:text-2xl font-bold flex items-center gap-2">
@@ -979,8 +1455,8 @@ const RequestsModule = () => {
                     )}
                     {selectedRequest.first_payment_date && (
                       <div>
-                        <Label className="text-xs font-medium text-gray-500 uppercase">Fecha del Primer Pago</Label>
-                        <p className="text-sm font-semibold mt-1">{new Date(selectedRequest.first_payment_date).toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Fecha de Creación del Préstamo</Label>
+                        <p className="text-sm font-semibold mt-1">{formatDateOnlyForSantoDomingo(selectedRequest.first_payment_date)}</p>
                       </div>
                     )}
                     {selectedRequest.minimum_payment_type && (
@@ -1180,7 +1656,7 @@ const RequestsModule = () => {
                         <div>
                           <Label className="text-xs font-medium text-gray-500 uppercase">Fecha de Revisión</Label>
                           <p className="text-sm font-semibold mt-1">
-                            {new Date(selectedRequest.reviewed_at).toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {formatDateTimeForSantoDomingo(selectedRequest.reviewed_at)}
                           </p>
                         </div>
                       )}
@@ -1195,6 +1671,142 @@ const RequestsModule = () => {
                 </Card>
               )}
 
+              {/* Documentos */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                      <File className="h-4 w-4" />
+                      Documentos
+                    </CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {requestDocuments[selectedRequest.id]?.length > 0 ? (
+                    <div className="space-y-2">
+                      {requestDocuments[selectedRequest.id].map((doc: any) => (
+                        <div key={doc.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <File className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{doc.title}</p>
+                              <p className="text-xs text-gray-500">
+                                {doc.document_type === 'identity_card' ? 'Cédula de Identidad' :
+                                 doc.document_type === 'income_certificate' ? 'Certificación de Ingresos' :
+                                 doc.document_type === 'bank_statements' ? 'Estados Bancarios' :
+                                 doc.document_type === 'commercial_references' ? 'Referencias Comerciales' :
+                                 doc.document_type === 'guarantees' ? 'Garantías/Colateral' :
+                                 doc.document_type}
+                                {doc.file_size && ` • ${(doc.file_size / 1024).toFixed(2)} KB`}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {doc.file_url && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(doc.file_url, '_blank')}
+                              >
+                                <Eye className="h-4 w-4 mr-2" />
+                                Ver
+                              </Button>
+                            )}
+                            {selectedRequest.status === 'pending' && doc.file_url && (
+                              <>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  id={`replace-doc-${doc.id}`}
+                                  data-doc-id={doc.id}
+                                  data-doc-type={doc.document_type}
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    const docId = e.currentTarget.getAttribute('data-doc-id');
+                                    const docType = e.currentTarget.getAttribute('data-doc-type');
+                                    if (file && docId && docType && selectedRequest) {
+                                      // Eliminar el documento anterior
+                                      try {
+                                        const { error: deleteError } = await supabase
+                                          .from('documents')
+                                          .delete()
+                                          .eq('id', docId);
+                                        
+                                        if (deleteError) throw deleteError;
+                                        
+                                        // Subir el nuevo documento
+                                        await handleUploadDocument(
+                                          selectedRequest.id,
+                                          file,
+                                          docType,
+                                          file.name
+                                        );
+                                        
+                                        toast.success('Documento reemplazado correctamente');
+                                      } catch (error: any) {
+                                        console.error('Error replacing document:', error);
+                                        toast.error('Error al reemplazar documento');
+                                      }
+                                      
+                                      e.target.value = '';
+                                    }
+                                  }}
+                                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    const input = document.getElementById(`replace-doc-${doc.id}`) as HTMLInputElement;
+                                    input?.click();
+                                  }}
+                                >
+                                  <Upload className="h-4 w-4 mr-2" />
+                                  Cambiar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-red-600 hover:bg-red-50"
+                                  onClick={async () => {
+                                    if (confirm('¿Estás seguro de que deseas eliminar este documento?')) {
+                                      try {
+                                        const { error } = await supabase
+                                          .from('documents')
+                                          .delete()
+                                          .eq('id', doc.id);
+                                        
+                                        if (error) throw error;
+                                        
+                                        toast.success('Documento eliminado correctamente');
+                                        await fetchRequestDocuments(selectedRequest.id);
+                                      } catch (error: any) {
+                                        console.error('Error deleting document:', error);
+                                        toast.error('Error al eliminar documento');
+                                      }
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <File className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>No hay documentos subidos</p>
+                      {selectedRequest.status === 'pending' && (
+                        <p className="text-xs mt-2">Selecciona un tipo de documento y haz clic en "Subir" para agregar documentos</p>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Fechas */}
               <Card>
                 <CardHeader className="pb-3">
@@ -1208,20 +1820,586 @@ const RequestsModule = () => {
                     <div>
                       <Label className="text-xs font-medium text-gray-500 uppercase">Fecha de Creación</Label>
                       <p className="text-sm font-semibold mt-1">
-                        {new Date(selectedRequest.created_at).toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {formatDateTimeForSantoDomingo(selectedRequest.created_at)}
                       </p>
                     </div>
                     {selectedRequest.updated_at && (
                       <div>
                         <Label className="text-xs font-medium text-gray-500 uppercase">Última Actualización</Label>
                         <p className="text-sm font-semibold mt-1">
-                          {new Date(selectedRequest.updated_at).toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          {formatDateTimeForSantoDomingo(selectedRequest.updated_at)}
                         </p>
                       </div>
                     )}
                   </div>
                 </CardContent>
               </Card>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Edit Request Dialog */}
+      {editingRequest && editFormData && (
+        <Dialog open={!!editingRequest} onOpenChange={() => {
+          setEditingRequest(null);
+          setEditFormData(null);
+          setSelectedDocumentType('');
+        }}>
+          <DialogContent className="w-[95vw] max-w-4xl h-[95vh] max-h-[95vh] overflow-hidden flex flex-col sm:w-[90vw] lg:w-[80vw]">
+            <DialogHeader className="flex-shrink-0">
+              <DialogTitle className="flex items-center gap-2">
+                <Pencil className="h-5 w-5" />
+                Editar Solicitud - {editingRequest.clients?.full_name}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-y-auto pr-1 sm:pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!user || !editingRequest) return;
+
+                try {
+                  const updateData: any = {
+                    requested_amount: editFormData.requested_amount,
+                    purpose: editFormData.purpose,
+                    monthly_income: editFormData.monthly_income,
+                    existing_debts: editFormData.existing_debts,
+                    employment_status: editFormData.employment_status,
+                    income_verification: editFormData.income_verification,
+                    collateral_description: editFormData.collateral_description,
+                    interest_rate: editFormData.interest_rate,
+                    term_months: editFormData.term_months,
+                    loan_type: editFormData.loan_type,
+                    amortization_type: editFormData.amortization_type,
+                    payment_frequency: editFormData.payment_frequency,
+                    first_payment_date: editFormData.first_payment_date,
+                    closing_costs: editFormData.closing_costs,
+                    late_fee: editFormData.late_fee_enabled,
+                    late_fee_rate: editFormData.late_fee_rate,
+                    grace_period_days: editFormData.grace_period_days,
+                    max_late_fee: editFormData.max_late_fee,
+                    late_fee_calculation_type: editFormData.late_fee_calculation_type,
+                    minimum_payment_type: editFormData.minimum_payment_type,
+                    minimum_payment_percentage: editFormData.minimum_payment_percentage,
+                    guarantor_required: editFormData.guarantor_required,
+                    guarantor_name: editFormData.guarantor_name,
+                    guarantor_phone: editFormData.guarantor_phone,
+                    guarantor_dni: editFormData.guarantor_dni,
+                    notes: editFormData.notes
+                  };
+
+                  const { error } = await supabase
+                    .from('loan_requests')
+                    .update(updateData)
+                    .eq('id', editingRequest.id);
+
+                  if (error) throw error;
+
+                  toast.success('Solicitud actualizada exitosamente');
+                  setEditingRequest(null);
+                  setEditFormData(null);
+                  fetchRequests();
+                } catch (error) {
+                  console.error('Error updating request:', error);
+                  toast.error('Error al actualizar solicitud');
+                }
+              }} className="space-y-3 sm:space-y-4 pb-4">
+                {/* Replicar todos los campos del formulario de nueva solicitud pero con editFormData */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div>
+                    <Label htmlFor="edit_requested_amount">Monto Solicitado *</Label>
+                    <Input
+                      id="edit_requested_amount"
+                      type="number"
+                      required
+                      value={editFormData.requested_amount}
+                      onChange={(e) => setEditFormData({...editFormData, requested_amount: Number(e.target.value)})}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit_purpose">Propósito</Label>
+                    <Input
+                      id="edit_purpose"
+                      value={editFormData.purpose}
+                      onChange={(e) => setEditFormData({...editFormData, purpose: e.target.value})}
+                      placeholder="Propósito del préstamo"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit_monthly_income">Ingresos Mensuales</Label>
+                    <Input
+                      id="edit_monthly_income"
+                      type="number"
+                      value={editFormData.monthly_income}
+                      onChange={(e) => setEditFormData({...editFormData, monthly_income: Number(e.target.value)})}
+                    />
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="edit_existing_debts">Deudas Existentes</Label>
+                    <Input
+                      id="edit_existing_debts"
+                      type="number"
+                      value={editFormData.existing_debts}
+                      onChange={(e) => setEditFormData({...editFormData, existing_debts: Number(e.target.value)})}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit_employment_status">Estado de Empleo</Label>
+                    <Select value={editFormData.employment_status} onValueChange={(value) => setEditFormData({...editFormData, employment_status: value})}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleccionar estado" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="employed">Empleado</SelectItem>
+                        <SelectItem value="self_employed">Trabajador Independiente</SelectItem>
+                        <SelectItem value="unemployed">Desempleado</SelectItem>
+                        <SelectItem value="retired">Jubilado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="edit_income_verification">Verificación de Ingresos</Label>
+                    <Input
+                      id="edit_income_verification"
+                      value={editFormData.income_verification}
+                      onChange={(e) => setEditFormData({...editFormData, income_verification: e.target.value})}
+                      placeholder="Documento de verificación"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_collateral_description">Descripción de Garantía</Label>
+                  <Textarea
+                    id="edit_collateral_description"
+                    value={editFormData.collateral_description}
+                    onChange={(e) => setEditFormData({...editFormData, collateral_description: e.target.value})}
+                    placeholder="Descripción de la garantía ofrecida (opcional)"
+                  />
+                </div>
+
+                {/* Campos de préstamo - Replicar del formulario original */}
+                <div className="border-t pt-4">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <DollarSign className="h-5 w-5" />
+                    Datos del Préstamo
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                      <Label htmlFor="edit_interest_rate">Tasa de Interés (%)</Label>
+                      <Input
+                        id="edit_interest_rate"
+                        type="number"
+                        step="0.01"
+                        value={editFormData.interest_rate}
+                        onChange={(e) => setEditFormData({...editFormData, interest_rate: Number(e.target.value)})}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_term_months">Plazo (meses)</Label>
+                      <Input
+                        id="edit_term_months"
+                        type="number"
+                        value={editFormData.term_months}
+                        onChange={(e) => setEditFormData({...editFormData, term_months: Number(e.target.value)})}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_loan_type">Tipo de Préstamo</Label>
+                      <Select value={editFormData.loan_type} onValueChange={(value) => setEditFormData({...editFormData, loan_type: value})}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="personal">Personal</SelectItem>
+                          <SelectItem value="business">Negocio</SelectItem>
+                          <SelectItem value="mortgage">Hipotecario</SelectItem>
+                          <SelectItem value="auto">Automotriz</SelectItem>
+                          <SelectItem value="education">Educación</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_amortization_type">Tipo de Amortización</Label>
+                      <Select value={editFormData.amortization_type} onValueChange={(value) => setEditFormData({...editFormData, amortization_type: value})}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="simple">Simple</SelectItem>
+                          <SelectItem value="french">Francés</SelectItem>
+                          <SelectItem value="german">Alemán</SelectItem>
+                          <SelectItem value="american">Americano</SelectItem>
+                          <SelectItem value="indefinite">Indefinido</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_payment_frequency">Frecuencia de Pago</Label>
+                      <Select value={editFormData.payment_frequency} onValueChange={(value) => setEditFormData({...editFormData, payment_frequency: value})}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="monthly">Mensual</SelectItem>
+                          <SelectItem value="biweekly">Quincenal</SelectItem>
+                          <SelectItem value="weekly">Semanal</SelectItem>
+                          <SelectItem value="daily">Diario</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_first_payment_date">Fecha de Creación del Préstamo</Label>
+                      <Input
+                        id="edit_first_payment_date"
+                        type="date"
+                        value={editFormData.first_payment_date}
+                        onChange={(e) => setEditFormData({...editFormData, first_payment_date: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit_closing_costs">Costos de Cierre</Label>
+                      <Input
+                        id="edit_closing_costs"
+                        type="number"
+                        step="0.01"
+                        value={editFormData.closing_costs}
+                        onChange={(e) => setEditFormData({...editFormData, closing_costs: Number(e.target.value)})}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Configuración de mora */}
+                <div className="border-t pt-4">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5" />
+                    Configuración de Mora
+                  </h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="edit_late_fee_enabled"
+                        checked={editFormData.late_fee_enabled}
+                        onChange={(e) => setEditFormData({...editFormData, late_fee_enabled: e.target.checked})}
+                        className="rounded"
+                      />
+                      <Label htmlFor="edit_late_fee_enabled">Incluir cargo por mora</Label>
+                    </div>
+                    {editFormData.late_fee_enabled && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div>
+                          <Label htmlFor="edit_late_fee_rate">Tasa de Mora (%)</Label>
+                          <Input
+                            id="edit_late_fee_rate"
+                            type="number"
+                            step="0.01"
+                            value={editFormData.late_fee_rate}
+                            onChange={(e) => setEditFormData({...editFormData, late_fee_rate: Number(e.target.value)})}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="edit_grace_period_days">Días de Gracia</Label>
+                          <Input
+                            id="edit_grace_period_days"
+                            type="number"
+                            value={editFormData.grace_period_days}
+                            onChange={(e) => setEditFormData({...editFormData, grace_period_days: Number(e.target.value)})}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="edit_max_late_fee">Mora Máxima (RD$)</Label>
+                          <Input
+                            id="edit_max_late_fee"
+                            type="number"
+                            step="0.01"
+                            value={editFormData.max_late_fee}
+                            onChange={(e) => setEditFormData({...editFormData, max_late_fee: Number(e.target.value)})}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="edit_late_fee_calculation_type">Tipo de Cálculo</Label>
+                          <Select value={editFormData.late_fee_calculation_type} onValueChange={(value) => setEditFormData({...editFormData, late_fee_calculation_type: value})}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="daily">Diario</SelectItem>
+                              <SelectItem value="monthly">Mensual</SelectItem>
+                              <SelectItem value="compound">Compuesto</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Codeudor */}
+                <div className="border-t pt-4">
+                  <div className="flex items-center space-x-2 mb-4">
+                    <input
+                      type="checkbox"
+                      id="edit_guarantor_required"
+                      checked={editFormData.guarantor_required}
+                      onChange={(e) => setEditFormData({...editFormData, guarantor_required: e.target.checked})}
+                      className="rounded"
+                    />
+                    <Label htmlFor="edit_guarantor_required">Requiere Codeudor</Label>
+                  </div>
+                  {editFormData.guarantor_required && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <Label htmlFor="edit_guarantor_name">Nombre del Codeudor</Label>
+                        <Input
+                          id="edit_guarantor_name"
+                          value={editFormData.guarantor_name}
+                          onChange={(e) => setEditFormData({...editFormData, guarantor_name: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="edit_guarantor_phone">Teléfono</Label>
+                        <Input
+                          id="edit_guarantor_phone"
+                          value={editFormData.guarantor_phone}
+                          onChange={(e) => setEditFormData({...editFormData, guarantor_phone: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="edit_guarantor_dni">DNI</Label>
+                        <Input
+                          id="edit_guarantor_dni"
+                          value={editFormData.guarantor_dni}
+                          onChange={(e) => setEditFormData({...editFormData, guarantor_dni: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sección de Documentos */}
+                <div className="border-t pt-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <Label className="text-base font-semibold flex items-center gap-2">
+                      <File className="h-5 w-5" />
+                      Documentos
+                    </Label>
+                    <div className="flex items-center gap-2">
+                      <Select 
+                        value={selectedDocumentType} 
+                        onValueChange={setSelectedDocumentType}
+                      >
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue placeholder="Tipo de documento" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="identity_card">Cédula de Identidad</SelectItem>
+                          <SelectItem value="income_certificate">Certificación de Ingresos</SelectItem>
+                          <SelectItem value="bank_statements">Estados Bancarios</SelectItem>
+                          <SelectItem value="commercial_references">Referencias Comerciales</SelectItem>
+                          <SelectItem value="guarantees">Garantías/Colateral</SelectItem>
+                          <SelectItem value="other">Otro</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file && selectedDocumentType && editingRequest) {
+                            await handleUploadDocument(
+                              editingRequest.id,
+                              file,
+                              selectedDocumentType,
+                              file.name
+                            );
+                            if (fileInputRef.current) {
+                              fileInputRef.current.value = '';
+                            }
+                            setSelectedDocumentType('');
+                          }
+                        }}
+                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          if (!selectedDocumentType) {
+                            toast.error('Selecciona un tipo de documento primero');
+                            return;
+                          }
+                          fileInputRef.current?.click();
+                        }}
+                        disabled={uploadingDocument || !selectedDocumentType}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Subir
+                      </Button>
+                    </div>
+                  </div>
+                  {requestDocuments[editingRequest.id]?.length > 0 ? (
+                    <div className="space-y-2">
+                      {requestDocuments[editingRequest.id].map((doc: any) => (
+                        <div key={doc.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <File className="h-5 w-5 text-blue-600 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{doc.title}</p>
+                              <p className="text-xs text-gray-500">
+                                {doc.document_type === 'identity_card' ? 'Cédula de Identidad' :
+                                 doc.document_type === 'income_certificate' ? 'Certificación de Ingresos' :
+                                 doc.document_type === 'bank_statements' ? 'Estados Bancarios' :
+                                 doc.document_type === 'commercial_references' ? 'Referencias Comerciales' :
+                                 doc.document_type === 'guarantees' ? 'Garantías/Colateral' :
+                                 doc.document_type}
+                                {doc.file_size && ` • ${(doc.file_size / 1024).toFixed(2)} KB`}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {doc.file_url && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(doc.file_url, '_blank')}
+                              >
+                                <Eye className="h-4 w-4 mr-2" />
+                                Ver
+                              </Button>
+                            )}
+                            {doc.file_url && (
+                              <>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  id={`edit-replace-doc-${doc.id}`}
+                                  data-doc-id={doc.id}
+                                  data-doc-type={doc.document_type}
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    const docId = e.currentTarget.getAttribute('data-doc-id');
+                                    const docType = e.currentTarget.getAttribute('data-doc-type');
+                                    if (file && docId && docType && editingRequest) {
+                                      // Eliminar el documento anterior
+                                      try {
+                                        const { error: deleteError } = await supabase
+                                          .from('documents')
+                                          .delete()
+                                          .eq('id', docId);
+                                        
+                                        if (deleteError) throw deleteError;
+                                        
+                                        // Subir el nuevo documento
+                                        await handleUploadDocument(
+                                          editingRequest.id,
+                                          file,
+                                          docType,
+                                          file.name
+                                        );
+                                        
+                                        toast.success('Documento reemplazado correctamente');
+                                      } catch (error: any) {
+                                        console.error('Error replacing document:', error);
+                                        toast.error('Error al reemplazar documento');
+                                      }
+                                      
+                                      e.target.value = '';
+                                    }
+                                  }}
+                                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    const input = document.getElementById(`edit-replace-doc-${doc.id}`) as HTMLInputElement;
+                                    input?.click();
+                                  }}
+                                >
+                                  <Upload className="h-4 w-4 mr-2" />
+                                  Cambiar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-red-600 hover:bg-red-50"
+                                  onClick={async () => {
+                                    if (confirm('¿Estás seguro de que deseas eliminar este documento?')) {
+                                      try {
+                                        const { error } = await supabase
+                                          .from('documents')
+                                          .delete()
+                                          .eq('id', doc.id);
+                                        
+                                        if (error) throw error;
+                                        
+                                        toast.success('Documento eliminado correctamente');
+                                        await fetchRequestDocuments(editingRequest.id);
+                                      } catch (error: any) {
+                                        console.error('Error deleting document:', error);
+                                        toast.error('Error al eliminar documento');
+                                      }
+                                    }
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <File className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>No hay documentos subidos</p>
+                      <p className="text-xs mt-2">Selecciona un tipo de documento y haz clic en "Subir" para agregar documentos</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Notas */}
+                <div>
+                  <Label htmlFor="edit_notes">Notas</Label>
+                  <Textarea
+                    id="edit_notes"
+                    value={editFormData.notes}
+                    onChange={(e) => setEditFormData({...editFormData, notes: e.target.value})}
+                    placeholder="Notas adicionales (opcional)"
+                  />
+                </div>
+
+                <div className="flex flex-col sm:flex-row justify-end gap-2 pt-4 border-t">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setEditingRequest(null);
+                      setEditFormData(null);
+                    }}
+                    className="w-full sm:w-auto"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" className="w-full sm:w-auto">
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Guardar Cambios
+                  </Button>
+                </div>
+              </form>
             </div>
           </DialogContent>
         </Dialog>
@@ -1346,6 +2524,107 @@ const RequestsModule = () => {
               />
             </div>
 
+            {/* Sección de Documentos */}
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between mb-4">
+                <Label className="text-base font-semibold flex items-center gap-2">
+                  <File className="h-5 w-5" />
+                  Documentos
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Select 
+                    value={selectedDocumentType} 
+                    onValueChange={setSelectedDocumentType}
+                  >
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Tipo de documento" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="identity_card">Cédula de Identidad</SelectItem>
+                      <SelectItem value="income_certificate">Certificación de Ingresos</SelectItem>
+                      <SelectItem value="bank_statements">Estados Bancarios</SelectItem>
+                      <SelectItem value="commercial_references">Referencias Comerciales</SelectItem>
+                      <SelectItem value="guarantees">Garantías/Colateral</SelectItem>
+                      <SelectItem value="other">Otro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <input
+                    ref={newRequestFileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file && selectedDocumentType) {
+                        setPendingDocuments(prev => [...prev, {
+                          file,
+                          type: selectedDocumentType,
+                          title: file.name
+                        }]);
+                        setSelectedDocumentType('');
+                        if (newRequestFileInputRef.current) {
+                          newRequestFileInputRef.current.value = '';
+                        }
+                        toast.success('Documento agregado. Se subirá al crear la solicitud.');
+                      }
+                    }}
+                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (!selectedDocumentType) {
+                        toast.error('Selecciona un tipo de documento primero');
+                        return;
+                      }
+                      newRequestFileInputRef.current?.click();
+                    }}
+                    disabled={!selectedDocumentType}
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Agregar
+                  </Button>
+                </div>
+              </div>
+              {pendingDocuments.length > 0 ? (
+                <div className="space-y-2">
+                  {pendingDocuments.map((doc, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <File className="h-5 w-5 text-blue-600" />
+                        <div>
+                          <p className="text-sm font-medium">{doc.title}</p>
+                          <p className="text-xs text-gray-500">
+                            {doc.type === 'identity_card' ? 'Cédula de Identidad' :
+                             doc.type === 'income_certificate' ? 'Certificación de Ingresos' :
+                             doc.type === 'bank_statements' ? 'Estados Bancarios' :
+                             doc.type === 'commercial_references' ? 'Referencias Comerciales' :
+                             doc.type === 'guarantees' ? 'Garantías/Colateral' :
+                             doc.type}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setPendingDocuments(prev => prev.filter((_, i) => i !== index));
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500 text-center py-4">
+                  No hay documentos agregados. Selecciona un tipo y haz clic en "Agregar" para subir documentos.
+                </p>
+              )}
+            </div>
+
             {/* Sección de Datos del Préstamo */}
             <div className="border-t pt-4 sm:pt-6">
               <h3 className="text-lg font-semibold mb-3 sm:mb-4 text-blue-600">📋 Datos del Préstamo</h3>
@@ -1424,7 +2703,7 @@ const RequestsModule = () => {
                 </div>
                 
                 <div>
-                  <Label htmlFor="first_payment_date">Fecha del Primer Pago *</Label>
+                  <Label htmlFor="first_payment_date">Fecha de Creación del Préstamo *</Label>
                   <Input
                     id="first_payment_date"
                     type="date"

@@ -782,6 +782,8 @@ export const LoansModule = () => {
         guarantor_phone: urlParams.get('guarantor_phone') || undefined,
         guarantor_dni: urlParams.get('guarantor_dni') || undefined,
         notes: urlParams.get('notes') || undefined,
+        // ID de la solicitud para copiar documentos
+        request_id: urlParams.get('request_id') || undefined,
       };
       
       // Solo configurar si hay al menos un parámetro válido
