@@ -110,23 +110,42 @@ export const LoansModule = () => {
     // Para otros tipos, calcular el total correcto y restar los pagos
     const correctTotalAmount = calculateTotalAmount(loan);
     
-    // Obtener todos los pagos del préstamo
     try {
-      const { data: payments, error } = await supabase
+      // Obtener todos los pagos del préstamo
+      const { data: payments, error: paymentsError } = await supabase
         .from('payments')
         .select('principal_amount, interest_amount')
         .eq('loan_id', loan.id);
       
-      if (error) {
-        console.error('Error obteniendo pagos para calcular balance:', error);
+      if (paymentsError) {
+        console.error('Error obteniendo pagos para calcular balance:', paymentsError);
         return loan.remaining_balance; // Fallback al valor de BD
       }
       
       // Calcular el total pagado (capital + interés)
       const totalPaid = (payments || []).reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
       
-      // El balance restante es el total menos lo pagado
-      return Math.max(0, correctTotalAmount - totalPaid);
+      // Obtener cargos no pagados (installments con interest_amount = 0 y principal_amount = total_amount)
+      const { data: unpaidCharges, error: chargesError } = await supabase
+        .from('installments')
+        .select('total_amount, principal_amount, interest_amount, is_paid')
+        .eq('loan_id', loan.id)
+        .eq('is_paid', false)
+        .eq('interest_amount', 0);
+      
+      if (chargesError) {
+        console.error('Error obteniendo cargos para calcular balance:', chargesError);
+        // Continuar sin cargos si hay error
+      }
+      
+      // Sumar los cargos no pagados que son realmente cargos (principal_amount = total_amount)
+      const unpaidChargesAmount = (unpaidCharges || [])
+        .filter(inst => inst.principal_amount === inst.total_amount)
+        .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+      
+      // El balance restante es el total menos lo pagado, más los cargos no pagados
+      const baseBalance = Math.max(0, correctTotalAmount - totalPaid);
+      return baseBalance + unpaidChargesAmount;
     } catch (error) {
       console.error('Error calculando balance pendiente:', error);
       return loan.remaining_balance; // Fallback al valor de BD
@@ -411,7 +430,7 @@ export const LoansModule = () => {
         // Calcular monto total
         totalAmounts[loan.id] = calculateTotalAmount(loan);
         
-        // Calcular balance pendiente
+        // Calcular balance pendiente (ya incluye cargos en calculateRemainingBalance)
         remainingBalances[loan.id] = await calculateRemainingBalance(loan);
       }
       
@@ -421,6 +440,48 @@ export const LoansModule = () => {
     
     calculateAllAmounts();
   }, [loans, pendingInterestForIndefinite]);
+  
+  // Escuchar cambios en installments para recalcular balances (incluyendo cargos)
+  useEffect(() => {
+    if (!loans || loans.length === 0) return;
+    
+    const loanIds = new Set(loans.map(loan => loan.id));
+    
+    // Crear canal de Realtime para escuchar cambios en installments
+    const installmentsChannel = supabase
+      .channel('loans-installments-changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'installments'
+        }, 
+        async (payload) => {
+          // Verificar si el cambio es para uno de nuestros préstamos
+          const affectedLoanId = (payload.new as any)?.loan_id || (payload.old as any)?.loan_id;
+          if (affectedLoanId && loanIds.has(affectedLoanId)) {
+            console.log('🔔 Cambio detectado en installments, recalculando balances:', payload);
+            
+            const affectedLoan = loans.find(l => l.id === affectedLoanId);
+            if (affectedLoan) {
+              // Pequeño delay para asegurar que la BD se actualizó
+              setTimeout(async () => {
+                const newBalance = await calculateRemainingBalance(affectedLoan);
+                setCalculatedRemainingBalances(prev => ({
+                  ...prev,
+                  [affectedLoanId]: newBalance
+                }));
+              }, 500);
+            }
+          }
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(installmentsChannel);
+    };
+  }, [loans]);
 
   // Función para calcular el interés pendiente total para préstamos indefinidos
   // Ahora también devuelve el número de cuotas pagadas
@@ -1519,9 +1580,9 @@ export const LoansModule = () => {
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
                           <div className="text-center p-4 bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl border border-green-100">
                             <div className="text-2xl font-bold text-green-700 mb-1">
-                              ${formatCurrencyNumber(calculatedTotalAmounts[loan.id] || calculateTotalAmount(loan))}
+                              ${formatCurrencyNumber(loan.amount)}
                             </div>
-                            <div className="text-sm text-green-600 font-medium">Monto Total</div>
+                            <div className="text-sm text-green-600 font-medium">Monto Prestado</div>
                           </div>
                           
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">

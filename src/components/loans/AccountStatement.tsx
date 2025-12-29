@@ -340,14 +340,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Calcular el total pagado (capital + interés)
       const totalPaid = (paymentsData || []).reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
       
-      // El balance restante es el total menos lo pagado
-      const correctRemainingBalance = Math.max(0, correctTotalAmount - totalPaid);
+      // El balance restante base es el total menos lo pagado
+      // Los cargos se agregarán después cuando se obtengan los installments
+      let correctRemainingBalance = Math.max(0, correctTotalAmount - totalPaid);
       
-      // Combinar los datos
+      // Combinar los datos iniciales
       const combinedLoanData = {
         ...loanData,
         total_amount: correctTotalAmount,
-        remaining_balance: correctRemainingBalance, // Balance correcto: total - pagos
+        remaining_balance: correctRemainingBalance, // Se actualizará con cargos después
         clients: clientData
       };
 
@@ -590,6 +591,20 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
       if (installmentsError) throw installmentsError;
       setInstallments(installmentsData || []);
+      
+      // Recalcular el balance restante incluyendo cargos no pagados
+      const unpaidChargesAmount = (installmentsData || [])
+        .filter(inst => !inst.is_paid && inst.interest_amount === 0 && inst.principal_amount === inst.total_amount)
+        .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+      
+      const finalRemainingBalance = correctRemainingBalance + unpaidChargesAmount;
+      
+      // Actualizar el loan con el balance que incluye cargos
+      setLoan(prev => ({
+        ...prev,
+        remaining_balance: finalRemainingBalance,
+        correctRemainingBalance: finalRemainingBalance
+      } as Loan));
 
       // Calcular la mora actual basándose en las cuotas reales del préstamo
       // Si el préstamo está saldado (status = 'paid'), la mora debe ser 0

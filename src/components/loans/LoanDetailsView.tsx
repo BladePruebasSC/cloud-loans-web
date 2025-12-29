@@ -774,7 +774,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const totalPaid = payments.reduce((sum, p) => sum + (p.principal_amount || 0), 0);
   const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
   const totalLateFeePaid = payments.reduce((sum, p) => sum + (p.late_fee || 0), 0);
-  const capitalPending = loan.amount - totalPaid;
+  
+  // Calcular cargos no pagados (installments con interest_amount = 0 y principal_amount = total_amount)
+  const unpaidChargesAmount = installments
+    .filter(inst => !inst.is_paid && inst.interest_amount === 0 && inst.principal_amount === inst.total_amount)
+    .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+  
+  // Capital pendiente = monto prestado - pagos de capital + cargos no pagados
+  const capitalPending = loan.amount - totalPaid + unpaidChargesAmount;
   
   // Calcular interés pendiente
   // Para préstamos indefinidos, usar el cálculo dinámico
@@ -812,8 +819,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     // Calcular el total pagado (capital + interés)
     const totalPaid = payments.reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
     
-    // El balance restante es el total menos lo pagado
-    remainingBalance = Math.max(0, correctTotalAmount - totalPaid);
+    // Calcular cargos no pagados (installments con interest_amount = 0 y principal_amount = total_amount)
+    const unpaidChargesAmount = installments
+      .filter(inst => !inst.is_paid && inst.interest_amount === 0 && inst.principal_amount === inst.total_amount)
+      .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+    
+    // El balance restante es el total menos lo pagado, más los cargos no pagados
+    const baseBalance = Math.max(0, correctTotalAmount - totalPaid);
+    remainingBalance = baseBalance + unpaidChargesAmount;
   }
   
   // Si el préstamo está saldado, la mora debe ser 0
@@ -958,7 +971,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                   <CardContent>
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
-                        <span className="text-gray-600">Capital:</span>
+                        <span className="text-gray-600">Monto Prestado:</span>
                         <div className="font-semibold">RD {loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div>
