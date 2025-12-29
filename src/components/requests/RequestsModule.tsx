@@ -89,7 +89,7 @@ const RequestsModule = () => {
   const [activeTab, setActiveTab] = useState('lista-solicitudes');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [requestToDelete, setRequestToDelete] = useState<LoanRequest | null>(null);
-  const { user, companyId } = useAuth();
+  const { user, companyId, companySettings } = useAuth();
 
   const [formData, setFormData] = useState({
     client_id: '',
@@ -121,6 +121,19 @@ const RequestsModule = () => {
     guarantor_dni: '',
     notes: ''
   });
+
+  // Cargar valores por defecto de la configuración de la empresa
+  useEffect(() => {
+    if (companySettings) {
+      setFormData(prev => ({
+        ...prev,
+        interest_rate: companySettings.interest_rate_default ?? prev.interest_rate,
+        late_fee_rate: companySettings.default_late_fee_rate ?? prev.late_fee_rate,
+        grace_period_days: companySettings.default_grace_period_days ?? companySettings.grace_period_days ?? prev.grace_period_days,
+        late_fee_enabled: companySettings.default_late_fee_rate ? true : prev.late_fee_enabled
+      }));
+    }
+  }, [companySettings]);
 
   useEffect(() => {
     if (user) {
@@ -324,17 +337,17 @@ const RequestsModule = () => {
       employment_status: '',
       income_verification: '',
       collateral_description: '',
-      // Resetear nuevos campos
-      interest_rate: 0,
+      // Resetear nuevos campos con valores por defecto de la configuración
+      interest_rate: companySettings?.interest_rate_default ?? 0,
       term_months: 12,
       loan_type: 'personal',
       amortization_type: 'simple',
       payment_frequency: 'monthly',
       first_payment_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
       closing_costs: 0,
-      late_fee_enabled: false,
-      late_fee_rate: 2.0,
-      grace_period_days: 0,
+      late_fee_enabled: companySettings?.default_late_fee_rate ? true : false,
+      late_fee_rate: companySettings?.default_late_fee_rate ?? 2.0,
+      grace_period_days: companySettings?.default_grace_period_days ?? companySettings?.grace_period_days ?? 0,
       max_late_fee: 0,
       late_fee_calculation_type: 'daily',
       minimum_payment_type: 'interest',
@@ -349,6 +362,19 @@ const RequestsModule = () => {
     setSelectedClient(null);
     setShowClientDropdown(false);
   };
+
+  // Cargar valores por defecto cuando se abre el formulario
+  useEffect(() => {
+    if (showRequestForm && companySettings) {
+      setFormData(prev => ({
+        ...prev,
+        interest_rate: prev.interest_rate === 0 ? (companySettings.interest_rate_default ?? 0) : prev.interest_rate,
+        late_fee_rate: prev.late_fee_rate === 2.0 ? (companySettings.default_late_fee_rate ?? 2.0) : prev.late_fee_rate,
+        grace_period_days: prev.grace_period_days === 0 ? (companySettings.default_grace_period_days ?? companySettings.grace_period_days ?? 0) : prev.grace_period_days,
+        late_fee_enabled: companySettings.default_late_fee_rate ? true : prev.late_fee_enabled
+      }));
+    }
+  }, [showRequestForm, companySettings]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {

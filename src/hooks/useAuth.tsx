@@ -32,6 +32,7 @@ interface CompanySettings {
   interest_rate_default: number | null;
   late_fee_percentage: number | null;
   grace_period_days: number | null;
+  default_grace_period_days: number | null;
   min_loan_amount: number | null;
   max_loan_amount: number | null;
   min_term_months: number | null;
@@ -131,7 +132,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const { data, error } = await supabase
         .from('company_settings')
-        .select('currency, interest_rate_default, late_fee_percentage, grace_period_days, min_loan_amount, max_loan_amount, min_term_months, max_term_months, default_late_fee_rate, default_pawn_period_days, document_templates, company_name')
+        .select('currency, interest_rate_default, late_fee_percentage, grace_period_days, default_grace_period_days, min_loan_amount, max_loan_amount, min_term_months, max_term_months, default_late_fee_rate, default_pawn_period_days, document_templates, company_name')
         .eq('user_id', ownerId)
         .maybeSingle();
       if (error && error.code !== 'PGRST116') {
