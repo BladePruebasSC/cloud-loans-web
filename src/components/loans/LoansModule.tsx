@@ -1,5 +1,5 @@
 ﻿
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -101,18 +101,26 @@ export const LoansModule = () => {
   };
 
   // Función helper para calcular el balance pendiente correcto
+  // CORRECCIÓN: Calcular dinámicamente igual que LoanDetailsView
+  // Esto asegura que el preview muestre el mismo valor que Detalles incluso cuando la BD no se actualiza
   const calculateRemainingBalance = async (loan: any): Promise<number> => {
-    // Para préstamos indefinidos, usar la lógica existente
+    // Para préstamos indefinidos, usar la lógica existente con interés pendiente
     if (loan.amortization_type === 'indefinite') {
       const baseAmount = loan.amount || 0;
       const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
       return baseAmount + pendingInterest;
     }
     
-    // Para otros tipos, calcular el total correcto y restar los pagos
-    const correctTotalAmount = calculateTotalAmount(loan);
-    
     try {
+      // CORRECCIÓN: Calcular dinámicamente usando la misma lógica que LoanDetailsView
+      // Calcular el total correcto (capital + interés total)
+      let correctTotalAmount = (loan as any).total_amount;
+      if (!correctTotalAmount || correctTotalAmount <= loan.amount) {
+        // Calcular total_amount: capital + interés total
+        const totalInterest = loan.amount * (loan.interest_rate / 100) * loan.term_months;
+        correctTotalAmount = loan.amount + totalInterest;
+      }
+      
       // Obtener todos los pagos del préstamo
       const { data: payments, error: paymentsError } = await supabase
         .from('payments')
@@ -121,7 +129,7 @@ export const LoansModule = () => {
       
       if (paymentsError) {
         console.error('Error obteniendo pagos para calcular balance:', paymentsError);
-        return loan.remaining_balance; // Fallback al valor de BD
+        return loan.remaining_balance || 0; // Fallback al valor de BD
       }
       
       // Obtener todos los cargos (installments con interest_amount = 0 y principal_amount = total_amount)
@@ -136,7 +144,7 @@ export const LoansModule = () => {
         // Continuar sin cargos si hay error
       }
       
-      // Calcular el total de cargos (suma de todos los cargos, pagados y no pagados)
+      // Calcular el total de TODOS los cargos (pagados y no pagados)
       let totalChargesAmount = 0;
       if (allCharges && allCharges.length > 0) {
         // Filtrar solo cargos reales (principal_amount = total_amount)
@@ -153,10 +161,20 @@ export const LoansModule = () => {
       // El balance restante es el total (préstamo + cargos) menos lo pagado
       const remainingBalance = Math.max(0, totalAmountWithCharges - totalPaid);
       
+      console.log('🔍 calculateRemainingBalance: Balance calculado dinámicamente', {
+        loanId: loan.id,
+        correctTotalAmount,
+        totalChargesAmount,
+        totalAmountWithCharges,
+        totalPaid,
+        remainingBalance,
+        bdRemainingBalance: loan.remaining_balance
+      });
+      
       return remainingBalance;
     } catch (error) {
       console.error('Error calculando balance pendiente:', error);
-      return loan.remaining_balance; // Fallback al valor de BD
+      return loan.remaining_balance || 0; // Fallback al valor de BD
     }
   };
 
@@ -410,79 +428,181 @@ export const LoansModule = () => {
   const { profile, companyId } = useAuth();
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
   
-  // Calcular fechas de próximo pago para todos los préstamos
-  useEffect(() => {
-    const calculateAllNextPaymentDates = async () => {
-      if (!loans || loans.length === 0) return;
-      
-      const dates: { [loanId: string]: string | null } = {};
-      
-      // Ejecutar todos los cálculos en paralelo para mayor velocidad
-      const calculations = loans.map(async (loan) => {
-        const date = await calculateNextPaymentDateISO(loan);
-        return { loanId: loan.id, date };
-      });
-      
-      const results = await Promise.all(calculations);
-      
-      results.forEach(({ loanId, date }) => {
-        dates[loanId] = date;
-      });
-      
-      setNextPaymentDates(dates);
-    };
+  // OPTIMIZADO: Usar next_payment_date de la BD directamente
+  // La BD ahora actualiza automáticamente este valor con triggers cuando cambian pagos/installments
+  // No necesitamos calcular dinámicamente
+  const nextPaymentDatesMemo = useMemo(() => {
+    if (!loans || loans.length === 0) return {};
     
-    calculateAllNextPaymentDates();
-  }, [loans]);
+    const dates: { [loanId: string]: string | null } = {};
+    
+    // Usar next_payment_date de la BD directamente (ya incluye cargos gracias a los triggers)
+    loans.forEach(loan => {
+      if (loan.next_payment_date) {
+        dates[loan.id] = loan.next_payment_date.split('T')[0];
+      } else {
+        dates[loan.id] = null;
+      }
+    });
+    
+    return dates;
+  }, [loans?.map(l => `${l.id}-${l.next_payment_date}`).join(',')]);
 
-  // Calcular montos totales y balances pendientes correctos para todos los préstamos
+  // Actualizar estado solo cuando el memo cambie
   useEffect(() => {
-    const calculateAllAmounts = async () => {
-      if (!loans || loans.length === 0) return;
-      
-      const totalAmounts: { [loanId: string]: number } = {};
-      const remainingBalances: { [loanId: string]: number } = {};
-      
-      // Ejecutar todos los cálculos en paralelo para mayor velocidad
-      const calculations = loans.map(async (loan) => {
-        const totalAmount = calculateTotalAmount(loan);
-        const remainingBalance = await calculateRemainingBalance(loan);
-        return { loanId: loan.id, totalAmount, remainingBalance };
-      });
-      
-      const results = await Promise.all(calculations);
-      
-      results.forEach(({ loanId, totalAmount, remainingBalance }) => {
-        totalAmounts[loanId] = totalAmount;
-        
-        // Solo actualizar el balance si no hay una actualización optimista reciente (últimos 2 segundos)
-        const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
-        const now = Date.now();
-        const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
-        
-        if (timeSinceOptimistic > 2000) {
-          // No hay actualización optimista reciente, usar el valor calculado
-          remainingBalances[loanId] = remainingBalance;
-        } else {
-          // Hay una actualización optimista reciente, preservar el valor optimista
-          remainingBalances[loanId] = calculatedRemainingBalances[loanId] || remainingBalance;
-          console.log('⚡ Preservando valor optimista para', loanId, 'por', timeSinceOptimistic, 'ms');
-        }
-      });
-      
-      setCalculatedTotalAmounts(totalAmounts);
-      setCalculatedRemainingBalances(remainingBalances);
-    };
+    setNextPaymentDates(nextPaymentDatesMemo);
+  }, [nextPaymentDatesMemo]);
+
+  // OPTIMIZADO: Ya no necesitamos recalcular fechas dinámicamente
+  // La BD ahora actualiza next_payment_date automáticamente con triggers cuando cambian pagos/installments
+  // Solo usamos next_payment_date de la BD directamente
+
+  // OPTIMIZADO: Calcular balances dinámicamente igual que LoanDetailsView
+  // Memoizar montos y balances usando los datos que ya vienen de la BD
+  const amountsMemo = useMemo(() => {
+    if (!loans || loans.length === 0) return { totalAmounts: {}, remainingBalances: {} };
     
-    calculateAllAmounts();
-  }, [loans, pendingInterestForIndefinite]);
-  
-  // Escuchar cambios en installments, loans y payments para actualizar datos instantáneamente
+    const totalAmounts: { [loanId: string]: number } = {};
+    const remainingBalances: { [loanId: string]: number } = {};
+    
+    // Calcular balances dinámicamente para cada préstamo
+    loans.forEach(loan => {
+      // Calcular total amount (síncrono, no requiere queries)
+      totalAmounts[loan.id] = calculateTotalAmount(loan);
+      
+      // CORRECCIÓN: Usar remaining_balance de la BD directamente
+      // La BD ahora actualiza automáticamente este valor con triggers cuando cambian pagos/installments
+      // Solo calcular dinámicamente para préstamos indefinidos que requieren cálculo de interés pendiente
+      if (loan.amortization_type === 'indefinite') {
+        // Para préstamos indefinidos, calcular con interés pendiente
+        const baseAmount = loan.amount || 0;
+        const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
+        remainingBalances[loan.id] = baseAmount + pendingInterest;
+      } else {
+        // Para otros tipos, usar remaining_balance de la BD (ya incluye cargos gracias a los triggers)
+        remainingBalances[loan.id] = loan.remaining_balance || 0;
+      }
+    });
+    
+    return { totalAmounts, remainingBalances };
+  }, [
+    loans?.map(l => `${l.id}-${l.amount}-${l.remaining_balance}-${l.total_amount}`).join(','),
+    // Incluir calculatedRemainingBalances para que se use cuando esté disponible
+    Object.keys(calculatedRemainingBalances).join(','),
+    // Incluir pendingInterestForIndefinite para préstamos indefinidos
+    Object.keys(pendingInterestForIndefinite).join(',')
+  ]);
+
+  // Actualizar estado solo cuando el memo cambie
+  // CORRECCIÓN: No sobrescribir calculatedRemainingBalances desde amountsMemo porque amountsMemo
+  // puede usar valores de BD que están desactualizados. Los balances se actualizan desde
+  // el useEffect que calcula dinámicamente (línea 543-588)
+  useEffect(() => {
+    setCalculatedTotalAmounts(amountsMemo.totalAmounts);
+    // No actualizar calculatedRemainingBalances desde aquí porque se actualiza
+    // dinámicamente en el useEffect que calcula balances (línea 543-588)
+  }, [amountsMemo]);
+
+  // OPTIMIZADO: Ya no necesitamos recalcular balances dinámicamente para préstamos no-indefinidos
+  // La BD ahora actualiza remaining_balance automáticamente con triggers cuando cambian pagos/installments
+  // Solo necesitamos calcular para préstamos indefinidos que requieren cálculo de interés pendiente
   useEffect(() => {
     if (!loans || loans.length === 0) return;
     
-    const loanIds = loans.map(loan => loan.id);
-    let refetchTimeoutId: NodeJS.Timeout | null = null;
+    // Solo recalcular para préstamos indefinidos
+    const indefiniteLoans = loans.filter(loan => loan.amortization_type === 'indefinite');
+    
+    if (indefiniteLoans.length === 0) return;
+    
+    // Recalcular solo préstamos indefinidos
+    const recalculateIndefiniteBalances = async () => {
+      try {
+        const remainingBalances: { [loanId: string]: number } = {};
+        
+        const calculations = indefiniteLoans.map(async (loan) => {
+          const remainingBalance = await calculateRemainingBalance(loan);
+          return { loanId: loan.id, remainingBalance };
+        });
+        
+        const results = await Promise.all(calculations);
+        
+        results.forEach(({ loanId, remainingBalance }) => {
+          // Solo actualizar si no hay actualización optimista reciente
+          const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
+          const now = Date.now();
+          const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
+          
+          if (timeSinceOptimistic > 2000) {
+            remainingBalances[loanId] = remainingBalance;
+          }
+        });
+        
+        // Actualizar solo los balances de préstamos indefinidos
+        if (Object.keys(remainingBalances).length > 0) {
+          setCalculatedRemainingBalances(prev => ({
+            ...prev,
+            ...remainingBalances
+          }));
+        }
+      } catch (error) {
+        console.error('Error calculando balances indefinidos:', error);
+      }
+    };
+    
+    // Ejecutar inmediatamente
+    recalculateIndefiniteBalances();
+  }, [
+    loans?.map(l => `${l.id}-${l.amount}-${l.remaining_balance}-${l.total_amount}`).join(','),
+    pendingInterestForIndefinite ? Object.keys(pendingInterestForIndefinite).join(',') : ''
+  ]); // Solo recalcular cuando cambien los préstamos indefinidos o el interés pendiente
+  
+  // OPTIMIZADO: Escuchar cambios en installments, loans y payments
+  // Usar refs para mantener canales y evitar recreaciones innecesarias
+  const channelsRef = useRef<{
+    installments?: any;
+    loans?: any;
+    payments?: any;
+  }>({});
+  const loanIdsRef = useRef<string[]>([]);
+  const refetchTimeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Memoizar loanIds para evitar recreaciones
+  const loanIds = useMemo(() => {
+    if (!loans || loans.length === 0) return [];
+    return loans.map(loan => loan.id).sort().join(',');
+  }, [loans?.map(l => l.id).sort().join(',')]);
+
+  useEffect(() => {
+    if (!loans || loans.length === 0) {
+      // Limpiar canales si no hay préstamos
+      Object.values(channelsRef.current).forEach(channel => {
+        if (channel) supabase.removeChannel(channel);
+      });
+      channelsRef.current = {};
+      loanIdsRef.current = [];
+      return;
+    }
+    
+    const currentLoanIds = loans.map(loan => loan.id).sort();
+    const currentLoanIdsStr = currentLoanIds.join(',');
+    
+    // Solo recrear canales si los IDs cambiaron
+    if (loanIdsRef.current.join(',') === currentLoanIdsStr) {
+      return; // No hacer nada si los IDs son los mismos
+    }
+    
+    // Limpiar canales anteriores
+    Object.values(channelsRef.current).forEach(channel => {
+      if (channel) supabase.removeChannel(channel);
+    });
+    channelsRef.current = {};
+    loanIdsRef.current = currentLoanIds;
+    
+    // Cancelar timeout anterior
+    if (refetchTimeoutIdRef.current) {
+      clearTimeout(refetchTimeoutIdRef.current);
+      refetchTimeoutIdRef.current = null;
+    }
     
     // Función para actualización optimista inmediata (sin queries, solo desde payload)
     const updateOptimistically = (loanId: string, payload: any) => {
@@ -574,9 +694,9 @@ export const LoansModule = () => {
     // Función para recargar datos inmediatamente (sin delay, en segundo plano)
     const refetchImmediately = () => {
       // Cancelar timeout anterior si existe
-      if (refetchTimeoutId) {
-        clearTimeout(refetchTimeoutId);
-        refetchTimeoutId = null;
+      if (refetchTimeoutIdRef.current) {
+        clearTimeout(refetchTimeoutIdRef.current);
+        refetchTimeoutIdRef.current = null;
       }
       
       // Ejecutar refetch de forma completamente asíncrona (no bloquea la UI)
@@ -591,28 +711,34 @@ export const LoansModule = () => {
         }, { timeout: 50 });
       } else {
         // Fallback: ejecutar en el siguiente tick
-        setTimeout(() => {
+        refetchTimeoutIdRef.current = setTimeout(() => {
           refetch();
+          refetchTimeoutIdRef.current = null;
         }, 0);
       }
     };
     
     // Crear canal de Realtime para escuchar cambios en installments
     const installmentsChannel = supabase
-      .channel('loans-installments-changes')
+      .channel(`loans-installments-changes-${Date.now()}`)
       .on('postgres_changes', 
         { 
           event: '*', 
           schema: 'public', 
           table: 'installments'
         }, 
-        (payload) => {
+        async (payload) => {
           const affectedLoanId = (payload.new as any)?.loan_id || (payload.old as any)?.loan_id;
-          if (affectedLoanId && loanIds.includes(affectedLoanId)) {
+          if (affectedLoanId && currentLoanIds.includes(affectedLoanId)) {
             // Actualización optimista inmediata para installments (cargos) usando el payload
             if (payload.new) {
               updateOptimisticallyForInstallments(affectedLoanId, payload);
             }
+            
+            // OPTIMIZADO: La BD ya actualiza next_payment_date automáticamente con triggers
+            // No necesitamos recalcular, el refetch traerá el valor correcto
+            // El valor se actualizará automáticamente cuando se haga el refetch
+            
             // Refetch en background (no bloquea la UI)
             refetchImmediately();
           }
@@ -622,17 +748,17 @@ export const LoansModule = () => {
     
     // Crear canal de Realtime para escuchar cambios en loans
     const loansChannel = supabase
-      .channel('loans-direct-changes')
+      .channel(`loans-direct-changes-${Date.now()}`)
       .on('postgres_changes', 
         { 
           event: '*', 
           schema: 'public', 
           table: 'loans',
-          filter: `id=in.(${loanIds.join(',')})`
+          filter: `id=in.(${currentLoanIds.join(',')})`
         }, 
         (payload) => {
           const affectedLoanId = (payload.new as any)?.id || (payload.old as any)?.id;
-          if (affectedLoanId) {
+          if (affectedLoanId && currentLoanIds.includes(affectedLoanId)) {
             // Actualización optimista inmediata desde el payload
             updateOptimistically(affectedLoanId, payload);
             // Refetch inmediato para sincronizar
@@ -644,16 +770,45 @@ export const LoansModule = () => {
     
     // Crear canal de Realtime para escuchar cambios en payments
     const paymentsChannel = supabase
-      .channel('loans-payments-changes')
+      .channel(`loans-payments-changes-${Date.now()}`)
       .on('postgres_changes', 
         { 
           event: '*', 
           schema: 'public', 
           table: 'payments'
         }, 
-        (payload) => {
+        async (payload) => {
           const affectedLoanId = (payload.new as any)?.loan_id || (payload.old as any)?.loan_id;
-          if (affectedLoanId && loanIds.includes(affectedLoanId)) {
+          if (affectedLoanId && currentLoanIds.includes(affectedLoanId)) {
+            // CORRECCIÓN: Recalcular balance Y fecha de próximo pago dinámicamente cuando cambian los pagos
+            // para asegurar que el preview muestre el mismo valor que Detalles
+            // Primero obtener el préstamo más reciente de la BD para asegurar datos actualizados
+            const { data: freshLoanData } = await supabase
+              .from('loans')
+              .select('*, total_amount')
+              .eq('id', affectedLoanId)
+              .single();
+            
+            if (freshLoanData) {
+              // OPTIMIZADO: La BD ya actualiza remaining_balance automáticamente con triggers
+              // No necesitamos recalcular dinámicamente, solo confiar en el valor de la BD
+              // El refetchImmediately() abajo actualizará los préstamos con los valores correctos
+              if (freshLoanData.amortization_type !== 'indefinite') {
+                // Para préstamos no-indefinidos, el trigger ya actualizó remaining_balance en la BD
+                // El refetch traerá el valor correcto
+                console.log('🔍 Balance actualizado en BD por trigger:', {
+                  loanId: affectedLoanId,
+                  bdRemainingBalance: freshLoanData.remaining_balance,
+                  event: payload.eventType
+                });
+              }
+              // Para préstamos indefinidos, el cálculo dinámico se hace en otro useEffect
+              
+              // OPTIMIZADO: La BD ya actualiza next_payment_date automáticamente con triggers
+              // No necesitamos recalcular, el refetch traerá el valor correcto
+              // El valor se actualizará automáticamente cuando se haga el refetch
+            }
+            
             // Refetch inmediato para cambios en payments (afectan balances y fechas)
             refetchImmediately();
           }
@@ -661,15 +816,21 @@ export const LoansModule = () => {
       )
       .subscribe();
     
-    return () => {
-      if (refetchTimeoutId) {
-        clearTimeout(refetchTimeoutId);
-      }
-      supabase.removeChannel(installmentsChannel);
-      supabase.removeChannel(loansChannel);
-      supabase.removeChannel(paymentsChannel);
+    // Guardar referencias a los canales
+    channelsRef.current = {
+      installments: installmentsChannel,
+      loans: loansChannel,
+      payments: paymentsChannel
     };
-  }, [loans, refetch]);
+    
+    return () => {
+      if (refetchTimeoutIdRef.current) {
+        clearTimeout(refetchTimeoutIdRef.current);
+        refetchTimeoutIdRef.current = null;
+      }
+      // Los canales se limpian automáticamente cuando se recrean arriba
+    };
+  }, [loanIds, refetch]); // Solo cuando cambien los IDs de préstamos
 
   // Función para calcular el interés pendiente total para préstamos indefinidos
   // Ahora también devuelve el número de cuotas pagadas
@@ -965,14 +1126,102 @@ export const LoansModule = () => {
     });
   };
 
-  // Actualizar moras dinámicas y interés pendiente cuando cambien los préstamos
-  useEffect(() => {
-    if (loans && loans.length > 0) {
-      updateDynamicLateFees();
-      updatePendingInterestForIndefinite();
-      fetchLoanAgreements();
+  // OPTIMIZADO: Actualizar moras dinámicas y interés pendiente SOLO cuando sea necesario
+  // Usar useMemo para identificar préstamos que realmente necesitan actualización
+  const loansSignature = useMemo(() => {
+    if (!loans || loans.length === 0) return '';
+    // Crear una firma basada en IDs y fechas relevantes (no recalcular si solo cambian otros campos)
+    return loans.map(l => `${l.id}-${l.start_date}-${l.next_payment_date}`).join(',');
+  }, [loans?.map(l => `${l.id}-${l.start_date}-${l.next_payment_date}`).join(',')]);
+
+  // Memoizar función para evitar recreaciones
+  const updateDynamicLateFeesMemo = useCallback(async () => {
+    if (!loans || loans.length === 0) return;
+    
+    const newLateFees: {[key: string]: number} = {};
+    
+    // Solo calcular para préstamos que tienen mora habilitada
+    const loansWithLateFee = loans.filter(loan => loan.late_fee_enabled);
+    
+    if (loansWithLateFee.length === 0) {
+      setDynamicLateFees({});
+      return;
     }
-  }, [loans]);
+    
+    // Ejecutar en paralelo pero en background
+    const calculations = loansWithLateFee.map(async (loan) => {
+      const currentLateFee = await calculateCurrentLateFee(loan);
+      return { loanId: loan.id, lateFee: currentLateFee };
+    });
+    
+    const results = await Promise.all(calculations);
+    
+    results.forEach(({ loanId, lateFee }) => {
+      newLateFees[loanId] = lateFee;
+    });
+    
+    setDynamicLateFees(newLateFees);
+  }, [loans?.length]);
+
+  const updatePendingInterestForIndefiniteMemo = useCallback(async () => {
+    if (!loans || loans.length === 0) {
+      setPendingInterestForIndefinite({});
+      setPaidInstallmentsCountForIndefinite({});
+      return;
+    }
+    
+    const indefiniteLoans = loans.filter(loan => loan.amortization_type === 'indefinite');
+    
+    if (indefiniteLoans.length === 0) {
+      setPendingInterestForIndefinite({});
+      setPaidInstallmentsCountForIndefinite({});
+      return;
+    }
+    
+    const newPendingInterest: {[key: string]: number} = {};
+    const newPaidCounts: {[key: string]: number} = {};
+    
+    // Ejecutar en paralelo pero en background
+    const calculations = indefiniteLoans.map(async (loan) => {
+      const result = await calculatePendingInterestForIndefinite(loan);
+      return { loanId: loan.id, pendingInterest: result.pendingInterest, paidCount: result.paidCount };
+    });
+    
+    const results = await Promise.all(calculations);
+    
+    results.forEach(({ loanId, pendingInterest, paidCount }) => {
+      newPendingInterest[loanId] = pendingInterest;
+      newPaidCounts[loanId] = paidCount;
+    });
+    
+    setPendingInterestForIndefinite(newPendingInterest);
+    setPaidInstallmentsCountForIndefinite(newPaidCounts);
+  }, [loans?.filter(l => l.amortization_type === 'indefinite').map(l => l.id).join(',')]);
+
+  // Ejecutar actualizaciones en BACKGROUND - no bloquear render inicial
+  useEffect(() => {
+    if (!loans || loans.length === 0) {
+      setDynamicLateFees({});
+      setPendingInterestForIndefinite({});
+      setPaidInstallmentsCountForIndefinite({});
+      return;
+    }
+
+    // Ejecutar en background usando requestIdleCallback para no bloquear la UI
+    const executeUpdates = () => {
+      updateDynamicLateFeesMemo();
+      updatePendingInterestForIndefiniteMemo();
+      fetchLoanAgreements();
+    };
+
+    // Usar requestIdleCallback si está disponible, sino setTimeout con delay
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      requestIdleCallback(executeUpdates, { timeout: 2000 });
+    } else {
+      // Delay de 500ms para permitir que la UI se renderice primero
+      setTimeout(executeUpdates, 500);
+    }
+  }, [loansSignature, updateDynamicLateFeesMemo, updatePendingInterestForIndefiniteMemo]); // Solo cuando cambie la firma
   
   // Constante para el texto del botón Editar
   const EDIT_BUTTON_TEXT = 'Actualizar';
@@ -1782,15 +2031,18 @@ export const LoansModule = () => {
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
                               ${formatCurrencyNumber(
-                                calculatedRemainingBalances[loan.id] !== undefined
-                                  ? calculatedRemainingBalances[loan.id]
-                                  : (loan.amortization_type === 'indefinite' 
-                                      ? (() => {
+                                // OPTIMIZADO: Usar remaining_balance de la BD directamente
+                                // La BD ahora actualiza automáticamente este valor con triggers
+                                // Solo calcular dinámicamente para préstamos indefinidos
+                                loan.amortization_type === 'indefinite'
+                                  ? (calculatedRemainingBalances[loan.id] !== undefined
+                                      ? calculatedRemainingBalances[loan.id]
+                                      : (() => {
                                           const baseAmount = loan.amount || 0;
                                           const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
                                           return baseAmount + pendingInterest;
-                                        })()
-                                      : loan.remaining_balance)
+                                        })())
+                                  : loan.remaining_balance || 0
                               )}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
@@ -1806,11 +2058,12 @@ export const LoansModule = () => {
                               ${formatCurrencyNumber(
                                 loan.status === 'paid' 
                                   ? 0 
-                                  : ((calculatedRemainingBalances[loan.id] !== undefined
-                                      ? calculatedRemainingBalances[loan.id]
-                                      : (loan.amortization_type === 'indefinite' 
-                                          ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
-                                          : loan.remaining_balance)) + 
+                                  : ((// OPTIMIZADO: Usar remaining_balance de la BD directamente (ya incluye cargos)
+                                     loan.amortization_type === 'indefinite'
+                                      ? (calculatedRemainingBalances[loan.id] !== undefined
+                                          ? calculatedRemainingBalances[loan.id]
+                                          : loan.amount + (pendingInterestForIndefinite[loan.id] || 0))
+                                      : loan.remaining_balance || 0) + 
                                      (dynamicLateFees[loan.id] || loan.current_late_fee || 0))
                               )}
                             </div>

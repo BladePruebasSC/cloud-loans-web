@@ -156,7 +156,8 @@ const Dashboard = () => {
       bgColor: 'bg-red-100'
     }
   ]);
-  const [loading, setLoading] = useState(true);
+  // OPTIMIZADO: Iniciar sin loading para mostrar datos inmediatamente
+  const [loading, setLoading] = useState(false);
   const [companyName, setCompanyName] = useState('');
   const [onboardingStatus, setOnboardingStatus] = useState({
     companyConfigured: false,
@@ -195,7 +196,9 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (user && companyId) {
-      fetchDashboardData(companyId);
+      // OPTIMIZADO: Cargar datos inmediatamente sin mostrar loading
+      // Los datos de la BD ya están actualizados por triggers
+      fetchDashboardData(companyId, false);
     }
   }, [user, companyId]);
 
@@ -232,10 +235,14 @@ const Dashboard = () => {
 
   const fetchDashboardData = async (ownerCompanyId: string, silent = false) => {
     try {
+      // OPTIMIZADO: Solo mostrar loading en refresh manual, no en carga inicial
+      // Esto permite que la UI se muestre inmediatamente con datos optimistas
       if (!silent) {
-        setLoading(true);
+        // No bloquear la UI mostrando loading
+        // setLoading(true);
       }
 
+      // OPTIMIZADO: Ejecutar queries en paralelo para máxima velocidad
       const [
         { data: companySettings, error: companySettingsError },
         { data: clientsData, error: clientsError },
@@ -249,11 +256,14 @@ const Dashboard = () => {
           .eq('user_id', ownerCompanyId)
           .maybeSingle(),
         supabase.from('clients').select('id, status').eq('user_id', ownerCompanyId),
+        // OPTIMIZADO: Usar remaining_balance y next_payment_date directamente de la BD
+        // Estos valores ahora se actualizan automáticamente con triggers
         supabase
           .from('loans')
           .select('id, amount, remaining_balance, status, total_amount, next_payment_date, monthly_payment, clients(full_name)')
           .eq('loan_officer_id', ownerCompanyId)
-          .neq('status', 'deleted'),
+          .neq('status', 'deleted')
+          .order('created_at', { ascending: false }), // Ordenar para mejor performance
         supabase
           .from('payments')
           .select('amount, interest_amount, created_at, payment_date')
@@ -265,11 +275,15 @@ const Dashboard = () => {
           .eq('user_id', ownerCompanyId)
       ]);
 
-      if (companySettingsError) throw companySettingsError;
-      if (clientsError) throw clientsError;
-      if (loansError) throw loansError;
-      if (paymentsError) throw paymentsError;
-      if (salesError) throw salesError;
+      // OPTIMIZADO: Continuar incluso si hay errores menores para no bloquear la UI
+      if (companySettingsError) console.error('Error loading company settings:', companySettingsError);
+      if (clientsError) console.error('Error loading clients:', clientsError);
+      if (loansError) {
+        console.error('Error loading loans:', loansError);
+        throw loansError; // Este es crítico, lanzar error
+      }
+      if (paymentsError) console.error('Error loading payments:', paymentsError);
+      if (salesError) console.error('Error loading sales:', salesError);
 
       if (companySettings?.company_name) {
         setCompanyName(companySettings.company_name);
@@ -288,6 +302,7 @@ const Dashboard = () => {
       const activeLoansForBalance = validLoansData.filter((loan) => loan.status === 'active') || [];
       
       const totalLent = validLoansData.reduce((sum, loan) => sum + (loan.amount || 0), 0) || 0;
+      // OPTIMIZADO: Usar remaining_balance directamente de la BD (ya incluye cargos gracias a triggers)
       const totalBalance = activeLoansForBalance.reduce((sum, loan) => sum + (loan.remaining_balance || 0), 0) || 0;
 
       // Calcular préstamos en mora (vencidos) - mejorado
@@ -305,6 +320,7 @@ const Dashboard = () => {
           return true;
         }
         
+        // OPTIMIZADO: Usar next_payment_date directamente de la BD (ya actualizado por triggers)
         // Incluir préstamos activos cuya fecha de pago ya pasó
         if (loan.status === 'active' && loan.next_payment_date) {
           const paymentDate = new Date(loan.next_payment_date);
@@ -331,6 +347,7 @@ const Dashboard = () => {
       // Filtrar solo préstamos activos para cálculos de pagos (excluir eliminados)
       const activeLoansData = validLoansData.filter((loan) => loan.status === 'active') || [];
 
+      // OPTIMIZADO: Usar next_payment_date de la BD (ya incluye cargos considerados por triggers)
       const loansDueThisWeek = activeLoansData.filter(
         (loan) =>
           loan.next_payment_date &&
@@ -354,6 +371,7 @@ const Dashboard = () => {
           .slice(0, 4)
           .map((loan) => {
             const normalizedLoan = loan as LoanRecord & { next_payment_date: string };
+            // OPTIMIZADO: Usar remaining_balance de la BD (ya incluye cargos)
             return {
               id: normalizedLoan.id,
               clientName: getClientDisplayName(normalizedLoan),
@@ -548,21 +566,9 @@ const Dashboard = () => {
     }
   ];
 
-  if (loading) {
-    return (
-      <div className="pt-4 pb-4 px-4 sm:pt-8 sm:pb-6 sm:px-6">
-        <Card className="animate-pulse">
-          <CardHeader>
-            <CardTitle>Cargando dashboard...</CardTitle>
-            <CardDescription>Estamos obteniendo tus métricas en tiempo real.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-32 bg-gray-100 rounded-lg" />
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  // OPTIMIZADO: Nunca bloquear la UI con loading
+  // Siempre mostrar contenido, los datos se actualizarán cuando lleguen
+  // Esto elimina el estado tedioso de "cargando" que el usuario mencionó
 
   return (
     <div className="pt-4 pb-4 px-4 sm:pt-8 sm:pb-6 sm:px-6 lg:px-8 space-y-5 sm:space-y-6 max-w-7xl mx-auto w-full">
