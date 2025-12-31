@@ -1,5 +1,5 @@
 ﻿
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -86,6 +86,8 @@ export const LoansModule = () => {
   const [loanAgreements, setLoanAgreements] = useState<{[key: string]: any[]}>({});
   const [calculatedTotalAmounts, setCalculatedTotalAmounts] = useState<{[key: string]: number}>({});
   const [calculatedRemainingBalances, setCalculatedRemainingBalances] = useState<{[key: string]: number}>({});
+  // Timestamp de última actualización optimista por préstamo para evitar sobrescrituras
+  const optimisticUpdateTimestampsRef = useRef<{[key: string]: number}>({});
   
   // Función helper para calcular el monto total correcto (capital + interés total)
   const calculateTotalAmount = (loan: any): number => {
@@ -122,15 +124,11 @@ export const LoansModule = () => {
         return loan.remaining_balance; // Fallback al valor de BD
       }
       
-      // Calcular el total pagado (capital + interés)
-      const totalPaid = (payments || []).reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
-      
-      // Obtener cargos no pagados (installments con interest_amount = 0 y principal_amount = total_amount)
-      const { data: unpaidCharges, error: chargesError } = await supabase
+      // Obtener todos los cargos (installments con interest_amount = 0 y principal_amount = total_amount)
+      const { data: allCharges, error: chargesError } = await supabase
         .from('installments')
-        .select('total_amount, principal_amount, interest_amount, is_paid')
+        .select('id, total_amount, principal_amount, interest_amount, is_paid, due_date, installment_number')
         .eq('loan_id', loan.id)
-        .eq('is_paid', false)
         .eq('interest_amount', 0);
       
       if (chargesError) {
@@ -138,14 +136,24 @@ export const LoansModule = () => {
         // Continuar sin cargos si hay error
       }
       
-      // Sumar los cargos no pagados que son realmente cargos (principal_amount = total_amount)
-      const unpaidChargesAmount = (unpaidCharges || [])
-        .filter(inst => inst.principal_amount === inst.total_amount)
-        .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+      // Calcular el total de cargos (suma de todos los cargos, pagados y no pagados)
+      let totalChargesAmount = 0;
+      if (allCharges && allCharges.length > 0) {
+        // Filtrar solo cargos reales (principal_amount = total_amount)
+        const realCharges = allCharges.filter(inst => inst.principal_amount === inst.total_amount);
+        totalChargesAmount = realCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+      }
       
-      // El balance restante es el total menos lo pagado, más los cargos no pagados
-      const baseBalance = Math.max(0, correctTotalAmount - totalPaid);
-      return baseBalance + unpaidChargesAmount;
+      // Calcular el total del préstamo incluyendo cargos
+      const totalAmountWithCharges = correctTotalAmount + totalChargesAmount;
+      
+      // Calcular el total pagado (capital + interés de todos los pagos)
+      const totalPaid = (payments || []).reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
+      
+      // El balance restante es el total (préstamo + cargos) menos lo pagado
+      const remainingBalance = Math.max(0, totalAmountWithCharges - totalPaid);
+      
+      return remainingBalance;
     } catch (error) {
       console.error('Error calculando balance pendiente:', error);
       return loan.remaining_balance; // Fallback al valor de BD
@@ -408,10 +416,19 @@ export const LoansModule = () => {
       if (!loans || loans.length === 0) return;
       
       const dates: { [loanId: string]: string | null } = {};
-      for (const loan of loans) {
+      
+      // Ejecutar todos los cálculos en paralelo para mayor velocidad
+      const calculations = loans.map(async (loan) => {
         const date = await calculateNextPaymentDateISO(loan);
-        dates[loan.id] = date;
-      }
+        return { loanId: loan.id, date };
+      });
+      
+      const results = await Promise.all(calculations);
+      
+      results.forEach(({ loanId, date }) => {
+        dates[loanId] = date;
+      });
+      
       setNextPaymentDates(dates);
     };
     
@@ -426,13 +443,32 @@ export const LoansModule = () => {
       const totalAmounts: { [loanId: string]: number } = {};
       const remainingBalances: { [loanId: string]: number } = {};
       
-      for (const loan of loans) {
-        // Calcular monto total
-        totalAmounts[loan.id] = calculateTotalAmount(loan);
+      // Ejecutar todos los cálculos en paralelo para mayor velocidad
+      const calculations = loans.map(async (loan) => {
+        const totalAmount = calculateTotalAmount(loan);
+        const remainingBalance = await calculateRemainingBalance(loan);
+        return { loanId: loan.id, totalAmount, remainingBalance };
+      });
+      
+      const results = await Promise.all(calculations);
+      
+      results.forEach(({ loanId, totalAmount, remainingBalance }) => {
+        totalAmounts[loanId] = totalAmount;
         
-        // Calcular balance pendiente (ya incluye cargos en calculateRemainingBalance)
-        remainingBalances[loan.id] = await calculateRemainingBalance(loan);
-      }
+        // Solo actualizar el balance si no hay una actualización optimista reciente (últimos 2 segundos)
+        const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
+        const now = Date.now();
+        const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
+        
+        if (timeSinceOptimistic > 2000) {
+          // No hay actualización optimista reciente, usar el valor calculado
+          remainingBalances[loanId] = remainingBalance;
+        } else {
+          // Hay una actualización optimista reciente, preservar el valor optimista
+          remainingBalances[loanId] = calculatedRemainingBalances[loanId] || remainingBalance;
+          console.log('⚡ Preservando valor optimista para', loanId, 'por', timeSinceOptimistic, 'ms');
+        }
+      });
       
       setCalculatedTotalAmounts(totalAmounts);
       setCalculatedRemainingBalances(remainingBalances);
@@ -441,11 +477,125 @@ export const LoansModule = () => {
     calculateAllAmounts();
   }, [loans, pendingInterestForIndefinite]);
   
-  // Escuchar cambios en installments para recalcular balances (incluyendo cargos)
+  // Escuchar cambios en installments, loans y payments para actualizar datos instantáneamente
   useEffect(() => {
     if (!loans || loans.length === 0) return;
     
-    const loanIds = new Set(loans.map(loan => loan.id));
+    const loanIds = loans.map(loan => loan.id);
+    let refetchTimeoutId: NodeJS.Timeout | null = null;
+    
+    // Función para actualización optimista inmediata (sin queries, solo desde payload)
+    const updateOptimistically = (loanId: string, payload: any) => {
+      // Si el cambio viene de la tabla loans, actualizar directamente los campos
+      if (payload.new) {
+        const updatedLoan = payload.new as any;
+        
+        // Actualizar fecha de próximo pago si cambió
+        if (updatedLoan.next_payment_date) {
+          setNextPaymentDates(prev => ({
+            ...prev,
+            [loanId]: updatedLoan.next_payment_date?.split('T')[0] || null
+          }));
+        }
+        
+        // Actualizar balance si cambió
+        if (updatedLoan.remaining_balance !== undefined) {
+          setCalculatedRemainingBalances(prev => ({
+            ...prev,
+            [loanId]: updatedLoan.remaining_balance
+          }));
+        }
+      }
+    };
+    
+    // Función para actualización optimista cuando se agregan cargos (installments)
+    // SÍNCRONA para actualización inmediata sin esperas
+    const updateOptimisticallyForInstallments = (loanId: string, payload?: any) => {
+      const loan = loans.find(l => l.id === loanId);
+      if (!loan) return;
+      
+      // Si tenemos el payload del evento, usar los datos directamente para actualización inmediata
+      if (payload?.new) {
+        const newInstallment = payload.new as any;
+        const isCharge = newInstallment.interest_amount === 0 && 
+                        newInstallment.principal_amount === newInstallment.total_amount;
+        
+        if (isCharge) {
+          // Actualización optimista SÍNCRONA e INMEDIATA: agregar el monto del cargo al balance actual
+          const currentBalance = calculatedRemainingBalances[loanId] || loan.remaining_balance || 0;
+          const chargeAmount = newInstallment.total_amount || 0;
+          const newBalance = currentBalance + chargeAmount;
+          
+          // Marcar timestamp de actualización optimista
+          optimisticUpdateTimestampsRef.current[loanId] = Date.now();
+          
+          // Actualizar balance INMEDIATAMENTE (síncrono)
+          setCalculatedRemainingBalances(prev => ({
+            ...prev,
+            [loanId]: newBalance
+          }));
+          
+          // Actualizar fecha de próximo pago si el cargo tiene una fecha anterior
+          if (newInstallment.due_date) {
+            const chargeDueDate = newInstallment.due_date.split('T')[0];
+            const currentNextDate = nextPaymentDates[loanId];
+            
+            // Si no hay fecha próxima o el cargo tiene una fecha anterior, actualizar
+            if (!currentNextDate || chargeDueDate < currentNextDate) {
+              setNextPaymentDates(prev => ({
+                ...prev,
+                [loanId]: chargeDueDate
+              }));
+            }
+          }
+          
+          console.log('⚡ Actualización optimista inmediata (síncrona):', {
+            loanId,
+            chargeAmount,
+            oldBalance: currentBalance,
+            newBalance,
+            timestamp: optimisticUpdateTimestampsRef.current[loanId]
+          });
+          
+          return; // Salir temprano, no hacer queries adicionales
+        }
+      }
+      
+      // Fallback: recalcular balance si no tenemos payload (más lento, async)
+      // Esto solo se ejecuta si no hay payload
+      calculateRemainingBalance(loan).then(newBalance => {
+        setCalculatedRemainingBalances(prev => ({
+          ...prev,
+          [loanId]: newBalance
+        }));
+      });
+    };
+    
+    // Función para recargar datos inmediatamente (sin delay, en segundo plano)
+    const refetchImmediately = () => {
+      // Cancelar timeout anterior si existe
+      if (refetchTimeoutId) {
+        clearTimeout(refetchTimeoutId);
+        refetchTimeoutId = null;
+      }
+      
+      // Ejecutar refetch de forma completamente asíncrona (no bloquea la UI)
+      // Usar queueMicrotask para ejecutar en el siguiente microtask (más rápido que setTimeout)
+      if (typeof queueMicrotask !== 'undefined') {
+        queueMicrotask(() => {
+          refetch();
+        });
+      } else if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        requestIdleCallback(() => {
+          refetch();
+        }, { timeout: 50 });
+      } else {
+        // Fallback: ejecutar en el siguiente tick
+        setTimeout(() => {
+          refetch();
+        }, 0);
+      }
+    };
     
     // Crear canal de Realtime para escuchar cambios en installments
     const installmentsChannel = supabase
@@ -456,32 +606,70 @@ export const LoansModule = () => {
           schema: 'public', 
           table: 'installments'
         }, 
-        async (payload) => {
-          // Verificar si el cambio es para uno de nuestros préstamos
+        (payload) => {
           const affectedLoanId = (payload.new as any)?.loan_id || (payload.old as any)?.loan_id;
-          if (affectedLoanId && loanIds.has(affectedLoanId)) {
-            console.log('🔔 Cambio detectado en installments, recalculando balances:', payload);
-            
-            const affectedLoan = loans.find(l => l.id === affectedLoanId);
-            if (affectedLoan) {
-              // Pequeño delay para asegurar que la BD se actualizó
-              setTimeout(async () => {
-                const newBalance = await calculateRemainingBalance(affectedLoan);
-                setCalculatedRemainingBalances(prev => ({
-                  ...prev,
-                  [affectedLoanId]: newBalance
-                }));
-              }, 500);
+          if (affectedLoanId && loanIds.includes(affectedLoanId)) {
+            // Actualización optimista inmediata para installments (cargos) usando el payload
+            if (payload.new) {
+              updateOptimisticallyForInstallments(affectedLoanId, payload);
             }
+            // Refetch en background (no bloquea la UI)
+            refetchImmediately();
+          }
+        }
+      )
+      .subscribe();
+    
+    // Crear canal de Realtime para escuchar cambios en loans
+    const loansChannel = supabase
+      .channel('loans-direct-changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'loans',
+          filter: `id=in.(${loanIds.join(',')})`
+        }, 
+        (payload) => {
+          const affectedLoanId = (payload.new as any)?.id || (payload.old as any)?.id;
+          if (affectedLoanId) {
+            // Actualización optimista inmediata desde el payload
+            updateOptimistically(affectedLoanId, payload);
+            // Refetch inmediato para sincronizar
+            refetchImmediately();
+          }
+        }
+      )
+      .subscribe();
+    
+    // Crear canal de Realtime para escuchar cambios en payments
+    const paymentsChannel = supabase
+      .channel('loans-payments-changes')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'payments'
+        }, 
+        (payload) => {
+          const affectedLoanId = (payload.new as any)?.loan_id || (payload.old as any)?.loan_id;
+          if (affectedLoanId && loanIds.includes(affectedLoanId)) {
+            // Refetch inmediato para cambios en payments (afectan balances y fechas)
+            refetchImmediately();
           }
         }
       )
       .subscribe();
     
     return () => {
+      if (refetchTimeoutId) {
+        clearTimeout(refetchTimeoutId);
+      }
       supabase.removeChannel(installmentsChannel);
+      supabase.removeChannel(loansChannel);
+      supabase.removeChannel(paymentsChannel);
     };
-  }, [loans]);
+  }, [loans, refetch]);
 
   // Función para calcular el interés pendiente total para préstamos indefinidos
   // Ahora también devuelve el número de cuotas pagadas
@@ -1211,10 +1399,16 @@ export const LoansModule = () => {
         onBack={() => {
           setShowPaymentForm(false);
           setSelectedLoanForPayment(null);
+          // Refetch para obtener datos actualizados
+          refetch();
         }} 
         preselectedLoan={selectedLoanForPayment}
         onPaymentSuccess={() => {
-          refetch(); // Actualizar los datos de préstamos
+          // Refetch inmediatamente después de registrar un pago
+          // Los datos se actualizarán automáticamente vía Realtime
+          setTimeout(() => {
+            refetch();
+          }, 50); // Pequeño delay para asegurar que el cambio se haya guardado
         }}
       />
     );

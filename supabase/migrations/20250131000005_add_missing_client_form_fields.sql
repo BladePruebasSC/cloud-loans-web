@@ -229,3 +229,4 @@ COMMENT ON COLUMN public.clients.created_by IS 'Usuario que creó el cliente';
 
 
 
+

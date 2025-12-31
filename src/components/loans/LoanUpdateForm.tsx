@@ -2039,6 +2039,24 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
       if (loanError) throw loanError;
 
+      // Para cargos y otros cambios que afectan el balance, asegurarse de que la actualización se complete
+      // antes de continuar, para que los datos estén actualizados cuando se recarguen
+      if (updateType === 'add_charge' || updateType === 'remove_late_fee' || updateType === 'term_extension') {
+        // Verificar que la actualización se completó correctamente leyendo los datos actualizados
+        const { data: updatedLoan, error: verifyError } = await supabase
+          .from('loans')
+          .select('remaining_balance, term_months, monthly_payment, next_payment_date')
+          .eq('id', loan.id)
+          .single();
+        
+        if (verifyError) {
+          console.warn('Error verificando actualización del préstamo:', verifyError);
+        } else if (updatedLoan) {
+          // Los datos se actualizaron correctamente, continuar
+          console.log('✅ Préstamo actualizado correctamente:', updatedLoan);
+        }
+      }
+
       // Registrar en historial de cambios (si existe la tabla)
       try {
         // Mapear updateType a valores permitidos en loan_history.change_type
@@ -2193,20 +2211,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       
       toast.success(message);
       
-      // Si se eliminó mora, esperar un momento para que se actualicen las cuotas antes de cerrar
-      if (updateType === 'remove_late_fee') {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      
-      // onUpdate() ya recarga los préstamos, pero también necesitamos recargar el historial
-      // El evento ya se disparó arriba si se guardó exitosamente
+      // Llamar a onUpdate() inmediatamente para que los datos se actualicen sin delays
+      // Los listeners de Realtime se encargarán de actualizar la UI instantáneamente
       onUpdate();
       
-      // Esperar un momento antes de cerrar para que el historial se recargue
-      if (updateType === 'add_charge' || updateType === 'remove_late_fee') {
-        await new Promise(resolve => setTimeout(resolve, 300));
-      }
-      
+      // Cerrar el modal inmediatamente - las actualizaciones optimistas y Realtime
+      // se encargarán de actualizar la UI sin necesidad de delays
       onClose();
     } catch (error) {
       console.error('Error updating loan:', error);

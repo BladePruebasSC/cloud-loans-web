@@ -807,7 +807,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                     </div>
                     <div>
                       <span className="text-gray-600">Balance Restante:</span>
-                      <div className="font-semibold">RD${formatCurrencyNumber(loanInfo.remaining_balance || 0)}</div>
+                      <div className="font-semibold">RD${formatCurrencyNumber(totalPending)}</div>
                     </div>
                     <div>
                       <span className="text-gray-600">Cuota Mensual:</span>

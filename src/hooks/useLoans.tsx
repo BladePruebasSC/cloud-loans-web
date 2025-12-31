@@ -126,6 +126,39 @@ export const useLoans = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, companyId]);
 
+  // Escuchar cambios en tiempo real en la tabla loans
+  useEffect(() => {
+    if (!user || !companyId) return;
+
+    // Determinar el loan_officer_id según el tipo de usuario
+    const loanOfficerId = profile?.is_employee && profile?.company_owner_id 
+      ? profile.company_owner_id 
+      : user.id;
+
+    // Crear canal de Realtime para escuchar cambios en loans
+    const loansChannel = supabase
+      .channel('loans-realtime-updates')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'loans',
+          filter: `loan_officer_id=eq.${loanOfficerId}`
+        }, 
+        (payload) => {
+          console.log('🔔 Cambio detectado en loans (Realtime), actualizando lista:', payload);
+          
+          // Refetch inmediatamente para obtener los datos actualizados
+          fetchLoans(true);
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(loansChannel);
+    };
+  }, [user, companyId, profile]);
+
   return {
     loans,
     loading: loading || isRefetching,

@@ -771,17 +771,28 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   }
 
   // Calcular estadísticas
+  // Separar pagos de capital del préstamo original de pagos de cargos
+  // Los cargos son adicionales al capital original, así que no se restan del capital original
   const totalPaid = payments.reduce((sum, p) => sum + (p.principal_amount || 0), 0);
   const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
   const totalLateFeePaid = payments.reduce((sum, p) => sum + (p.late_fee || 0), 0);
   
-  // Calcular cargos no pagados (installments con interest_amount = 0 y principal_amount = total_amount)
-  const unpaidChargesAmount = installments
-    .filter(inst => !inst.is_paid && inst.interest_amount === 0 && inst.principal_amount === inst.total_amount)
+  // Calcular cargos totales (pagados y no pagados)
+  const allCharges = installments.filter(inst => 
+    inst.interest_amount === 0 && 
+    inst.principal_amount === inst.total_amount
+  );
+  const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+  const paidChargesAmount = allCharges
+    .filter(inst => inst.is_paid)
     .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+  const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
   
-  // Capital pendiente = monto prestado - pagos de capital + cargos no pagados
-  const capitalPending = loan.amount - totalPaid + unpaidChargesAmount;
+  // Capital pendiente = monto prestado - (pagos de capital - pagos de cargos) + cargos no pagados
+  // Los cargos son adicionales, así que el capital pendiente incluye el capital original + cargos no pagados
+  // Pero debemos restar solo el capital pagado del préstamo original (excluyendo pagos de cargos)
+  const capitalPaidFromLoan = totalPaid - paidChargesAmount;
+  const capitalPending = loan.amount - capitalPaidFromLoan + unpaidChargesAmount;
   
   // Calcular interés pendiente
   // Para préstamos indefinidos, usar el cálculo dinámico
@@ -816,17 +827,21 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       correctTotalAmount = loan.amount + totalInterest;
     }
     
-    // Calcular el total pagado (capital + interés)
+    // Calcular el total de TODOS los cargos (pagados y no pagados)
+    const allCharges = installments.filter(inst => 
+      inst.interest_amount === 0 && 
+      inst.principal_amount === inst.total_amount
+    );
+    const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+    
+    // Calcular el total del préstamo incluyendo cargos
+    const totalAmountWithCharges = correctTotalAmount + totalChargesAmount;
+    
+    // Calcular el total pagado (capital + interés de todos los pagos)
     const totalPaid = payments.reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
     
-    // Calcular cargos no pagados (installments con interest_amount = 0 y principal_amount = total_amount)
-    const unpaidChargesAmount = installments
-      .filter(inst => !inst.is_paid && inst.interest_amount === 0 && inst.principal_amount === inst.total_amount)
-      .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
-    
-    // El balance restante es el total menos lo pagado, más los cargos no pagados
-    const baseBalance = Math.max(0, correctTotalAmount - totalPaid);
-    remainingBalance = baseBalance + unpaidChargesAmount;
+    // El balance restante es el total (préstamo + cargos) menos lo pagado
+    remainingBalance = Math.max(0, totalAmountWithCharges - totalPaid);
   }
   
   // Si el préstamo está saldado, la mora debe ser 0

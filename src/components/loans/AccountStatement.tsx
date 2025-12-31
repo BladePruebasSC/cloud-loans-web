@@ -342,6 +342,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       
       // El balance restante base es el total menos lo pagado
       // Los cargos se agregarán después cuando se obtengan los installments
+      // Por ahora, usar el balance base sin cargos
       let correctRemainingBalance = Math.max(0, correctTotalAmount - totalPaid);
       
       // Combinar los datos iniciales
@@ -592,12 +593,17 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       if (installmentsError) throw installmentsError;
       setInstallments(installmentsData || []);
       
-      // Recalcular el balance restante incluyendo cargos no pagados
-      const unpaidChargesAmount = (installmentsData || [])
-        .filter(inst => !inst.is_paid && inst.interest_amount === 0 && inst.principal_amount === inst.total_amount)
-        .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+      // Recalcular el balance restante incluyendo TODOS los cargos (pagados y no pagados)
+      // Usar la misma lógica que en LoansModule: Total = Préstamo + Cargos, Balance = Total - Pagos
+      const allCharges = (installmentsData || [])
+        .filter(inst => inst.interest_amount === 0 && inst.principal_amount === inst.total_amount);
+      const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
       
-      const finalRemainingBalance = correctRemainingBalance + unpaidChargesAmount;
+      // Calcular el total del préstamo incluyendo cargos
+      const totalAmountWithCharges = correctTotalAmount + totalChargesAmount;
+      
+      // El balance restante es el total (préstamo + cargos) menos lo pagado
+      const finalRemainingBalance = Math.max(0, totalAmountWithCharges - totalPaid);
       
       // Actualizar el loan con el balance que incluye cargos
       setLoan(prev => ({
@@ -958,90 +964,133 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
       }
     } else {
-      // Para préstamos no indefinidos, acumular pagos para completar cada cuota antes de pasar a la siguiente
-      // Similar a préstamos indefinidos, pero acumulando tanto capital como interés
+      // Para préstamos no indefinidos, PRIMERO procesar todos los cargos, LUEGO las cuotas regulares
+      // Esto asegura que los pagos se asignen correctamente a los cargos antes que a las cuotas regulares
       let paymentIndex = 0;
       let accumulatedPrincipal = 0;
       let accumulatedInterest = 0;
       
+      // PRIMERO: Procesar TODOS los cargos (en cualquier orden de cuota)
+      const chargeInstallments: number[] = [];
+      for (let i = 1; i <= numberOfPayments; i++) {
+        const realInstallment = installmentsMap.get(i);
+        const isCharge = realInstallment && 
+                         realInstallment.interest_amount === 0 && 
+                         realInstallment.principal_amount > 0 && 
+                         Math.abs(realInstallment.principal_amount - (realInstallment.amount || (realInstallment as any).total_amount || 0)) < 0.01;
+        if (isCharge) {
+          chargeInstallments.push(i);
+        }
+      }
+      
+      // Procesar cada cargo
+      for (const i of chargeInstallments) {
+        const realInstallment = installmentsMap.get(i);
+        if (!realInstallment) continue;
+        
+        const chargeTotal = realInstallment.total_amount || realInstallment.amount || realInstallment.principal_amount;
+        const chargeDueDate = realInstallment.due_date.split('T')[0];
+        accumulatedPrincipal = 0; // Resetear para cada cargo
+        
+        // Buscar pagos que correspondan a este cargo específico
+        while (paymentIndex < sortedPayments.length && accumulatedPrincipal < chargeTotal * 0.99) {
+          const payment = sortedPayments[paymentIndex];
+          
+          // Si el pago ya fue asignado, saltarlo
+          if (assignedPaymentIds.has(payment.id)) {
+            paymentIndex++;
+            continue;
+          }
+          
+          // Verificar si este pago corresponde a este cargo específico
+          const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
+          
+          // Solo asignar si la fecha coincide y el monto es razonable para este cargo
+          if (paymentDueDate === chargeDueDate) {
+            const paymentAmount = payment.principal_amount || payment.amount || 0;
+            
+            // Verificar que el monto del pago no exceda el cargo pendiente
+            const remainingCharge = chargeTotal - accumulatedPrincipal;
+            if (paymentAmount > 0 && paymentAmount <= remainingCharge * 1.1) {
+              assignedPaymentIds.add(payment.id);
+              paymentToInstallmentMap.set(payment.id, i);
+              accumulatedPrincipal += paymentAmount;
+              paymentIndex++;
+              
+              // Si el cargo está completo, pasar al siguiente cargo
+              if (accumulatedPrincipal >= chargeTotal * 0.99) {
+                break;
+              }
+            } else {
+              // Si el monto no coincide, este pago no es para este cargo
+              break;
+            }
+          } else {
+            // Si la fecha no coincide, este pago no es para este cargo
+            // Continuar buscando en el siguiente cargo
+            break;
+          }
+        }
+      }
+      
+      // SEGUNDO: Procesar todas las cuotas regulares (excluyendo cargos)
+      accumulatedPrincipal = 0;
+      accumulatedInterest = 0;
+      
       for (let i = 1; i <= numberOfPayments && paymentIndex < sortedPayments.length; i++) {
         const realInstallment = installmentsMap.get(i);
         
-        // Determinar si es un cargo
+        // Saltar si es un cargo (ya fue procesado)
         const isCharge = realInstallment && 
                          realInstallment.interest_amount === 0 && 
                          realInstallment.principal_amount > 0 && 
                          Math.abs(realInstallment.principal_amount - (realInstallment.amount || (realInstallment as any).total_amount || 0)) < 0.01;
         
-        if (isCharge && realInstallment) {
-          // Para cargos, acumular todos los pagos con el mismo due_date
-          const chargeDueDate = realInstallment.due_date.split('T')[0];
-          const chargeTotal = realInstallment.total_amount || realInstallment.amount || realInstallment.principal_amount;
+        if (isCharge) {
+          continue; // Ya procesado arriba
+        }
+        
+        // Para cuotas regulares, calcular el capital e interés esperados por cuota
+        const installmentData = amortizationData[i - 1];
+        const expectedPrincipal = installmentData.principalPayment;
+        const expectedInterest = installmentData.interestPayment;
+        const expectedTotal = expectedPrincipal + expectedInterest;
+        
+        // Acumular pagos hasta que se complete esta cuota
+        while (paymentIndex < sortedPayments.length && 
+               (accumulatedPrincipal < expectedPrincipal * 0.99 || accumulatedInterest < expectedInterest * 0.99)) {
+          const payment = sortedPayments[paymentIndex];
           
-          // Buscar todos los pagos para este cargo (mismo due_date)
-          while (paymentIndex < sortedPayments.length) {
-            const payment = sortedPayments[paymentIndex];
-            const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
+          if (!assignedPaymentIds.has(payment.id)) {
+            assignedPaymentIds.add(payment.id);
+            paymentToInstallmentMap.set(payment.id, i);
+            accumulatedPrincipal += (payment.principal_amount || 0);
+            accumulatedInterest += (payment.interest_amount || 0);
+            paymentIndex++;
             
-            if (paymentDueDate === chargeDueDate && !assignedPaymentIds.has(payment.id)) {
-              assignedPaymentIds.add(payment.id);
-              paymentToInstallmentMap.set(payment.id, i);
-              accumulatedPrincipal += (payment.principal_amount || payment.amount || 0);
-              paymentIndex++;
-              
-              // Si el cargo está completo, pasar a la siguiente cuota
-              if (accumulatedPrincipal >= chargeTotal * 0.99) {
-                accumulatedPrincipal = 0; // Resetear para la siguiente cuota
-                break;
-              }
-            } else {
-              // Si el pago no corresponde a este cargo, pasar a la siguiente cuota
-              break;
-            }
-          }
-        } else {
-          // Para cuotas regulares, calcular el capital e interés esperados por cuota
-          const installmentData = amortizationData[i - 1];
-          const expectedPrincipal = installmentData.principalPayment;
-          const expectedInterest = installmentData.interestPayment;
-          const expectedTotal = expectedPrincipal + expectedInterest;
-          
-          // Acumular pagos hasta que se complete esta cuota
-          while (paymentIndex < sortedPayments.length && 
-                 (accumulatedPrincipal < expectedPrincipal * 0.99 || accumulatedInterest < expectedInterest * 0.99)) {
-            const payment = sortedPayments[paymentIndex];
-            
-            if (!assignedPaymentIds.has(payment.id)) {
-              assignedPaymentIds.add(payment.id);
-              paymentToInstallmentMap.set(payment.id, i);
-              accumulatedPrincipal += (payment.principal_amount || 0);
-              accumulatedInterest += (payment.interest_amount || 0);
-              paymentIndex++;
-              
-              console.log(`🔍 Acumulando pago para cuota ${i}:`, {
-                paymentDate: payment.payment_date,
-                principalPaid: payment.principal_amount,
-                interestPaid: payment.interest_amount,
-                accumulatedPrincipal,
-                accumulatedInterest,
-                expectedPrincipal,
-                expectedInterest
-              });
-            } else {
-              paymentIndex++;
-            }
-          }
-          
-          // Si se acumuló suficiente capital e interés, la cuota está completa
-          if (accumulatedPrincipal >= expectedPrincipal * 0.99 && accumulatedInterest >= expectedInterest * 0.99) {
-            // Restar el capital e interés usados para esta cuota (el excedente se usa para la siguiente)
-            accumulatedPrincipal = Math.max(0, accumulatedPrincipal - expectedPrincipal);
-            accumulatedInterest = Math.max(0, accumulatedInterest - expectedInterest);
+            console.log(`🔍 Acumulando pago para cuota ${i}:`, {
+              paymentDate: payment.payment_date,
+              principalPaid: payment.principal_amount,
+              interestPaid: payment.interest_amount,
+              accumulatedPrincipal,
+              accumulatedInterest,
+              expectedPrincipal,
+              expectedInterest
+            });
           } else {
-            // Si no hay suficiente acumulado, detener el procesamiento
-            // Las cuotas siguientes están pendientes
-            break;
+            paymentIndex++;
           }
+        }
+        
+        // Si se acumuló suficiente capital e interés, la cuota está completa
+        if (accumulatedPrincipal >= expectedPrincipal * 0.99 && accumulatedInterest >= expectedInterest * 0.99) {
+          // Restar el capital e interés usados para esta cuota (el excedente se usa para la siguiente)
+          accumulatedPrincipal = Math.max(0, accumulatedPrincipal - expectedPrincipal);
+          accumulatedInterest = Math.max(0, accumulatedInterest - expectedInterest);
+        } else {
+          // Si no hay suficiente acumulado, detener el procesamiento
+          // Las cuotas siguientes están pendientes
+          break;
         }
       }
     }
@@ -1277,29 +1326,57 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
       
       // Calcular el balance pendiente del préstamo después de esta cuota
-      // Usar el capital realmente pagado de las cuotas anteriores
+      // Incluir tanto el capital del préstamo original como los cargos
       let totalCapitalPaidUpToThisInstallment = 0;
+      let totalChargesUpToThisInstallment = 0;
+      
       for (let j = 1; j <= i; j++) {
         const prevInstallment = installmentsMap.get(j);
-        if (prevInstallment && prevInstallment.is_paid) {
-          // Buscar el pago real de esta cuota anterior
-          if (prevInstallment.paid_date && payments) {
-            const prevPayment = payments.find(p => {
-              const paymentDateStr = p.payment_date.split('T')[0];
-              const paidDateStr = prevInstallment.paid_date?.split('T')[0];
-              return paymentDateStr === paidDateStr;
-            });
-            if (prevPayment) {
-              totalCapitalPaidUpToThisInstallment += prevPayment.principal_amount || 0;
-            } else {
-              totalCapitalPaidUpToThisInstallment += prevInstallment.principal_amount || 0;
+        const isPrevCharge = prevInstallment && 
+                             prevInstallment.interest_amount === 0 && 
+                             prevInstallment.principal_amount > 0 && 
+                             Math.abs(prevInstallment.principal_amount - (prevInstallment.amount || (prevInstallment as any).total_amount || 0)) < 0.01;
+        
+        if (isPrevCharge) {
+          // Para cargos, sumar el monto del cargo
+          const chargeAmount = (prevInstallment as any).total_amount || prevInstallment.amount || prevInstallment.principal_amount || 0;
+          totalChargesUpToThisInstallment += chargeAmount;
+          
+          // Buscar pagos asignados a este cargo específico
+          const chargePayments: any[] = [];
+          for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
+            if (installmentNum === j) {
+              const payment = payments?.find(p => p.id === paymentId);
+              if (payment) {
+                chargePayments.push(payment);
+              }
             }
-          } else {
-            totalCapitalPaidUpToThisInstallment += prevInstallment.principal_amount || 0;
           }
+          
+          // Sumar los pagos asignados a este cargo
+          const chargePaid = chargePayments.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
+          totalCapitalPaidUpToThisInstallment += chargePaid;
+        } else if (prevInstallment) {
+          // Para cuotas regulares, usar el capital pagado
+          // Buscar pagos asignados a esta cuota
+          const installmentPayments: any[] = [];
+          for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
+            if (installmentNum === j) {
+              const payment = payments?.find(p => p.id === paymentId);
+              if (payment) {
+                installmentPayments.push(payment);
+              }
+            }
+          }
+          
+          // Sumar el capital pagado de esta cuota
+          const installmentPrincipalPaid = installmentPayments.reduce((sum, p) => sum + (p.principal_amount || 0), 0);
+          totalCapitalPaidUpToThisInstallment += installmentPrincipalPaid;
         }
       }
-      const remainingBalanceAfterThisInstallment = Math.max(0, principal - totalCapitalPaidUpToThisInstallment);
+      
+      // Calcular el balance pendiente: (Capital original + Cargos hasta esta cuota) - Pagos hasta esta cuota
+      const remainingBalanceAfterThisInstallment = Math.max(0, (principal + totalChargesUpToThisInstallment) - totalCapitalPaidUpToThisInstallment);
 
       console.log(`🔍 RESUMEN FINAL - Cuota ${i}:`, {
         exists: !!realInstallment,
@@ -1317,6 +1394,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         remainingPayment,
         paymentStatus,
         totalCapitalPaidUpToThisInstallment,
+        totalChargesUpToThisInstallment,
         remainingBalanceAfterThisInstallment,
         ESTADO_FINAL: paymentStatus === 'paid' ? '✅ PAGADO' : paymentStatus === 'partial' ? '⚠️ PARCIAL' : '❌ PENDIENTE'
       });
