@@ -486,6 +486,178 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         return a.installment_number - b.installment_number;
       });
 
+      // CORRECCIÓN: Calcular dinámicamente qué cuotas están pagadas basándose en los pagos reales
+      // Esto asegura que cuando se elimina un pago, las cuotas se actualicen correctamente
+      const { data: allPaymentsForStatus, error: paymentsStatusError } = await supabase
+        .from('payments')
+        .select('id, principal_amount, interest_amount, payment_date, amount, due_date')
+        .eq('loan_id', loanId)
+        .order('payment_date', { ascending: true });
+
+      if (!paymentsStatusError && allPaymentsForStatus && allPaymentsForStatus.length > 0) {
+        const isIndefinite = loanInfo?.amortization_type === 'indefinite';
+        const sortedPayments = [...allPaymentsForStatus].sort((a, b) => 
+          new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime()
+        );
+
+        // Crear un mapa de cuotas por número para acceso rápido
+        const installmentsMap = new Map();
+        sortedInstallments.forEach(inst => {
+          installmentsMap.set(inst.installment_number, inst);
+        });
+
+        // Para préstamos indefinidos, usar lógica de acumulación de interés
+        if (isIndefinite) {
+          const interestPerPayment = (loanInfo.amount || 0) * ((loanInfo.interest_rate || 0) / 100);
+          let accumulatedInterest = 0;
+          let paymentIndex = 0;
+          let firstPaymentDateForInstallment: string | null = null;
+
+          for (let i = 0; i < sortedInstallments.length && paymentIndex < sortedPayments.length; i++) {
+            const installment = sortedInstallments[i];
+
+            // Acumular interés de los pagos hasta que se complete esta cuota
+            while (paymentIndex < sortedPayments.length && accumulatedInterest < interestPerPayment * 0.99) {
+              const payment = sortedPayments[paymentIndex];
+              const paymentInterest = payment.interest_amount || 0;
+
+              if (firstPaymentDateForInstallment === null) {
+                firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;
+              }
+
+              accumulatedInterest += paymentInterest;
+              paymentIndex++;
+            }
+
+            // Si se acumuló suficiente interés, marcar la cuota como pagada
+            if (accumulatedInterest >= interestPerPayment * 0.99) {
+              installment.is_paid = true;
+              installment.paid_date = firstPaymentDateForInstallment;
+              accumulatedInterest -= interestPerPayment;
+              firstPaymentDateForInstallment = null;
+            } else {
+              // Si no hay suficiente interés, la cuota no está pagada
+              installment.is_paid = false;
+              installment.paid_date = null;
+            }
+          }
+        } else {
+          // Para préstamos no indefinidos, procesar primero cargos y luego cuotas regulares
+          let paymentIndex = 0;
+          let accumulatedPrincipal = 0;
+          let accumulatedInterest = 0;
+
+          // PRIMERO: Procesar TODOS los cargos
+          const chargeInstallments: typeof sortedInstallments = [];
+          for (const inst of sortedInstallments) {
+            const isCharge = inst.interest_amount === 0 && 
+                            inst.principal_amount > 0 && 
+                            Math.abs(inst.principal_amount - (inst.total_amount || inst.amount || 0)) < 0.01;
+            if (isCharge) {
+              chargeInstallments.push(inst);
+            }
+          }
+
+          // Procesar cada cargo
+          for (const chargeInst of chargeInstallments) {
+            const chargeTotal = chargeInst.total_amount || chargeInst.amount || chargeInst.principal_amount;
+            const chargeDueDate = chargeInst.due_date?.split('T')[0];
+            accumulatedPrincipal = 0;
+
+            // Buscar pagos que correspondan a este cargo específico
+            while (paymentIndex < sortedPayments.length && accumulatedPrincipal < chargeTotal * 0.99) {
+              const payment = sortedPayments[paymentIndex];
+              const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
+
+              if (paymentDueDate === chargeDueDate) {
+                const paymentAmount = payment.principal_amount || payment.amount || 0;
+                const remainingCharge = chargeTotal - accumulatedPrincipal;
+
+                if (paymentAmount > 0 && paymentAmount <= remainingCharge * 1.1) {
+                  accumulatedPrincipal += paymentAmount;
+                  paymentIndex++;
+
+                  if (accumulatedPrincipal >= chargeTotal * 0.99) {
+                    break;
+                  }
+                } else {
+                  break;
+                }
+              } else {
+                break;
+              }
+            }
+
+            // Marcar el cargo como pagado si se acumuló suficiente monto
+            if (accumulatedPrincipal >= chargeTotal * 0.99) {
+              chargeInst.is_paid = true;
+              // Buscar la fecha del primer pago de este cargo
+              const paymentForCharge = sortedPayments.find(p => {
+                const paymentDueDate = (p.due_date as string)?.split('T')[0] || (p.due_date as string);
+                return paymentDueDate === chargeDueDate;
+              });
+              if (paymentForCharge) {
+                chargeInst.paid_date = paymentForCharge.payment_date?.split('T')[0] || paymentForCharge.payment_date || null;
+              }
+            } else {
+              chargeInst.is_paid = false;
+              chargeInst.paid_date = null;
+            }
+          }
+
+          // SEGUNDO: Procesar todas las cuotas regulares (excluyendo cargos)
+          accumulatedPrincipal = 0;
+          accumulatedInterest = 0;
+          let firstPaymentDateForInstallment: string | null = null;
+
+          for (const regularInst of sortedInstallments) {
+            // Saltar si es un cargo (ya fue procesado)
+            const isCharge = regularInst.interest_amount === 0 && 
+                            regularInst.principal_amount > 0 && 
+                            Math.abs(regularInst.principal_amount - (regularInst.total_amount || regularInst.amount || 0)) < 0.01;
+            if (isCharge) {
+              continue;
+            }
+
+            // CORRECCIÓN: Usar los valores reales de cada cuota (principal_amount e interest_amount)
+            // no calcular promedios, para que coincida con AccountStatement
+            const expectedPrincipal = regularInst.principal_amount || 0;
+            const expectedInterest = regularInst.interest_amount || 0;
+
+            // Resetear la fecha del primer pago para esta cuota
+            firstPaymentDateForInstallment = null;
+
+            // Acumular pagos hasta que se complete esta cuota
+            while (paymentIndex < sortedPayments.length && 
+                   (accumulatedPrincipal < expectedPrincipal * 0.99 || accumulatedInterest < expectedInterest * 0.99)) {
+              const payment = sortedPayments[paymentIndex];
+              
+              // Guardar la fecha del primer pago de esta cuota
+              if (firstPaymentDateForInstallment === null) {
+                firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;
+              }
+              
+              accumulatedPrincipal += (payment.principal_amount || 0);
+              accumulatedInterest += (payment.interest_amount || 0);
+              paymentIndex++;
+            }
+
+            // Si se acumuló suficiente capital e interés, la cuota está completa
+            if (accumulatedPrincipal >= expectedPrincipal * 0.99 && accumulatedInterest >= expectedInterest * 0.99) {
+              regularInst.is_paid = true;
+              regularInst.paid_date = firstPaymentDateForInstallment;
+              
+              // Restar el capital e interés usados para esta cuota
+              accumulatedPrincipal = Math.max(0, accumulatedPrincipal - expectedPrincipal);
+              accumulatedInterest = Math.max(0, accumulatedInterest - expectedInterest);
+            } else {
+              regularInst.is_paid = false;
+              regularInst.paid_date = null;
+            }
+          }
+        }
+      }
+
       // Establecer las cuotas inmediatamente para mostrar los datos
       setInstallments(sortedInstallments);
 

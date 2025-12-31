@@ -70,12 +70,14 @@ BEGIN
     END IF;
     
     -- Calcular el total de TODOS los cargos (installments con interest_amount = 0 y principal_amount = total_amount)
+    -- CORRECCIÓN: Usar comparación con tolerancia para manejar posibles diferencias por redondeo
+    -- Un cargo es cuando interest_amount es 0 (o muy cercano a 0) y principal_amount es igual (o muy cercano) a total_amount
     SELECT COALESCE(SUM(total_amount), 0)
     INTO v_total_charges_amount
     FROM public.installments
     WHERE loan_id = p_loan_id
-      AND interest_amount = 0
-      AND principal_amount = total_amount;
+      AND ABS(interest_amount) < 0.01  -- interest_amount es 0 (con tolerancia para redondeo)
+      AND ABS(principal_amount - total_amount) < 0.01;  -- principal_amount = total_amount (con tolerancia)
     
     -- Calcular el total del préstamo incluyendo cargos
     v_total_amount_with_charges := v_correct_total_amount + v_total_charges_amount;

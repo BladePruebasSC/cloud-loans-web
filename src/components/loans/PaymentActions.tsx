@@ -296,24 +296,71 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       console.log('🗑️ Pagos restantes:', remainingPayments?.length || 0);
 
-      // PASO 4: Recalcular balance
-      // Para préstamos indefinidos, el balance siempre es el monto original
-      // Para otros tipos, calcular basándose en el capital pagado
-      let newBalance: number;
-      if (loanData.amortization_type === 'indefinite') {
-        newBalance = loanData.amount; // El balance no cambia en préstamos indefinidos
-      } else {
-        const totalPrincipalPaid = remainingPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
-        newBalance = loanData.amount - totalPrincipalPaid;
+      // CORRECCIÓN: NO recalcular balance manualmente aquí
+      // El trigger de la BD ya actualizó remaining_balance correctamente (incluyendo cargos)
+      // Recalcular manualmente aquí causaría que se sobrescriba el valor correcto del trigger
+      // Solo necesitamos obtener el valor actualizado de la BD después de que el trigger lo calcule
+      
+      // Esperar un momento para que los triggers completen el cálculo
+      // Aumentado a 300ms para asegurar que los triggers de payments e installments completen
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Obtener los valores actualizados de la BD (ya calculados por los triggers con cargos incluidos)
+      // Reintentar varias veces si es necesario para asegurar que los triggers completaron
+      let updatedLoanData: any = null;
+      let fetchError: any = null;
+      let retries = 3;
+      
+      while (retries > 0) {
+        const result = await supabase
+          .from('loans')
+          .select('remaining_balance, next_payment_date')
+          .eq('id', payment.loan_id)
+          .single();
+        
+        fetchError = result.error;
+        updatedLoanData = result.data;
+        
+        // Si no hay error y tenemos datos, salir del loop
+        if (!fetchError && updatedLoanData) {
+          break;
+        }
+        
+        retries--;
+        if (retries > 0) {
+          // Esperar un poco más antes de reintentar
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
       }
-      console.log('🗑️ Balance recalculado:', {
+      
+      let newBalance: number;
+      if (fetchError || !updatedLoanData) {
+        console.error('🗑️ ERROR obteniendo valores actualizados de la BD:', fetchError);
+        // Fallback al balance anterior si hay error (no ideal pero mejor que crashear)
+        if (loanData.amortization_type === 'indefinite') {
+          newBalance = loanData.amount;
+        } else {
+          const totalPrincipalPaid = remainingPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
+          newBalance = loanData.amount - totalPrincipalPaid;
+        }
+      } else {
+        // Usar los valores calculados por los triggers (incluyen cargos)
+        newBalance = updatedLoanData.remaining_balance || loanData.remaining_balance || 0;
+      }
+      
+      console.log('🗑️ Valores obtenidos de BD (calculados por triggers con cargos):', {
         amount: loanData.amount,
         amortization_type: loanData.amortization_type,
-        newBalance
+        remaining_balance_from_bd: updatedLoanData?.remaining_balance,
+        next_payment_date_from_bd: updatedLoanData?.next_payment_date,
+        newBalance,
+        bdCalculated: !fetchError && updatedLoanData
       });
 
-      // PASO 5: Recalcular next_payment_date y paid_installments basándose en los pagos restantes
-      let nextPaymentDate = loanData.next_payment_date;
+      // CORRECCIÓN: Los triggers de la BD ya actualizaron remaining_balance y next_payment_date correctamente (incluyendo cargos)
+      // NO recalcular manualmente, solo calcular paid_installments que es necesario para actualizar las cuotas
+      
+      // PASO 5: Recalcular paid_installments basándose en los pagos restantes (necesario para actualizar el estado de las cuotas)
       let updatedPaidInstallments: number[] = [];
 
       if (loanData.amortization_type === 'indefinite') {
@@ -332,68 +379,8 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           }
         }
 
-        // Calcular la próxima fecha desde start_date
-        if (!loanData.start_date) {
-          console.warn('🗑️ No hay start_date, usando next_payment_date original');
-          nextPaymentDate = loanData.next_payment_date;
-        } else {
-          const startDateStr = loanData.start_date.split('T')[0];
-          const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-          const startDate = new Date(startYear, startMonth - 1, startDay);
-          
-          const firstPaymentDate = new Date(startDate);
-          const frequency = loanData.payment_frequency || 'monthly';
-          
-          switch (frequency) {
-            case 'daily':
-              firstPaymentDate.setDate(startDate.getDate() + 1);
-              break;
-            case 'weekly':
-              firstPaymentDate.setDate(startDate.getDate() + 7);
-              break;
-            case 'biweekly':
-              firstPaymentDate.setDate(startDate.getDate() + 14);
-              break;
-            case 'monthly':
-            default:
-              const startDay = startDate.getDate();
-              const nextMonth = startDate.getMonth() + 1;
-              const nextYear = startDate.getFullYear();
-              const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-              const dayToUse = Math.min(startDay, lastDayOfNextMonth);
-              firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
-              break;
-          }
-          
-          const nextDate = new Date(firstPaymentDate);
-          const periodsToAdd = paidInstallmentsCount;
-          
-          switch (frequency) {
-            case 'daily':
-              nextDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
-              break;
-            case 'weekly':
-              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
-              break;
-            case 'biweekly':
-              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
-              break;
-            case 'monthly':
-            default:
-              const paymentDay = firstPaymentDate.getDate();
-              const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
-              const targetYear = firstPaymentDate.getFullYear();
-              const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-              const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
-              nextDate.setFullYear(targetYear, targetMonth, dayToUse);
-              break;
-          }
-          
-          const finalYear = nextDate.getFullYear();
-          const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
-          const finalDay = String(nextDate.getDate()).padStart(2, '0');
-          nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
-        }
+        // CORRECCIÓN: NO calcular next_payment_date manualmente
+        // El trigger de la BD ya lo actualizó correctamente (incluyendo cargos)
 
         // Actualizar paid_installments para préstamos indefinidos
         for (let i = 1; i <= paidInstallmentsCount; i++) {
@@ -429,71 +416,8 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           }
         }
 
-        // Calcular next_payment_date
-        if (!loanData.start_date) {
-          console.warn('🗑️ No hay start_date, usando next_payment_date original');
-          nextPaymentDate = loanData.next_payment_date;
-        } else {
-          const startDateStr = loanData.start_date.split('T')[0];
-          const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-          const startDate = new Date(startYear, startMonth - 1, startDay);
-          
-          const firstPaymentDate = new Date(startDate);
-          const frequency = loanData.payment_frequency || 'monthly';
-          
-          switch (frequency) {
-            case 'daily':
-              firstPaymentDate.setDate(startDate.getDate() + 1);
-              break;
-            case 'weekly':
-              firstPaymentDate.setDate(startDate.getDate() + 7);
-              break;
-            case 'biweekly':
-              firstPaymentDate.setDate(startDate.getDate() + 14);
-              break;
-            case 'monthly':
-            default:
-              const startDay = startDate.getDate();
-              const nextMonth = startDate.getMonth() + 1;
-              const nextYear = startDate.getFullYear();
-              const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-              const dayToUse = Math.min(startDay, lastDayOfNextMonth);
-              firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
-              break;
-          }
-          
-          // La próxima cuota no pagada está a (paidInstallmentsCount) períodos de firstPaymentDate
-          // Si se pagaron 0 cuotas, la próxima es la cuota 1 (firstPaymentDate + 0 períodos = firstPaymentDate)
-          // Si se pagó 1 cuota, la próxima es la cuota 2 (firstPaymentDate + 1 período)
-          const nextDate = new Date(firstPaymentDate);
-          const periodsToAdd = paidInstallmentsCount; // Si paidInstallmentsCount = 0, nextDate = firstPaymentDate (correcto)
-          
-          switch (frequency) {
-            case 'daily':
-              nextDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
-              break;
-            case 'weekly':
-              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
-              break;
-            case 'biweekly':
-              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
-              break;
-            case 'monthly':
-            default:
-              const paymentDay = firstPaymentDate.getDate();
-              const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
-              const targetYear = firstPaymentDate.getFullYear();
-              const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-              const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
-              nextDate.setFullYear(targetYear, targetMonth, dayToUse);
-              break;
-          }
-          
-          const finalYear = nextDate.getFullYear();
-          const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
-          const finalDay = String(nextDate.getDate()).padStart(2, '0');
-          nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
-        }
+        // CORRECCIÓN: NO calcular next_payment_date manualmente
+        // El trigger de la BD ya lo actualizó correctamente (incluyendo cargos)
 
         // Actualizar paid_installments para préstamos no indefinidos
         for (let i = 1; i <= paidInstallmentsCount; i++) {
@@ -501,10 +425,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         }
       }
 
-      console.log('🗑️ Próxima fecha de pago recalculada:', nextPaymentDate);
       console.log('🗑️ Cuotas pagadas recalculadas:', updatedPaidInstallments);
+      console.log('🗑️ next_payment_date y remaining_balance fueron actualizados por triggers de la BD (incluyen cargos)');
 
       // PASO 6: Revertir el estado de las cuotas que ya no deberían estar pagadas
+      // CORRECCIÓN: Los triggers también actualizan cuando cambian installments, así que esto es seguro
       console.log('🗑️ REVIRTIENDO ESTADO DE CUOTAS...');
       const { data: allInstallments, error: installmentsError } = await supabase
         .from('installments')
@@ -525,6 +450,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
               })
               .eq('loan_id', payment.loan_id)
               .eq('installment_number', installment.installment_number);
+            // El trigger actualizará remaining_balance y next_payment_date automáticamente
           } else if (!installment.is_paid && shouldBePaid) {
             console.log(`🗑️ Marcando cuota ${installment.installment_number} como pagada`);
             await supabase
@@ -537,16 +463,19 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
               })
               .eq('loan_id', payment.loan_id)
               .eq('installment_number', installment.installment_number);
+            // El trigger actualizará remaining_balance y next_payment_date automáticamente
           }
         }
       }
 
       // PASO 7: Recalcular la mora
+      // CORRECCIÓN: Usar next_payment_date de la BD (ya calculado por el trigger con cargos incluidos)
       console.log('🗑️ RECALCULANDO MORA...');
+      const nextPaymentDateFromBD = updatedLoanData?.next_payment_date || loanData.next_payment_date;
       const loanDataForLateFee = {
         id: payment.loan_id,
         remaining_balance: newBalance,
-        next_payment_date: nextPaymentDate,
+        next_payment_date: nextPaymentDateFromBD,
         late_fee_rate: loanData.late_fee_rate || 0,
         grace_period_days: loanData.grace_period_days || 0,
         max_late_fee: loanData.max_late_fee || 0,
@@ -566,23 +495,19 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       console.log('🗑️ Mora recalculada:', newCurrentLateFee);
 
-      // PASO 8: Actualizar el préstamo con todos los datos recalculados
-      console.log('🗑️ ACTUALIZANDO PRÉSTAMO...');
+      // PASO 8: Actualizar solo los campos que no son manejados por triggers
+      // CORRECCIÓN: NO incluir remaining_balance ni next_payment_date en el update
+      // Ambos ya fueron actualizados correctamente por los triggers de la BD (incluyendo cargos)
+      // Incluirlos aquí sobrescribiría los valores correctos calculados por los triggers
+      console.log('🗑️ ACTUALIZANDO PRÉSTAMO (solo campos no manejados por triggers)...');
       const updateData: any = {
-        remaining_balance: newBalance,
-        next_payment_date: nextPaymentDate,
+        // remaining_balance: NO incluir - ya fue actualizado correctamente por el trigger de la BD (incluye cargos)
+        // next_payment_date: NO incluir - ya fue actualizado correctamente por el trigger de la BD (incluye cargos)
         paid_installments: updatedPaidInstallments,
         current_late_fee: newCurrentLateFee,
         last_late_fee_calculation: new Date().toISOString().split('T')[0],
         status: newBalance <= 0 ? 'paid' : 'active'
       };
-
-      // Si el pago eliminado incluía mora, ya está recalculada arriba
-      // Pero si había mora en el pago, asegurarnos de que se restaure correctamente
-      if (payment.late_fee && payment.late_fee > 0) {
-        console.log('🗑️ El pago eliminado incluía mora de:', payment.late_fee);
-        // La mora ya fue recalculada arriba, así que no necesitamos sumarla manualmente
-      }
       
       const { error: updateError } = await supabase
         .from('loans')
@@ -594,15 +519,33 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         throw updateError;
       }
 
-      console.log('🗑️ ✅ Préstamo actualizado exitosamente con todos los datos recalculados');
+      console.log('🗑️ ✅ Préstamo actualizado exitosamente');
+      console.log('🗑️ remaining_balance y next_payment_date fueron actualizados por triggers (incluyen cargos)');
 
-      // PASO 9: Notificar éxito y refrescar
+      // PASO 9: Esperar un momento adicional para asegurar que todos los triggers completaron
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Verificar que los valores estén correctos en la BD
+      const { data: finalLoanData, error: finalCheckError } = await supabase
+        .from('loans')
+        .select('remaining_balance, next_payment_date')
+        .eq('id', payment.loan_id)
+        .single();
+      
+      if (!finalCheckError && finalLoanData) {
+        console.log('🗑️ Verificación final - Valores en BD después de triggers:', {
+          remaining_balance: finalLoanData.remaining_balance,
+          next_payment_date: finalLoanData.next_payment_date
+        });
+      }
+
+      // Notificar éxito y refrescar
       toast.success('Pago eliminado exitosamente. Todos los datos han sido revertidos.');
       setShowDeleteModal(false);
       
-      // Refrescar inmediatamente
+      // Refrescar inmediatamente para que se vean los valores correctos
       if (onPaymentUpdated) {
-        console.log('🗑️ Refrescando lista...');
+        console.log('🗑️ Refrescando lista para mostrar valores actualizados de la BD...');
         onPaymentUpdated();
       }
       

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Payment {
@@ -24,35 +24,28 @@ interface PaymentStatus {
   hasPartialPayments: boolean;
 }
 
+// Estado inicial: null indica que aún no se ha cargado (evita render con valores incorrectos)
+const INITIAL_STATUS: PaymentStatus | null = null;
+
 export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
-  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>({
-    currentPaymentDue: 0,
-    currentPaymentPaid: 0,
-    currentPaymentRemaining: 0,
-    isCurrentPaymentComplete: false,
-    hasPartialPayments: false,
-  });
+  // Cambiar a null inicial para evitar render con valores incorrectos
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | null>(INITIAL_STATUS);
   const [loading, setLoading] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const loanIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    if (loan && loan.monthly_payment > 0) {
-      // Inicializar inmediatamente con valores por defecto
-      const defaultStatus = {
-        currentPaymentDue: loan.monthly_payment,
-        currentPaymentPaid: 0,
-        currentPaymentRemaining: loan.monthly_payment,
-        isCurrentPaymentComplete: false,
-        hasPartialPayments: false,
-      };
-      setPaymentStatus(defaultStatus);
-      
-      // Luego buscar pagos reales
-      fetchPaymentStatus();
+  // Memoizar fetchPaymentStatus para evitar recreaciones innecesarias
+  const fetchPaymentStatus = useCallback(async () => {
+    if (!loan) {
+      setPaymentStatus(null);
+      return;
     }
-  }, [loan?.id, loan?.monthly_payment, loan?.next_payment_date]);
 
-  const fetchPaymentStatus = async () => {
-    if (!loan) return;
+    // Cancelar fetch anterior si existe
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
 
     setLoading(true);
     try {
@@ -71,6 +64,9 @@ export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
         console.error('Error fetching installments:', installmentError);
         return;
       }
+
+      // Verificar si fue cancelado
+      if (abortControllerRef.current?.signal.aborted) return;
 
       // Determinar el due_date a usar: si hay una cuota pendiente, usar su due_date, sino usar next_payment_date
       const targetDueDate = firstUnpaidInstallment && firstUnpaidInstallment.length > 0 
@@ -93,6 +89,9 @@ export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
         console.error('Error fetching payments:', error);
         return;
       }
+
+      // Verificar si fue cancelado
+      if (abortControllerRef.current?.signal.aborted) return;
 
       console.log('All payments found:', payments);
 
@@ -133,23 +132,59 @@ export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
         currentPaymentRemaining
       });
 
-      setPaymentStatus({
-        currentPaymentDue,
-        currentPaymentPaid,
-        currentPaymentRemaining,
-        isCurrentPaymentComplete,
-        hasPartialPayments,
-      });
+      // Solo actualizar si el loanId sigue siendo el mismo (evita race conditions)
+      if (loanIdRef.current === loan.id) {
+        setPaymentStatus({
+          currentPaymentDue,
+          currentPaymentPaid,
+          currentPaymentRemaining,
+          isCurrentPaymentComplete,
+          hasPartialPayments,
+        });
+      }
     } catch (error) {
-      console.error('Error calculating payment status:', error);
+      if (error instanceof Error && error.name !== 'AbortError') {
+        console.error('Error calculating payment status:', error);
+      }
     } finally {
+      if (loanIdRef.current === loan?.id) {
+        setLoading(false);
+      }
+    }
+  }, [loan]);
+
+  useEffect(() => {
+    if (loan && loan.monthly_payment > 0) {
+      loanIdRef.current = loan.id;
+      // NO inicializar con valores por defecto - esperar datos reales
+      // Esto evita el render con valores incorrectos
+      fetchPaymentStatus();
+    } else {
+      loanIdRef.current = null;
+      setPaymentStatus(null);
       setLoading(false);
     }
-  };
 
+    // Cleanup: cancelar fetch si el componente se desmonta o cambia el loan
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [loan?.id, loan?.monthly_payment, loan?.next_payment_date, fetchPaymentStatus]);
+
+  // Retornar valores por defecto solo cuando paymentStatus es null (aún no cargado)
+  // Esto evita que el componente renderice con valores incorrectos
   return {
-    paymentStatus,
+    paymentStatus: paymentStatus || {
+      currentPaymentDue: 0,
+      currentPaymentPaid: 0,
+      currentPaymentRemaining: 0,
+      isCurrentPaymentComplete: false,
+      hasPartialPayments: false,
+    },
     loading,
     refetch: fetchPaymentStatus,
+    isReady: paymentStatus !== null, // Flag para saber si los datos están listos
   };
 };

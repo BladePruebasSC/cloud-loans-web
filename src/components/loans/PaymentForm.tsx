@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -107,8 +107,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [lastPaymentData, setLastPaymentData] = useState<any>(null);
   const [isClosingPrintModal, setIsClosingPrintModal] = useState(false);
   const { user, companyId } = useAuth();
-  const { paymentStatus, refetch: refetchPaymentStatus } = useLoanPaymentStatusSimple(selectedLoan);
+  const { paymentStatus, refetch: refetchPaymentStatus, isReady: paymentStatusReady } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
+  
+  // Ref para evitar recrear listeners innecesariamente
+  const realtimeChannelRef = useRef<any>(null);
 
   // Función para generar el HTML del recibo según el formato
   const generateReceiptHTMLWithFormat = (format: string = 'LETTER'): string => {
@@ -998,12 +1001,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     dueDate: string | null;
   } | null>(null);
 
-  // Función para buscar información del próximo pago
-  const fetchNextPaymentInfo = React.useCallback(async () => {
+  // Función para buscar información del próximo pago - MEMOIZADA para evitar recreaciones
+  const fetchNextPaymentInfo = useCallback(async () => {
     if (!selectedLoan) {
       setNextPaymentInfo(null);
       return;
     }
+
+    const loanId = selectedLoan.id; // Capturar para verificar después
 
     try {
       // Priorizar velocidad: usar cache si está disponible y hacer la query en paralelo
@@ -1011,10 +1016,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       const { data: installments, error } = await supabase
         .from('installments')
         .select('due_date, is_paid, total_amount, principal_amount, interest_amount, installment_number')
-        .eq('loan_id', selectedLoan.id)
+        .eq('loan_id', loanId)
         .eq('is_paid', false)
         .order('due_date', { ascending: true })
         .limit(1);
+
+      // Verificar que el loan sigue siendo el mismo (evita race conditions)
+      if (selectedLoan?.id !== loanId) return;
 
       if (!error && installments && installments.length > 0) {
         const firstUnpaid = installments[0];
@@ -1030,17 +1038,20 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             supabase
               .from('installments')
               .select('id, installment_number, total_amount, is_paid, due_date')
-              .eq('loan_id', selectedLoan.id)
+              .eq('loan_id', loanId)
               .eq('due_date', firstUnpaid.due_date)
               .eq('interest_amount', 0)
               .order('installment_number', { ascending: true }),
             supabase
               .from('payments')
               .select('id, amount, principal_amount, due_date, payment_date')
-              .eq('loan_id', selectedLoan.id)
+              .eq('loan_id', loanId)
               .eq('due_date', firstUnpaid.due_date)
               .order('payment_date', { ascending: true })
           ]);
+          
+          // Verificar nuevamente que el loan sigue siendo el mismo
+          if (selectedLoan?.id !== loanId) return;
           
           const chargesWithSameDate = chargesResult.data;
           const paymentsForDate = paymentsResult.data;
@@ -1071,8 +1082,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             const { data: paymentsForCharge } = await supabase
               .from('payments')
               .select('amount, principal_amount')
-              .eq('loan_id', selectedLoan.id)
+              .eq('loan_id', loanId)
               .eq('due_date', firstUnpaid.due_date);
+            
+            // Verificar nuevamente
+            if (selectedLoan?.id !== loanId) return;
             
             totalPaidForCharge = paymentsForCharge?.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0) || 0;
           }
@@ -1088,94 +1102,124 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           });
         }
         
-        setNextPaymentInfo({
-          isCharge,
-          amount: remainingAmount, // Usar el monto restante, no el total
-          dueDate: firstUnpaid.due_date
-        });
+        // Solo actualizar si el loan sigue siendo el mismo
+        if (selectedLoan?.id === loanId) {
+          setNextPaymentInfo({
+            isCharge,
+            amount: remainingAmount, // Usar el monto restante, no el total
+            dueDate: firstUnpaid.due_date
+          });
+        }
       } else {
-        setNextPaymentInfo(null);
+        if (selectedLoan?.id === loanId) {
+          setNextPaymentInfo(null);
+        }
       }
     } catch (error) {
       console.error('Error buscando información del próximo pago:', error);
-      setNextPaymentInfo(null);
+      if (selectedLoan?.id === loanId) {
+        setNextPaymentInfo(null);
+      }
     }
   }, [selectedLoan]);
 
-  // Detectar si el próximo pago es un cargo y calcular cuánto falta
+  // EFECTO CONSOLIDADO: Detectar próximo pago y configurar listener de Realtime
+  // Solo se ejecuta cuando cambia selectedLoan, evitando múltiples renders
   React.useEffect(() => {
-    fetchNextPaymentInfo();
-    
-    // Escuchar cambios en installments para recalcular cuando se agreguen nuevos cargos
-    if (selectedLoan) {
-      const channel = supabase
-        .channel(`payment-form-installments-${selectedLoan.id}`)
-        .on('postgres_changes', 
-          { 
-            event: '*', 
-            schema: 'public', 
-            table: 'installments',
-            filter: `loan_id=eq.${selectedLoan.id}`
-          }, 
-          (payload) => {
-            // Recalcular inmediatamente cuando haya cambios en installments
-            console.log('⚡ PaymentForm: Cambio detectado en installments, recalculando inmediatamente...', payload);
-            // Actualizar inmediatamente si tenemos el payload
-            if (payload.new && selectedLoan) {
-              const newInstallment = payload.new as any;
-              const isCharge = newInstallment.interest_amount === 0 && 
-                              newInstallment.principal_amount === newInstallment.total_amount;
-              
-              if (isCharge && !newInstallment.is_paid) {
-                // Si es un cargo nuevo no pagado, actualizar nextPaymentInfo inmediatamente
-                setNextPaymentInfo({
-                  isCharge: true,
-                  amount: newInstallment.total_amount,
-                  dueDate: newInstallment.due_date
-                });
-                console.log('⚡ PaymentForm: Actualización optimista inmediata del cargo:', newInstallment.total_amount);
-              }
-            }
-            // También hacer el fetch completo en background
-            fetchNextPaymentInfo();
-          }
-        )
-        .subscribe();
-      
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [selectedLoan, paymentStatus.currentPaymentPaid, fetchNextPaymentInfo]); // Agregar dependencia para recalcular cuando cambie el pago
-
-  // Actualizar automáticamente el monto del pago cuando cambie el estado o nextPaymentInfo
-  React.useEffect(() => {
-    if (!selectedLoan) return;
-    
-    // Si el próximo pago es un cargo, usar el monto del cargo (prioridad)
-    if (nextPaymentInfo?.isCharge && nextPaymentInfo.amount > 0) {
-      const roundedAmount = Math.round(nextPaymentInfo.amount);
-      form.setValue('amount', roundedAmount);
-      setPaymentAmount(roundedAmount);
-      console.log('🔍 PaymentForm: Autorellenando con monto de cargo:', roundedAmount);
+    if (!selectedLoan) {
+      setNextPaymentInfo(null);
+      // Limpiar listener anterior
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+      }
       return;
     }
+
+    // Limpiar listener anterior antes de crear uno nuevo
+    if (realtimeChannelRef.current) {
+      supabase.removeChannel(realtimeChannelRef.current);
+      realtimeChannelRef.current = null;
+    }
+
+    // Fetch inicial de información del próximo pago
+    fetchNextPaymentInfo();
     
-    // Si hay un saldo pendiente, usar ese monto
+    // Configurar listener de Realtime UNA SOLA VEZ por préstamo
+    const channel = supabase
+      .channel(`payment-form-installments-${selectedLoan.id}`)
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'installments',
+          filter: `loan_id=eq.${selectedLoan.id}`
+        }, 
+        (payload) => {
+          // Actualización optimista inmediata solo si es un cargo nuevo no pagado
+          if (payload.new) {
+            const newInstallment = payload.new as any;
+            const isCharge = newInstallment.interest_amount === 0 && 
+                            newInstallment.principal_amount === newInstallment.total_amount;
+            
+            if (isCharge && !newInstallment.is_paid) {
+              setNextPaymentInfo({
+                isCharge: true,
+                amount: newInstallment.total_amount,
+                dueDate: newInstallment.due_date
+              });
+              console.log('⚡ PaymentForm: Actualización optimista inmediata del cargo:', newInstallment.total_amount);
+            }
+          }
+          // Fetch completo en background (sin bloquear UI)
+          fetchNextPaymentInfo();
+        }
+      )
+      .subscribe();
+    
+    realtimeChannelRef.current = channel;
+    
+    return () => {
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+      }
+    };
+  }, [selectedLoan?.id, fetchNextPaymentInfo]); // Solo depende del ID del préstamo, no de fetchNextPaymentInfo directamente
+
+  // EFECTO CONSOLIDADO: Actualizar monto SOLO cuando los datos estén listos
+  // Usa useMemo para calcular el monto correcto y evita renders innecesarios
+  const calculatedAmount = useMemo(() => {
+    // NO renderizar con valores incorrectos - esperar hasta que los datos estén listos
+    if (!selectedLoan || !paymentStatusReady) {
+      return null; // null indica que aún no hay datos válidos
+    }
+
+    // Prioridad 1: Si el próximo pago es un cargo, usar el monto del cargo
+    if (nextPaymentInfo?.isCharge && nextPaymentInfo.amount > 0) {
+      return Math.round(nextPaymentInfo.amount);
+    }
+    
+    // Prioridad 2: Si hay un saldo pendiente, usar ese monto
     if (paymentStatus.currentPaymentRemaining > 0) {
       if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
-        // Si hay un saldo pendiente menor a la cuota mensual, pre-llenar con ese monto
-        const roundedAmount = Math.round(paymentStatus.currentPaymentRemaining);
-        form.setValue('amount', roundedAmount);
-        setPaymentAmount(roundedAmount);
+        return Math.round(paymentStatus.currentPaymentRemaining);
       } else {
-        // Si no hay pagos previos, usar la cuota mensual completa
-        const roundedAmount = Math.round(selectedLoan.monthly_payment);
-        form.setValue('amount', roundedAmount);
-        setPaymentAmount(roundedAmount);
+        return Math.round(selectedLoan.monthly_payment);
       }
     }
-  }, [paymentStatus.currentPaymentRemaining, selectedLoan, form, nextPaymentInfo]);
+
+    return null; // No hay monto válido aún
+  }, [selectedLoan, paymentStatusReady, paymentStatus.currentPaymentRemaining, nextPaymentInfo]);
+
+  // Actualizar formulario y estado SOLO cuando calculatedAmount cambie y sea válido
+  React.useEffect(() => {
+    if (calculatedAmount !== null && calculatedAmount !== paymentAmount) {
+      form.setValue('amount', calculatedAmount);
+      setPaymentAmount(calculatedAmount);
+      console.log('🔍 PaymentForm: Monto actualizado:', calculatedAmount);
+    }
+  }, [calculatedAmount, form, paymentAmount]);
 
   // Obtener datos de la empresa
   React.useEffect(() => {
@@ -2517,9 +2561,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               type="number"
                               step="0.01"
                               min="0"
-                              placeholder="0.00"
+                              placeholder={paymentStatusReady ? "0.00" : "Cargando..."}
                               {...field}
-                              value={field.value || ''}
+                              // Solo mostrar valor cuando los datos estén listos (evita render con valor incorrecto)
+                              value={paymentStatusReady ? (field.value || '') : ''}
+                              disabled={!paymentStatusReady}
                               onChange={async (e) => {
                                 const value = e.target.value;
                                 const numValue = value === '' ? 0 : parseFloat(value) || 0;
@@ -3169,3 +3215,4 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     </div>
   );
 };
+

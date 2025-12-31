@@ -370,8 +370,10 @@ export const LoansModule = () => {
 
   // Función helper para formatear la visualización de next_payment_date
   const formatNextPaymentDate = (loan: any) => {
-    // Usar la fecha calculada si está disponible, sino usar la fecha almacenada
-    const isoDate = nextPaymentDates[loan.id] || loan.next_payment_date?.split('T')[0] || null;
+    // CORRECCIÓN: SIEMPRE usar next_payment_date de la BD directamente
+    // La BD ahora actualiza automáticamente este valor con triggers (incluye cargos)
+    // NO usar nextPaymentDates calculado porque puede estar desactualizado
+    const isoDate = loan.next_payment_date?.split('T')[0] || null;
     if (!isoDate) return 'N/A';
     return formatDateStringForSantoDomingo(isoDate);
   };
@@ -641,43 +643,20 @@ export const LoansModule = () => {
                         newInstallment.principal_amount === newInstallment.total_amount;
         
         if (isCharge) {
-          // Actualización optimista SÍNCRONA e INMEDIATA: agregar el monto del cargo al balance actual
-          const currentBalance = calculatedRemainingBalances[loanId] || loan.remaining_balance || 0;
-          const chargeAmount = newInstallment.total_amount || 0;
-          const newBalance = currentBalance + chargeAmount;
-          
-          // Marcar timestamp de actualización optimista
+          // CORRECCIÓN: NO hacer actualización optimista aquí porque los triggers de la BD
+          // ya actualizarán remaining_balance y next_payment_date correctamente (incluyendo cargos)
+          // Hacer actualización optimista aquí puede sobrescribir los valores correctos calculados por los triggers
+          // Solo marcar timestamp para evitar recálculos innecesarios y confiar en el refetch
           optimisticUpdateTimestampsRef.current[loanId] = Date.now();
           
-          // Actualizar balance INMEDIATAMENTE (síncrono)
-          setCalculatedRemainingBalances(prev => ({
-            ...prev,
-            [loanId]: newBalance
-          }));
-          
-          // Actualizar fecha de próximo pago si el cargo tiene una fecha anterior
-          if (newInstallment.due_date) {
-            const chargeDueDate = newInstallment.due_date.split('T')[0];
-            const currentNextDate = nextPaymentDates[loanId];
-            
-            // Si no hay fecha próxima o el cargo tiene una fecha anterior, actualizar
-            if (!currentNextDate || chargeDueDate < currentNextDate) {
-              setNextPaymentDates(prev => ({
-                ...prev,
-                [loanId]: chargeDueDate
-              }));
-            }
-          }
-          
-          console.log('⚡ Actualización optimista inmediata (síncrona):', {
+          console.log('⚡ Cargo detectado - esperando triggers de BD para actualizar valores:', {
             loanId,
-            chargeAmount,
-            oldBalance: currentBalance,
-            newBalance,
-            timestamp: optimisticUpdateTimestampsRef.current[loanId]
+            chargeAmount: newInstallment.total_amount || 0,
+            // No actualizar estado aquí, dejar que los triggers actualicen y el refetch traiga los valores correctos
           });
           
-          return; // Salir temprano, no hacer queries adicionales
+          // NO salir temprano, dejar que el refetchImmediately() actualice los valores correctos desde la BD
+          // return; // REMOVIDO: Necesitamos que el refetch se ejecute
         }
       }
       
@@ -691,7 +670,7 @@ export const LoansModule = () => {
       });
     };
     
-    // Función para recargar datos inmediatamente (sin delay, en segundo plano)
+    // Función para recargar datos después de que los triggers completen
     const refetchImmediately = () => {
       // Cancelar timeout anterior si existe
       if (refetchTimeoutIdRef.current) {
@@ -699,23 +678,14 @@ export const LoansModule = () => {
         refetchTimeoutIdRef.current = null;
       }
       
-      // Ejecutar refetch de forma completamente asíncrona (no bloquea la UI)
-      // Usar queueMicrotask para ejecutar en el siguiente microtask (más rápido que setTimeout)
-      if (typeof queueMicrotask !== 'undefined') {
-        queueMicrotask(() => {
-          refetch();
-        });
-      } else if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-        requestIdleCallback(() => {
-          refetch();
-        }, { timeout: 50 });
-      } else {
-        // Fallback: ejecutar en el siguiente tick
-        refetchTimeoutIdRef.current = setTimeout(() => {
-          refetch();
-          refetchTimeoutIdRef.current = null;
-        }, 0);
-      }
+      // CORRECCIÓN: Esperar un momento (300ms) antes de refetch para asegurar que los triggers completen
+      // Los triggers de PostgreSQL necesitan tiempo para ejecutarse y actualizar remaining_balance y next_payment_date
+      // Ejecutar refetch después de que los triggers completen su actualización
+      refetchTimeoutIdRef.current = setTimeout(() => {
+        console.log('🔄 Refetching loans después de cambio (esperando triggers)...');
+        refetch();
+        refetchTimeoutIdRef.current = null;
+      }, 300);
     };
     
     // Crear canal de Realtime para escuchar cambios en installments
@@ -2031,18 +2001,21 @@ export const LoansModule = () => {
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
                               ${formatCurrencyNumber(
-                                // OPTIMIZADO: Usar remaining_balance de la BD directamente
-                                // La BD ahora actualiza automáticamente este valor con triggers
-                                // Solo calcular dinámicamente para préstamos indefinidos
-                                loan.amortization_type === 'indefinite'
-                                  ? (calculatedRemainingBalances[loan.id] !== undefined
-                                      ? calculatedRemainingBalances[loan.id]
-                                      : (() => {
-                                          const baseAmount = loan.amount || 0;
-                                          const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
-                                          return baseAmount + pendingInterest;
-                                        })())
-                                  : loan.remaining_balance || 0
+                                // CORRECCIÓN: SIEMPRE usar remaining_balance de la BD directamente
+                                // La BD ahora actualiza automáticamente este valor con triggers (incluye cargos)
+                                // Para préstamos indefinidos, la BD también lo actualiza correctamente
+                                // Solo calcular dinámicamente si el valor de BD no está disponible
+                                loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                                  ? loan.remaining_balance
+                                  : (loan.amortization_type === 'indefinite'
+                                      ? (calculatedRemainingBalances[loan.id] !== undefined
+                                          ? calculatedRemainingBalances[loan.id]
+                                          : (() => {
+                                              const baseAmount = loan.amount || 0;
+                                              const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
+                                              return baseAmount + pendingInterest;
+                                            })())
+                                      : loan.amount || 0)
                               )}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
@@ -2058,12 +2031,15 @@ export const LoansModule = () => {
                               ${formatCurrencyNumber(
                                 loan.status === 'paid' 
                                   ? 0 
-                                  : ((// OPTIMIZADO: Usar remaining_balance de la BD directamente (ya incluye cargos)
-                                     loan.amortization_type === 'indefinite'
-                                      ? (calculatedRemainingBalances[loan.id] !== undefined
-                                          ? calculatedRemainingBalances[loan.id]
-                                          : loan.amount + (pendingInterestForIndefinite[loan.id] || 0))
-                                      : loan.remaining_balance || 0) + 
+                                  : ((// CORRECCIÓN: SIEMPRE usar remaining_balance de la BD directamente (ya incluye cargos)
+                                     // La BD ahora actualiza automáticamente este valor con triggers (incluye cargos)
+                                     loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                                      ? loan.remaining_balance
+                                      : (loan.amortization_type === 'indefinite'
+                                          ? (calculatedRemainingBalances[loan.id] !== undefined
+                                              ? calculatedRemainingBalances[loan.id]
+                                              : loan.amount + (pendingInterestForIndefinite[loan.id] || 0))
+                                          : loan.amount || 0)) + 
                                      (dynamicLateFees[loan.id] || loan.current_late_fee || 0))
                               )}
                             </div>
