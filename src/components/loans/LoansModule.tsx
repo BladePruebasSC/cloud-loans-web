@@ -519,33 +519,33 @@ export const LoansModule = () => {
     // Recalcular solo préstamos indefinidos
     const recalculateIndefiniteBalances = async () => {
       try {
-        const remainingBalances: { [loanId: string]: number } = {};
+      const remainingBalances: { [loanId: string]: number } = {};
+      
+      const calculations = indefiniteLoans.map(async (loan) => {
+        const remainingBalance = await calculateRemainingBalance(loan);
+        return { loanId: loan.id, remainingBalance };
+      });
+      
+      const results = await Promise.all(calculations);
+      
+      results.forEach(({ loanId, remainingBalance }) => {
+        // Solo actualizar si no hay actualización optimista reciente
+        const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
+        const now = Date.now();
+        const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
         
-        const calculations = indefiniteLoans.map(async (loan) => {
-          const remainingBalance = await calculateRemainingBalance(loan);
-          return { loanId: loan.id, remainingBalance };
-        });
-        
-        const results = await Promise.all(calculations);
-        
-        results.forEach(({ loanId, remainingBalance }) => {
-          // Solo actualizar si no hay actualización optimista reciente
-          const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
-          const now = Date.now();
-          const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
-          
-          if (timeSinceOptimistic > 2000) {
-            remainingBalances[loanId] = remainingBalance;
-          }
-        });
-        
-        // Actualizar solo los balances de préstamos indefinidos
-        if (Object.keys(remainingBalances).length > 0) {
-          setCalculatedRemainingBalances(prev => ({
-            ...prev,
-            ...remainingBalances
-          }));
+        if (timeSinceOptimistic > 2000) {
+          remainingBalances[loanId] = remainingBalance;
         }
+      });
+      
+        // Actualizar solo los balances de préstamos indefinidos
+      if (Object.keys(remainingBalances).length > 0) {
+        setCalculatedRemainingBalances(prev => ({
+          ...prev,
+          ...remainingBalances
+        }));
+      }
       } catch (error) {
         console.error('Error calculando balances indefinidos:', error);
       }
@@ -681,10 +681,10 @@ export const LoansModule = () => {
       // CORRECCIÓN: Esperar un momento (300ms) antes de refetch para asegurar que los triggers completen
       // Los triggers de PostgreSQL necesitan tiempo para ejecutarse y actualizar remaining_balance y next_payment_date
       // Ejecutar refetch después de que los triggers completen su actualización
-      refetchTimeoutIdRef.current = setTimeout(() => {
+        refetchTimeoutIdRef.current = setTimeout(() => {
         console.log('🔄 Refetching loans después de cambio (esperando triggers)...');
-        refetch();
-        refetchTimeoutIdRef.current = null;
+          refetch();
+          refetchTimeoutIdRef.current = null;
       }, 300);
     };
     
@@ -2007,13 +2007,13 @@ export const LoansModule = () => {
                                 // Solo calcular dinámicamente si el valor de BD no está disponible
                                 loan.remaining_balance !== null && loan.remaining_balance !== undefined
                                   ? loan.remaining_balance
-                                  : (loan.amortization_type === 'indefinite'
+                                  : (loan.amortization_type === 'indefinite' 
                                       ? (calculatedRemainingBalances[loan.id] !== undefined
                                           ? calculatedRemainingBalances[loan.id]
                                           : (() => {
-                                              const baseAmount = loan.amount || 0;
-                                              const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
-                                              return baseAmount + pendingInterest;
+                                          const baseAmount = loan.amount || 0;
+                                          const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
+                                          return baseAmount + pendingInterest;
                                             })())
                                       : loan.amount || 0)
                               )}
@@ -2035,7 +2035,7 @@ export const LoansModule = () => {
                                      // La BD ahora actualiza automáticamente este valor con triggers (incluye cargos)
                                      loan.remaining_balance !== null && loan.remaining_balance !== undefined
                                       ? loan.remaining_balance
-                                      : (loan.amortization_type === 'indefinite'
+                                      : (loan.amortization_type === 'indefinite' 
                                           ? (calculatedRemainingBalances[loan.id] !== undefined
                                               ? calculatedRemainingBalances[loan.id]
                                               : loan.amount + (pendingInterestForIndefinite[loan.id] || 0))
@@ -2473,7 +2473,12 @@ export const LoansModule = () => {
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Balance:</span> 
-                               <span className="text-xs sm:text-sm">${formatCurrencyNumber(loan.remaining_balance)}</span>
+                               <span className="text-xs sm:text-sm">${formatCurrencyNumber(
+                                 // CORRECCIÓN: SIEMPRE usar remaining_balance de la BD directamente (incluye cargos)
+                                 loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                                   ? loan.remaining_balance
+                                   : loan.amount || 0
+                               )}</span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Cuota:</span> 
@@ -2797,7 +2802,12 @@ export const LoansModule = () => {
                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 sm:gap-4 text-sm text-gray-600">
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Balance Total:</span> 
-                                   <span className="text-xs sm:text-sm font-semibold text-red-600">${formatCurrencyNumber(loan.remaining_balance)}</span>
+                                   <span className="text-xs sm:text-sm font-semibold text-red-600">${formatCurrencyNumber(
+                                     // CORRECCIÓN: SIEMPRE usar remaining_balance de la BD directamente (incluye cargos)
+                                     loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                                       ? loan.remaining_balance
+                                       : loan.amount || 0
+                                   )}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Cuota Mensual:</span> 

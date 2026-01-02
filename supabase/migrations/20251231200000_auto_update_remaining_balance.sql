@@ -69,17 +69,18 @@ BEGIN
         v_correct_total_amount := v_loan.amount + v_total_interest;
     END IF;
     
-    -- Calcular el total de TODOS los cargos (installments con interest_amount = 0 y principal_amount = total_amount)
-    -- CORRECCIÓN: Usar comparación con tolerancia para manejar posibles diferencias por redondeo
+    -- CORRECCIÓN: Calcular el total de SOLO los cargos NO PAGADOS
     -- Un cargo es cuando interest_amount es 0 (o muy cercano a 0) y principal_amount es igual (o muy cercano) a total_amount
+    -- Solo debemos incluir cargos que NO están pagados (is_paid = false)
     SELECT COALESCE(SUM(total_amount), 0)
     INTO v_total_charges_amount
     FROM public.installments
     WHERE loan_id = p_loan_id
       AND ABS(interest_amount) < 0.01  -- interest_amount es 0 (con tolerancia para redondeo)
-      AND ABS(principal_amount - total_amount) < 0.01;  -- principal_amount = total_amount (con tolerancia)
+      AND ABS(principal_amount - total_amount) < 0.01  -- principal_amount = total_amount (con tolerancia)
+      AND (is_paid = false OR is_paid IS NULL);  -- CORRECCIÓN: Solo cargos NO pagados
     
-    -- Calcular el total del préstamo incluyendo cargos
+    -- Calcular el total del préstamo incluyendo cargos NO PAGADOS
     v_total_amount_with_charges := v_correct_total_amount + v_total_charges_amount;
     
     -- Calcular el total pagado (capital + interés de todos los pagos)
@@ -88,7 +89,7 @@ BEGIN
     FROM public.payments
     WHERE loan_id = p_loan_id;
     
-    -- El balance restante es el total (préstamo + cargos) menos lo pagado
+    -- El balance restante es el total (préstamo + cargos NO PAGADOS) menos lo pagado
     v_remaining_balance := GREATEST(0, v_total_amount_with_charges - v_total_paid);
     
     RETURN v_remaining_balance;

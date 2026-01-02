@@ -1857,17 +1857,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         console.log('🔍 PaymentForm: Distribución de mora completada');
       }
 
-      // CORREGIR: El balance se reduce por el pago completo (capital + interés), no solo por el capital
-      // CORRECCIÓN: Para préstamos indefinidos, el balance restante no cambia (solo se paga interés)
-      // Para otros tipos, restar el capital pagado del balance restante
-      const newBalance = selectedLoan.amortization_type === 'indefinite'
+      // CORRECCIÓN: NO calcular remaining_balance manualmente aquí
+      // Los triggers de la BD ya actualizan remaining_balance automáticamente cuando se inserta el pago
+      // Incluirlo aquí sobrescribiría el valor correcto calculado por los triggers (que incluye cargos)
+      // Solo necesitamos obtener el valor actualizado de la BD después de que los triggers lo calculen
+      // Por ahora, usamos el valor actual como placeholder, pero NO lo incluiremos en el update
+      const placeholderBalance = selectedLoan.amortization_type === 'indefinite'
         ? selectedLoan.amount  // Para indefinidos, el balance siempre es el monto original
-        : Math.max(0, remainingBalance - Math.round(principalPayment));
+        : remainingBalance; // Usar el valor actual, pero los triggers lo actualizarán
       
       // Actualizar la fecha del próximo pago
       // Para cargos, mantener el due_date del cargo hasta que se complete completamente
       let nextPaymentDate = selectedLoan.next_payment_date;
       let updatedPaidInstallments = selectedLoan.paid_installments || [];
+      
+      // NOTA: El código de abajo marca las cuotas como pagadas, lo cual también dispara triggers
+      // Por lo tanto, después de marcar las cuotas, esperaremos nuevamente para que los triggers completen
 
       // Verificar si se completó un cargo (incluso con pagos parciales)
       let chargeCompleted = false;
@@ -2098,18 +2103,34 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           let paymentCoversInstallment = false;
           
           if (isCharge) {
-            // Para cargos, acumular todos los pagos (incluyendo el actual) y verificar si cubren el cargo completo
-            // Buscar todos los pagos previos para este cargo (mismo due_date)
-            const { data: previousPaymentsForCharge } = await supabase
+            // CORRECCIÓN: Para cargos, buscar pagos que correspondan a este cargo específico
+            // Buscar por due_date Y verificar que no tengan interés (característica de cargos)
+            const chargeDueDate = firstUnpaidInstallment.due_date.split('T')[0];
+            
+            // Obtener todos los pagos que podrían corresponder a este cargo
+            const { data: allPaymentsForLoan } = await supabase
               .from('payments')
-              .select('amount, principal_amount')
+              .select('amount, principal_amount, interest_amount, due_date')
               .eq('loan_id', data.loan_id)
-              .eq('due_date', firstUnpaidInstallment.due_date);
+              .order('payment_date', { ascending: true });
+            
+            // Filtrar pagos que corresponden a este cargo específico
+            // Un pago corresponde a un cargo si:
+            // 1. Tiene el mismo due_date, Y
+            // 2. No tiene interés (interest_amount = 0 o muy pequeño), Y
+            // 3. El monto es razonable (no excede el cargo por mucho)
+            const paymentsForThisCharge = (allPaymentsForLoan || []).filter(p => {
+              const paymentDueDate = (p.due_date as string)?.split('T')[0];
+              const hasNoInterest = (p.interest_amount || 0) < 0.01; // Sin interés o casi sin interés
+              const reasonableAmount = (p.principal_amount || p.amount || 0) <= installmentAmount * 1.1; // No más del 110% del cargo
+              
+              return paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
+            });
             
             // Calcular el total pagado ANTES del pago actual
-            const totalPaidBefore = previousPaymentsForCharge?.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0) || 0;
+            const totalPaidBefore = paymentsForThisCharge.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
             
-            // Agregar el pago actual
+            // Agregar el pago actual (que aún no está en la BD)
             const totalPaidAfter = totalPaidBefore + data.amount;
             
             // El cargo está cubierto si el total pagado (incluyendo este pago) cubre el monto del cargo
@@ -2182,7 +2203,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               updatedPaidInstallments
           });
 
-          // Marcar la cuota como pagada en la tabla installments y resetear late_fee_paid
+          // CORRECCIÓN: Marcar la cuota como pagada en la tabla installments
+          // Esto es especialmente importante para cargos, ya que los triggers también actualizarán remaining_balance
           const { error: installmentError } = await supabase
             .from('installments')
             .update({
@@ -2196,10 +2218,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           if (installmentError) {
             console.error('Error marcando cuota como pagada en installments:', installmentError);
           } else {
-              console.log(`✅ Cuota ${firstUnpaidInstallmentNumber} marcada como pagada en la tabla installments`);
+              console.log(`✅ Cuota ${firstUnpaidInstallmentNumber} (${isCharge ? 'CARGO' : 'REGULAR'}) marcada como pagada en la tabla installments`);
+              // Los triggers actualizarán remaining_balance y next_payment_date automáticamente
             }
           } else {
             console.log('⚠️ El pago no cubre completamente la primera cuota pendiente');
+            if (isCharge) {
+              console.log('⚠️ Cargo parcialmente pagado - no se marca como pagado aún');
+            }
           }
         } else {
           console.log('⚠️ No se encontró ninguna cuota sin pagar para marcar');
@@ -2209,20 +2235,76 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // La mora se recalculará automáticamente usando calculateLateFee
       // No restamos manualmente el abono de mora para evitar acumulación incorrecta
 
-      console.log('🔍 PaymentForm: Actualizando préstamo con:', {
+      // CORRECCIÓN: Esperar un momento para que los triggers completen el cálculo
+      // Primero esperar después de insertar el pago
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Luego, si se marcó un installment como pagado arriba, esperar nuevamente para que ese trigger también complete
+      // (Los triggers de installments también actualizan remaining_balance y next_payment_date)
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Obtener los valores actualizados de la BD (ya calculados por los triggers con cargos incluidos)
+      // Reintentar varias veces si es necesario para asegurar que los triggers completaron
+      let updatedLoanData: any = null;
+      let fetchError: any = null;
+      let retries = 3;
+      
+      while (retries > 0) {
+        const result = await supabase
+          .from('loans')
+          .select('remaining_balance, next_payment_date')
+          .eq('id', data.loan_id)
+          .single();
+        
+        fetchError = result.error;
+        updatedLoanData = result.data;
+        
+        // Si no hay error y tenemos datos, salir del loop
+        if (!fetchError && updatedLoanData) {
+          break;
+        }
+        
+        retries--;
+        if (retries > 0) {
+          // Esperar un poco más antes de reintentar
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      
+      let finalBalance = placeholderBalance;
+      let finalNextPaymentDate = nextPaymentDate;
+      
+      if (!fetchError && updatedLoanData) {
+        // Usar los valores calculados por los triggers (incluyen cargos)
+        finalBalance = updatedLoanData.remaining_balance || placeholderBalance;
+        // Si los triggers actualizaron next_payment_date, usarlo
+        if (updatedLoanData.next_payment_date) {
+          finalNextPaymentDate = updatedLoanData.next_payment_date.split('T')[0];
+        }
+      }
+      
+      console.log('🔍 PaymentForm: Valores obtenidos de BD (calculados por triggers con cargos):', {
         loanId: data.loan_id,
-        newBalance,
-        nextPaymentDate,
-        status: newBalance <= 0 ? 'paid' : 'active'
+        remaining_balance_from_bd: updatedLoanData?.remaining_balance,
+        next_payment_date_from_bd: updatedLoanData?.next_payment_date,
+        finalBalance,
+        finalNextPaymentDate,
+        bdCalculated: !fetchError && updatedLoanData
       });
 
       // Preparar datos de actualización del préstamo
+      // CORRECCIÓN: NO incluir remaining_balance ni next_payment_date porque los triggers ya los actualizaron
       const loanUpdateData: any = {
-        remaining_balance: newBalance,
-        next_payment_date: nextPaymentDate,
-        status: newBalance <= 0 ? 'paid' : 'active',
+        // remaining_balance: NO incluir - ya fue actualizado por los triggers de la BD (incluye cargos)
+        // next_payment_date: NO incluir si los triggers lo actualizaron - usar el valor del trigger
+        status: finalBalance <= 0 ? 'paid' : 'active',
         paid_installments: updatedPaidInstallments,
       };
+      
+      // Solo incluir next_payment_date si los triggers no lo actualizaron
+      if (fetchError || !updatedLoanData?.next_payment_date) {
+        loanUpdateData.next_payment_date = finalNextPaymentDate;
+      }
 
       // Si se pagó mora, actualizar el campo total_late_fee_paid
       if (data.late_fee_amount && data.late_fee_amount > 0) {
@@ -2271,7 +2353,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         interesPagado: interestPayment,
         moraPagada: data.late_fee_amount || 0,
         balanceAnterior: remainingBalance,
-        balanceNuevo: newBalance
+        balanceNuevo: finalBalance
       });
       
       toast.success(successMessage);

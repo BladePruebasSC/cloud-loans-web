@@ -337,12 +337,12 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       if (fetchError || !updatedLoanData) {
         console.error('🗑️ ERROR obteniendo valores actualizados de la BD:', fetchError);
         // Fallback al balance anterior si hay error (no ideal pero mejor que crashear)
-        if (loanData.amortization_type === 'indefinite') {
+      if (loanData.amortization_type === 'indefinite') {
           newBalance = loanData.amount;
-        } else {
-          const totalPrincipalPaid = remainingPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
-          newBalance = loanData.amount - totalPrincipalPaid;
-        }
+      } else {
+        const totalPrincipalPaid = remainingPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
+        newBalance = loanData.amount - totalPrincipalPaid;
+      }
       } else {
         // Usar los valores calculados por los triggers (incluyen cargos)
         newBalance = updatedLoanData.remaining_balance || loanData.remaining_balance || 0;

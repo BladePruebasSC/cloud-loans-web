@@ -827,12 +827,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       correctTotalAmount = loan.amount + totalInterest;
     }
     
-    // Calcular el total de TODOS los cargos (pagados y no pagados)
-    const allCharges = installments.filter(inst => 
+    // CORRECCIÓN: Calcular el total de SOLO los cargos NO PAGADOS
+    // Si un cargo está pagado, no debe afectar el balance pendiente
+    const unpaidCharges = installments.filter(inst => 
       inst.interest_amount === 0 && 
-      inst.principal_amount === inst.total_amount
+      inst.principal_amount === inst.total_amount &&
+      !inst.is_paid  // CORRECCIÓN: Solo cargos NO pagados
     );
-    const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+    const totalChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
     
     // Calcular el total del préstamo incluyendo cargos
     const totalAmountWithCharges = correctTotalAmount + totalChargesAmount;

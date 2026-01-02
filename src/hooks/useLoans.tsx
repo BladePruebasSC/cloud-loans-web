@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
@@ -43,6 +43,7 @@ export const useLoans = () => {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loading, setLoading] = useState(true);
   const [isRefetching, setIsRefetching] = useState(false);
+  const balancesUpdatedRef = useRef(false); // Para ejecutar la actualización solo una vez
   const { user, profile, companyId } = useAuth();
 
   const fetchLoans = async (isRefetch = false) => {
@@ -91,6 +92,45 @@ export const useLoans = () => {
           toast.error('Error al cargar préstamos');
         }
         return;
+      }
+
+      // CORRECCIÓN: Actualizar remaining_balance para todos los préstamos cargados SOLO UNA VEZ
+      // Esto asegura que los valores estén correctos incluso si los triggers no se ejecutaron
+      // Solo actualizar préstamos activos/no eliminados para evitar trabajo innecesario
+      // Solo ejecutar en la primera carga, no en refetches
+      if (!isRefetch && !balancesUpdatedRef.current) {
+        balancesUpdatedRef.current = true;
+        const activeLoans = (data || []).filter(loan => 
+          loan.status !== 'deleted' && loan.status !== 'paid'
+        );
+        
+        // Ejecutar actualización en segundo plano para no bloquear la carga
+        if (activeLoans.length > 0) {
+          // Usar Promise.all para ejecutar todas las actualizaciones en paralelo
+          Promise.all(
+            activeLoans.map(async (loan) => {
+              try {
+                // Llamar a la función SQL de actualización para recalcular remaining_balance
+                // Esta función ya tiene la corrección para solo incluir cargos NO pagados
+                const { error } = await supabase.rpc('update_loan_remaining_balance', {
+                  p_loan_id: loan.id
+                });
+                if (error) {
+                  console.warn(`Error actualizando balance para préstamo ${loan.id}:`, error);
+                }
+              } catch (err) {
+                console.warn(`Error en actualización de balance para préstamo ${loan.id}:`, err);
+              }
+            })
+          ).then(() => {
+            // Refrescar los datos después de las actualizaciones para mostrar valores correctos
+            setTimeout(() => {
+              fetchLoans(false); // Refetch sin mostrar loading
+            }, 500);
+          }).catch((err) => {
+            console.warn('Error en actualización masiva de balances:', err);
+          });
+        }
       }
 
       // Ordenar préstamos: pendientes primero, luego por fecha de creación

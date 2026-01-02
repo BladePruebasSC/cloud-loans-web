@@ -992,21 +992,30 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         const chargeDueDate = realInstallment.due_date.split('T')[0];
         accumulatedPrincipal = 0; // Resetear para cada cargo
         
-        // Buscar pagos que correspondan a este cargo específico
-        while (paymentIndex < sortedPayments.length && accumulatedPrincipal < chargeTotal * 0.99) {
-          const payment = sortedPayments[paymentIndex];
+        // CORRECCIÓN: Buscar TODOS los pagos que correspondan a este cargo específico
+        // No usar paymentIndex porque necesitamos buscar en todos los pagos para este cargo
+        for (let pIdx = 0; pIdx < sortedPayments.length && accumulatedPrincipal < chargeTotal * 0.99; pIdx++) {
+          const payment = sortedPayments[pIdx];
           
           // Si el pago ya fue asignado, saltarlo
           if (assignedPaymentIds.has(payment.id)) {
-            paymentIndex++;
             continue;
           }
           
-          // Verificar si este pago corresponde a este cargo específico
+          // CORRECCIÓN: Verificar si este pago corresponde a este cargo específico
+          // Verificar por due_date Y que no tenga interés (característica de cargos)
           const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
           
-          // Solo asignar si la fecha coincide y el monto es razonable para este cargo
-          if (paymentDueDate === chargeDueDate) {
+          // CORRECCIÓN: Verificar si el pago corresponde a este cargo por:
+          // 1. Mismo due_date, Y
+          // 2. No tiene interés (interest_amount = 0 o muy pequeño), Y
+          // 3. El monto es razonable para este cargo
+          const hasNoInterest = (payment.interest_amount || 0) < 0.01;
+          const reasonableAmount = (payment.principal_amount || payment.amount || 0) <= chargeTotal * 1.1;
+          const paymentMatchesCharge = paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
+          
+          // Solo asignar si corresponde a este cargo y el monto es razonable
+          if (paymentMatchesCharge) {
             const paymentAmount = payment.principal_amount || payment.amount || 0;
             
             // Verificar que el monto del pago no exceda el cargo pendiente
@@ -1015,25 +1024,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               assignedPaymentIds.add(payment.id);
               paymentToInstallmentMap.set(payment.id, i);
               accumulatedPrincipal += paymentAmount;
-              paymentIndex++;
               
               // Si el cargo está completo, pasar al siguiente cargo
               if (accumulatedPrincipal >= chargeTotal * 0.99) {
                 break;
               }
-            } else {
-              // Si el monto no coincide, este pago no es para este cargo
-              break;
             }
-          } else {
-            // Si la fecha no coincide, este pago no es para este cargo
-            // Continuar buscando en el siguiente cargo
-            break;
           }
         }
       }
       
       // SEGUNDO: Procesar todas las cuotas regulares (excluyendo cargos)
+      // CORRECCIÓN: Resetear paymentIndex después de procesar cargos
+      paymentIndex = 0;
       accumulatedPrincipal = 0;
       accumulatedInterest = 0;
       
