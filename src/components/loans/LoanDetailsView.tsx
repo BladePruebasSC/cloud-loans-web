@@ -139,6 +139,76 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     }
   }, [showNotes, loanId]);
 
+  // CORRECCIÓN: Verificar y corregir discrepancias en remaining_balance
+  useEffect(() => {
+    if (!loan || !installments || installments.length === 0 || !payments) return;
+    if (loan.status === 'deleted' || loan.status === 'paid') return;
+    
+    // Calcular balance dinámicamente
+    let calculatedBalance: number;
+    if (loan.amortization_type === 'indefinite') {
+      // Para indefinidos, el cálculo se hace en calculatePendingInterestForIndefinite
+      return;
+    } else {
+      // CORRECCIÓN: Usar loan.total_amount como base (igual que InstallmentsTable)
+      // Esto evita errores de redondeo al sumar cuotas individuales
+      let correctTotalAmount = loan.total_amount;
+      
+      // Si no hay total_amount o es inválido, calcular usando la fórmula
+      if (!correctTotalAmount || correctTotalAmount <= loan.amount) {
+        const totalInterest = loan.amount * (loan.interest_rate / 100) * loan.term_months;
+        correctTotalAmount = loan.amount + totalInterest;
+      }
+      
+      // CORRECCIÓN: Calcular el total de TODOS los cargos (pagados y no pagados)
+      // El "Total a Pagar" debe incluir TODOS los cargos (pagados y no pagados)
+      // El balance pendiente será: (préstamo + TODOS los cargos) - total pagado
+      const allCharges = installments.filter(inst => {
+        const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                        Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+        return isCharge;
+      });
+      const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+      
+      // Calcular el total del préstamo incluyendo TODOS los cargos (pagados y no pagados)
+      const totalAmountWithCharges = correctTotalAmount + totalChargesAmount;
+      
+      // Calcular el total pagado usando amount (igual que InstallmentsTable)
+      const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      
+      // El balance restante es el total (préstamo + cargos) menos lo pagado
+      calculatedBalance = Math.max(0, totalAmountWithCharges - totalPaid);
+    }
+    
+    // Comparar con valor de BD
+    const dbBalance = loan.remaining_balance || 0;
+    const discrepancy = Math.abs(calculatedBalance - dbBalance);
+    
+    // Si hay discrepancia significativa, actualizar BD
+    if (discrepancy > 0.01) {
+      console.log('🔍 LoanDetailsView: Discrepancia detectada, actualizando BD:', {
+        loanId: loan.id,
+        calculated: calculatedBalance,
+        db: dbBalance,
+        discrepancy
+      });
+      
+      // Forzar actualización en BD
+      supabase.rpc('update_loan_remaining_balance', {
+        p_loan_id: loan.id
+      }).then(({ error }) => {
+        if (error) {
+          console.warn('Error actualizando balance en BD:', error);
+        } else {
+          // Refrescar datos del préstamo después de actualizar
+          setTimeout(() => {
+            fetchLoanDetails();
+          }, 300);
+        }
+      });
+    }
+  }, [loan?.id, loan?.remaining_balance, installments?.length, payments?.length, loan?.status]);
+
   // Calcular interés pendiente para préstamos indefinidos
   useEffect(() => {
     if (loan && loan.amortization_type === 'indefinite' && installments.length >= 0) {
@@ -827,20 +897,21 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       correctTotalAmount = loan.amount + totalInterest;
     }
     
-    // CORRECCIÓN: Calcular el total de SOLO los cargos NO PAGADOS
-    // Si un cargo está pagado, no debe afectar el balance pendiente
-    const unpaidCharges = installments.filter(inst => 
-      inst.interest_amount === 0 && 
-      inst.principal_amount === inst.total_amount &&
-      !inst.is_paid  // CORRECCIÓN: Solo cargos NO pagados
-    );
-    const totalChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+    // CORRECCIÓN: Calcular el total de TODOS los cargos (pagados y no pagados)
+    // El "Total a Pagar" debe incluir TODOS los cargos (pagados y no pagados)
+    // El balance pendiente será: (préstamo + TODOS los cargos) - total pagado
+    const allCharges = installments.filter(inst => {
+      const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                      Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+      return isCharge;
+    });
+    const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
     
-    // Calcular el total del préstamo incluyendo cargos
+    // Calcular el total del préstamo incluyendo TODOS los cargos (pagados y no pagados)
     const totalAmountWithCharges = correctTotalAmount + totalChargesAmount;
     
-    // Calcular el total pagado (capital + interés de todos los pagos)
-    const totalPaid = payments.reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
+    // Calcular el total pagado usando amount (igual que InstallmentsTable)
+    const totalPaid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
     
     // El balance restante es el total (préstamo + cargos) menos lo pagado
     remainingBalance = Math.max(0, totalAmountWithCharges - totalPaid);

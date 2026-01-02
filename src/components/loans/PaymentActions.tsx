@@ -285,7 +285,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       console.log('🗑️ OBTENIENDO PAGOS RESTANTES...');
       const { data: remainingPayments, error: paymentsError } = await supabase
         .from('payments')
-        .select('id, principal_amount, interest_amount, late_fee, payment_date')
+        .select('id, principal_amount, interest_amount, late_fee, payment_date, due_date, amount')
         .eq('loan_id', payment.loan_id)
         .order('payment_date', { ascending: true });
 
@@ -428,20 +428,96 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       console.log('🗑️ Cuotas pagadas recalculadas:', updatedPaidInstallments);
       console.log('🗑️ next_payment_date y remaining_balance fueron actualizados por triggers de la BD (incluyen cargos)');
 
-      // PASO 6: Revertir el estado de las cuotas que ya no deberían estar pagadas
-      // CORRECCIÓN: Los triggers también actualizan cuando cambian installments, así que esto es seguro
-      console.log('🗑️ REVIRTIENDO ESTADO DE CUOTAS...');
+      // PASO 6: Revertir el estado de las cuotas y cargos que ya no deberían estar pagados
+      // CORRECCIÓN: Necesitamos diferenciar entre cuotas regulares y cargos
+      console.log('🗑️ REVIRTIENDO ESTADO DE CUOTAS Y CARGOS...');
       const { data: allInstallments, error: installmentsError } = await supabase
         .from('installments')
-        .select('installment_number, is_paid')
-        .eq('loan_id', payment.loan_id);
+        .select('installment_number, is_paid, due_date, total_amount, principal_amount, interest_amount')
+        .eq('loan_id', payment.loan_id)
+        .order('due_date', { ascending: true })
+        .order('installment_number', { ascending: true });
 
       if (!installmentsError && allInstallments) {
-        // Revertir todas las cuotas que no están en updatedPaidInstallments
+        // Agrupar cargos por fecha de vencimiento para calcular pagos aplicados
+        const chargesByDate = new Map<string, typeof allInstallments>();
+        const regularInstallments = allInstallments.filter(inst => 
+          Math.abs(inst.interest_amount || 0) >= 0.01 || 
+          Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) >= 0.01
+        );
+        
+        // Agrupar cargos por fecha
+        allInstallments.forEach(inst => {
+          const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                          Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+          if (isCharge) {
+            const dateKey = inst.due_date.split('T')[0];
+            if (!chargesByDate.has(dateKey)) {
+              chargesByDate.set(dateKey, []);
+            }
+            chargesByDate.get(dateKey)!.push(inst);
+          }
+        });
+
+        // Ordenar cargos dentro de cada fecha por installment_number
+        chargesByDate.forEach((charges, date) => {
+          charges.sort((a, b) => a.installment_number - b.installment_number);
+        });
+
+        // Calcular pagos aplicados a cargos
+        const paymentsForCharges = (remainingPayments || []).filter(p => 
+          Math.abs(p.interest_amount || 0) < 0.01
+        );
+
+        // Procesar cada installment
         for (const installment of allInstallments) {
-          const shouldBePaid = updatedPaidInstallments.includes(installment.installment_number);
+          const isCharge = Math.abs(installment.interest_amount || 0) < 0.01 && 
+                          Math.abs((installment.principal_amount || 0) - (installment.total_amount || 0)) < 0.01;
+          
+          let shouldBePaid: boolean;
+          
+          if (isCharge) {
+            // Para cargos: calcular si está pagado basándose en pagos aplicados a ese cargo específico
+            const chargeDate = installment.due_date.split('T')[0];
+            const chargesWithSameDate = chargesByDate.get(chargeDate) || [];
+            const chargeIndex = chargesWithSameDate.findIndex(c => c.installment_number === installment.installment_number);
+            
+            // Filtrar pagos que corresponden a cargos de esta fecha
+            const paymentsForThisDate = paymentsForCharges.filter(p => {
+              const paymentDate = (p.payment_date as string)?.split('T')[0];
+              return paymentDate === chargeDate;
+            });
+            
+            // Calcular total pagado a cargos de esta fecha
+            const totalPaidForDate = paymentsForThisDate.reduce((sum, p) => 
+              sum + (p.principal_amount || p.amount || 0), 0
+            );
+            
+            // Asignar pagos secuencialmente a los cargos
+            let remainingPaymentsForCharges = totalPaidForDate;
+            let totalPaidForThisCharge = 0;
+            
+            for (let i = 0; i < chargeIndex; i++) {
+              const prevCharge = chargesWithSameDate[i];
+              const amountForPrevCharge = Math.min(remainingPaymentsForCharges, prevCharge.total_amount || 0);
+              remainingPaymentsForCharges -= amountForPrevCharge;
+            }
+            
+            totalPaidForThisCharge = Math.min(remainingPaymentsForCharges, installment.total_amount || 0);
+            shouldBePaid = totalPaidForThisCharge >= (installment.total_amount || 0) - 0.01;
+            
+            console.log(`🗑️ Cargo ${installment.installment_number}:`, {
+              totalAmount: installment.total_amount,
+              totalPaid: totalPaidForThisCharge,
+              shouldBePaid
+            });
+          } else {
+            // Para cuotas regulares: usar updatedPaidInstallments
+            shouldBePaid = updatedPaidInstallments.includes(installment.installment_number);
+          }
+          
           if (installment.is_paid && !shouldBePaid) {
-            console.log(`🗑️ Revirtiendo cuota ${installment.installment_number} a pendiente`);
+            console.log(`🗑️ Revirtiendo ${isCharge ? 'cargo' : 'cuota'} ${installment.installment_number} a pendiente`);
             await supabase
               .from('installments')
               .update({
@@ -452,14 +528,15 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
               .eq('installment_number', installment.installment_number);
             // El trigger actualizará remaining_balance y next_payment_date automáticamente
           } else if (!installment.is_paid && shouldBePaid) {
-            console.log(`🗑️ Marcando cuota ${installment.installment_number} como pagada`);
+            console.log(`🗑️ Marcando ${isCharge ? 'cargo' : 'cuota'} ${installment.installment_number} como pagado`);
+            const lastPaymentDate = remainingPayments && remainingPayments.length > 0 
+              ? remainingPayments[remainingPayments.length - 1].payment_date?.split('T')[0] 
+              : null;
             await supabase
               .from('installments')
               .update({
                 is_paid: true,
-                paid_date: remainingPayments && remainingPayments.length > 0 
-                  ? remainingPayments[remainingPayments.length - 1].payment_date?.split('T')[0] 
-                  : null
+                paid_date: lastPaymentDate
               })
               .eq('loan_id', payment.loan_id)
               .eq('installment_number', installment.installment_number);
@@ -468,10 +545,50 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         }
       }
 
+      // PASO 6.5: Esperar a que los triggers completen después de revertir installments
+      // Los triggers se ejecutan automáticamente cuando se actualizan installments
+      // Esperar tiempo suficiente para que todos los triggers completen
+      console.log('🗑️ Esperando a que los triggers actualicen el balance después de revertir installments...');
+      await new Promise(resolve => setTimeout(resolve, 400));
+      
+      // Obtener el balance final actualizado de la BD (después de que los triggers actualicen installments)
+      let finalUpdatedLoanData: any = null;
+      let finalFetchError: any = null;
+      let finalRetries = 3;
+      
+      while (finalRetries > 0) {
+        const finalResult = await supabase
+          .from('loans')
+          .select('remaining_balance, next_payment_date')
+          .eq('id', payment.loan_id)
+          .single();
+        
+        finalFetchError = finalResult.error;
+        finalUpdatedLoanData = finalResult.data;
+        
+        if (!finalFetchError && finalUpdatedLoanData) {
+          break;
+        }
+        
+        finalRetries--;
+        if (finalRetries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+      }
+      
+      // Usar el balance final actualizado si está disponible
+      if (!finalFetchError && finalUpdatedLoanData) {
+        newBalance = finalUpdatedLoanData.remaining_balance || newBalance;
+        console.log('🗑️ Balance final actualizado después de revertir installments:', {
+          remaining_balance: finalUpdatedLoanData.remaining_balance,
+          next_payment_date: finalUpdatedLoanData.next_payment_date
+        });
+      }
+
       // PASO 7: Recalcular la mora
       // CORRECCIÓN: Usar next_payment_date de la BD (ya calculado por el trigger con cargos incluidos)
       console.log('🗑️ RECALCULANDO MORA...');
-      const nextPaymentDateFromBD = updatedLoanData?.next_payment_date || loanData.next_payment_date;
+      const nextPaymentDateFromBD = finalUpdatedLoanData?.next_payment_date || updatedLoanData?.next_payment_date || loanData.next_payment_date;
       const loanDataForLateFee = {
         id: payment.loan_id,
         remaining_balance: newBalance,
