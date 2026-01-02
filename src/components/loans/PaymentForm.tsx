@@ -113,6 +113,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   // Ref para evitar recrear listeners innecesariamente
   const realtimeChannelRef = useRef<any>(null);
   const isUserEditingAmountRef = useRef<boolean>(false);
+  const [isAmountLoading, setIsAmountLoading] = useState(false);
 
   // Función para generar el HTML del recibo según el formato
   const generateReceiptHTMLWithFormat = (format: string = 'LETTER'): string => {
@@ -1013,93 +1014,198 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 
     try {
       // Priorizar velocidad: usar cache si está disponible y hacer la query en paralelo
-      // Buscar la primera cuota/cargo pendiente ordenada por fecha de vencimiento
-      const { data: installments, error } = await supabase
+      // CORRECCIÓN: PRIORIDAD - Buscar primero cargos parcialmente pagados (tienen prioridad sobre cuotas regulares)
+      // Un cargo parcialmente pagado puede estar marcado como is_paid = true pero aún tener saldo pendiente
+      let firstUnpaid = null;
+      let isCharge = false;
+      
+      // PASO 1: Buscar cargos parcialmente pagados (PRIORIDAD)
+      // Obtener todos los cargos del préstamo
+      const { data: allCharges, error: chargesError } = await supabase
         .from('installments')
         .select('due_date, is_paid, total_amount, principal_amount, interest_amount, installment_number')
         .eq('loan_id', loanId)
-        .eq('is_paid', false)
-        .order('due_date', { ascending: true })
-        .limit(1);
+        .eq('interest_amount', 0) // Solo cargos
+        .order('due_date', { ascending: true });
 
       // Verificar que el loan sigue siendo el mismo (evita race conditions)
       if (selectedLoan?.id !== loanId) return;
 
-      if (!error && installments && installments.length > 0) {
-        const firstUnpaid = installments[0];
-        // Un cargo es una cuota donde interest_amount es 0 y principal_amount es igual a total_amount
-        const isCharge = firstUnpaid.interest_amount === 0 && 
-                        firstUnpaid.principal_amount === firstUnpaid.total_amount;
-        
+      if (!chargesError && allCharges && allCharges.length > 0) {
+        // Obtener todos los pagos para calcular saldos pendientes
+        const { data: allPaymentsForLoan } = await supabase
+          .from('payments')
+          .select('id, amount, principal_amount, interest_amount, due_date, payment_date')
+          .eq('loan_id', loanId)
+          .order('payment_date', { ascending: true });
+
+        // Verificar nuevamente
+        if (selectedLoan?.id !== loanId) return;
+
+          // Buscar el primer cargo con saldo pendiente
+          for (const charge of allCharges) {
+            const chargeDueDate = charge.due_date.split('T')[0];
+            
+            // Obtener todos los cargos con la misma fecha
+            const chargesWithSameDate = allCharges.filter(c => c.due_date.split('T')[0] === chargeDueDate);
+            
+            // Filtrar pagos que corresponden a cargos de esta fecha específica (sin interés)
+            const paymentsForCharges = (allPaymentsForLoan || []).filter(p => {
+              const paymentDueDate = (p.due_date as string)?.split('T')[0];
+              const hasNoInterest = (p.interest_amount || 0) < 0.01;
+              // El pago debe tener la misma fecha que el cargo Y no tener interés
+              return paymentDueDate === chargeDueDate && hasNoInterest;
+            });
+            
+            console.log('🔍 PaymentForm: Buscando cargo parcialmente pagado:', {
+              chargeInstallmentNumber: charge.installment_number,
+              chargeDueDate,
+              chargeTotalAmount: charge.total_amount,
+              chargeIsPaid: charge.is_paid,
+              paymentsForChargesCount: paymentsForCharges.length,
+              paymentsForCharges: paymentsForCharges.map(p => ({
+                id: p.id,
+                amount: p.amount || p.principal_amount,
+                dueDate: p.due_date,
+                interest: p.interest_amount
+              }))
+            });
+          
+          // Calcular el total pagado a cargos de esta fecha
+          const totalPaidForDate = paymentsForCharges.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
+          
+          // Encontrar la posición de este cargo en la lista
+          const chargeIndex = chargesWithSameDate.findIndex(c => c.installment_number === charge.installment_number);
+          
+          let totalPaidForCharge = 0;
+          if (chargeIndex >= 0) {
+            // Asignar pagos secuencialmente a los cargos con la misma fecha
+            let remainingPayments = totalPaidForDate;
+            
+            for (let i = 0; i < chargeIndex; i++) {
+              const prevCharge = chargesWithSameDate[i];
+              const amountForPrevCharge = Math.min(remainingPayments, prevCharge.total_amount);
+              remainingPayments -= amountForPrevCharge;
+            }
+            
+            totalPaidForCharge = Math.min(remainingPayments, charge.total_amount);
+          } else {
+            totalPaidForCharge = Math.min(totalPaidForDate, charge.total_amount);
+          }
+          
+          const remainingAmount = Math.max(0, charge.total_amount - totalPaidForCharge);
+          
+          // Si este cargo tiene saldo pendiente, es el próximo pago (tiene prioridad)
+          if (remainingAmount > 0.01) {
+            firstUnpaid = charge;
+            isCharge = true;
+            console.log('🔍 PaymentForm: Cargo parcialmente pagado encontrado (PRIORIDAD):', {
+              installmentNumber: charge.installment_number,
+              totalAmount: charge.total_amount,
+              totalPaid: totalPaidForCharge,
+              remainingAmount,
+              dueDate: charge.due_date,
+              isPaid: charge.is_paid
+            });
+            break;
+          }
+        }
+      }
+
+      // PASO 2: Si no hay cargos parcialmente pagados, buscar installments NO pagados (cuotas regulares)
+      if (!firstUnpaid) {
+        const { data: unpaidInstallments, error: unpaidError } = await supabase
+          .from('installments')
+          .select('due_date, is_paid, total_amount, principal_amount, interest_amount, installment_number')
+          .eq('loan_id', loanId)
+          .eq('is_paid', false)
+          .order('due_date', { ascending: true })
+          .limit(1);
+
+        // Verificar que el loan sigue siendo el mismo
+        if (selectedLoan?.id !== loanId) return;
+
+        if (!unpaidError && unpaidInstallments && unpaidInstallments.length > 0) {
+          firstUnpaid = unpaidInstallments[0];
+          // Un cargo es una cuota donde interest_amount es 0 y principal_amount es igual a total_amount
+          isCharge = firstUnpaid.interest_amount === 0 && 
+                     firstUnpaid.principal_amount === firstUnpaid.total_amount;
+        }
+      }
+
+      if (firstUnpaid) {
         // Si es un cargo, calcular cuánto se ha pagado ya y cuánto falta
         let remainingAmount = firstUnpaid.total_amount;
+        
         if (isCharge) {
-          // Ejecutar ambas queries en paralelo para mayor velocidad
-          const [chargesResult, paymentsResult] = await Promise.all([
-            supabase
-              .from('installments')
-              .select('id, installment_number, total_amount, is_paid, due_date')
-              .eq('loan_id', loanId)
-              .eq('due_date', firstUnpaid.due_date)
-              .eq('interest_amount', 0)
-              .order('installment_number', { ascending: true }),
-            supabase
-              .from('payments')
-              .select('id, amount, principal_amount, due_date, payment_date')
-              .eq('loan_id', loanId)
-              .eq('due_date', firstUnpaid.due_date)
-              .order('payment_date', { ascending: true })
-          ]);
+          // CORRECCIÓN: Para cargos, necesitamos asignar pagos específicamente a este cargo por installment_number
+          // Considerando que puede haber múltiples cargos con la misma fecha
+          const chargeDueDate = firstUnpaid.due_date.split('T')[0];
+          
+          // Obtener todos los cargos con la misma fecha ordenados por installment_number
+          const { data: chargesWithSameDate } = await supabase
+            .from('installments')
+            .select('id, installment_number, total_amount, is_paid, due_date')
+            .eq('loan_id', loanId)
+            .eq('due_date', firstUnpaid.due_date)
+            .eq('interest_amount', 0)
+            .order('installment_number', { ascending: true });
           
           // Verificar nuevamente que el loan sigue siendo el mismo
           if (selectedLoan?.id !== loanId) return;
           
-          const chargesWithSameDate = chargesResult.data;
-          const paymentsForDate = paymentsResult.data;
+          // Obtener todos los pagos que podrían corresponder a cargos de esta fecha
+          const { data: allPaymentsForLoan } = await supabase
+            .from('payments')
+            .select('id, amount, principal_amount, interest_amount, due_date, payment_date')
+            .eq('loan_id', loanId)
+            .order('payment_date', { ascending: true });
           
-          // Asignar pagos secuencialmente a los cargos con la misma fecha
+          // Verificar nuevamente
+          if (selectedLoan?.id !== loanId) return;
+          
+          // Filtrar pagos que corresponden a cargos de esta fecha (sin interés)
+          const paymentsForCharges = (allPaymentsForLoan || []).filter(p => {
+            const paymentDueDate = (p.due_date as string)?.split('T')[0];
+            const hasNoInterest = (p.interest_amount || 0) < 0.01;
+            return paymentDueDate === chargeDueDate && hasNoInterest;
+          });
+          
+          // Calcular el total pagado a cargos de esta fecha
+          const totalPaidForDate = paymentsForCharges.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
+          
+          // Encontrar la posición de este cargo en la lista
+          const chargeIndex = chargesWithSameDate?.findIndex(c => c.installment_number === firstUnpaid.installment_number) ?? -1;
+          
           let totalPaidForCharge = 0;
-          if (chargesWithSameDate && paymentsForDate) {
-            // Encontrar la posición de este cargo en la lista
-            const chargeIndex = chargesWithSameDate.findIndex(c => c.installment_number === firstUnpaid.installment_number);
+          if (chargeIndex >= 0 && chargesWithSameDate) {
+            // Asignar pagos secuencialmente a los cargos con la misma fecha
+            // Los pagos se asignan a los cargos en orden de installment_number
+            let remainingPayments = totalPaidForDate;
             
-            // Calcular cuánto se ha pagado a los cargos anteriores (más bajos en installment_number)
-            let totalPaidToPreviousCharges = 0;
             for (let i = 0; i < chargeIndex; i++) {
               const prevCharge = chargesWithSameDate[i];
-              totalPaidToPreviousCharges += prevCharge.total_amount;
+              // Asignar pagos al cargo anterior hasta completarlo
+              const amountForPrevCharge = Math.min(remainingPayments, prevCharge.total_amount);
+              remainingPayments -= amountForPrevCharge;
             }
             
-            // Sumar todos los pagos de esta fecha
-            const totalPaidForDate = paymentsForDate.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
-            
-            // El monto pagado a este cargo es: total pagado - pagado a cargos anteriores
-            totalPaidForCharge = Math.max(0, totalPaidForDate - totalPaidToPreviousCharges);
-            
-            // Asegurar que no exceda el monto del cargo
-            totalPaidForCharge = Math.min(totalPaidForCharge, firstUnpaid.total_amount);
+            // El monto pagado a este cargo específico es lo que queda después de pagar los anteriores
+            totalPaidForCharge = Math.min(remainingPayments, firstUnpaid.total_amount);
           } else {
-            // Fallback: buscar pagos por fecha solamente
-            const { data: paymentsForCharge } = await supabase
-              .from('payments')
-              .select('amount, principal_amount')
-              .eq('loan_id', loanId)
-              .eq('due_date', firstUnpaid.due_date);
-            
-            // Verificar nuevamente
-            if (selectedLoan?.id !== loanId) return;
-            
-            totalPaidForCharge = paymentsForCharge?.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0) || 0;
+            // Fallback: si no hay otros cargos, todos los pagos van a este cargo
+            totalPaidForCharge = Math.min(totalPaidForDate, firstUnpaid.total_amount);
           }
           
           remainingAmount = Math.max(0, firstUnpaid.total_amount - totalPaidForCharge);
           
-          console.log('🔍 PaymentForm: Cargo detectado:', {
+          console.log('🔍 PaymentForm: Cargo detectado (corregido - incluye parcialmente pagados):', {
             installmentNumber: firstUnpaid.installment_number,
             totalAmount: firstUnpaid.total_amount,
             totalPaid: totalPaidForCharge,
             remainingAmount,
-            dueDate: firstUnpaid.due_date
+            dueDate: firstUnpaid.due_date,
+            isPaid: firstUnpaid.is_paid
           });
         }
         
@@ -1123,6 +1229,17 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       }
     }
   }, [selectedLoan]);
+
+  // EFECTO: Activar animación de carga cuando se selecciona un préstamo
+  React.useEffect(() => {
+    if (selectedLoan) {
+      setIsAmountLoading(true);
+      const timer = setTimeout(() => {
+        setIsAmountLoading(false);
+      }, 500); // Duración de 0.5 segundos
+      return () => clearTimeout(timer);
+    }
+  }, [selectedLoan?.id]);
 
   // EFECTO CONSOLIDADO: Detectar próximo pago y configurar listener de Realtime
   // Solo se ejecuta cuando cambia selectedLoan, evitando múltiples renders
@@ -2113,46 +2230,79 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           let paymentCoversInstallment = false;
           
           if (isCharge) {
-            // CORRECCIÓN: Para cargos, buscar pagos que correspondan a este cargo específico
-            // Buscar por due_date Y verificar que no tengan interés (característica de cargos)
+            // CORRECCIÓN: Para cargos, necesitamos asignar pagos específicamente a este cargo por installment_number
+            // Considerando que puede haber múltiples cargos con la misma fecha
             const chargeDueDate = firstUnpaidInstallment.due_date.split('T')[0];
             
-            // Obtener todos los pagos que podrían corresponder a este cargo
+            // Obtener todos los cargos con la misma fecha ordenados por installment_number
+            const { data: chargesWithSameDate } = await supabase
+              .from('installments')
+              .select('id, installment_number, total_amount, is_paid, due_date')
+              .eq('loan_id', data.loan_id)
+              .eq('due_date', firstUnpaidInstallment.due_date)
+              .eq('interest_amount', 0)
+              .order('installment_number', { ascending: true });
+            
+            // Obtener todos los pagos que podrían corresponder a cargos de esta fecha
             const { data: allPaymentsForLoan } = await supabase
               .from('payments')
-              .select('amount, principal_amount, interest_amount, due_date')
+              .select('amount, principal_amount, interest_amount, due_date, payment_date')
               .eq('loan_id', data.loan_id)
               .order('payment_date', { ascending: true });
             
-            // Filtrar pagos que corresponden a este cargo específico
-            // Un pago corresponde a un cargo si:
-            // 1. Tiene el mismo due_date, Y
-            // 2. No tiene interés (interest_amount = 0 o muy pequeño), Y
-            // 3. El monto es razonable (no excede el cargo por mucho)
-            const paymentsForThisCharge = (allPaymentsForLoan || []).filter(p => {
+            // Filtrar pagos que corresponden a cargos de esta fecha (sin interés)
+            const paymentsForCharges = (allPaymentsForLoan || []).filter(p => {
               const paymentDueDate = (p.due_date as string)?.split('T')[0];
-              const hasNoInterest = (p.interest_amount || 0) < 0.01; // Sin interés o casi sin interés
-              const reasonableAmount = (p.principal_amount || p.amount || 0) <= installmentAmount * 1.1; // No más del 110% del cargo
-              
-              return paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
+              const hasNoInterest = (p.interest_amount || 0) < 0.01;
+              return paymentDueDate === chargeDueDate && hasNoInterest;
             });
             
+            // Calcular el total pagado a cargos de esta fecha
+            const totalPaidForDate = paymentsForCharges.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
+            
+            // Encontrar la posición de este cargo en la lista
+            const chargeIndex = chargesWithSameDate?.findIndex(c => c.installment_number === firstUnpaidInstallmentNumber) ?? -1;
+            
+            let totalPaidForCharge = 0;
+            if (chargeIndex >= 0 && chargesWithSameDate) {
+              // Asignar pagos secuencialmente a los cargos con la misma fecha
+              // Los pagos se asignan a los cargos en orden de installment_number
+              let remainingPayments = totalPaidForDate;
+              
+              for (let i = 0; i < chargeIndex; i++) {
+                const prevCharge = chargesWithSameDate[i];
+                // Asignar pagos al cargo anterior hasta completarlo
+                const amountForPrevCharge = Math.min(remainingPayments, prevCharge.total_amount);
+                remainingPayments -= amountForPrevCharge;
+              }
+              
+              // El monto pagado a este cargo específico es lo que queda después de pagar los anteriores
+              totalPaidForCharge = Math.min(remainingPayments, installmentAmount);
+            } else {
+              // Fallback: si no hay otros cargos, todos los pagos van a este cargo
+              totalPaidForCharge = Math.min(totalPaidForDate, installmentAmount);
+            }
+            
             // Calcular el total pagado ANTES del pago actual
-            const totalPaidBefore = paymentsForThisCharge.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
+            const totalPaidBefore = totalPaidForCharge;
             
             // Agregar el pago actual (que aún no está en la BD)
             const totalPaidAfter = totalPaidBefore + data.amount;
             
             // El cargo está cubierto si el total pagado (incluyendo este pago) cubre el monto del cargo
+            // IMPORTANTE: Solo marcar como pagado si está completamente cubierto
             paymentCoversInstallment = totalPaidAfter >= installmentAmount * 0.99; // 99% para tolerancia de redondeo
             
-            console.log('🔍 PaymentForm: Verificando cargo (con acumulación):', {
+            console.log('🔍 PaymentForm: Verificando cargo (con acumulación corregida):', {
+              installmentNumber: firstUnpaidInstallmentNumber,
               paymentAmount: data.amount,
               installmentAmount,
               totalPaidBefore,
               totalPaidAfter,
               principalPayment,
-              paymentCoversInstallment
+              paymentCoversInstallment,
+              chargeIndex,
+              totalPaidForDate
             });
           } else {
             // Para cuotas regulares, verificar si el pago acumulado cubre esta cuota
@@ -2657,7 +2807,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               {...field}
                               // Solo mostrar valor cuando los datos estén listos (evita render con valor incorrecto)
                               value={paymentStatusReady ? (field.value || '') : ''}
-                              disabled={!paymentStatusReady}
+                              disabled={!paymentStatusReady || isAmountLoading}
+                              className={isAmountLoading ? "animate-pulse bg-gray-100" : ""}
                               onChange={async (e) => {
                                 // Marcar que el usuario está editando manualmente
                                 isUserEditingAmountRef.current = true;
