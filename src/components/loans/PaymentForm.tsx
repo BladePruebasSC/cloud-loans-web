@@ -112,6 +112,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   
   // Ref para evitar recrear listeners innecesariamente
   const realtimeChannelRef = useRef<any>(null);
+  const isUserEditingAmountRef = useRef<boolean>(false);
 
   // Función para generar el HTML del recibo según el formato
   const generateReceiptHTMLWithFormat = (format: string = 'LETTER'): string => {
@@ -1213,8 +1214,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   }, [selectedLoan, paymentStatusReady, paymentStatus.currentPaymentRemaining, nextPaymentInfo]);
 
   // Actualizar formulario y estado SOLO cuando calculatedAmount cambie y sea válido
+  // PERO solo si el usuario no está editando manualmente el campo
   React.useEffect(() => {
-    if (calculatedAmount !== null && calculatedAmount !== paymentAmount) {
+    if (calculatedAmount !== null && calculatedAmount !== paymentAmount && !isUserEditingAmountRef.current) {
       form.setValue('amount', calculatedAmount);
       setPaymentAmount(calculatedAmount);
       console.log('🔍 PaymentForm: Monto actualizado:', calculatedAmount);
@@ -1265,6 +1267,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // El monto se establecerá automáticamente cuando se actualice el paymentStatus
       setPaymentAmount(0); // Reset payment amount
       setPaymentDistribution(null); // Reset distribution
+      // Resetear el flag de edición manual para permitir que se establezca el valor calculado
+      isUserEditingAmountRef.current = false;
     }
   }, [preselectedLoan, form]);
 
@@ -1456,6 +1460,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     // Limpiar el desglose original para recalcular con el nuevo préstamo
     setOriginalLateFeeBreakdown(null);
     setAppliedLateFeePayment(0);
+    // Resetear el flag de edición manual para permitir que se establezca el valor calculado
+    isUserEditingAmountRef.current = false;
     // Calcular mora cuando se selecciona un préstamo
     calculateLoanLateFee(loan);
     // El monto se establecerá cuando se actualice el paymentStatus
@@ -1469,6 +1475,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Limpiar el desglose original para recalcular con el nuevo préstamo
       setOriginalLateFeeBreakdown(null);
       setAppliedLateFeePayment(0);
+      // Resetear el flag de edición manual para permitir que se establezca el valor calculado
+      isUserEditingAmountRef.current = false;
       // Calcular mora cuando se selecciona un préstamo
       calculateLoanLateFee(loan);
       // El monto se establecerá cuando se actualice el paymentStatus
@@ -1598,6 +1606,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       }
       
       // Validación 2b: Debe haber al menos un pago (cuota o mora)
+      // NOTA: Los pagos parciales están permitidos - cualquier monto mayor a 0 es válido
       if (data.amount <= 0 && (!data.late_fee_amount || data.late_fee_amount <= 0)) {
         toast.error('Debe pagar al menos algo de la cuota o de la mora');
         setLoading(false);
@@ -1605,6 +1614,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       }
 
       // Validación 3: No permitir pagos que excedan lo que falta de la cuota actual (solo si hay pago de cuota)
+      // NOTA: Los pagos parciales de cualquier monto mayor a 0 están permitidos
       // EXCEPCIÓN: Si el próximo pago es un cargo, permitir pagar el monto completo del cargo
       if (data.amount > 0) {
         // Si es un cargo, permitir pagar hasta el monto del cargo
@@ -2402,8 +2412,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         lateFeeAmount: data.late_fee_amount || 0,
         paymentMethod: data.payment_method,
         referenceNumber: data.reference_number,
-        remainingBalance: newBalance,
-        nextPaymentDate: formatDateStringForSantoDomingo(nextPaymentDate)
+        remainingBalance: finalBalance,
+        nextPaymentDate: formatDateStringForSantoDomingo(finalNextPaymentDate)
       });
       
       // Mostrar primero el modal de impresión
@@ -2416,8 +2426,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         // Preparar los datos actualizados del préstamo
         const updatedLoanData = {
           id: data.loan_id,
-          remaining_balance: newBalance,
-          next_payment_date: nextPaymentDate,
+          remaining_balance: finalBalance,
+          next_payment_date: finalNextPaymentDate,
           late_fee_rate: selectedLoan.late_fee_rate || 0,
           grace_period_days: selectedLoan.grace_period_days || 0,
           max_late_fee: selectedLoan.max_late_fee || 0,
@@ -2649,6 +2659,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               value={paymentStatusReady ? (field.value || '') : ''}
                               disabled={!paymentStatusReady}
                               onChange={async (e) => {
+                                // Marcar que el usuario está editando manualmente
+                                isUserEditingAmountRef.current = true;
+                                
                                 const value = e.target.value;
                                 const numValue = value === '' ? 0 : parseFloat(value) || 0;
                                 const roundedValue = roundToTwoDecimals(numValue);
@@ -2662,6 +2675,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                 } else {
                                   setPaymentDistribution(null);
                                 }
+                                
+                                // Permitir que el useEffect actualice el valor después de un breve delay
+                                // Esto permite que el usuario pueda editar sin que se restablezca inmediatamente
+                                setTimeout(() => {
+                                  isUserEditingAmountRef.current = false;
+                                }, 1000);
+                              }}
+                              onFocus={() => {
+                                // Marcar que el usuario está editando cuando hace focus en el campo
+                                isUserEditingAmountRef.current = true;
+                              }}
+                              onBlur={() => {
+                                // Permitir actualizaciones automáticas después de que el usuario termine de editar
+                                setTimeout(() => {
+                                  isUserEditingAmountRef.current = false;
+                                }, 500);
                               }}
                             />
                           </FormControl>
