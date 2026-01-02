@@ -2084,7 +2084,7 @@ export const LoansModule = () => {
                               {(loan as any).amortization_type === 'indefinite' ? 'Indefinido' : loan.term_months}
                             </div>
                             <div className="text-xs text-gray-600">
-                              {(loan as any).amortization_type === 'indefinite' ? '' : 'Meses'}
+                              {(loan as any).amortization_type === 'indefinite' ? '' : 'Cuotas'}
                             </div>
                           </div>
                           
