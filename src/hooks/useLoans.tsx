@@ -179,7 +179,7 @@ export const useLoans = () => {
             setLoans(prevLoans => prevLoans.filter(l => l.id !== (payload.old as any).id));
           } else {
             // Para otros casos, hacer refetch
-            fetchLoans(true);
+          fetchLoans(true);
           }
         }
       )

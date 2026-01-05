@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   Clock, 
   Plus, 
@@ -213,22 +214,32 @@ const ShiftsModule = () => {
     }
   };
 
-  const deleteAppointment = async (appointmentId: string) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar esta cita?')) return;
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [appointmentToDelete, setAppointmentToDelete] = useState<string | null>(null);
+
+  const deleteAppointment = (appointmentId: string) => {
+    setAppointmentToDelete(appointmentId);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDeleteAppointment = async () => {
+    if (!appointmentToDelete) return;
 
     try {
       const { error } = await supabase
         .from('appointments')
         .delete()
-        .eq('id', appointmentId);
+        .eq('id', appointmentToDelete);
 
       if (error) throw error;
 
       toast.success('Cita eliminada exitosamente');
       fetchAppointments();
+      setAppointmentToDelete(null);
     } catch (error) {
       console.error('Error deleting appointment:', error);
       toast.error('Error al eliminar cita');
+      setAppointmentToDelete(null);
     }
   };
 
@@ -622,6 +633,22 @@ const ShiftsModule = () => {
         </DialogContent>
       </Dialog>
     </div>
+
+    {/* Diálogo de Verificación de Contraseña */}
+    <PasswordVerificationDialog
+      isOpen={showPasswordVerification}
+      onClose={() => {
+        setShowPasswordVerification(false);
+        setAppointmentToDelete(null);
+      }}
+      onVerify={() => {
+        setShowPasswordVerification(false);
+        confirmDeleteAppointment();
+      }}
+      title="Verificar Contraseña"
+      description="Por seguridad, ingresa tu contraseña para confirmar la eliminación de la cita."
+      entityName="cita"
+    />
   );
 };
 

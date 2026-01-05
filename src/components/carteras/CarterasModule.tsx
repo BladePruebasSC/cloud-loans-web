@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   Wallet, 
   TrendingUp, 
@@ -69,6 +70,8 @@ export const CarterasModule = () => {
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [portfoliosWithStats, setPortfoliosWithStats] = useState<PortfolioWithStats[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [portfolioToDelete, setPortfolioToDelete] = useState<Portfolio | null>(null);
   const [stats, setStats] = useState<PortfolioStats>({
     totalPortfolios: 0,
     totalValue: 0,
@@ -369,17 +372,20 @@ export const CarterasModule = () => {
     }
   };
 
-  const handleDeletePortfolio = async (portfolio: Portfolio) => {
-    if (!confirm(`¿Estás seguro de eliminar la cartera "${portfolio.name}"?`)) {
-      return;
-    }
+  const handleDeletePortfolio = (portfolio: Portfolio) => {
+    setPortfolioToDelete(portfolio);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDeletePortfolio = async () => {
+    if (!portfolioToDelete) return;
 
     try {
       // Primero, desasignar préstamos de esta cartera
       const { error: updateError } = await supabase
         .from('loans')
         .update({ portfolio_id: null })
-        .eq('portfolio_id', portfolio.id);
+        .eq('portfolio_id', portfolioToDelete.id);
 
       if (updateError) throw updateError;
 
@@ -387,15 +393,17 @@ export const CarterasModule = () => {
       const { error: deleteError } = await supabase
         .from('portfolios')
         .delete()
-        .eq('id', portfolio.id);
+        .eq('id', portfolioToDelete.id);
 
       if (deleteError) throw deleteError;
 
       toast.success('Cartera eliminada exitosamente');
       fetchPortfolios();
+      setPortfolioToDelete(null);
     } catch (error: any) {
       console.error('Error deleting portfolio:', error);
       toast.error(error?.message || 'Error al eliminar la cartera');
+      setPortfolioToDelete(null);
     }
   };
 
@@ -1850,6 +1858,21 @@ export const CarterasModule = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setPortfolioToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDeletePortfolio();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación de la cartera."
+        entityName="cartera"
+      />
     </div>
   );
 };

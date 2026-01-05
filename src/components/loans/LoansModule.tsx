@@ -187,11 +187,11 @@ export const LoansModule = () => {
         const { data: paymentsWithPrincipal, error: paymentsPrincipalError } = await supabase
           .from('payments')
           .select('principal_amount')
-          .eq('loan_id', loan.id)
+        .eq('loan_id', loan.id)
           .gt('principal_amount', 0);
         
         const totalPaidCapital = (paymentsWithPrincipal || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
-        
+      
         // Balance = capital + interés pendiente + TODOS los cargos - pagos de capital/cargos
         // Los pagos de interés NO reducen el balance
         const remainingBalance = Math.max(0, baseAmount + pendingInterest + totalChargesAmount - totalPaidCapital);
@@ -1431,10 +1431,10 @@ export const LoansModule = () => {
       return;
     }
     
-    // Esperar a que los préstamos estén cargados
-    if (loading) {
-      return; // Esperar a que termine la carga
-    }
+      // Esperar a que los préstamos estén cargados
+      if (loading) {
+        return; // Esperar a que termine la carga
+      }
     
     // Limpiar URL ANTES de procesar la acción para evitar re-ejecuciones
     window.history.replaceState({}, '', '/prestamos');
@@ -1444,13 +1444,13 @@ export const LoansModule = () => {
     manuallyClosedRef.current = false;
     lastProcessedUrlRef.current = currentUrl;
     lastUrlHadParamsRef.current = true; // Marcar que la URL tenía parámetros
-    
-    // Buscar el préstamo específico
-    const targetLoan = loans.find(loan => loan.id === loanId);
-    
-    if (targetLoan) {
-      // Pequeño delay para asegurar que el componente esté listo
-      setTimeout(() => {
+      
+      // Buscar el préstamo específico
+      const targetLoan = loans.find(loan => loan.id === loanId);
+      
+      if (targetLoan) {
+        // Pequeño delay para asegurar que el componente esté listo
+        setTimeout(() => {
         if (action === 'payment') {
           // Abrir formulario de pago
           setSelectedLoanForPayment(targetLoan);
@@ -1462,11 +1462,11 @@ export const LoansModule = () => {
           setShowCollectionTracking(true);
           toast.success(`Abriendo formulario de seguimiento para ${targetLoan.client?.full_name}`);
         }
-      }, 100);
-    } else if (!loading) {
-      // Solo mostrar error si ya terminó de cargar y no encontró el préstamo
-      toast.error('Préstamo no encontrado. Puede que haya sido eliminado o no tengas acceso.');
-    }
+        }, 100);
+      } else if (!loading) {
+        // Solo mostrar error si ya terminó de cargar y no encontró el préstamo
+        toast.error('Préstamo no encontrado. Puede que haya sido eliminado o no tengas acceso.');
+      }
   }, [loans, loading, location.search, showPaymentForm, showCollectionTracking]); // Agregar showPaymentForm y showCollectionTracking a las dependencias
 
   // Función para actualizar mora de todos los préstamos

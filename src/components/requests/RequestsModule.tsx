@@ -12,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   FileText, 
   Plus, 
@@ -102,6 +103,7 @@ const RequestsModule = () => {
   const [activeTab, setActiveTab] = useState('lista-solicitudes');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [requestToDelete, setRequestToDelete] = useState<LoanRequest | null>(null);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingRequest, setEditingRequest] = useState<LoanRequest | null>(null);
   const [editFormData, setEditFormData] = useState<any>(null);
@@ -601,13 +603,13 @@ const RequestsModule = () => {
 
   const handleDeleteRequest = (request: LoanRequest) => {
     setRequestToDelete(request);
-    setShowDeleteDialog(true);
+    setShowPasswordVerification(true);
   };
 
   const confirmDeleteRequest = async () => {
     if (requestToDelete) {
       await deleteApprovedRequest(requestToDelete.id);
-      setShowDeleteDialog(false);
+      setShowPasswordVerification(false);
       setRequestToDelete(null);
     }
   };
@@ -2734,6 +2736,22 @@ const RequestsModule = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setRequestToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDeleteRequest();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación de la solicitud."
+        entityName="solicitud"
+      />
     </div>
   );
 };

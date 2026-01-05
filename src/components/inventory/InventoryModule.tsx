@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   Package, 
   Plus, 
@@ -1253,21 +1254,28 @@ const InventoryModule = () => {
     setShowProductForm(true);
   };
 
-  const handleDelete = async (productId: string) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este producto?')) return;
+  const handleDelete = (productId: string) => {
+    setProductToDelete(productId);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!productToDelete) return;
 
     try {
       const { error } = await supabase
         .from('products')
         .delete()
-        .eq('id', productId);
+        .eq('id', productToDelete);
 
       if (error) throw error;
       toast.success('Producto eliminado exitosamente');
       fetchProducts();
+      setProductToDelete(null);
     } catch (error) {
       console.error('Error deleting product:', error);
       toast.error('Error al eliminar producto');
+      setProductToDelete(null);
     }
   };
 
@@ -4284,6 +4292,22 @@ const InventoryModule = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setProductToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDelete();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación del producto."
+        entityName="producto"
+      />
     </div>
   );
 };

@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   Phone, 
   Mail, 
@@ -84,6 +85,8 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingRecord, setEditingRecord] = useState<CollectionTracking | null>(null);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -170,21 +173,28 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
   };
 
   // Eliminar registro
-  const handleDelete = async (recordId: string) => {
-    if (!confirm('¿Estás seguro de que quieres eliminar este seguimiento?')) return;
+  const handleDelete = (recordId: string) => {
+    setRecordToDelete(recordId);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!recordToDelete) return;
 
     try {
       const { error } = await supabase
         .from('collection_tracking')
         .delete()
-        .eq('id', recordId);
+        .eq('id', recordToDelete);
 
       if (error) throw error;
       toast.success('Seguimiento eliminado correctamente');
       fetchTrackingRecords();
+      setRecordToDelete(null);
     } catch (error) {
       console.error('Error deleting tracking record:', error);
       toast.error('Error al eliminar el seguimiento');
+      setRecordToDelete(null);
     }
   };
 
@@ -514,6 +524,22 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
           </Card>
         </div>
       </DialogContent>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setRecordToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDelete();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación del seguimiento."
+        entityName="seguimiento"
+      />
     </Dialog>
   );
 };

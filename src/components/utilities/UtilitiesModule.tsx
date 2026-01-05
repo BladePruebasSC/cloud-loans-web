@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   Zap, 
   Plus, 
@@ -59,6 +60,9 @@ const UtilitiesModule = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('calculadora');
   const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [expenseToDelete, setExpenseToDelete] = useState<string | null>(null);
+  const [categoryToDelete, setCategoryToDelete] = useState<{ name: string; index: number } | null>(null);
   const { user, companyId } = useAuth();
 
   // Calculator configuration state
@@ -547,22 +551,29 @@ const UtilitiesModule = () => {
     });
   };
 
-  const deleteExpense = async (expenseId: string) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este gasto?')) return;
+  const deleteExpense = (expenseId: string) => {
+    setExpenseToDelete(expenseId);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDeleteExpense = async () => {
+    if (!expenseToDelete) return;
 
     try {
       const { error } = await supabase
         .from('expenses')
         .delete()
-        .eq('id', expenseId);
+        .eq('id', expenseToDelete);
 
       if (error) throw error;
 
       toast.success('Gasto eliminado exitosamente');
       fetchExpenses();
+      setExpenseToDelete(null);
     } catch (error) {
       console.error('Error deleting expense:', error);
       toast.error('Error al eliminar gasto');
+      setExpenseToDelete(null);
     }
   };
 
@@ -964,28 +975,35 @@ const UtilitiesModule = () => {
     setEditingCategoryName('');
   };
 
-  const handleDeleteCategory = async (index: number) => {
-    const categoryToDelete = expenseCategories[index];
+  const handleDeleteCategory = (index: number) => {
+    const categoryName = expenseCategories[index];
     // Verificar si hay gastos usando esta categoría
-    const hasExpenses = expenses.some(exp => exp.category === categoryToDelete);
+    const hasExpenses = expenses.some(exp => exp.category === categoryName);
     if (hasExpenses) {
       toast.error('No se puede eliminar una categoría que tiene gastos asociados');
       return;
     }
-    if (confirm(`¿Estás seguro de que deseas eliminar la categoría "${categoryToDelete}"?`)) {
-      const oldCategories = [...expenseCategories];
-      const updated = expenseCategories.filter((_, i) => i !== index);
-      setExpenseCategories(updated);
-      
-      // Guardar en la base de datos
-      try {
-        await saveExpenseCategories();
-        toast.success('Categoría eliminada exitosamente');
-      } catch (error) {
-        // Revertir cambio local si falla
-        setExpenseCategories(oldCategories);
-        toast.error('Error al eliminar la categoría');
-      }
+    setCategoryToDelete({ name: categoryName, index });
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDeleteCategory = async () => {
+    if (!categoryToDelete) return;
+
+    const oldCategories = [...expenseCategories];
+    const updated = expenseCategories.filter((_, i) => i !== categoryToDelete.index);
+    setExpenseCategories(updated);
+    
+    // Guardar en la base de datos
+    try {
+      await saveExpenseCategories();
+      toast.success('Categoría eliminada exitosamente');
+      setCategoryToDelete(null);
+    } catch (error) {
+      // Revertir cambio local si falla
+      setExpenseCategories(oldCategories);
+      toast.error('Error al eliminar la categoría');
+      setCategoryToDelete(null);
     }
   };
 
@@ -4015,6 +4033,27 @@ Fecha: {fecha_actual}`
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setExpenseToDelete(null);
+          setCategoryToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          if (expenseToDelete) {
+            confirmDeleteExpense();
+          } else if (categoryToDelete) {
+            confirmDeleteCategory();
+          }
+        }}
+        title="Verificar Contraseña"
+        description={`Por seguridad, ingresa tu contraseña para confirmar la eliminación ${expenseToDelete ? 'del gasto' : 'de la categoría'}.`}
+        entityName={expenseToDelete ? 'gasto' : 'categoría'}
+      />
     </div>
   );
 };

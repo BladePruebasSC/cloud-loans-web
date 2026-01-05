@@ -25,6 +25,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { Checkbox } from '@/components/ui/checkbox';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 
 interface Document {
   id: string;
@@ -349,17 +350,20 @@ export const DocumentsModule = () => {
     }
   };
 
-  const handleDeleteDocument = async (documentId: string, fileUrl: string | null) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar este documento?')) {
-      return;
-    }
+  const handleDeleteDocument = (documentId: string, fileUrl: string | null) => {
+    setDocumentToDelete({ id: documentId, fileUrl });
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDeleteDocument = async () => {
+    if (!documentToDelete) return;
 
     try {
       // Eliminar de storage
-      if (fileUrl) {
+      if (documentToDelete.fileUrl) {
         const { error: storageError } = await supabase.storage
           .from('documents')
-          .remove([fileUrl]);
+          .remove([documentToDelete.fileUrl]);
         
         if (storageError) {
           console.error('Error eliminando archivo de storage:', storageError);
@@ -370,15 +374,17 @@ export const DocumentsModule = () => {
       const { error: deleteError } = await supabase
         .from('documents')
         .delete()
-        .eq('id', documentId);
+        .eq('id', documentToDelete.id);
 
       if (deleteError) throw deleteError;
 
       toast.success('Documento eliminado correctamente');
       fetchDocuments();
+      setDocumentToDelete(null);
     } catch (error: any) {
       console.error('Error al eliminar documento:', error);
       toast.error('Error al eliminar documento');
+      setDocumentToDelete(null);
     }
   };
 
@@ -1389,6 +1395,22 @@ export const DocumentsModule = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setDocumentToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDeleteDocument();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación del documento."
+        entityName="documento"
+      />
     </div>
   );
 };

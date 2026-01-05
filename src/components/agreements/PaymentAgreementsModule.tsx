@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   HandHeart, 
   Plus, 
@@ -86,6 +87,8 @@ export const PaymentAgreementsModule = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('acuerdos');
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [agreementToDelete, setAgreementToDelete] = useState<string | null>(null);
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -272,22 +275,29 @@ export const PaymentAgreementsModule = () => {
     setShowForm(true);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('¿Está seguro de eliminar este acuerdo?')) return;
+  const handleDelete = (id: string) => {
+    setAgreementToDelete(id);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!agreementToDelete) return;
     
     try {
       const { error } = await supabase
         .from('payment_agreements')
         .delete()
-        .eq('id', id);
+        .eq('id', agreementToDelete);
 
       if (error) throw error;
 
       toast.success('Acuerdo eliminado exitosamente');
       fetchAgreements(); // Recargar acuerdos desde la base de datos
+      setAgreementToDelete(null);
     } catch (error: any) {
       console.error('Error deleting agreement:', error);
       toast.error(`Error al eliminar acuerdo: ${error.message || 'Error desconocido'}`);
+      setAgreementToDelete(null);
     }
   };
 
@@ -942,6 +952,22 @@ export const PaymentAgreementsModule = () => {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setAgreementToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDelete();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación del acuerdo."
+        entityName="acuerdo"
+      />
     </div>
   );
 };

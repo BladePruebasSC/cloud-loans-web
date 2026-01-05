@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Route, Plus, Edit, Trash2, Clock, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 
 interface RouteData {
   id: string;
@@ -56,6 +57,8 @@ export const RoutesModule = () => {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingRoute, setEditingRoute] = useState<RouteData | null>(null);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [routeToDelete, setRouteToDelete] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -113,10 +116,15 @@ export const RoutesModule = () => {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('¿Está seguro de eliminar esta ruta?')) {
-      setRoutes(prev => prev.filter(route => route.id !== id));
-      toast.success('Ruta eliminada exitosamente');
-    }
+    setRouteToDelete(id);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDelete = () => {
+    if (!routeToDelete) return;
+    setRoutes(prev => prev.filter(route => route.id !== routeToDelete));
+    toast.success('Ruta eliminada exitosamente');
+    setRouteToDelete(null);
   };
 
   const activeRoutes = routes.filter(r => r.status === 'active').length;
@@ -351,6 +359,22 @@ export const RoutesModule = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setRouteToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDelete();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación de la ruta."
+        entityName="ruta"
+      />
     </div>
   );
 };

@@ -44,6 +44,8 @@ export const HolidaysModule = () => {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState<Holiday | null>(null);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [holidayToDelete, setHolidayToDelete] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     date: '',
@@ -87,10 +89,15 @@ export const HolidaysModule = () => {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('¿Está seguro de eliminar este día feriado?')) {
-      setHolidays(prev => prev.filter(holiday => holiday.id !== id));
-      toast.success('Día feriado eliminado exitosamente');
-    }
+    setHolidayToDelete(id);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDelete = () => {
+    if (!holidayToDelete) return;
+    setHolidays(prev => prev.filter(holiday => holiday.id !== holidayToDelete));
+    toast.success('Día feriado eliminado exitosamente');
+    setHolidayToDelete(null);
   };
 
   return (
@@ -222,6 +229,22 @@ export const HolidaysModule = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setHolidayToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDelete();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación del día feriado."
+        entityName="día feriado"
+      />
     </div>
   );
 };

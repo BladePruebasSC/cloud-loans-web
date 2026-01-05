@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { 
   Building2, 
   Plus, 
@@ -112,6 +113,8 @@ const BanksModule = () => {
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] = useState<Transaction | null>(null);
 
   // Formularios
   const [accountForm, setAccountForm] = useState({
@@ -530,26 +533,31 @@ const BanksModule = () => {
       .eq('id', transaction.account_id);
   };
 
-  const handleDeleteTransaction = async (transaction: Transaction) => {
-    if (!confirm('¿Está seguro de eliminar esta transacción? Esta acción no se puede deshacer.')) {
-      return;
-    }
+  const handleDeleteTransaction = (transaction: Transaction) => {
+    setTransactionToDelete(transaction);
+    setShowPasswordVerification(true);
+  };
+
+  const confirmDeleteTransaction = async () => {
+    if (!transactionToDelete) return;
 
     try {
       // El trigger revertirá el balance automáticamente
       const { error } = await supabase
         .from('bank_transactions')
         .delete()
-        .eq('id', transaction.id);
+        .eq('id', transactionToDelete.id);
 
       if (error) throw error;
 
       toast.success('Transacción eliminada exitosamente');
       fetchAccounts();
       fetchTransactions();
+      setTransactionToDelete(null);
     } catch (error: any) {
       console.error('Error deleting transaction:', error);
       toast.error(error.message || 'Error al eliminar transacción');
+      setTransactionToDelete(null);
     }
   };
 
@@ -2358,6 +2366,22 @@ const BanksModule = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setTransactionToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDeleteTransaction();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación de la transacción bancaria."
+        entityName="transacción bancaria"
+      />
     </div>
   );
 };
