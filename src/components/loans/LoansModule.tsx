@@ -644,29 +644,13 @@ export const LoansModule = () => {
         }));
       }
         
-        // Forzar actualización en BD para préstamos con discrepancias
+        // OPTIMIZADO: Ya no forzamos actualización ni refetch
+        // Los triggers de la BD actualizan balances automáticamente
+        // Eliminamos el refetch para evitar múltiples cargas
         if (loansToUpdate.length > 0) {
-          console.log('🔍 Forzando actualización de balances en BD para', loansToUpdate.length, 'préstamos');
-          // Actualizar en paralelo pero con un pequeño delay para evitar sobrecarga
-          loansToUpdate.forEach(async (loanId, index) => {
-            setTimeout(async () => {
-              try {
-                const { error } = await supabase.rpc('update_loan_remaining_balance', {
-                  p_loan_id: loanId
-                });
-                if (error) {
-                  console.warn(`Error actualizando balance para préstamo ${loanId}:`, error);
-                }
-              } catch (err) {
-                console.warn(`Error en actualización de balance para préstamo ${loanId}:`, err);
-              }
-            }, index * 100); // Espaciar las actualizaciones por 100ms cada una
-          });
-          
-          // Refrescar datos después de actualizar
-          setTimeout(() => {
-            refetch();
-          }, loansToUpdate.length * 100 + 500);
+          console.log('🔍 Discrepancia detectada en balances, pero confiando en triggers de BD');
+          // Los triggers de la BD ya actualizan remaining_balance automáticamente
+          // No necesitamos forzar actualización ni refetch
         }
       } catch (error) {
         console.error('Error calculando y verificando balances:', error);
