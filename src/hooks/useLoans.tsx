@@ -150,10 +150,37 @@ export const useLoans = () => {
           filter: `loan_officer_id=eq.${loanOfficerId}`
         }, 
         (payload) => {
-          console.log('🔔 Cambio detectado en loans (Realtime), actualizando lista:', payload);
+          console.log('🔔 Cambio detectado en loans (Realtime), actualizando lista inmediatamente:', payload);
           
-          // Refetch inmediatamente para obtener los datos actualizados
-          fetchLoans(true);
+          // ACTUALIZACIÓN INMEDIATA: Actualizar el estado loans directamente desde el payload
+          // Esto evita el delay del refetch y hace que los cambios se vean instantáneamente
+          if (payload.eventType === 'UPDATE' && payload.new) {
+            const updatedLoanData = payload.new as Partial<Loan>;
+            setLoans(prevLoans => {
+              const index = prevLoans.findIndex(l => l.id === updatedLoanData.id);
+              if (index !== -1) {
+                // Actualizar solo los campos que cambiaron, preservando el resto (como client)
+                const newLoans = [...prevLoans];
+                newLoans[index] = { 
+                  ...newLoans[index], 
+                  ...updatedLoanData,
+                  // Preservar relaciones que no vienen en el payload
+                  client: newLoans[index].client
+                };
+                return newLoans;
+              }
+              return prevLoans;
+            });
+          } else if (payload.eventType === 'INSERT' && payload.new) {
+            // Si es un nuevo préstamo, hacer refetch para obtener datos completos (con client, etc.)
+            fetchLoans(true);
+          } else if (payload.eventType === 'DELETE') {
+            // Si se elimina un préstamo, removerlo del estado
+            setLoans(prevLoans => prevLoans.filter(l => l.id !== (payload.old as any).id));
+          } else {
+            // Para otros casos, hacer refetch
+            fetchLoans(true);
+          }
         }
       )
       .subscribe();

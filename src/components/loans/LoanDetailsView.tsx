@@ -981,9 +981,31 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const amountToPay = loan.monthly_payment + effectiveLateFee;
   const toSettle = remainingBalance + effectiveLateFee;
 
-  // Calcular porcentaje pagado
-  const paidPercentage = loan.amount > 0 ? (totalPaid / loan.amount) * 100 : 0;
-  const pendingPercentage = 100 - paidPercentage;
+  // Calcular porcentaje pagado basándose en el total correcto (capital + interés + cargos)
+  // Para préstamos indefinidos: total = capital + interés pendiente + todos los cargos
+  // Para otros tipos: total = capital + interés total + todos los cargos
+  let totalLoanAmount: number;
+  if (loan.amortization_type === 'indefinite') {
+    // Para indefinidos: capital + interés pendiente + todos los cargos
+    totalLoanAmount = loan.amount + pendingInterestForIndefinite + totalChargesAmount;
+  } else {
+    // Para otros tipos: calcular total correcto
+    let correctTotalAmount = (loan as any).total_amount;
+    if (!correctTotalAmount || correctTotalAmount <= loan.amount) {
+      const totalInterest = loan.amount * (loan.interest_rate / 100) * loan.term_months;
+      correctTotalAmount = loan.amount + totalInterest;
+    }
+    totalLoanAmount = correctTotalAmount + totalChargesAmount;
+  }
+  
+  // Calcular total pagado (incluyendo capital, interés y cargos)
+  const totalPaidForPercentage = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  
+  // Calcular porcentajes basándose en el total correcto
+  const paidPercentage = totalLoanAmount > 0 ? (totalPaidForPercentage / totalLoanAmount) * 100 : 0;
+  
+  // Asegurar que el porcentaje esté entre 0 y 100
+  const safePaidPercentage = Math.max(0, Math.min(100, paidPercentage));
 
   // Calcular balance por antigüedad
   const calculateBalanceByAge = () => {
@@ -1275,24 +1297,30 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                             fill="none"
                             stroke="#3b82f6"
                             strokeWidth="16"
-                            strokeDasharray={`${(paidPercentage / 100) * 502.4} 502.4`}
+                            strokeDasharray={`${(safePaidPercentage / 100) * 502.4} 502.4`}
                             strokeLinecap="round"
                           />
                         </svg>
                         <div className="absolute inset-0 flex items-center justify-center">
                           <div className="text-center">
-                            <div className="text-2xl font-bold">{pendingPercentage.toFixed(1)}%</div>
-                            <div className="text-sm text-gray-600">Pendiente</div>
+                            <div className="text-2xl font-bold text-blue-600">{safePaidPercentage.toFixed(1)}%</div>
+                            <div className="text-sm text-gray-600">Pagado</div>
                           </div>
                         </div>
                       </div>
                     </div>
                     <div className="mt-4 space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span>Capital RD{totalPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Pagado</span>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Total Pagado:</span>
+                        <span className="font-semibold text-green-600">RD{totalPaidForPercentage.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Capital RD{capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Pendiente</span>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Total Pendiente:</span>
+                        <span className="font-semibold text-red-600">RD{(totalLoanAmount - totalPaidForPercentage).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-2 border-t">
+                        <span className="text-gray-600 font-medium">Total del Préstamo:</span>
+                        <span className="font-bold">RD{totalLoanAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     </div>
                   </CardContent>

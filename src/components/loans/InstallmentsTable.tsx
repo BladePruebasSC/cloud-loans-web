@@ -484,11 +484,18 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           correctedInterest = 0;
         }
 
-        // Usar total_amount de la BD como fuente de verdad para el amount
-        // Esto evita problemas de redondeo acumulativo
-        // IMPORTANTE: Si hay total_amount en la BD, usarlo directamente sin redondear
-        // Solo redondear si no hay total_amount y necesitamos calcularlo
-        const finalAmount = totalAmountFromDB || (correctedPrincipal + correctedInterest);
+        // CORRECCIÓN: Para préstamos indefinidos, el amount debe ser siempre principal + interés
+        // No usar totalAmountFromDB si es indefinido porque puede estar desactualizado
+        // Para otros tipos de préstamos, usar totalAmountFromDB si está disponible
+        let finalAmount: number;
+        if (loanInfo?.amortization_type === 'indefinite') {
+          // Para indefinidos, calcular el amount como la suma de principal + interés
+          finalAmount = correctedPrincipal + correctedInterest;
+        } else {
+          // Para otros tipos, usar total_amount de la BD si está disponible (evita problemas de redondeo)
+          finalAmount = totalAmountFromDB || (correctedPrincipal + correctedInterest);
+        }
+        
         const finalPrincipal = isCharge ? correctedPrincipal : Math.round(correctedPrincipal * 100) / 100;
         const finalInterest = isCharge ? 0 : Math.round(correctedInterest * 100) / 100;
 
@@ -999,14 +1006,54 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     const isIndefinite = loanInfo.amortization_type === 'indefinite';
     
     if (isIndefinite) {
-      // Para préstamos indefinidos: Total = Interés por cuota × Número de cuotas
-      // Interés por cuota = (amount × interest_rate) / 100
-      const interestPerPayment = (loanInfo.amount * loanInfo.interest_rate) / 100;
-      totalAmount = interestPerPayment * installments.length;
+      // Para préstamos indefinidos: Total = Capital + Interés total + Todos los cargos
+      // Calcular todos los cargos (cuotas con interest_amount = 0 y principal_amount = total_amount)
+      const chargesTotal = installments.reduce((sum, inst) => {
+        const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 && 
+                        Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01 &&
+                        (inst as any).principal_amount > 0;
+        if (isCharge) {
+          // Usar total_amount de la BD si está disponible, sino usar amount
+          const chargeAmount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
+            ? (inst as any).total_amount
+            : (inst.amount || 0);
+          return sum + Number(chargeAmount);
+        }
+        return sum;
+      }, 0);
       
-      // Total pagado: sumar solo las cuotas pagadas usando el interés real
-      const paidInstallments = installments.filter(inst => inst.is_paid).length;
-      totalPaid = interestPerPayment * paidInstallments;
+      // Calcular el interés total sumando todas las cuotas de interés (excluyendo cargos)
+      const interestTotal = installments.reduce((sum, inst) => {
+        const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 && 
+                        Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01 &&
+                        (inst as any).principal_amount > 0;
+        if (!isCharge) {
+          // Sumar el interés de esta cuota
+          const interestAmount = (inst as any).interest_amount !== undefined && (inst as any).interest_amount !== null
+            ? (inst as any).interest_amount
+            : (inst.interest_amount || 0);
+          return sum + Number(interestAmount);
+        }
+        return sum;
+      }, 0);
+      
+      // Total = Capital + Interés total + Todos los cargos
+      totalAmount = loanInfo.amount + interestTotal + chargesTotal;
+      
+      // Total pagado: usar los pagos reales si están disponibles
+      if (totalPaidFromPayments > 0) {
+        totalPaid = totalPaidFromPayments;
+      } else {
+        // Fallback: calcular desde cuotas pagadas sumando sus montos reales
+        totalPaid = installments
+          .filter(inst => inst.is_paid)
+          .reduce((sum, inst) => {
+            const amount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
+              ? (inst as any).total_amount
+              : (inst.amount || 0);
+            return sum + Number(amount);
+          }, 0);
+      }
     } else {
       // Para préstamos con plazo definido: calcular el total correctamente
       // IMPORTANTE: Usar total_amount del préstamo como base (sin redondear) y sumar solo los cargos
