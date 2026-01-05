@@ -104,13 +104,6 @@ export const LoansModule = () => {
   // CORRECCIÓN: Calcular dinámicamente igual que LoanDetailsView
   // Esto asegura que el preview muestre el mismo valor que Detalles incluso cuando la BD no se actualiza
   const calculateRemainingBalance = async (loan: any): Promise<number> => {
-    // Para préstamos indefinidos, usar la lógica existente con interés pendiente
-    if (loan.amortization_type === 'indefinite') {
-      const baseAmount = loan.amount || 0;
-      const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
-      return baseAmount + pendingInterest;
-    }
-    
     try {
       // Obtener todos los pagos del préstamo
       const { data: payments, error: paymentsError } = await supabase
@@ -129,6 +122,86 @@ export const LoansModule = () => {
         .select('id, total_amount, principal_amount, interest_amount, is_paid, due_date, installment_number')
         .eq('loan_id', loan.id);
       
+      // Calcular el total pagado usando amount (igual que InstallmentsTable)
+      const totalPaid = (payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      
+      // CORRECCIÓN: Para préstamos indefinidos, incluir cargos y restar solo pagos de capital/cargos
+      // Los pagos de interés NO reducen el balance en préstamos indefinidos
+      if (loan.amortization_type === 'indefinite') {
+        const baseAmount = loan.amount || 0;
+        
+        // Calcular interés pendiente directamente aquí para asegurar que esté disponible
+        let pendingInterest = 0;
+        if (loan.start_date) {
+          const interestPerPayment = (loan.amount || 0) * ((loan.interest_rate || 0) / 100);
+          const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+          const startDate = new Date(startYear, startMonth - 1, startDay);
+          const currentDate = getCurrentDateInSantoDomingo();
+          const monthsElapsed = Math.max(0, 
+            (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+            (currentDate.getMonth() - startDate.getMonth())
+          );
+          
+          // Calcular cuántas cuotas se han pagado desde los pagos
+          let paidCount = 0;
+          if (payments && payments.length > 0 && interestPerPayment > 0) {
+            // Obtener pagos con interés para calcular cuántas cuotas se han pagado
+            const { data: paymentsWithInterest } = await supabase
+              .from('payments')
+              .select('interest_amount')
+              .eq('loan_id', loan.id);
+            
+            const totalInterestPaid = (paymentsWithInterest || []).reduce((sum, p) => sum + (Number(p.interest_amount) || 0), 0);
+            paidCount = Math.floor(totalInterestPaid / interestPerPayment);
+          }
+          
+          // CORRECCIÓN: El total esperado debe ser al menos (paidCount + 1) para asegurar que siempre hay 1 cuota pendiente
+          // También debe ser al menos (monthsElapsed + 1) para reflejar el tiempo transcurrido
+          const totalExpectedInstallments = Math.max(paidCount + 1, monthsElapsed + 1);
+          
+          const unpaidCount = Math.max(1, totalExpectedInstallments - paidCount); // Siempre al menos 1 cuota pendiente
+          pendingInterest = unpaidCount * interestPerPayment;
+        }
+        
+        // Calcular el total de TODOS los cargos (pagados y no pagados)
+        let totalChargesAmount = 0;
+        if (allInstallments && allInstallments.length > 0) {
+          const allChargesList = allInstallments.filter(inst => {
+            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+            return isCharge;
+          });
+          totalChargesAmount = allChargesList.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+        }
+        
+        // CORRECCIÓN CRÍTICA: Solo restar pagos de capital/cargos, NO pagos de interés
+        // Obtener pagos de capital/cargos (principal_amount > 0)
+        const { data: paymentsWithPrincipal, error: paymentsPrincipalError } = await supabase
+          .from('payments')
+          .select('principal_amount')
+          .eq('loan_id', loan.id)
+          .gt('principal_amount', 0);
+        
+        const totalPaidCapital = (paymentsWithPrincipal || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
+        
+        // Balance = capital + interés pendiente + TODOS los cargos - pagos de capital/cargos
+        // Los pagos de interés NO reducen el balance
+        const remainingBalance = Math.max(0, baseAmount + pendingInterest + totalChargesAmount - totalPaidCapital);
+        
+        console.log('🔍 calculateRemainingBalance: Balance calculado para indefinido', {
+          loanId: loan.id,
+          baseAmount,
+          pendingInterest,
+          totalChargesAmount,
+          totalPaidCapital,
+          totalPaid, // Para comparación
+          remainingBalance,
+          bdRemainingBalance: loan.remaining_balance
+        });
+        
+        return remainingBalance;
+      }
+      
       if (installmentsError) {
         console.error('Error obteniendo installments para calcular balance:', installmentsError);
         // Fallback al cálculo tradicional
@@ -137,7 +210,6 @@ export const LoansModule = () => {
           const totalInterest = loan.amount * (loan.interest_rate / 100) * loan.term_months;
           correctTotalAmount = loan.amount + totalInterest;
         }
-        const totalPaid = (payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
         return Math.max(0, correctTotalAmount - totalPaid);
       }
       
@@ -167,9 +239,6 @@ export const LoansModule = () => {
       
       // Calcular el total del préstamo incluyendo TODOS los cargos (pagados y no pagados)
       const totalAmountWithCharges = correctTotalAmount + totalChargesAmount;
-      
-      // Calcular el total pagado usando amount (igual que InstallmentsTable)
-      const totalPaid = (payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
       
       // El balance restante es el total (préstamo + cargos) menos lo pagado
       const remainingBalance = Math.max(0, totalAmountWithCharges - totalPaid);
@@ -528,7 +597,7 @@ export const LoansModule = () => {
       try {
         const remainingBalances: { [loanId: string]: number } = {};
         const loansToUpdate: string[] = [];
-        
+    
         // Calcular balances para todos los préstamos
         const calculations = loans.map(async (loan) => {
           const calculatedBalance = await calculateRemainingBalance(loan);
@@ -551,29 +620,29 @@ export const LoansModule = () => {
             remainingBalance: calculatedBalance,
             needsUpdate: discrepancy > 0.01 
           };
-        });
-        
-        const results = await Promise.all(calculations);
-        
+      });
+      
+      const results = await Promise.all(calculations);
+      
         // Actualizar estado con balances calculados
         results.forEach(({ loanId, remainingBalance, needsUpdate }) => {
-          // Solo actualizar si no hay actualización optimista reciente
-          const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
-          const now = Date.now();
-          const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
-          
-          if (timeSinceOptimistic > 2000) {
-            remainingBalances[loanId] = remainingBalance;
-          }
-        });
+        // Solo actualizar si no hay actualización optimista reciente
+        const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
+        const now = Date.now();
+        const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
         
-        // Actualizar estado con balances calculados
-        if (Object.keys(remainingBalances).length > 0) {
-          setCalculatedRemainingBalances(prev => ({
-            ...prev,
-            ...remainingBalances
-          }));
+        if (timeSinceOptimistic > 2000) {
+          remainingBalances[loanId] = remainingBalance;
         }
+      });
+      
+        // Actualizar estado con balances calculados
+      if (Object.keys(remainingBalances).length > 0) {
+        setCalculatedRemainingBalances(prev => ({
+          ...prev,
+          ...remainingBalances
+        }));
+      }
         
         // Forzar actualización en BD para préstamos con discrepancias
         if (loansToUpdate.length > 0) {
@@ -2066,12 +2135,12 @@ export const LoansModule = () => {
                                   ? calculatedRemainingBalances[loan.id]
                                   : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
                                       ? loan.remaining_balance
-                                      : (loan.amortization_type === 'indefinite' 
-                                          ? (() => {
-                                            const baseAmount = loan.amount || 0;
-                                            const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
-                                            return baseAmount + pendingInterest;
-                                          })()
+                                  : (loan.amortization_type === 'indefinite' 
+                                      ? (() => {
+                                          const baseAmount = loan.amount || 0;
+                                          const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
+                                          return baseAmount + pendingInterest;
+                                        })()
                                           : loan.amount || 0))
                               )}
                             </div>
@@ -2094,8 +2163,8 @@ export const LoansModule = () => {
                                       ? calculatedRemainingBalances[loan.id]
                                       : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
                                           ? loan.remaining_balance
-                                          : (loan.amortization_type === 'indefinite' 
-                                              ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
+                                      : (loan.amortization_type === 'indefinite' 
+                                          ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
                                               : loan.amount || 0))) + 
                                      (dynamicLateFees[loan.id] || loan.current_late_fee || 0))
                               )}

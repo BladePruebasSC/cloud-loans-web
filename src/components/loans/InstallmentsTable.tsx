@@ -144,24 +144,39 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
       const loanInfo = loanInfoResult.data;
       
-      // Luego obtener las cuotas, limitando a 1 si es indefinido
+      // CORRECCIÓN: Para préstamos indefinidos, obtener TODAS las cuotas (incluyendo cargos)
+      // Antes solo se obtenía 1 cuota, lo que excluía los cargos
       const isIndefinite = loanInfo?.amortization_type === 'indefinite';
-      let installmentsQuery = supabase
+      const installmentsQuery = supabase
         .from('installments')
         .select('*, is_settled, total_amount')
         .eq('loan_id', loanId)
         .order('due_date', { ascending: true })
         .order('installment_number', { ascending: true }); // Orden secundario por número de cuota
       
-      if (isIndefinite) {
-        installmentsQuery = installmentsQuery.limit(1);
-      }
-      
       const installmentsResult = await installmentsQuery;
       
       if (installmentsResult.error) throw installmentsResult.error;
 
       let data = installmentsResult.data || [];
+      
+      // Para préstamos indefinidos, separar cargos de cuotas regulares
+      let chargesFromDB: typeof data = [];
+      let regularInstallmentsFromDB: typeof data = [];
+      if (isIndefinite) {
+        chargesFromDB = data.filter(inst => {
+          const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 &&
+                          (inst as any).principal_amount > 0 &&
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || 0)) < 0.01;
+          return isCharge;
+        });
+        regularInstallmentsFromDB = data.filter(inst => {
+          const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 &&
+                          (inst as any).principal_amount > 0 &&
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || 0)) < 0.01;
+          return !isCharge;
+        });
+      }
 
       // Para préstamos indefinidos, generar cuotas dinámicamente basándose en el tiempo transcurrido
       if (isIndefinite && loanInfo) {
@@ -342,13 +357,22 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             // para evitar usar fechas incorrectas guardadas en la BD
             const finalDueDate = formattedDate; // Siempre usar la fecha calculada correctamente
             
+            // Para préstamos indefinidos, las cuotas normales (con interés) NO deben tener capital
+            // Solo los cargos (sin interés) tienen capital
+            const isChargeFromDB = existingInstallment && 
+                                   Math.abs((existingInstallment.interest_amount || 0)) < 0.01 &&
+                                   existingInstallment.principal_amount > 0 &&
+                                   Math.abs(existingInstallment.principal_amount - (existingInstallment.total_amount || existingInstallment.amount || 0)) < 0.01;
+            
             dynamicInstallments.push({
               id: existingInstallment?.id || `dynamic-${i}`,
               loan_id: loanId,
               installment_number: i,
               due_date: finalDueDate,
               amount: existingInstallment?.amount || interestPerPayment,
-              principal_amount: existingInstallment?.principal_amount || 0,
+              // CORRECCIÓN: Para préstamos indefinidos, las cuotas normales (con interés) deben tener principal_amount = 0
+              // Solo los cargos (sin interés) tienen principal_amount > 0
+              principal_amount: isChargeFromDB ? (existingInstallment.principal_amount || 0) : 0,
               interest_amount: existingInstallment?.interest_amount || interestPerPayment,
               late_fee_paid: existingInstallment?.late_fee_paid || 0,
               is_paid: existingInstallment?.is_paid || false,
@@ -404,7 +428,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             }
           }
           
-          data = dynamicInstallments;
+          // CORRECCIÓN: Mezclar cuotas dinámicas con cargos de la BD
+          // Los cargos deben incluirse porque están en la BD y no se generan dinámicamente
+          data = [...dynamicInstallments, ...chargesFromDB];
         }
       }
 
@@ -442,8 +468,13 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           correctedInterest = (loanData.amount * loanData.interest_rate) / 100;
         }
 
-        // Si no es un cargo y no hay capital, calcularlo
-        if (!isCharge && (!correctedPrincipal || correctedPrincipal === 0)) {
+        // CORRECCIÓN: Para préstamos indefinidos, las cuotas normales (con interés) NO deben tener capital
+        // Solo los cargos (sin interés) tienen capital
+        if (!isCharge && loanInfo?.amortization_type === 'indefinite') {
+          // Para préstamos indefinidos, las cuotas normales siempre tienen principal_amount = 0
+          correctedPrincipal = 0;
+        } else if (!isCharge && (!correctedPrincipal || correctedPrincipal === 0)) {
+          // Para otros tipos de préstamos, calcular el capital normalmente
           correctedPrincipal = correctedAmount - correctedInterest;
         }
         
@@ -506,19 +537,117 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           installmentsMap.set(inst.installment_number, inst);
         });
 
-        // Para préstamos indefinidos, usar lógica de acumulación de interés
+        // Para préstamos indefinidos, procesar primero cargos y luego cuotas regulares (igual que préstamos no indefinidos)
         if (isIndefinite) {
+          // PRIMERO: Procesar TODOS los cargos
+          const chargeInstallments: typeof sortedInstallments = [];
+          for (const inst of sortedInstallments) {
+            const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 &&
+                            (inst as any).principal_amount > 0 &&
+                            Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+            if (isCharge) {
+              chargeInstallments.push(inst);
+            }
+          }
+
+          // Procesar cada cargo
+          for (const chargeInst of chargeInstallments) {
+            const chargeTotal = chargeInst.total_amount || chargeInst.amount || chargeInst.principal_amount;
+            const chargeDueDate = chargeInst.due_date?.split('T')[0];
+            let accumulatedPrincipal = 0;
+
+            // Buscar TODOS los pagos que correspondan a este cargo específico
+            for (let pIdx = 0; pIdx < sortedPayments.length && accumulatedPrincipal < chargeTotal * 0.99; pIdx++) {
+              const payment = sortedPayments[pIdx];
+              const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
+              
+              const hasNoInterest = (payment.interest_amount || 0) < 0.01;
+              const reasonableAmount = (payment.principal_amount || payment.amount || 0) <= chargeTotal * 1.1;
+              const paymentMatchesCharge = paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
+
+              if (paymentMatchesCharge) {
+                const paymentAmount = payment.principal_amount || payment.amount || 0;
+                const remainingCharge = chargeTotal - accumulatedPrincipal;
+
+                if (paymentAmount > 0 && paymentAmount <= remainingCharge * 1.1) {
+                  accumulatedPrincipal += paymentAmount;
+
+                  if (accumulatedPrincipal >= chargeTotal * 0.99) {
+                    break;
+                  }
+                }
+              }
+            }
+
+            // Marcar el cargo como pagado si se acumuló suficiente monto
+            if (accumulatedPrincipal >= chargeTotal * 0.99) {
+              chargeInst.is_paid = true;
+              const paymentForCharge = sortedPayments.find(p => {
+                const paymentDueDate = (p.due_date as string)?.split('T')[0] || (p.due_date as string);
+                return paymentDueDate === chargeDueDate;
+              });
+              if (paymentForCharge) {
+                chargeInst.paid_date = paymentForCharge.payment_date?.split('T')[0] || paymentForCharge.payment_date || null;
+              }
+            } else {
+              chargeInst.is_paid = false;
+              chargeInst.paid_date = null;
+            }
+          }
+
+          // SEGUNDO: Procesar cuotas regulares (de interés)
           const interestPerPayment = (loanInfo.amount || 0) * ((loanInfo.interest_rate || 0) / 100);
           let accumulatedInterest = 0;
           let paymentIndex = 0;
           let firstPaymentDateForInstallment: string | null = null;
 
+          // Crear un Set de IDs de pagos ya asignados a cargos
+          const paymentsAssignedToCharges = new Set<string>();
+          for (const chargeInst of chargeInstallments) {
+            const chargeTotal = chargeInst.total_amount || chargeInst.amount || chargeInst.principal_amount;
+            const chargeDueDate = chargeInst.due_date?.split('T')[0];
+            let chargeAccumulated = 0;
+            
+            for (const payment of sortedPayments) {
+              if (paymentsAssignedToCharges.has(payment.id)) continue;
+              
+              const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
+              const hasNoInterest = (payment.interest_amount || 0) < 0.01;
+              const reasonableAmount = (payment.principal_amount || payment.amount || 0) <= chargeTotal * 1.1;
+              const paymentMatchesCharge = paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
+              
+              if (paymentMatchesCharge && chargeAccumulated < chargeTotal * 0.99) {
+                const paymentAmount = payment.principal_amount || payment.amount || 0;
+                if (paymentAmount > 0 && paymentAmount <= (chargeTotal - chargeAccumulated) * 1.1) {
+                  paymentsAssignedToCharges.add(payment.id);
+                  chargeAccumulated += paymentAmount;
+                  if (chargeAccumulated >= chargeTotal * 0.99) break;
+                }
+              }
+            }
+          }
+
           for (let i = 0; i < sortedInstallments.length && paymentIndex < sortedPayments.length; i++) {
             const installment = sortedInstallments[i];
 
-            // Acumular interés de los pagos hasta que se complete esta cuota
+            // Saltar si es un cargo (ya fue procesado)
+            const isCharge = Math.abs((installment as any).interest_amount || 0) < 0.01 &&
+                            (installment as any).principal_amount > 0 &&
+                            Math.abs((installment as any).principal_amount - ((installment as any).total_amount || installment.amount || 0)) < 0.01;
+            if (isCharge) {
+              continue;
+            }
+
+            // Acumular interés de los pagos hasta que se complete esta cuota (excluyendo pagos asignados a cargos)
             while (paymentIndex < sortedPayments.length && accumulatedInterest < interestPerPayment * 0.99) {
               const payment = sortedPayments[paymentIndex];
+              
+              // Saltar pagos ya asignados a cargos
+              if (paymentsAssignedToCharges.has(payment.id)) {
+                paymentIndex++;
+                continue;
+              }
+
               const paymentInterest = payment.interest_amount || 0;
 
               if (firstPaymentDateForInstallment === null) {

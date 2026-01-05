@@ -246,15 +246,11 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         (currentDate.getMonth() - startDate.getMonth())
       );
 
-      // Total de cuotas que deberían existir desde el inicio hasta hoy
-      const totalExpectedInstallments = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
-
       console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Cálculo dinámico', {
         loanId: loan.id,
         startDate: loan.start_date,
         currentDate: currentDate.toISOString().split('T')[0],
-        monthsElapsed,
-        totalExpectedInstallments
+        monthsElapsed
       });
 
       // Calcular cuántas cuotas se han pagado
@@ -284,8 +280,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         });
       }
 
-      // Cuotas pendientes = total esperadas - pagadas
-      const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
+      // CORRECCIÓN: El total esperado debe ser al menos (paidCount + 1) para asegurar que siempre hay 1 cuota pendiente
+      // También debe ser al menos (monthsElapsed + 1) para reflejar el tiempo transcurrido
+      const totalExpectedInstallments = Math.max(paidCount + 1, monthsElapsed + 1);
+
+      // Cuotas pendientes = total esperadas - pagadas (siempre al menos 1)
+      const unpaidCount = Math.max(1, totalExpectedInstallments - paidCount);
 
       // Calcular interés pendiente total
       const totalPendingInterest = unpaidCount * interestPerPayment;
@@ -883,11 +883,15 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   }
   
   // Calcular balance restante
-  // Para préstamos indefinidos: amount + interés pendiente total
+  // CORRECCIÓN: Para préstamos indefinidos, incluir cargos y restar solo pagos de capital/cargos
+  // Los pagos de interés NO reducen el balance en préstamos indefinidos
   // Para otros tipos: calcular basándose en total_amount o calcularlo
   let remainingBalance: number;
   if (loan.amortization_type === 'indefinite') {
-    remainingBalance = loan.amount + pendingInterestForIndefinite;
+    // CORRECCIÓN CRÍTICA: Solo restar pagos de capital/cargos, NO pagos de interés
+    const totalPaidCapital = payments.reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
+    // Balance = capital + interés pendiente + TODOS los cargos - pagos de capital/cargos
+    remainingBalance = Math.max(0, loan.amount + pendingInterestForIndefinite + totalChargesAmount - totalPaidCapital);
   } else {
     // Calcular el total correcto (capital + interés total)
     let correctTotalAmount = (loan as any).total_amount;

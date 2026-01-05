@@ -25,40 +25,79 @@ BEGIN
         RETURN 0;
     END IF;
     
-    -- Para préstamos indefinidos, calcular interés pendiente
+    -- Para préstamos indefinidos, calcular interés pendiente + cargos - pagos
     IF v_loan.amortization_type = 'indefinite' THEN
         -- Calcular interés pendiente basado en cuotas esperadas vs pagadas
         -- Esto es una simplificación - en producción podría necesitar más lógica
         SELECT COALESCE(SUM(interest_amount), 0)
         INTO v_pending_interest
         FROM public.installments
-        WHERE loan_id = p_loan_id AND is_paid = false;
+        WHERE loan_id = p_loan_id 
+          AND is_paid = false
+          AND NOT (ABS(interest_amount) < 0.01 AND ABS(principal_amount - COALESCE(total_amount, 0)) < 0.01); -- Excluir cargos
         
-        -- Si no hay installments, calcular basado en meses transcurridos
+        -- Si no hay installments de interés, calcular basado en meses transcurridos
         IF v_pending_interest = 0 THEN
             DECLARE
                 v_months_elapsed INTEGER;
                 v_interest_per_month DECIMAL(10,2);
                 v_total_expected_interest DECIMAL(10,2);
                 v_paid_interest DECIMAL(10,2);
+                v_paid_count INTEGER;
+                v_total_expected_count INTEGER;
             BEGIN
                 v_months_elapsed := EXTRACT(YEAR FROM AGE(CURRENT_DATE, v_loan.start_date::DATE)) * 12 
                                   + EXTRACT(MONTH FROM AGE(CURRENT_DATE, v_loan.start_date::DATE));
                 v_months_elapsed := GREATEST(0, v_months_elapsed);
                 
                 v_interest_per_month := v_loan.amount * (v_loan.interest_rate / 100);
-                v_total_expected_interest := v_interest_per_month * GREATEST(1, v_months_elapsed + 1);
                 
+                -- Calcular cuántas cuotas se han pagado
                 SELECT COALESCE(SUM(interest_amount), 0)
                 INTO v_paid_interest
                 FROM public.payments
                 WHERE loan_id = p_loan_id;
                 
-                v_pending_interest := GREATEST(0, v_total_expected_interest - v_paid_interest);
+                -- Calcular cuántas cuotas completas se han pagado
+                IF v_interest_per_month > 0 THEN
+                    v_paid_count := FLOOR(v_paid_interest / v_interest_per_month);
+                ELSE
+                    v_paid_count := 0;
+                END IF;
+                
+                -- CORRECCIÓN: El total esperado debe ser al menos (paidCount + 1) para asegurar que siempre hay 1 cuota pendiente
+                -- También debe ser al menos (monthsElapsed + 1) para reflejar el tiempo transcurrido
+                v_total_expected_count := GREATEST(v_paid_count + 1, v_months_elapsed + 1);
+                
+                -- Calcular interés pendiente: siempre al menos 1 cuota pendiente
+                v_pending_interest := v_interest_per_month * GREATEST(1, v_total_expected_count - v_paid_count);
             END;
         END IF;
         
-        RETURN v_loan.amount + v_pending_interest;
+        -- CORRECCIÓN: Calcular el total de TODOS los cargos (pagados y no pagados) desde installments
+        -- Un cargo es cuando interest_amount es 0 (o muy cercano a 0) y principal_amount es igual (o muy cercano) a total_amount
+        SELECT COALESCE(SUM(total_amount), 0)
+        INTO v_total_charges_amount
+        FROM public.installments
+        WHERE loan_id = p_loan_id
+          AND ABS(interest_amount) < 0.01  -- interest_amount es 0 (con tolerancia para redondeo)
+          AND ABS(principal_amount - COALESCE(total_amount, 0)) < 0.01  -- principal_amount = total_amount (con tolerancia)
+          AND COALESCE(total_amount, 0) > 0;  -- Asegurar que total_amount existe y es mayor que 0
+        
+        -- CORRECCIÓN CRÍTICA: Para préstamos indefinidos, los pagos de interés NO reducen el balance
+        -- Solo restar pagos de capital/cargos, NO pagos de interés
+        -- Un pago de capital/cargo es uno donde principal_amount > 0 O interest_amount = 0 (o muy cercano)
+        SELECT COALESCE(SUM(principal_amount), 0)
+        INTO v_total_paid
+        FROM public.payments
+        WHERE loan_id = p_loan_id
+          AND principal_amount > 0;  -- Solo pagos de capital/cargos, excluir pagos solo de interés
+        
+        -- El balance restante es: capital + interés pendiente + TODOS los cargos - pagos de capital/cargos
+        -- Los pagos de interés NO reducen el balance en préstamos indefinidos
+        v_remaining_balance := GREATEST(0, v_loan.amount + v_pending_interest + v_total_charges_amount - v_total_paid);
+        
+        RETURN v_remaining_balance;
     END IF;
     
     -- Para otros tipos de préstamos, calcular con cargos incluidos
