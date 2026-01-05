@@ -544,8 +544,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           installmentsMap.set(inst.installment_number, inst);
         });
 
-        // Para préstamos indefinidos, procesar primero cargos y luego cuotas regulares (igual que préstamos no indefinidos)
+        // Para préstamos indefinidos, procesar primero cargos y luego cuotas regulares (igual que AccountStatement)
         if (isIndefinite) {
+          // Crear un Set global para rastrear qué pagos (por ID) ya han sido asignados a cuotas
+          const assignedPaymentIds = new Set<string>();
+          
           // PRIMERO: Procesar TODOS los cargos
           const chargeInstallments: typeof sortedInstallments = [];
           for (const inst of sortedInstallments) {
@@ -566,8 +569,13 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             // Buscar TODOS los pagos que correspondan a este cargo específico
             for (let pIdx = 0; pIdx < sortedPayments.length && accumulatedPrincipal < chargeTotal * 0.99; pIdx++) {
               const payment = sortedPayments[pIdx];
-              const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
               
+              // Si el pago ya fue asignado, saltarlo
+              if (assignedPaymentIds.has(payment.id)) {
+                continue;
+              }
+              
+              const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
               const hasNoInterest = (payment.interest_amount || 0) < 0.01;
               const reasonableAmount = (payment.principal_amount || payment.amount || 0) <= chargeTotal * 1.1;
               const paymentMatchesCharge = paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
@@ -577,6 +585,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 const remainingCharge = chargeTotal - accumulatedPrincipal;
 
                 if (paymentAmount > 0 && paymentAmount <= remainingCharge * 1.1) {
+                  assignedPaymentIds.add(payment.id);
                   accumulatedPrincipal += paymentAmount;
 
                   if (accumulatedPrincipal >= chargeTotal * 0.99) {
@@ -602,65 +611,42 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             }
           }
 
-          // SEGUNDO: Procesar cuotas regulares (de interés)
+          // SEGUNDO: Procesar cuotas regulares (de interés) - Igual que AccountStatement
           const interestPerPayment = (loanInfo.amount || 0) * ((loanInfo.interest_rate || 0) / 100);
           let accumulatedInterest = 0;
           let paymentIndex = 0;
           let firstPaymentDateForInstallment: string | null = null;
 
-          // Crear un Set de IDs de pagos ya asignados a cargos
-          const paymentsAssignedToCharges = new Set<string>();
-          for (const chargeInst of chargeInstallments) {
-            const chargeTotal = chargeInst.total_amount || chargeInst.amount || chargeInst.principal_amount;
-            const chargeDueDate = chargeInst.due_date?.split('T')[0];
-            let chargeAccumulated = 0;
-            
-            for (const payment of sortedPayments) {
-              if (paymentsAssignedToCharges.has(payment.id)) continue;
-              
-              const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
-              const hasNoInterest = (payment.interest_amount || 0) < 0.01;
-              const reasonableAmount = (payment.principal_amount || payment.amount || 0) <= chargeTotal * 1.1;
-              const paymentMatchesCharge = paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
-              
-              if (paymentMatchesCharge && chargeAccumulated < chargeTotal * 0.99) {
-                const paymentAmount = payment.principal_amount || payment.amount || 0;
-                if (paymentAmount > 0 && paymentAmount <= (chargeTotal - chargeAccumulated) * 1.1) {
-                  paymentsAssignedToCharges.add(payment.id);
-                  chargeAccumulated += paymentAmount;
-                  if (chargeAccumulated >= chargeTotal * 0.99) break;
-                }
-              }
-            }
-          }
+          // Filtrar y ordenar las cuotas regulares (excluyendo cargos) por installment_number
+          const regularInstallments = sortedInstallments
+            .filter(inst => {
+              const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 &&
+                              (inst as any).principal_amount > 0 &&
+                              Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+              return !isCharge;
+            })
+            .sort((a, b) => a.installment_number - b.installment_number);
 
-          for (let i = 0; i < sortedInstallments.length && paymentIndex < sortedPayments.length; i++) {
-            const installment = sortedInstallments[i];
-
-            // Saltar si es un cargo (ya fue procesado)
-            const isCharge = Math.abs((installment as any).interest_amount || 0) < 0.01 &&
-                            (installment as any).principal_amount > 0 &&
-                            Math.abs((installment as any).principal_amount - ((installment as any).total_amount || installment.amount || 0)) < 0.01;
-            if (isCharge) {
-              continue;
-            }
-
-            // Acumular interés de los pagos hasta que se complete esta cuota (excluyendo pagos asignados a cargos)
+          // Procesar cuotas regulares en orden
+          for (const installment of regularInstallments) {
+            // Acumular interés de los pagos hasta que se complete esta cuota (excluyendo pagos ya asignados)
             while (paymentIndex < sortedPayments.length && accumulatedInterest < interestPerPayment * 0.99) {
               const payment = sortedPayments[paymentIndex];
               
-              // Saltar pagos ya asignados a cargos
-              if (paymentsAssignedToCharges.has(payment.id)) {
+              // Saltar pagos ya asignados (a cargos o a otras cuotas)
+              if (assignedPaymentIds.has(payment.id)) {
                 paymentIndex++;
                 continue;
               }
 
               const paymentInterest = payment.interest_amount || 0;
 
-              if (firstPaymentDateForInstallment === null) {
+              if (firstPaymentDateForInstallment === null && paymentInterest > 0) {
                 firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;
               }
 
+              // Asignar este pago a esta cuota
+              assignedPaymentIds.add(payment.id);
               accumulatedInterest += paymentInterest;
               paymentIndex++;
             }
@@ -669,12 +655,14 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             if (accumulatedInterest >= interestPerPayment * 0.99) {
               installment.is_paid = true;
               installment.paid_date = firstPaymentDateForInstallment;
+              // Restar el interés usado para esta cuota (el excedente se usa para la siguiente)
               accumulatedInterest -= interestPerPayment;
               firstPaymentDateForInstallment = null;
             } else {
-              // Si no hay suficiente interés, la cuota no está pagada
+              // Si no hay suficiente interés acumulado, la cuota no está pagada y detener el procesamiento
               installment.is_paid = false;
               installment.paid_date = null;
+              break; // Detener el procesamiento, las cuotas siguientes están pendientes
             }
           }
         } else {

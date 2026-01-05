@@ -88,6 +88,14 @@ export const LoansModule = () => {
   const [calculatedRemainingBalances, setCalculatedRemainingBalances] = useState<{[key: string]: number}>({});
   // Timestamp de última actualización optimista por préstamo para evitar sobrescrituras
   const optimisticUpdateTimestampsRef = useRef<{[key: string]: number}>({});
+  // Ref para rastrear si ya se procesó una acción desde la URL (evitar re-ejecuciones)
+  const processedActionRef = useRef<string | null>(null);
+  // Ref para rastrear si el usuario cerró el formulario manualmente (evitar re-abrir)
+  const manuallyClosedRef = useRef<boolean>(false);
+  // Ref para rastrear la última URL procesada (para detectar cambios de URL)
+  const lastProcessedUrlRef = useRef<string | null>(null);
+  // Ref para rastrear si la última URL tenía parámetros (para detectar nueva navegación)
+  const lastUrlHadParamsRef = useRef<boolean>(false);
   
   // Función helper para calcular el monto total correcto (capital + interés total)
   const calculateTotalAmount = (loan: any): number => {
@@ -1381,18 +1389,68 @@ export const LoansModule = () => {
     const action = urlParams.get('action');
     const loanId = urlParams.get('loanId');
     
-    if (action && loanId) {
-      // Esperar a que los préstamos estén cargados
-      if (loading) {
-        return; // Esperar a que termine la carga
-      }
-      
-      // Buscar el préstamo específico
-      const targetLoan = loans.find(loan => loan.id === loanId);
-      
-      if (targetLoan) {
-        // Pequeño delay para asegurar que el componente esté listo
-        setTimeout(() => {
+    // Si no hay parámetros en la URL, solo marcar que la URL no tiene parámetros
+    // NO resetear manuallyClosedRef aquí - mantenerlo para prevenir re-apertura
+    if (!action || !loanId) {
+      lastUrlHadParamsRef.current = false;
+      return;
+    }
+    
+    // VERIFICACIÓN CRÍTICA: Si el usuario cerró manualmente Y el formulario está cerrado, NO procesar
+    // Esto previene que se reabra el formulario después de cerrarlo
+    if (manuallyClosedRef.current && !showPaymentForm && !showCollectionTracking) {
+      // Limpiar URL y no procesar
+      window.history.replaceState({}, '', '/prestamos');
+      lastUrlHadParamsRef.current = false;
+      return;
+    }
+    
+    // Crear una clave única para esta acción y la URL completa
+    const actionKey = `${action}-${loanId}`;
+    const currentUrl = location.search;
+    
+    // Detectar si es una nueva navegación: la URL cambió de no tener parámetros a tenerlos
+    // Esto ocurre cuando el usuario hace clic en una notificación
+    const isNewNavigation = !lastUrlHadParamsRef.current;
+    
+    // Si es una nueva navegación, resetear el flag de cierre manual para permitir abrir
+    if (isNewNavigation) {
+      manuallyClosedRef.current = false;
+      processedActionRef.current = null; // Resetear también para permitir procesar
+    }
+    
+    // Si es una acción diferente a la procesada anteriormente, resetear también processedActionRef
+    // Esto permite abrir desde notificaciones incluso si el usuario cerró un formulario anterior
+    if (processedActionRef.current !== actionKey) {
+      manuallyClosedRef.current = false; // Resetear también manuallyClosedRef para acción diferente
+    }
+    
+    // Si ya procesamos esta acción exacta Y no es una nueva navegación, no procesar de nuevo
+    // (esto previene re-procesar la misma acción cuando la URL no cambió)
+    if (processedActionRef.current === actionKey && !isNewNavigation) {
+      return;
+    }
+    
+    // Esperar a que los préstamos estén cargados
+    if (loading) {
+      return; // Esperar a que termine la carga
+    }
+    
+    // Limpiar URL ANTES de procesar la acción para evitar re-ejecuciones
+    window.history.replaceState({}, '', '/prestamos');
+    
+    // Marcar esta acción como procesada, resetear el flag de cierre manual, y guardar la URL
+    processedActionRef.current = actionKey;
+    manuallyClosedRef.current = false;
+    lastProcessedUrlRef.current = currentUrl;
+    lastUrlHadParamsRef.current = true; // Marcar que la URL tenía parámetros
+    
+    // Buscar el préstamo específico
+    const targetLoan = loans.find(loan => loan.id === loanId);
+    
+    if (targetLoan) {
+      // Pequeño delay para asegurar que el componente esté listo
+      setTimeout(() => {
         if (action === 'payment') {
           // Abrir formulario de pago
           setSelectedLoanForPayment(targetLoan);
@@ -1404,18 +1462,12 @@ export const LoansModule = () => {
           setShowCollectionTracking(true);
           toast.success(`Abriendo formulario de seguimiento para ${targetLoan.client?.full_name}`);
         }
-        }, 100);
-        
-        // Limpiar URL para evitar re-aplicación
-        window.history.replaceState({}, '', '/prestamos');
-      } else if (!loading) {
-        // Solo mostrar error si ya terminó de cargar y no encontró el préstamo
-        toast.error('Préstamo no encontrado. Puede que haya sido eliminado o no tengas acceso.');
-        // Limpiar URL incluso si no se encuentra el préstamo
-        window.history.replaceState({}, '', '/prestamos');
-      }
+      }, 100);
+    } else if (!loading) {
+      // Solo mostrar error si ya terminó de cargar y no encontró el préstamo
+      toast.error('Préstamo no encontrado. Puede que haya sido eliminado o no tengas acceso.');
     }
-  }, [loans, loading, location.search]); // Dependencia en loans, loading y location.search para detectar cambios en query params
+  }, [loans, loading, location.search, showPaymentForm, showCollectionTracking]); // Agregar showPaymentForm y showCollectionTracking a las dependencias
 
   // Función para actualizar mora de todos los préstamos
   const handleUpdateLateFees = async () => {
@@ -1726,8 +1778,15 @@ export const LoansModule = () => {
     return (
       <PaymentForm 
         onBack={() => {
+          // Limpiar URL INMEDIATAMENTE para prevenir re-ejecución del useEffect
+          window.history.replaceState({}, '', '/prestamos');
           setShowPaymentForm(false);
           setSelectedLoanForPayment(null);
+          // Marcar que el usuario cerró el formulario manualmente
+          manuallyClosedRef.current = true;
+          // Resetear processedActionRef para permitir abrir desde nuevas notificaciones
+          processedActionRef.current = null;
+          lastUrlHadParamsRef.current = false;
           // Refetch para obtener datos actualizados
           refetch();
         }} 
@@ -4155,8 +4214,15 @@ export const LoansModule = () => {
          clientName={selectedLoanForTracking.client?.full_name || 'Cliente'}
          isOpen={showCollectionTracking}
          onClose={() => {
+           // Limpiar URL INMEDIATAMENTE para prevenir re-ejecución del useEffect
+           window.history.replaceState({}, '', '/prestamos');
            setShowCollectionTracking(false);
            setSelectedLoanForTracking(null);
+           // Marcar que el usuario cerró el formulario manualmente
+           manuallyClosedRef.current = true;
+           // Resetear processedActionRef para permitir abrir desde nuevas notificaciones
+           processedActionRef.current = null;
+           lastUrlHadParamsRef.current = false;
          }}
        />
      )}
