@@ -66,6 +66,8 @@ const ShiftsModule = () => {
   const [activeTab, setActiveTab] = useState('agenda');
   const [showAppointmentForm, setShowAppointmentForm] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [appointmentToDelete, setAppointmentToDelete] = useState<string | null>(null);
   const { user } = useAuth();
 
   const [appointmentForm, setAppointmentForm] = useState({
@@ -213,9 +215,6 @@ const ShiftsModule = () => {
       toast.error('Error al actualizar cita');
     }
   };
-
-  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
-  const [appointmentToDelete, setAppointmentToDelete] = useState<string | null>(null);
 
   const deleteAppointment = (appointmentId: string) => {
     setAppointmentToDelete(appointmentId);
@@ -632,23 +631,23 @@ const ShiftsModule = () => {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
 
-    {/* Diálogo de Verificación de Contraseña */}
-    <PasswordVerificationDialog
-      isOpen={showPasswordVerification}
-      onClose={() => {
-        setShowPasswordVerification(false);
-        setAppointmentToDelete(null);
-      }}
-      onVerify={() => {
-        setShowPasswordVerification(false);
-        confirmDeleteAppointment();
-      }}
-      title="Verificar Contraseña"
-      description="Por seguridad, ingresa tu contraseña para confirmar la eliminación de la cita."
-      entityName="cita"
-    />
+      {/* Diálogo de Verificación de Contraseña */}
+      <PasswordVerificationDialog
+        isOpen={showPasswordVerification}
+        onClose={() => {
+          setShowPasswordVerification(false);
+          setAppointmentToDelete(null);
+        }}
+        onVerify={() => {
+          setShowPasswordVerification(false);
+          confirmDeleteAppointment();
+        }}
+        title="Verificar Contraseña"
+        description="Por seguridad, ingresa tu contraseña para confirmar la eliminación de la cita."
+        entityName="cita"
+      />
+    </div>
   );
 };
 
