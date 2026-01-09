@@ -19,7 +19,8 @@ import {
   AlertCircle,
   Printer,
   Download,
-  X
+  X,
+  CreditCard
 } from 'lucide-react';
 import { PaymentActions } from './PaymentActions';
 import { formatInTimeZone } from 'date-fns-tz';
@@ -31,7 +32,10 @@ interface LoanHistoryEntry {
   change_type: string;
   old_values: any;
   new_values: any;
-  reason: string;
+  old_value?: any;
+  new_value?: any;
+  reason?: string;
+  description?: string;
   amount?: number;
   created_by: string;
   created_at: string;
@@ -283,10 +287,34 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       term_extension: 'Extensión de Plazo',
       balance_adjustment: 'Ajuste de Balance',
       rate_change: 'Cambio de Tasa',
+      status_change: 'Cambio de Estado',
       add_charge: 'Agregar Cargo',
-      remove_late_fee: 'Eliminar Mora'
+      remove_late_fee: 'Eliminar Mora',
+      capital_payment: 'Abono a Capital'
     };
     return labels[type as keyof typeof labels] || type;
+  };
+
+  const getChangeTypeLabelWithUpdateType = (entry: LoanHistoryEntry) => {
+    // Si la descripción contiene información específica, extraerla para una etiqueta más descriptiva
+    const description = entry.description || '';
+    
+    // Detectar tipos específicos basados en la descripción
+    if (description.includes('Abono a capital')) {
+      return 'Abono a Capital';
+    }
+    if (description.includes('Agregar Cargo') || description.includes('Cargo')) {
+      return 'Agregar Cargo';
+    }
+    if (description.includes('Eliminar Mora') || description.includes('Mora')) {
+      return 'Eliminar Mora';
+    }
+    if (description.includes('Acuerdo de Pago')) {
+      return 'Acuerdo de Pago';
+    }
+    
+    // Usar la función básica como fallback
+    return getChangeTypeLabel(entry.change_type);
   };
 
   const getPaymentMethodLabel = (method: string) => {
@@ -397,7 +425,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                   <History className="h-5 w-5" />
                   Movimientos ({(() => {
                     const movements = payments.length + 
-                      history.filter(h => h.change_type === 'add_charge' || h.change_type === 'remove_late_fee').length;
+                      history.filter(h => h.change_type === 'add_charge' || h.change_type === 'remove_late_fee' || h.change_type === 'capital_payment').length;
                     return movements;
                   })()})
                 </CardTitle>
@@ -409,7 +437,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                   // Combinar pagos y movimientos de historial
                   const movements: Array<{
                     id: string;
-                    type: 'payment' | 'add_charge' | 'remove_late_fee';
+                    type: 'payment' | 'add_charge' | 'remove_late_fee' | 'capital_payment';
                     date: Date;
                     data: any;
                   }> = [];
@@ -425,15 +453,16 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                     });
                   });
 
-                  // Agregar cargos y eliminaciones de mora del historial
+                  // Agregar cargos, eliminaciones de mora y abonos a capital del historial
                   console.log('🔍 Processing history entries:', history.length);
                   history.forEach(entry => {
                     console.log('🔍 Processing entry:', entry.change_type, entry.id);
-                    if (entry.change_type === 'add_charge' || entry.change_type === 'remove_late_fee') {
+                    // Incluir abonos a capital en movimientos (ahora change_type es 'capital_payment')
+                    if (entry.change_type === 'add_charge' || entry.change_type === 'remove_late_fee' || entry.change_type === 'capital_payment') {
                       console.log('✅ Adding movement:', entry.change_type);
                       movements.push({
                         id: entry.id,
-                        type: entry.change_type as 'add_charge' | 'remove_late_fee',
+                        type: entry.change_type === 'capital_payment' ? 'capital_payment' : entry.change_type as 'add_charge' | 'remove_late_fee',
                         date: new Date(entry.created_at),
                         data: entry
                       });
@@ -522,6 +551,50 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                           );
                         } else if (movement.type === 'add_charge') {
                           const entry = movement.data as LoanHistoryEntry;
+                          
+                          // Parsear old_value y new_value como JSON strings si es necesario
+                          let oldValues: any = {};
+                          let newValues: any = {};
+                          
+                          try {
+                            if (entry.old_values) {
+                              oldValues = typeof entry.old_values === 'string' 
+                                ? JSON.parse(entry.old_values) 
+                                : (entry.old_values || {});
+                            }
+                            if (entry.new_values) {
+                              newValues = typeof entry.new_values === 'string' 
+                                ? JSON.parse(entry.new_values) 
+                                : (entry.new_values || {});
+                            }
+                            if ((entry as any).old_value) {
+                              oldValues = typeof (entry as any).old_value === 'string' 
+                                ? JSON.parse((entry as any).old_value) 
+                                : ((entry as any).old_value || {});
+                            }
+                            if ((entry as any).new_value) {
+                              newValues = typeof (entry as any).new_value === 'string' 
+                                ? JSON.parse((entry as any).new_value) 
+                                : ((entry as any).new_value || {});
+                            }
+                          } catch (e) {
+                            console.error('Error parseando valores del historial:', e);
+                          }
+                          
+                          // Extraer información de la descripción
+                          const description = entry.description || '';
+                          const amountMatch = description.match(/Monto:\s*RD?\$?([\d,]+\.?\d*)/i);
+                          const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : (entry.amount || 0);
+                          
+                          // Extraer razón de la descripción (después de "Agregar Cargo: ")
+                          let reason = entry.reason || '';
+                          if (!reason && description) {
+                            const reasonMatch = description.match(/Agregar Cargo:\s*([^\.]+?)(?:\.\s*Monto|$)/i);
+                            if (reasonMatch) {
+                              reason = reasonMatch[1].trim();
+                            }
+                          }
+                          
                           return (
                             <div 
                               key={movement.id} 
@@ -529,7 +602,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                             >
                               <div className="flex items-center gap-3 mb-2">
                                 <TrendingUp className="h-4 w-4 text-blue-600" />
-                                <span className="font-semibold">Cargo Agregado: ${entry.amount?.toLocaleString()}</span>
+                                <span className="font-semibold">Cargo Agregado: RD${amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 <Badge variant="outline" className="bg-blue-100 text-blue-800">Cargo</Badge>
                               </div>
                               
@@ -553,17 +626,21 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                 </div>
                               )}
 
+                              {reason && (
                               <div className="text-sm text-gray-600 mb-2">
-                                <span className="font-medium">Balance Anterior:</span> ${entry.old_values.balance?.toLocaleString()}
+                                  <span className="font-medium">Razón:</span> {translateReason(reason)}
                               </div>
+                              )}
 
+                              {oldValues && oldValues.balance !== undefined && (
                               <div className="text-sm text-gray-600 mb-2">
-                                <span className="font-medium">Nuevo Balance:</span> ${entry.new_values.balance?.toLocaleString()}
+                                  <span className="font-medium">Balance Anterior:</span> RD${oldValues.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </div>
+                              )}
 
-                              {entry.reason && (
+                              {newValues && newValues.balance !== undefined && (
                                 <div className="text-sm text-gray-600 mb-2">
-                                  <span className="font-medium">Razón:</span> {translateReason(entry.reason)}
+                                  <span className="font-medium">Nuevo Balance:</span> RD${newValues.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>
                               )}
 
@@ -576,6 +653,82 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                               {(entry as any).notes && (
                                 <div className="text-sm text-gray-600 mt-2 pt-2 border-t">
                                   <span className="font-medium">Notas:</span> {(entry as any).notes}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        } else if (movement.type === 'capital_payment') {
+                          const entry = movement.data as LoanHistoryEntry;
+                          
+                          // Parsear old_value y new_value como JSON strings
+                          let oldValues: any = {};
+                          let newValues: any = {};
+                          try {
+                            if (entry.old_value) {
+                              oldValues = typeof entry.old_value === 'string' ? JSON.parse(entry.old_value) : entry.old_value;
+                            }
+                            if (entry.new_value) {
+                              newValues = typeof entry.new_value === 'string' ? JSON.parse(entry.new_value) : entry.new_value;
+                            }
+                          } catch (e) {
+                            console.error('Error parseando valores del historial:', e);
+                          }
+                          
+                          // Extraer información del abono de la descripción
+                          const description = entry.description || '';
+                          const capitalMatch = description.match(/Abono a capital: RD\$([\d,]+\.?\d*)/);
+                          const capitalAmount = capitalMatch ? parseFloat(capitalMatch[1].replace(/,/g, '')) : (oldValues.capital_before && newValues.capital_after ? oldValues.capital_before - newValues.capital_after : 0);
+                          
+                          // Extraer información de penalidad de la descripción
+                          const penaltyMatch = description.match(/Penalidad \(([\d.]+)%\): RD\$([\d,]+\.?\d*)/);
+                          const penaltyPercentage = penaltyMatch ? penaltyMatch[1] : null;
+                          const penaltyAmount = penaltyMatch ? parseFloat(penaltyMatch[2].replace(/,/g, '')) : 0;
+                          const totalAmount = capitalAmount + penaltyAmount;
+                          
+                          return (
+                            <div 
+                              key={movement.id} 
+                              className="border rounded-lg p-4 hover:bg-gray-50 transition-colors bg-green-50/30"
+                            >
+                              <div className="flex items-center gap-3 mb-2">
+                                <CreditCard className="h-4 w-4 text-green-600" />
+                                <span className="font-semibold">Abono a Capital: RD${capitalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                {penaltyAmount > 0 && (
+                                  <span className="text-sm text-orange-600">+ Penalidad: RD${penaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                )}
+                                <Badge variant="outline" className="bg-green-100 text-green-800">Abono a Capital</Badge>
+                              </div>
+                              
+                              <div className="text-sm text-gray-600 mb-2">
+                                <span className="font-medium">Fecha:</span>{' '}
+                                {formatInTimeZone(
+                                  addHours(new Date(entry.created_at), 2),
+                                  'America/Santo_Domingo',
+                                  'dd MMM yyyy, hh:mm a'
+                                )}
+                              </div>
+
+                              {totalAmount > 0 && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Total Pagado:</span> RD${totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              )}
+
+                              {oldValues.capital_before !== undefined && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Capital Antes:</span> RD${oldValues.capital_before.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              )}
+
+                              {newValues.capital_after !== undefined && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Capital Después:</span> RD${newValues.capital_after.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              )}
+
+                              {description && (
+                                <div className="text-sm text-gray-600 mt-2 pt-2 border-t">
+                                  <span className="font-medium">Detalles:</span> {description}
                                 </div>
                               )}
                             </div>
@@ -602,17 +755,51 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                 )}
                               </div>
 
-                              {entry.old_values.current_late_fee !== undefined && (
+                              {(() => {
+                                let oldValuesForLateFee: any = {};
+                                let newValuesForLateFee: any = {};
+                                
+                                try {
+                                  if (entry.old_values) {
+                                    oldValuesForLateFee = typeof entry.old_values === 'string' 
+                                      ? JSON.parse(entry.old_values) 
+                                      : (entry.old_values || {});
+                                  }
+                                  if (entry.new_values) {
+                                    newValuesForLateFee = typeof entry.new_values === 'string' 
+                                      ? JSON.parse(entry.new_values) 
+                                      : (entry.new_values || {});
+                                  }
+                                  if ((entry as any).old_value) {
+                                    oldValuesForLateFee = typeof (entry as any).old_value === 'string' 
+                                      ? JSON.parse((entry as any).old_value) 
+                                      : ((entry as any).old_value || {});
+                                  }
+                                  if ((entry as any).new_value) {
+                                    newValuesForLateFee = typeof (entry as any).new_value === 'string' 
+                                      ? JSON.parse((entry as any).new_value) 
+                                      : ((entry as any).new_value || {});
+                                  }
+                                } catch (e) {
+                                  console.error('Error parseando valores para mora:', e);
+                                }
+                                
+                                return (
+                                  <>
+                                    {oldValuesForLateFee && oldValuesForLateFee.current_late_fee !== undefined && (
                                 <div className="text-sm text-gray-600 mb-2">
-                                  <span className="font-medium">Mora Anterior:</span> RD${entry.old_values.current_late_fee.toLocaleString()}
+                                        <span className="font-medium">Mora Anterior:</span> RD${oldValuesForLateFee.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>
                               )}
 
-                              {entry.new_values.current_late_fee !== undefined && (
+                                    {newValuesForLateFee && newValuesForLateFee.current_late_fee !== undefined && (
                                 <div className="text-sm text-gray-600 mb-2">
-                                  <span className="font-medium">Mora Nueva:</span> RD${entry.new_values.current_late_fee.toLocaleString()}
+                                        <span className="font-medium">Mora Nueva:</span> RD${newValuesForLateFee.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>
                               )}
+                                  </>
+                                );
+                              })()}
 
                               {entry.reason && (
                                 <div className="text-sm text-gray-600 mb-2">
@@ -636,22 +823,64 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
               </CardContent>
             </Card>
 
-            {/* Historial de Cambios (excluyendo add_charge y remove_late_fee que ya están en movimientos) */}
-            {history.filter(h => h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee').length > 0 && (
+            {/* Historial de Cambios (excluyendo add_charge, remove_late_fee y capital_payment que ya están en movimientos) */}
+            {history.filter(h => {
+              return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && h.change_type !== 'capital_payment';
+            }).length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Edit className="h-5 w-5" />
-                    Historial de Modificaciones ({history.filter(h => h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee').length})
+                    Historial de Modificaciones ({history.filter(h => {
+                      return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && h.change_type !== 'capital_payment';
+                    }).length})
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
-                    {history.filter(h => h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee').map((entry) => (
+                    {history.filter(h => {
+                      return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && h.change_type !== 'capital_payment';
+                    }).map((entry) => {
+                      // Parsear old_value y new_value como JSON strings si es necesario
+                      let oldValues: any = null;
+                      let newValues: any = null;
+                      
+                      try {
+                        // Si old_values/new_values son strings (JSON), parsearlos
+                        // Si ya son objetos, usarlos directamente
+                        // IMPORTANTE: Manejar null explícitamente
+                        if (entry.old_values !== null && entry.old_values !== undefined) {
+                          oldValues = typeof entry.old_values === 'string' 
+                            ? JSON.parse(entry.old_values) 
+                            : (entry.old_values || null);
+                        }
+                        if (entry.new_values !== null && entry.new_values !== undefined) {
+                          newValues = typeof entry.new_values === 'string' 
+                            ? JSON.parse(entry.new_values) 
+                            : (entry.new_values || null);
+                        }
+                        // También verificar si vienen como old_value/new_value (singular) desde la DB
+                        if ((entry as any).old_value !== null && (entry as any).old_value !== undefined) {
+                          oldValues = typeof (entry as any).old_value === 'string' 
+                            ? JSON.parse((entry as any).old_value) 
+                            : ((entry as any).old_value || null);
+                        }
+                        if ((entry as any).new_value !== null && (entry as any).new_value !== undefined) {
+                          newValues = typeof (entry as any).new_value === 'string' 
+                            ? JSON.parse((entry as any).new_value) 
+                            : ((entry as any).new_value || null);
+                        }
+                      } catch (e) {
+                        console.error('Error parseando valores del historial:', e);
+                        oldValues = null;
+                        newValues = null;
+                      }
+                      
+                      return (
                       <div key={entry.id} className="border rounded-lg p-4">
                         <div className="flex items-center gap-3 mb-2">
                           {getChangeTypeIcon(entry.change_type)}
-                          <span className="font-semibold">{getChangeTypeLabel(entry.change_type)}</span>
+                          <span className="font-semibold">{getChangeTypeLabelWithUpdateType(entry)}</span>
                           <span className="text-sm text-gray-500">
                             {formatInTimeZone(
                               addHours(new Date(entry.created_at), 2),
@@ -718,54 +947,62 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                         )}
 
                         {/* Información específica para eliminar mora */}
-                        {entry.change_type === 'remove_late_fee' && entry.old_values.current_late_fee !== undefined && (
+                        {entry.change_type === 'remove_late_fee' && oldValues && oldValues.current_late_fee !== undefined && (
                           <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Mora Anterior:</span> RD${entry.old_values.current_late_fee.toLocaleString()}
+                            <span className="font-medium">Mora Anterior:</span> RD${oldValues.current_late_fee.toLocaleString()}
                           </div>
                         )}
 
-                        {entry.change_type === 'remove_late_fee' && entry.new_values.current_late_fee !== undefined && (
+                        {entry.change_type === 'remove_late_fee' && newValues && newValues.current_late_fee !== undefined && (
                           <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Mora Nueva:</span> RD${entry.new_values.current_late_fee.toLocaleString()}
+                            <span className="font-medium">Mora Nueva:</span> RD${newValues.current_late_fee.toLocaleString()}
                           </div>
                         )}
 
+                        {(oldValues && typeof oldValues === 'object' && Object.keys(oldValues).length > 0) || (newValues && typeof newValues === 'object' && Object.keys(newValues).length > 0) ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                           <div>
                             <span className="font-medium">Valores Anteriores:</span>
                             <ul className="list-disc list-inside ml-4 text-gray-600">
-                              {entry.old_values.balance && (
-                                <li>Balance: ${entry.old_values.balance.toLocaleString()}</li>
+                                {oldValues && typeof oldValues === 'object' && oldValues.balance !== null && oldValues.balance !== undefined && (
+                                  <li>Balance: ${oldValues.balance.toLocaleString()}</li>
                               )}
-                              {entry.old_values.payment && (
-                                <li>Cuota: ${entry.old_values.payment.toLocaleString()}</li>
+                                {oldValues && oldValues.payment && (
+                                  <li>Cuota: ${oldValues.payment.toLocaleString()}</li>
                               )}
-                              {entry.old_values.rate && (
-                                <li>Tasa: {entry.old_values.rate}%</li>
+                                {oldValues && oldValues.rate && (
+                                  <li>Tasa: {oldValues.rate}%</li>
                               )}
-                              {entry.old_values.current_late_fee !== undefined && entry.change_type !== 'remove_late_fee' && (
-                                <li>Mora: RD${entry.old_values.current_late_fee.toLocaleString()}</li>
+                                {oldValues && oldValues.current_late_fee !== undefined && entry.change_type !== 'remove_late_fee' && (
+                                  <li>Mora: RD${oldValues.current_late_fee.toLocaleString()}</li>
+                                )}
+                                {(!oldValues || (typeof oldValues === 'object' && Object.keys(oldValues).length === 0)) && (
+                                  <li className="text-gray-400">Sin valores anteriores</li>
                               )}
                             </ul>
                           </div>
                           <div>
                             <span className="font-medium">Valores Nuevos:</span>
                             <ul className="list-disc list-inside ml-4 text-gray-600">
-                              {entry.new_values.balance && (
-                                <li>Balance: ${entry.new_values.balance.toLocaleString()}</li>
+                                {newValues && typeof newValues === 'object' && newValues.balance !== null && newValues.balance !== undefined && (
+                                  <li>Balance: ${newValues.balance.toLocaleString()}</li>
                               )}
-                              {entry.new_values.payment && (
-                                <li>Cuota: ${entry.new_values.payment.toLocaleString()}</li>
+                                {newValues && newValues.payment && (
+                                  <li>Cuota: ${newValues.payment.toLocaleString()}</li>
                               )}
-                              {entry.new_values.rate && (
-                                <li>Tasa: {entry.new_values.rate}%</li>
+                                {newValues && newValues.rate && (
+                                  <li>Tasa: {newValues.rate}%</li>
                               )}
-                              {entry.new_values.current_late_fee !== undefined && entry.change_type !== 'remove_late_fee' && (
-                                <li>Mora: RD${entry.new_values.current_late_fee.toLocaleString()}</li>
+                                {newValues && newValues.current_late_fee !== undefined && entry.change_type !== 'remove_late_fee' && (
+                                  <li>Mora: RD${newValues.current_late_fee.toLocaleString()}</li>
+                                )}
+                                {(!newValues || (typeof newValues === 'object' && Object.keys(newValues).length === 0)) && (
+                                  <li className="text-gray-400">Sin valores nuevos</li>
                               )}
                             </ul>
                           </div>
                         </div>
+                        ) : null}
 
                         {/* Mostrar notas si existen */}
                         {(entry as any).notes && (
@@ -774,7 +1011,8 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>

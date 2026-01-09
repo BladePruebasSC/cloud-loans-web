@@ -68,6 +68,23 @@ interface SaleReceipt {
   saleId?: string;
 }
 
+interface CapitalPaymentReceipt {
+  companyName: string;
+  clientName: string;
+  clientDni?: string;
+  paymentDate: string;
+  capitalPaymentAmount: number;
+  penaltyAmount?: number;
+  capitalBefore: number;
+  capitalAfter: number;
+  loanAmount?: number;
+  remainingBalance?: number;
+  interestRate?: number;
+  nextPaymentDate?: string;
+  keepInstallments?: boolean;
+  adjustmentReason?: string;
+}
+
 /**
  * Formatea un número de teléfono para WhatsApp
  */
@@ -266,3 +283,42 @@ export const generateSaleReceipt = (receipt: SaleReceipt): string => {
   return message;
 };
 
+/**
+ * Genera el mensaje de recibo para abono a capital
+ */
+export const generateCapitalPaymentReceipt = (receipt: CapitalPaymentReceipt): string => {
+  let message = `*Notificación de ${receipt.companyName}*\n\n`;
+  message += `${receipt.clientName}${receipt.clientDni ? ` (${receipt.clientDni})` : ''} le informamos que su abono a capital fue registrado exitosamente.\n\n`;
+  
+  message += `*Información del Préstamo*\n`;
+  if (receipt.loanAmount) {
+    message += `Monto del préstamo: ${formatCurrency(receipt.loanAmount)}\n`;
+  }
+  if (receipt.interestRate) {
+    message += `Tasa de interés: ${receipt.interestRate}% mensual\n`;
+  }
+  if (receipt.nextPaymentDate) {
+    message += `Próxima fecha de pago: ${receipt.nextPaymentDate}\n`;
+  }
+  message += `\n`;
+  
+  message += `*Información del Abono a Capital*\n`;
+  message += `Fecha: ${receipt.paymentDate}\n`;
+  message += `Capital pendiente antes: ${formatCurrency(receipt.capitalBefore)}\n`;
+  message += `Monto del abono: ${formatCurrency(receipt.capitalPaymentAmount)}\n`;
+  if (receipt.penaltyAmount && receipt.penaltyAmount > 0) {
+    message += `Penalidad aplicada: ${formatCurrency(receipt.penaltyAmount)}\n`;
+  }
+  message += `Capital pendiente después: ${formatCurrency(receipt.capitalAfter)}\n`;
+  if (receipt.keepInstallments !== undefined) {
+    message += `Cuotas: ${receipt.keepInstallments ? 'Mantener número de cuotas (reducir monto)' : 'Reducir número de cuotas (mantener monto)'}\n`;
+  }
+  if (receipt.adjustmentReason) {
+    message += `Razón: ${receipt.adjustmentReason}\n`;
+  }
+  if (receipt.remainingBalance !== undefined) {
+    message += `Balance restante del préstamo: ${formatCurrency(receipt.remainingBalance)}\n`;
+  }
+  
+  return message;
+};

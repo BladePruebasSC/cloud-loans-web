@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
-import { generateLoanPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
+import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { 
   Edit, 
   DollarSign, 
@@ -28,6 +28,8 @@ import {
   Clock,
   CreditCard,
   Receipt,
+  Eye,
+  Table,
   Trash2,
   PlusCircle,
   MinusCircle,
@@ -40,7 +42,7 @@ import { PaymentForm } from './PaymentForm';
 import { Handshake } from 'lucide-react';
 
 const updateSchema = z.object({
-  update_type: z.enum(['add_charge', 'term_extension', 'settle_loan', 'delete_loan', 'remove_late_fee', 'payment_agreement', 'edit_loan']),
+  update_type: z.enum(['add_charge', 'term_extension', 'settle_loan', 'delete_loan', 'remove_late_fee', 'payment_agreement', 'edit_loan', 'capital_payment']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   late_fee_amount: z.number().min(0.01, 'El monto de mora debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
@@ -63,6 +65,11 @@ const updateSchema = z.object({
   edit_late_fee_enabled: z.boolean().optional(),
   edit_late_fee_rate: z.number().min(0).max(100).optional(),
   edit_grace_period_days: z.number().min(0).max(30).optional(),
+  // Campos para abono a capital
+  capital_payment_amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
+  keep_installments: z.boolean().optional(),
+  is_penalty: z.boolean().optional(),
+  penalty_percentage: z.number().min(0).max(100, 'El porcentaje debe ser entre 0 y 100').optional(),
 }).refine((data) => {
   if (data.update_type === 'remove_late_fee') {
     return data.late_fee_amount !== undefined && data.late_fee_amount > 0;
@@ -115,6 +122,14 @@ const updateSchema = z.object({
 }, {
   message: 'El capital a pagar no puede exceder el capital pendiente',
   path: ['settle_capital'],
+}).refine((data) => {
+  if (data.update_type === 'capital_payment') {
+    return data.capital_payment_amount !== undefined && data.capital_payment_amount > 0;
+  }
+  return true;
+}, {
+  message: 'Debe especificar el monto del abono a capital',
+  path: ['capital_payment_amount'],
 });
 
 type UpdateFormData = z.infer<typeof updateSchema>;
@@ -167,7 +182,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [agreements, setAgreements] = useState<any[]>([]);
   const [selectedAgreement, setSelectedAgreement] = useState<any | null>(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [balanceCalculated, setBalanceCalculated] = useState(false);
   const [calculatedValues, setCalculatedValues] = useState({
+    currentBalance: loan.remaining_balance,
     newBalance: loan.remaining_balance,
     newPayment: loan.monthly_payment,
     newEndDate: '',
@@ -188,7 +205,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [showWhatsAppDialog, setShowWhatsAppDialog] = useState(false);
   const [isClosingPrintModal, setIsClosingPrintModal] = useState(false);
   const [lastSettlePaymentData, setLastSettlePaymentData] = useState<any>(null);
+  const [lastCapitalPaymentData, setLastCapitalPaymentData] = useState<any>(null);
   const [companySettings, setCompanySettings] = useState<any>(null);
+  const [pendingCapital, setPendingCapital] = useState<number>(0);
+  const [capitalPaymentPreview, setCapitalPaymentPreview] = useState({
+    newPendingCapital: 0,
+    installmentsImpact: '',
+    newInstallmentAmount: 0,
+    newInstallmentCount: 0
+  });
+  const [penaltyAmount, setPenaltyAmount] = useState<number>(0);
+  const [originalPendingCapital, setOriginalPendingCapital] = useState<number>(0); // Capital pendiente original antes del abono
+  const [showPreviewTable, setShowPreviewTable] = useState(false);
+  const [previewInstallments, setPreviewInstallments] = useState<any[]>([]);
   const { user, companyId } = useAuth();
 
   const form = useForm<UpdateFormData>({
@@ -399,6 +428,406 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       setPendingInterestForIndefinite(0);
     }
   }, [isOpen, loan.id, loan.amortization_type, loan.start_date, installments]);
+
+  // Resetear flag de balance calculado cuando se abre el modal
+  useEffect(() => {
+    if (isOpen) {
+      setBalanceCalculated(false);
+    }
+  }, [isOpen]);
+
+  // Calcular capital pendiente (necesario para calcular balance actual correctamente)
+  useEffect(() => {
+    if (isOpen && loan.id) {
+      const calculatePendingCapital = async () => {
+        try {
+          // Obtener todos los pagos del préstamo
+          const { data: payments, error: paymentsError } = await supabase
+            .from('payments')
+            .select('principal_amount')
+            .eq('loan_id', loan.id);
+
+          if (paymentsError) throw paymentsError;
+
+          // Obtener todos los abonos a capital anteriores
+          const { data: capitalPayments, error: capitalPaymentsError } = await supabase
+            .from('capital_payments')
+            .select('amount')
+            .eq('loan_id', loan.id);
+
+          if (capitalPaymentsError) throw capitalPaymentsError;
+
+          // Calcular cargos (installments donde interest_amount === 0 y principal_amount === total_amount)
+          const allCharges = installments.filter(inst => 
+            Math.abs(inst.interest_amount || 0) < 0.01 && 
+            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01
+          );
+          
+          const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+          const paidChargesAmount = allCharges
+            .filter(inst => inst.is_paid)
+            .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+          const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
+
+          // Calcular capital pagado desde pagos regulares (total principal_amount)
+          const totalPaid = (payments || []).reduce((sum, p) => sum + (p.principal_amount || 0), 0);
+          
+          // Capital pagado del préstamo original (excluyendo pagos de cargos)
+          const capitalPaidFromLoan = totalPaid - paidChargesAmount;
+          
+          // Calcular total de abonos a capital anteriores
+          const totalCapitalPayments = (capitalPayments || []).reduce((sum, cp) => sum + (cp.amount || 0), 0);
+
+          // Capital pendiente = suma del capital de todas las cuotas pendientes (regulares + cargos)
+          // IMPORTANTE: Calcular desde las cuotas pendientes para obtener el valor exacto (igual que LoanDetailsView)
+          // Incluir tanto cuotas regulares como cargos pendientes (ambos tienen principal_amount)
+          let calculatedPendingCapital: number;
+          if (loan.amortization_type === 'indefinite') {
+            // Para préstamos indefinidos, el capital pendiente es el monto original después de abonos
+            calculatedPendingCapital = Math.round(loan.amount - totalCapitalPayments);
+          } else {
+            // Para préstamos con plazo fijo: calcular desde las cuotas pendientes
+            const capitalPendingFromInstallments = installments
+              .filter(inst => !inst.is_paid) // Incluir todas las cuotas pendientes (regulares y cargos)
+              .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+            
+            // Si hay cuotas pendientes, usar ese cálculo; sino usar el cálculo tradicional
+            calculatedPendingCapital = capitalPendingFromInstallments > 0 
+              ? capitalPendingFromInstallments 
+              : Math.round(loan.amount - capitalPaidFromLoan - totalCapitalPayments);
+          }
+
+          setPendingCapital(calculatedPendingCapital);
+          setOriginalPendingCapital(calculatedPendingCapital); // Guardar el capital pendiente original para calcular penalidad
+          
+          // Calcular el balance actual correcto inmediatamente
+          let currentBalance = loan.remaining_balance;
+          
+          if (loan.amortization_type === 'indefinite') {
+            // Para préstamos indefinidos: usar calculatedPendingCapital + pendingInterestForIndefinite
+            // Si pendingInterestForIndefinite aún no está calculado, calcularlo aquí
+            const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+            
+            // Calcular interés pendiente usando el cálculo dinámico
+            if (loan.start_date) {
+              const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+              const startDate = new Date(startYear, startMonth - 1, startDay);
+              const currentDate = new Date();
+              currentDate.setHours(0, 0, 0, 0);
+              
+              const monthsElapsed = Math.max(0, 
+                (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
+                (currentDate.getMonth() - startDate.getMonth())
+              );
+              
+              const totalExpectedInstallments = Math.max(1, monthsElapsed + 1);
+              
+              // Calcular cuántas cuotas se han pagado
+              let paidCount = 0;
+              if (payments && payments.length > 0) {
+                const totalInterestPaid = payments.reduce((sum: number, p: any) => sum + (p.interest_amount || 0), 0);
+                paidCount = Math.floor(totalInterestPaid / interestPerPayment);
+              }
+              
+              const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
+              const pendingInterest = unpaidCount * interestPerPayment;
+              currentBalance = calculatedPendingCapital + pendingInterest + unpaidChargesAmount;
+            } else {
+              // Fallback: usar installments si están disponibles
+              const unpaidRegularInstallments = installments.filter(inst => {
+                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                return !inst.is_paid && !isCharge;
+              });
+              const unpaidInterest = unpaidRegularInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+              currentBalance = calculatedPendingCapital + unpaidInterest + unpaidChargesAmount;
+            }
+          } else {
+            // Para préstamos con plazo fijo: capital pendiente + interés pendiente
+            // IMPORTANTE: El capital pendiente ya incluye los cargos pendientes (cuando se calcula desde cuotas)
+            // IMPORTANTE: Redondear cada valor individual antes de sumar
+            const unpaidRegularInstallments = installments.filter(inst => {
+              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+              return !inst.is_paid && !isCharge;
+            });
+            const interestPendingFromInstallments = unpaidRegularInstallments.reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+            // Balance = Capital pendiente (ya incluye cargos) + Interés pendiente
+            currentBalance = calculatedPendingCapital + interestPendingFromInstallments;
+          }
+          
+          // Actualizar el balance actual inmediatamente
+          // IMPORTANTE: Redondear a número entero para evitar diferencias de redondeo
+          setCalculatedValues(prev => ({
+            ...prev,
+            currentBalance: Math.round(currentBalance),
+            newBalance: Math.round(currentBalance)
+          }));
+          setBalanceCalculated(true);
+          
+          console.log('🔍 Capital pendiente calculado para abono:', {
+            loanAmount: loan.amount,
+            capitalPaidFromLoan,
+            totalCapitalPayments,
+            unpaidChargesAmount,
+            calculatedPendingCapital,
+            currentBalance
+          });
+        } catch (error) {
+          console.error('Error calculando capital pendiente:', error);
+          // Fallback: usar el monto original para indefinidos, o remaining_balance para otros
+          setPendingCapital(loan.amortization_type === 'indefinite' ? loan.amount : loan.remaining_balance);
+        }
+      };
+
+      calculatePendingCapital();
+    }
+  }, [isOpen, loan.id, form.watch('update_type'), installments]);
+
+  // Calcular monto de penalidad cuando cambia el porcentaje
+  // IMPORTANTE: La penalidad se calcula sobre el capital pendiente ORIGINAL (antes del abono)
+  // Usamos originalPendingCapital, no pendingCapital, para asegurar que siempre use el valor original
+  useEffect(() => {
+    const updateType = form.watch('update_type');
+    const isPenalty = form.watch('is_penalty');
+    const penaltyPercentage = form.watch('penalty_percentage');
+
+    if (updateType === 'capital_payment' && isPenalty && penaltyPercentage && penaltyPercentage > 0 && originalPendingCapital > 0) {
+      // La penalidad siempre se calcula sobre el capital pendiente original (originalPendingCapital)
+      // No sobre el nuevo capital pendiente después del abono
+      const calculatedPenalty = (originalPendingCapital * penaltyPercentage) / 100;
+      setPenaltyAmount(Math.round(calculatedPenalty * 100) / 100);
+    } else {
+      setPenaltyAmount(0);
+    }
+  }, [form.watch('is_penalty'), form.watch('penalty_percentage'), originalPendingCapital, form.watch('update_type')]);
+
+  // Calcular vista previa del impacto del abono a capital
+  useEffect(() => {
+    const updateType = form.watch('update_type');
+    const capitalPaymentAmount = form.watch('capital_payment_amount');
+    const keepInstallments = form.watch('keep_installments');
+    const isPenalty = form.watch('is_penalty');
+    const penaltyAmountValue = penaltyAmount || 0;
+
+    // IMPORTANTE: Usar originalPendingCapital siempre, no pendingCapital
+    // La penalidad se calcula sobre el capital original, y la vista previa también
+    if (updateType === 'capital_payment' && capitalPaymentAmount && capitalPaymentAmount > 0 && originalPendingCapital > 0) {
+      const calculatePreview = () => {
+        // Si hay penalidad, el monto total del abono incluye la penalidad
+        const totalPaymentAmount = capitalPaymentAmount + (isPenalty ? penaltyAmountValue : 0);
+        
+        if (capitalPaymentAmount > originalPendingCapital) {
+          // El monto excede el capital pendiente, no calcular preview
+          setCapitalPaymentPreview({
+            newPendingCapital: 0,
+            installmentsImpact: 'El monto excede el capital pendiente',
+            newInstallmentAmount: 0,
+            newInstallmentCount: 0
+          });
+          return;
+        }
+
+        // El nuevo capital pendiente se reduce solo por el capitalPaymentAmount (sin incluir penalidad)
+        // La penalidad será un cargo adicional
+        // IMPORTANTE: Usar originalPendingCapital, no pendingCapital
+        const newPendingCapital = originalPendingCapital - capitalPaymentAmount;
+        
+        if (loan.amortization_type === 'indefinite') {
+          // Para préstamos indefinidos, el interés se recalcula con el nuevo capital
+          const newInterestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
+          const currentInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+          
+          setCapitalPaymentPreview({
+            newPendingCapital,
+            installmentsImpact: keepInstallments 
+              ? `Las cuotas mensuales de interés se reducirán de RD$${currentInterestPerPayment.toFixed(2)} a RD$${newInterestPerPayment.toFixed(2)}`
+              : `Las cuotas mensuales de interés se reducirán a RD$${newInterestPerPayment.toFixed(2)}`,
+            newInstallmentAmount: newInterestPerPayment,
+            newInstallmentCount: 0 // No aplica para indefinidos
+          });
+        } else {
+          // Para préstamos con plazo fijo
+          const unpaidInstallments = installments.filter(inst => !inst.is_paid);
+          const remainingInstallmentsCount = unpaidInstallments.length;
+
+          if (keepInstallments) {
+            // Mantener número de cuotas: recalcular el monto de cada cuota
+            const interestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
+            const principalPerPayment = remainingInstallmentsCount > 0 ? newPendingCapital / remainingInstallmentsCount : 0;
+            const newInstallmentAmount = interestPerPayment + principalPerPayment;
+            const currentInstallmentAmount = loan.monthly_payment;
+            
+            setCapitalPaymentPreview({
+              newPendingCapital,
+              installmentsImpact: `Las ${remainingInstallmentsCount} cuotas restantes se reducirán de RD$${currentInstallmentAmount.toFixed(2)} a RD$${newInstallmentAmount.toFixed(2)} cada una`,
+              newInstallmentAmount,
+              newInstallmentCount: remainingInstallmentsCount
+            });
+          } else {
+            // Mantener monto de cuota: reducir número de cuotas
+            const interestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
+            const principalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
+            const newInstallmentCount = principalPerPayment > 0 ? Math.ceil(newPendingCapital / principalPerPayment) : remainingInstallmentsCount;
+            const reductionInInstallments = Math.max(0, remainingInstallmentsCount - newInstallmentCount);
+            
+            setCapitalPaymentPreview({
+              newPendingCapital,
+              installmentsImpact: reductionInInstallments > 0
+                ? `Se reducirán ${reductionInInstallments} cuota(s). El préstamo finalizará ${reductionInInstallments} mes(es) antes.`
+                : `El número de cuotas se mantendrá en ${remainingInstallmentsCount}`,
+              newInstallmentAmount: loan.monthly_payment,
+              newInstallmentCount
+            });
+          }
+        }
+      };
+
+      calculatePreview();
+    } else {
+      // Resetear preview
+      setCapitalPaymentPreview({
+        newPendingCapital: 0,
+        installmentsImpact: '',
+        newInstallmentAmount: 0,
+        newInstallmentCount: 0
+      });
+    }
+  }, [form.watch('capital_payment_amount'), form.watch('keep_installments'), form.watch('is_penalty'), penaltyAmount, originalPendingCapital, installments, loan, form.watch('update_type')]);
+
+  // Función para calcular las cuotas futuras después del abono
+  const calculatePreviewInstallments = () => {
+    const capitalPaymentAmount = form.watch('capital_payment_amount') || 0;
+    const keepInstallments = form.watch('keep_installments') || false;
+    const isPenalty = form.watch('is_penalty') || false;
+    
+    if (capitalPaymentAmount <= 0 || originalPendingCapital <= 0) {
+      return [];
+    }
+
+    const newPendingCapital = originalPendingCapital - capitalPaymentAmount;
+    
+    // IMPORTANTE: Separar cuotas regulares de cargos
+    // Los cargos NO se recalculan, solo las cuotas regulares
+    const unpaidRegularInstallments = installments.filter(inst => {
+      const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                      Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+      return !inst.is_paid && !isCharge; // Solo cuotas regulares no pagadas
+    });
+    
+    // Obtener cargos no pagados (NO se recalculan, se mantienen como están)
+    const unpaidCharges = installments.filter(inst => {
+      const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                      Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+      return isCharge && !inst.is_paid;
+    });
+    
+    const remainingInstallmentsCount = unpaidRegularInstallments.length;
+
+    if (loan.amortization_type === 'indefinite') {
+      // Para préstamos indefinidos: solo interés
+      const newInterestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
+      const previewInsts = unpaidRegularInstallments.map((inst) => {
+        return {
+          installment_number: inst.installment_number,
+          due_date: inst.due_date,
+          interest_amount: newInterestPerPayment,
+          principal_amount: 0,
+          total_amount: newInterestPerPayment,
+          is_paid: false,
+          description: `Cuota ${inst.installment_number} - Interés recalculado`
+        };
+      });
+      
+      // IMPORTANTE: Agregar cargos no pagados como cuotas extra separadas
+      unpaidCharges.forEach((charge) => {
+        previewInsts.push({
+          installment_number: charge.installment_number,
+          due_date: charge.due_date,
+          interest_amount: 0,
+          principal_amount: charge.total_amount,
+          total_amount: charge.total_amount,
+          is_paid: false,
+          description: `Cargo extra - No afectado por abono`
+        });
+      });
+      
+      return previewInsts;
+    } else {
+      // Para préstamos con plazo fijo
+      let previewInsts: any[] = [];
+
+      if (keepInstallments) {
+        // Mantener número de cuotas: recalcular el monto
+        const interestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
+        const principalPerPayment = remainingInstallmentsCount > 0 ? newPendingCapital / remainingInstallmentsCount : 0;
+        const newInstallmentAmount = interestPerPayment + principalPerPayment;
+
+        unpaidRegularInstallments.forEach((inst) => {
+          previewInsts.push({
+            installment_number: inst.installment_number,
+            due_date: inst.due_date,
+            interest_amount: interestPerPayment,
+            principal_amount: principalPerPayment,
+            total_amount: newInstallmentAmount,
+            is_paid: false,
+            description: `Cuota ${inst.installment_number} recalculada`
+          });
+        });
+      } else {
+        // Mantener monto de cuota: reducir número de cuotas
+        const interestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
+        const principalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
+        const newInstallmentCount = principalPerPayment > 0 ? Math.ceil(newPendingCapital / principalPerPayment) : remainingInstallmentsCount;
+        
+        // Generar las nuevas cuotas (solo las que quedan)
+        let remainingCapital = newPendingCapital;
+        for (let i = 0; i < Math.min(newInstallmentCount, remainingInstallmentsCount) && remainingCapital > 0.01; i++) {
+          const inst = unpaidRegularInstallments[i];
+          const principalForThisPayment = Math.min(principalPerPayment, remainingCapital);
+          const totalForThisPayment = interestPerPayment + principalForThisPayment;
+          
+          previewInsts.push({
+            installment_number: inst ? inst.installment_number : remainingInstallmentsCount - newInstallmentCount + i + 1,
+            due_date: inst ? inst.due_date : '',
+            interest_amount: interestPerPayment,
+            principal_amount: principalForThisPayment,
+            total_amount: totalForThisPayment,
+            is_paid: false,
+            description: `Cuota ${inst ? inst.installment_number : remainingInstallmentsCount - newInstallmentCount + i + 1} recalculada`
+          });
+          
+          remainingCapital -= principalForThisPayment;
+        }
+      }
+
+      // IMPORTANTE: Agregar cargos no pagados como cuotas extra separadas
+      // Los cargos NO se recalculan, mantienen su monto original
+      unpaidCharges.forEach((charge) => {
+        previewInsts.push({
+          installment_number: charge.installment_number,
+          due_date: charge.due_date,
+          interest_amount: 0,
+          principal_amount: charge.total_amount,
+          total_amount: charge.total_amount,
+          is_paid: false,
+          description: `Cargo extra - No afectado por abono`
+        });
+      });
+
+      // La penalidad NO es una cuota, se paga junto con el abono a capital
+      // No se incluye en la tabla de cuotas
+
+      return previewInsts;
+    }
+  };
+
+  // Manejar click en botón de previsualización
+  const handlePreviewTable = () => {
+    const preview = calculatePreviewInstallments();
+    setPreviewInstallments(preview);
+    setShowPreviewTable(true);
+  };
 
   // Obtener datos de la empresa para el recibo
   useEffect(() => {
@@ -619,21 +1048,27 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     }
   }, [isOpen, editOnly, form]);
 
-  const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount', 'edit_amount', 'edit_interest_rate', 'edit_term_months', 'edit_amortization_type', 'settle_capital', 'settle_interest', 'settle_late_fee']);
+  const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount', 'edit_amount', 'edit_interest_rate', 'edit_term_months', 'edit_amortization_type', 'settle_capital', 'settle_interest', 'settle_late_fee', 'capital_payment_amount', 'keep_installments', 'is_penalty', 'penalty_percentage']);
 
   useEffect(() => {
     const updateType = form.watch('update_type');
     if (updateType !== 'payment_agreement') {
       calculateUpdatedValues();
     }
-  }, [watchedValues, pendingInterestForIndefinite]);
+  }, [watchedValues, pendingInterestForIndefinite, pendingCapital, installments]);
 
-  // Resetear el campo de razón cuando cambia el tipo de actualización
+    // Resetear el campo de razón cuando cambia el tipo de actualización
   useEffect(() => {
     const updateType = form.watch('update_type');
     form.setValue('adjustment_reason', '');
     form.setValue('late_fee_amount', undefined);
     form.setValue('amount', undefined);
+    form.setValue('capital_payment_amount', undefined);
+    form.setValue('keep_installments', false);
+    form.setValue('is_penalty', false);
+    form.setValue('penalty_percentage', undefined);
+    setPenaltyAmount(0);
+    setOriginalPendingCapital(0);
     
     // Si es "add_charge", establecer fecha por defecto (hoy)
     if (updateType === 'add_charge') {
@@ -712,12 +1147,86 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
 
   const calculateUpdatedValues = () => {
-    const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType, settleCapital, settleInterest, settleLateFee] = watchedValues;
+    const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType, settleCapital, settleInterest, settleLateFee, capitalPaymentAmount, keepInstallments] = watchedValues;
     
-    // Calcular el balance actual correcto (incluyendo intereses pendientes para indefinidos)
-    const currentBalance = loan.amortization_type === 'indefinite' 
-      ? loan.amount + pendingInterestForIndefinite
-      : loan.remaining_balance;
+    // CORRECCIÓN: Calcular el balance actual dinámicamente igual que LoanDetailsView
+    // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
+    // Si el balance ya fue calculado correctamente, usarlo para evitar mostrar un valor incorrecto
+    // Solo recalcular si los datos necesarios están disponibles
+    let currentBalance = balanceCalculated ? calculatedValues.currentBalance : loan.remaining_balance;
+    
+    // Solo recalcular el balance si los datos necesarios están disponibles
+    // Si balanceCalculated es true, ya tenemos el balance correcto y no necesitamos recalcular
+    if (!balanceCalculated && installments.length > 0) {
+      // Calcular cargos no pagados
+      // IMPORTANTE: Redondear cada valor individual antes de sumar para evitar diferencias de redondeo
+      const unpaidCharges = installments.filter(inst => {
+        const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                        Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+        return isCharge && !inst.is_paid;
+      });
+      const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + Math.round(inst.total_amount || 0), 0);
+      
+      if (loan.amortization_type === 'indefinite') {
+        // Para préstamos indefinidos: usar pendingCapital y pendingInterestForIndefinite
+        // IMPORTANTE: Redondear cada componente antes de sumar
+        if (pendingCapital > 0) {
+          currentBalance = Math.round(pendingCapital) + Math.round(pendingInterestForIndefinite) + unpaidChargesAmount;
+        } else {
+          // Fallback si pendingCapital no está calculado
+          currentBalance = Math.round(loan.amount) + Math.round(pendingInterestForIndefinite) + unpaidChargesAmount;
+        }
+      } else {
+        // Para préstamos con plazo fijo: calcular capital pendiente + interés pendiente
+        if (pendingCapital > 0) {
+          // Calcular interés pendiente
+          const unpaidInstallments = installments.filter(inst => !inst.is_paid && 
+            !(Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01));
+          // IMPORTANTE: Redondear cada valor individual antes de sumar para evitar diferencias de redondeo
+          const interestPendingFromInstallments = unpaidInstallments.reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+          
+          // Balance actual = Capital pendiente + Interés pendiente
+          // IMPORTANTE: El capital pendiente ya incluye los cargos pendientes cuando se calcula desde las cuotas
+          // IMPORTANTE: Redondear cada componente antes de sumar
+          currentBalance = Math.round(pendingCapital) + interestPendingFromInstallments;
+        } else {
+          // Fallback: calcular usando installments disponibles
+          // Si pendingCapital no está disponible, calcular capital pendiente desde installments
+          // IMPORTANTE: Redondear cada valor individual antes de sumar para evitar diferencias de redondeo
+          const paidInstallments = installments.filter(inst => inst.is_paid && 
+            !(Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01));
+          const totalCapitalPaidFromInstallments = paidInstallments.reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+          
+          // Calcular capital pendiente desde todas las cuotas pendientes (regulares + cargos)
+          // IMPORTANTE: Calcular desde las cuotas pendientes para obtener el valor exacto
+          const calculatedCapitalPending = installments
+            .filter(inst => !inst.is_paid) // Incluir todas las cuotas pendientes (regulares y cargos)
+            .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+          
+          // Calcular interés pendiente (solo de cuotas regulares, no cargos)
+          const unpaidInstallments = installments.filter(inst => {
+            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+            return !inst.is_paid && !isCharge;
+          });
+          const interestPendingFromInstallments = unpaidInstallments.reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+          
+          // IMPORTANTE: Balance = Capital pendiente (ya incluye cargos) + Interés pendiente
+          currentBalance = calculatedCapitalPending + interestPendingFromInstallments;
+        }
+      }
+    }
+    
+    // IMPORTANTE: Redondear el balance final para evitar diferencias de redondeo
+    currentBalance = Math.round(currentBalance);
+    
+    console.log('🔍 Preview - Balance Actual calculado:', {
+      updateType,
+      pendingCapital,
+      pendingInterestForIndefinite,
+      currentBalance,
+      loanRemainingBalance: loan.remaining_balance
+    });
     
     let newBalance = currentBalance;
     let newPayment = loan.monthly_payment;
@@ -815,14 +1324,79 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       case 'remove_late_fee':
         // No afecta el balance, solo la mora
         break;
+
+      case 'capital_payment':
+        // Calcular el nuevo balance después del abono a capital
+        const capitalPaymentAmount = form.watch('capital_payment_amount') || 0;
+        if (capitalPaymentAmount > 0 && originalPendingCapital > 0) {
+          const capitalAfter = Math.max(0, originalPendingCapital - capitalPaymentAmount);
+          
+          // Calcular cargos no pagados para incluirlos en el balance
+          const unpaidCharges = installments.filter(inst => {
+            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+            return isCharge && !inst.is_paid;
+          });
+          const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+          
+          // Para préstamos con plazo fijo, recalcular el balance
+          if (loan.amortization_type !== 'indefinite') {
+            const unpaidInstallments = installments.filter(inst => !inst.is_paid && 
+              !(Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01));
+            const remainingInstallmentsCount = unpaidInstallments.length;
+            const keepInstallments = form.watch('keep_installments') || false;
+            
+            // Calcular interés pendiente después del abono
+            let newInterestPending = 0;
+            if (keepInstallments && remainingInstallmentsCount > 0) {
+              // Mantener número de cuotas: recalcular el monto de cada cuota
+              const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+              const newPrincipalPerPayment = capitalAfter / remainingInstallmentsCount;
+              const newInstallmentAmount = newInterestPerPayment + newPrincipalPerPayment;
+              newPayment = newInstallmentAmount;
+              newInterestPending = newInterestPerPayment * remainingInstallmentsCount;
+            } else {
+              // Mantener monto de cuota: el balance se reduce por el capital abonado
+              const interestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+              const originalPrincipalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
+              const newInstallmentCount = originalPrincipalPerPayment > 0 ? Math.ceil(capitalAfter / originalPrincipalPerPayment) : remainingInstallmentsCount;
+              newInterestPending = interestPerPayment * newInstallmentCount;
+            }
+            
+            // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
+            newBalance = capitalAfter + newInterestPending + unpaidChargesAmount;
+            
+            console.log('🔍 Preview - Cálculo de balance (capital_payment, fixed-term):', {
+              capitalAfter,
+              newInterestPending,
+              unpaidChargesAmount,
+              newBalance,
+              keepInstallments,
+              remainingInstallmentsCount
+            });
+          } else {
+            // Para préstamos indefinidos: Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
+            newBalance = capitalAfter + pendingInterestForIndefinite + unpaidChargesAmount;
+            
+            console.log('🔍 Preview - Cálculo de balance (capital_payment, indefinite):', {
+              capitalAfter,
+              pendingInterestForIndefinite,
+              unpaidChargesAmount,
+              newBalance
+            });
+          }
+        }
+        break;
     }
 
+    // IMPORTANTE: Redondear a números enteros para evitar diferencias de redondeo
     setCalculatedValues({
-      newBalance: Math.round(newBalance * 100) / 100,
-      newPayment: Math.round(newPayment * 100) / 100,
+      currentBalance: Math.round(currentBalance),
+      newBalance: Math.round(newBalance),
+      newPayment: Math.round(newPayment),
       newEndDate,
-      interestAmount: Math.round(interestAmount * 100) / 100,
-      principalAmount: Math.round(principalAmount * 100) / 100
+      interestAmount: Math.round(interestAmount),
+      principalAmount: Math.round(principalAmount)
     });
   };
 
@@ -1123,7 +1697,300 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     `;
   };
 
+  // Función para generar el HTML del recibo de abono a capital según el formato
+  const generateCapitalPaymentReceiptHTML = (format: string = 'LETTER'): string => {
+    if (!lastCapitalPaymentData) return '';
+    
+    const capitalPayment = lastCapitalPaymentData.capitalPayment;
+    const loan = lastCapitalPaymentData.loan;
+    const client = loan.clients || loan.client;
+    
+    const getFormatStyles = (format: string) => {
+      switch (format) {
+        case 'POS58':
+          return `
+            * { box-sizing: border-box; }
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0 !important; 
+              padding: 0 !important;
+              font-size: 12px;
+              line-height: 1.2;
+              color: #000;
+              width: 100% !important;
+              min-width: 100% !important;
+            }
+            .receipt-container {
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 5px !important;
+              min-width: 100% !important;
+            }
+            .header { text-align: center; margin-bottom: 10px; width: 100%; }
+            .receipt-title { font-size: 14px; font-weight: bold; margin-bottom: 5px; }
+            .receipt-number { font-size: 10px; }
+            .section { margin-bottom: 10px; width: 100%; }
+            .section-title { font-weight: bold; font-size: 11px; margin-bottom: 5px; text-decoration: underline; }
+            .info-row { margin-bottom: 3px; font-size: 10px; width: 100%; }
+            .amount-section { margin: 10px 0; width: 100%; }
+            .total-amount { font-size: 14px; font-weight: bold; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 15px; text-align: center; font-size: 9px; width: 100%; }
+            @media print { 
+              * { box-sizing: border-box; }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100% !important;
+                min-width: 100% !important;
+              }
+              .receipt-container { 
+                border: none; 
+                width: 100% !important; 
+                max-width: none !important; 
+                margin: 0 !important;
+                min-width: 100% !important;
+              }
+              @page { 
+                margin: 0 !important; 
+                size: auto !important;
+              }
+            }
+          `;
+        
+        case 'POS80':
+          return `
+            * { box-sizing: border-box; }
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0 !important; 
+              padding: 0 !important;
+              font-size: 14px;
+              line-height: 1.3;
+              color: #000;
+              width: 100% !important;
+              min-width: 100% !important;
+            }
+            .receipt-container {
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              padding: 8px !important;
+              min-width: 100% !important;
+            }
+            .header { text-align: center; margin-bottom: 15px; width: 100%; }
+            .receipt-title { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
+            .receipt-number { font-size: 12px; }
+            .section { margin-bottom: 15px; width: 100%; }
+            .section-title { font-weight: bold; font-size: 13px; margin-bottom: 8px; text-decoration: underline; }
+            .info-row { margin-bottom: 4px; font-size: 12px; width: 100%; }
+            .amount-section { margin: 15px 0; width: 100%; }
+            .total-amount { font-size: 16px; font-weight: bold; text-align: center; margin-top: 15px; }
+            .footer { margin-top: 20px; text-align: center; font-size: 10px; width: 100%; }
+            @media print { 
+              * { box-sizing: border-box; }
+              body { 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                width: 100% !important;
+                min-width: 100% !important;
+              }
+              .receipt-container { 
+                border: none; 
+                width: 100% !important; 
+                max-width: none !important; 
+                margin: 0 !important;
+                min-width: 100% !important;
+              }
+              @page { 
+                margin: 0 !important; 
+                size: auto !important;
+              }
+            }
+          `;
+        
+        case 'LETTER':
+          return `
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              line-height: 1.6;
+              color: #333;
+            }
+            .receipt-container {
+              max-width: 8.5in;
+              margin: 0 auto;
+              padding: 30px;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+            }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+            @media print { 
+              body { margin: 0; }
+              .receipt-container { border: none; max-width: 8.5in; }
+            }
+          `;
+        
+        case 'A4':
+          return `
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 20px; 
+              line-height: 1.6;
+              color: #333;
+            }
+            .receipt-container {
+              max-width: 210mm;
+              margin: 0 auto;
+              padding: 30px;
+              border: 1px solid #ddd;
+              border-radius: 8px;
+            }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+            .receipt-number { font-size: 14px; color: #666; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; margin-top: 10px; }
+            .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px; }
+            @media print { 
+              body { margin: 0; }
+              .receipt-container { border: none; max-width: 210mm; }
+            }
+          `;
+        
+        default:
+          return '';
+      }
+    };
+
+    const getFormatTitle = (format: string) => {
+      switch (format) {
+        case 'POS58': return 'RECIBO DE ABONO A CAPITAL - POS58';
+        case 'POS80': return 'RECIBO DE ABONO A CAPITAL - POS80';
+        case 'LETTER': return 'RECIBO DE ABONO A CAPITAL';
+        case 'A4': return 'RECIBO DE ABONO A CAPITAL';
+        default: return 'RECIBO DE ABONO A CAPITAL';
+      }
+    };
+
+    return `
+      <html>
+        <head>
+          <title>${getFormatTitle(format)} - ${client?.full_name || ''}</title>
+          <style>
+            ${getFormatStyles(format)}
+          </style>
+        </head>
+        <body>
+          <div class="receipt-container">
+            <div class="header">
+              ${companySettings ? `
+                <div style="margin-bottom: 15px; text-align: center;">
+                  <div style="font-size: ${format.includes('POS') ? '14px' : '18px'}; font-weight: bold; margin-bottom: 5px;">
+                    ${companySettings.company_name || 'LA EMPRESA'}
+                  </div>
+                  ${companySettings.address ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 2px;">${companySettings.address}</div>` : ''}
+                  ${companySettings.tax_id ? `<div style="font-size: ${format.includes('POS') ? '9px' : '11px'}; margin-bottom: 5px;">RNC: ${companySettings.tax_id}</div>` : ''}
+                </div>
+                <hr style="border: none; border-top: 1px solid #000; margin: 10px 0;">
+              ` : ''}
+              <div class="receipt-title">${getFormatTitle(format)}</div>
+              <div class="receipt-number">Fecha: ${capitalPayment.paymentDate}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">INFORMACIÓN DEL CLIENTE</div>
+              <div class="info-row">
+                <span>Nombre: ${client?.full_name || 'N/A'}</span>
+              </div>
+              <div class="info-row">
+                <span>Cédula: ${client?.dni || 'N/A'}</span>
+              </div>
+              ${client?.phone ? `<div class="info-row"><span>Teléfono: ${client.phone}</span></div>` : ''}
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL PRÉSTAMO</div>
+              <div class="info-row">
+                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Tasa de Interés: ${loan.interest_rate}%</span>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL ABONO A CAPITAL</div>
+              <div class="info-row">
+                <span>Fecha: ${capitalPayment.paymentDate}</span>
+              </div>
+              <div class="info-row">
+                <span>Capital pendiente antes: RD$${capitalPayment.capitalBefore.toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Monto del abono: RD$${capitalPayment.amount.toLocaleString()}</span>
+              </div>
+              ${capitalPayment.penaltyAmount > 0 ? `
+                <div class="info-row">
+                  <span>Penalidad aplicada: RD$${capitalPayment.penaltyAmount.toLocaleString()}</span>
+                </div>
+              ` : ''}
+              <div class="info-row">
+                <span>Capital pendiente después: RD$${capitalPayment.capitalAfter.toLocaleString()}</span>
+              </div>
+              <div class="info-row">
+                <span>Configuración de cuotas: ${capitalPayment.keepInstallments ? 'Mantener número de cuotas (reducir monto)' : 'Reducir número de cuotas (mantener monto)'}</span>
+              </div>
+              ${capitalPayment.adjustmentReason ? `
+                <div class="info-row">
+                  <span>Razón: ${capitalPayment.adjustmentReason}</span>
+                </div>
+              ` : ''}
+            </div>
+
+            <div class="amount-section">
+              <div class="total-amount">
+                TOTAL ABONADO: RD$${(capitalPayment.amount + (capitalPayment.penaltyAmount || 0)).toLocaleString()}
+              </div>
+              ${lastCapitalPaymentData.remainingBalance !== undefined ? `
+                <div style="text-align: center; margin-top: 10px; font-size: ${format.includes('POS') ? '10px' : '14px'};">
+                  Balance restante: RD$${lastCapitalPaymentData.remainingBalance.toLocaleString()}
+                </div>
+              ` : ''}
+            </div>
+
+            <div class="footer">
+              <p>Este documento es un comprobante oficial de abono a capital.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
   const printReceipt = (format: string = 'LETTER') => {
+    if (lastCapitalPaymentData) {
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        const receiptHTML = generateCapitalPaymentReceiptHTML(format);
+        printWindow.document.write(receiptHTML);
+        printWindow.document.close();
+        printWindow.print();
+      }
+      return;
+    }
+    
     if (!lastSettlePaymentData) return;
     
     const printWindow = window.open('', '_blank');
@@ -1136,6 +2003,22 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   };
 
   const downloadReceipt = (format: string = 'LETTER') => {
+    if (lastCapitalPaymentData) {
+      const receiptHTML = generateCapitalPaymentReceiptHTML(format);
+      const client = lastCapitalPaymentData.loan.clients || lastCapitalPaymentData.loan.client;
+
+      const blob = new Blob([receiptHTML], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recibo_abono_capital_${client.full_name.replace(/\s+/g, '_')}_${new Date(lastCapitalPaymentData.capitalPayment.paymentDate).toISOString().split('T')[0]}_${format}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      return;
+    }
+    
     if (!lastSettlePaymentData) return;
     
     const receiptHTML = generateReceiptHTMLWithFormat(format);
@@ -1153,6 +2036,63 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   };
 
   const sendWhatsAppDirectly = async () => {
+    // Manejar abono a capital primero
+    if (lastCapitalPaymentData) {
+      if (!companySettings) {
+        toast.error('Error: No se encontraron los datos de la empresa');
+        return;
+      }
+
+      try {
+        const capitalPayment = lastCapitalPaymentData.capitalPayment;
+        const loan = lastCapitalPaymentData.loan;
+        const client = loan.clients || loan.client;
+        
+        if (!client) {
+          toast.error('No se pudo obtener la información del cliente');
+          return;
+        }
+        
+        const receiptData = {
+          companyName: companySettings?.company_name || 'LA EMPRESA',
+          clientName: client?.full_name || 'Cliente',
+          clientDni: client?.dni,
+          paymentDate: capitalPayment.paymentDate,
+          capitalPaymentAmount: capitalPayment.amount,
+          penaltyAmount: capitalPayment.penaltyAmount || 0,
+          capitalBefore: capitalPayment.capitalBefore,
+          capitalAfter: capitalPayment.capitalAfter,
+          loanAmount: loan.amount,
+          remainingBalance: lastCapitalPaymentData.remainingBalance,
+          interestRate: loan.interest_rate,
+          nextPaymentDate: loan.next_payment_date,
+          keepInstallments: capitalPayment.keepInstallments,
+          adjustmentReason: capitalPayment.adjustmentReason
+        };
+
+        const receiptMessage = generateCapitalPaymentReceipt(receiptData);
+        const clientPhone = client?.phone;
+        
+        if (!clientPhone) {
+          toast.error('El cliente no tiene un número de teléfono registrado');
+          return;
+        }
+
+        const formattedPhone = formatPhoneForWhatsApp(clientPhone);
+        await openWhatsApp(formattedPhone, receiptMessage);
+        toast.success('Recibo enviado por WhatsApp');
+        setShowPrintFormatModal(false);
+        setShowWhatsAppDialog(false);
+        setLastCapitalPaymentData(null);
+        onUpdate();
+        onClose();
+      } catch (error: any) {
+        console.error('Error enviando recibo por WhatsApp:', error);
+        toast.error('Error al enviar recibo por WhatsApp');
+      }
+      return;
+    }
+
     if (!lastSettlePaymentData || !companySettings) {
       toast.error('Error: No se encontraron los datos necesarios');
       return;
@@ -1278,17 +2218,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         const historyData: any = {
           loan_id: loan.id,
           change_type: 'status_change', // delete_loan no está permitido, usar status_change
-          old_values: {
+          old_value: JSON.stringify({
             balance: loan.remaining_balance,
             payment: loan.monthly_payment,
             rate: loan.interest_rate
-          },
-          new_values: {
+          }),
+          new_value: JSON.stringify({
             balance: loan.remaining_balance,
             payment: loan.monthly_payment,
             rate: loan.interest_rate
-          },
-          reason: data.adjustment_reason,
+          }),
+          description: `Eliminar Préstamo: ${data.adjustment_reason || 'Sin razón especificada'}`,
           created_by: companyId,
         };
         
@@ -1438,12 +2378,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           }
 
           // Actualizar el balance del préstamo
+          // El balance debe ser: capital pendiente + interés pendiente + cargos no pagados (incluyendo el nuevo cargo)
+          // calculatedValues.newBalance ya incluye el nuevo cargo porque es currentBalance + amount
           loanUpdates = {
             remaining_balance: calculatedValues.newBalance,
             term_months: nextInstallmentNumber, // Actualizar el número total de cuotas
           };
 
           console.log(`✅ Nueva cuota ${nextInstallmentNumber} creada con cargo de RD$${data.amount.toLocaleString()}`);
+          console.log(`🔍 Balance actualizado - currentBalance: ${calculatedValues.currentBalance}, newBalance: ${calculatedValues.newBalance}, cargo: ${data.amount}`);
           break;
           
 
@@ -2022,6 +2965,299 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }
           }
           break;
+
+        case 'capital_payment':
+          {
+            // Validar que el préstamo no esté liquidado
+            if (loan.status === 'paid') {
+              toast.error('No se pueden realizar abonos a capital en préstamos ya liquidados');
+              setLoading(false);
+              return;
+            }
+
+            // Validar monto del abono
+            const capitalPaymentAmount = data.capital_payment_amount || 0;
+            if (capitalPaymentAmount <= 0) {
+              toast.error('El monto del abono debe ser mayor a 0');
+              setLoading(false);
+              return;
+            }
+
+            // IMPORTANTE: Usar originalPendingCapital para la validación
+            if (capitalPaymentAmount > originalPendingCapital) {
+              toast.error(`El abono no puede ser mayor al capital pendiente (RD$${originalPendingCapital.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`);
+              setLoading(false);
+              return;
+            }
+
+            const keepInstallments = data.keep_installments || false;
+            const isPenalty = data.is_penalty || false;
+            const penaltyPercentage = data.penalty_percentage || 0;
+            // IMPORTANTE: Usar originalPendingCapital para calcular la penalidad (capital antes del abono)
+            const calculatedPenaltyAmount = isPenalty && penaltyPercentage > 0 ? (originalPendingCapital * penaltyPercentage) / 100 : 0;
+            const capitalBefore = originalPendingCapital; // Usar el capital original antes del abono
+            const capitalAfter = Math.max(0, originalPendingCapital - capitalPaymentAmount);
+
+            // Registrar el abono a capital
+            console.log('💰 REGISTRANDO ABONO A CAPITAL:', {
+              loan_id: loan.id,
+              amount: capitalPaymentAmount,
+              capital_before: capitalBefore,
+              capital_after: capitalAfter,
+              keep_installments: keepInstallments,
+              penalty: calculatedPenaltyAmount
+            });
+            
+            const { data: insertedCapitalPayment, error: capitalPaymentError } = await supabase
+              .from('capital_payments')
+              .insert([{
+                loan_id: loan.id,
+                amount: capitalPaymentAmount,
+                capital_before: capitalBefore,
+                capital_after: capitalAfter,
+                keep_installments: keepInstallments,
+                adjustment_reason: data.adjustment_reason,
+                created_by: user?.id || companyId
+              }])
+              .select();
+
+            if (capitalPaymentError) {
+              console.error('❌ Error registrando abono a capital:', capitalPaymentError);
+              toast.error('Error al registrar el abono a capital');
+              setLoading(false);
+              return;
+            }
+            
+            console.log('✅ Abono a capital registrado:', insertedCapitalPayment);
+
+            // IMPORTANTE: La penalidad NO se crea como cargo/instalment
+            // Se paga junto con el abono a capital, no como una cuota separada
+            // El monto total a pagar es: capitalPaymentAmount + calculatedPenaltyAmount
+            // La penalidad se registra solo en las notas del historial y en el recibo
+
+            // Obtener cuotas pendientes para recalcular (EXCLUIR CARGOS)
+            // Los cargos NO se recalculan, solo las cuotas regulares del préstamo
+            const unpaidInstallments = installments.filter(inst => {
+              // Excluir cargos: un cargo es cuando interest_amount === 0 y principal_amount === total_amount
+              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+              return !inst.is_paid && !isCharge; // Solo cuotas regulares no pagadas
+            }).sort((a, b) => a.installment_number - b.installment_number);
+            const remainingInstallmentsCount = unpaidInstallments.length;
+
+            if (loan.amortization_type === 'indefinite') {
+              // Para préstamos indefinidos, actualizar el capital y recalcular el balance
+              // El interés se recalculará automáticamente en las próximas cuotas
+              // No necesitamos modificar cuotas existentes
+              const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+              // Calcular cuántas cuotas de interés pendientes hay (EXCLUIR CARGOS)
+              const unpaidRegularInstallments = installments.filter(inst => {
+                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                return !inst.is_paid && !isCharge; // Solo cuotas regulares no pagadas
+              });
+              const unpaidInterest = unpaidRegularInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+              // Si no hay cuotas pendientes, usar el cálculo dinámico (al menos 1 cuota)
+              const pendingInterest = unpaidInterest > 0 ? unpaidInterest : newInterestPerPayment;
+              
+              // IMPORTANTE: Calcular cargos no pagados (los cargos NO se recalculan)
+              const unpaidCharges = installments.filter(inst => {
+                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                return isCharge && !inst.is_paid;
+              });
+              const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+              
+              loanUpdates = {
+                amount: capitalAfter, // Actualizar el capital base
+                remaining_balance: capitalAfter + pendingInterest + unpaidChargesAmount // Incluir cargos no pagados
+              };
+            } else {
+              // Para préstamos con plazo fijo
+              if (keepInstallments) {
+                // Mantener número de cuotas: recalcular el monto de cada cuota
+                const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+                const newPrincipalPerPayment = remainingInstallmentsCount > 0 ? capitalAfter / remainingInstallmentsCount : 0;
+                const newInstallmentAmount = newInterestPerPayment + newPrincipalPerPayment;
+
+                // Actualizar todas las cuotas pendientes
+                for (const installment of unpaidInstallments) {
+                  await supabase
+                    .from('installments')
+                    .update({
+                      principal_amount: newPrincipalPerPayment,
+                      interest_amount: newInterestPerPayment,
+                      total_amount: newInstallmentAmount
+                    })
+                    .eq('id', installment.id);
+                }
+
+                  // Calcular cargos no pagados (los cargos NO se recalculan)
+                  const unpaidCharges = installments.filter(inst => {
+                    const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                    return isCharge && !inst.is_paid;
+                  });
+                  const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+
+                  // Calcular el nuevo total_amount del préstamo
+                  const newTotalInterest = (capitalAfter * loan.interest_rate / 100) * loan.term_months;
+                  const newTotalAmount = capitalAfter + newTotalInterest;
+                  
+                  loanUpdates = {
+                    monthly_payment: newInstallmentAmount,
+                    // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
+                    remaining_balance: capitalAfter + (newInterestPerPayment * remainingInstallmentsCount) + unpaidChargesAmount,
+                    total_amount: newTotalAmount
+                  };
+              } else {
+                // Mantener monto de cuota: reducir número de cuotas
+                // IMPORTANTE: Los cargos NO se eliminan ni se modifican, solo las cuotas regulares
+                const interestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+                const originalPrincipalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
+                const newPrincipalPerPayment = originalPrincipalPerPayment; // Mantener el mismo
+                const newInstallmentCount = newPrincipalPerPayment > 0 ? Math.ceil(capitalAfter / newPrincipalPerPayment) : remainingInstallmentsCount;
+
+                // Calcular cargos no pagados (los cargos NO se recalculan ni se eliminan)
+                const unpaidCharges = installments.filter(inst => {
+                  const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                  Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                  return isCharge && !inst.is_paid;
+                });
+                const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+
+                // Eliminar cuotas sobrantes (las últimas) - SOLO cuotas regulares, NO cargos
+                if (newInstallmentCount < remainingInstallmentsCount) {
+                  const installmentsToDelete = unpaidInstallments.slice(newInstallmentCount);
+                  for (const installment of installmentsToDelete) {
+                    await supabase
+                      .from('installments')
+                      .delete()
+                      .eq('id', installment.id);
+                  }
+
+                  // Actualizar las cuotas restantes con el nuevo capital
+                  const remainingInstallments = unpaidInstallments.slice(0, newInstallmentCount);
+                  for (const installment of remainingInstallments) {
+                    await supabase
+                      .from('installments')
+                      .update({
+                        principal_amount: newPrincipalPerPayment,
+                        interest_amount: interestPerPayment,
+                        total_amount: loan.monthly_payment
+                      })
+                      .eq('id', installment.id);
+                  }
+
+                  // Calcular el nuevo total_amount del préstamo (sin incluir cargos en el total_amount)
+                  const newTotalInterest = (capitalAfter * loan.interest_rate / 100) * newInstallmentCount;
+                  const newTotalAmount = capitalAfter + newTotalInterest;
+                  
+                  loanUpdates = {
+                    term_months: loan.term_months - (remainingInstallmentsCount - newInstallmentCount),
+                    // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
+                    remaining_balance: capitalAfter + (interestPerPayment * newInstallmentCount) + unpaidChargesAmount,
+                    total_amount: newTotalAmount
+                  };
+
+                  // Actualizar end_date si es necesario
+                  if (loan.end_date) {
+                    const endDate = new Date(loan.end_date);
+                    const reductionInMonths = remainingInstallmentsCount - newInstallmentCount;
+                    endDate.setMonth(endDate.getMonth() - reductionInMonths);
+                    loanUpdates.end_date = endDate.toISOString().split('T')[0];
+                  }
+                } else {
+                  // Si no se reducen cuotas, solo actualizar los montos
+                  for (const installment of unpaidInstallments) {
+                    await supabase
+                      .from('installments')
+                      .update({
+                        principal_amount: newPrincipalPerPayment,
+                        interest_amount: interestPerPayment
+                      })
+                      .eq('id', installment.id);
+                  }
+
+                  // Calcular cargos no pagados (los cargos NO se recalculan)
+                  const unpaidCharges = installments.filter(inst => {
+                    const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                    return isCharge && !inst.is_paid;
+                  });
+                  const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+
+                  // Calcular el nuevo total_amount del préstamo
+                  const newTotalInterest = (capitalAfter * loan.interest_rate / 100) * remainingInstallmentsCount;
+                  const newTotalAmount = capitalAfter + newTotalInterest;
+                  
+                  loanUpdates = {
+                    // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
+                    remaining_balance: capitalAfter + (interestPerPayment * remainingInstallmentsCount) + unpaidChargesAmount,
+                    total_amount: newTotalAmount
+                  };
+                }
+              }
+            }
+
+            console.log('📝 ACTUALIZANDO PRÉSTAMO con loanUpdates:', loanUpdates);
+            
+            // Guardar datos del abono para mostrar recibo
+            const paymentDate = new Date().toLocaleDateString('es-DO');
+            const { data: updatedLoanData } = await supabase
+              .from('loans')
+              .select(`
+                *,
+                clients:client_id (
+                  id,
+                  full_name,
+                  dni,
+                  phone
+                )
+              `)
+              .eq('id', loan.id)
+              .single();
+
+            console.log('📊 Datos del préstamo después del update:', updatedLoanData);
+
+            if (updatedLoanData) {
+              setLastCapitalPaymentData({
+                loan: updatedLoanData,
+                capitalPayment: {
+                  amount: capitalPaymentAmount,
+                  penaltyAmount: calculatedPenaltyAmount,
+                  capitalBefore,
+                  capitalAfter,
+                  keepInstallments,
+                  adjustmentReason: data.adjustment_reason,
+                  paymentDate
+                },
+                remainingBalance: loanUpdates.remaining_balance || updatedLoanData.remaining_balance
+              });
+
+              // Mostrar modal de impresión después del éxito
+              setShowPrintFormatModal(true);
+              
+              // IMPORTANTE: Actualizar el préstamo incluso si se muestra el modal
+              // Disparar evento para refrescar historial y actualizar datos
+              console.log('🔄 Disparando evento loanHistoryRefresh para loanId:', loan.id);
+              window.dispatchEvent(new CustomEvent('loanHistoryRefresh', { 
+                detail: { loanId: loan.id } 
+              }));
+              
+              // Llamar a onUpdate para refrescar los datos del préstamo
+              console.log('🔄 Llamando a onUpdate()');
+              onUpdate();
+            }
+
+            const successMessage = isPenalty && calculatedPenaltyAmount > 0
+              ? `Abono a capital de RD$${capitalPaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} registrado exitosamente. Penalidad de RD$${calculatedPenaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} agregada como cargo adicional.`
+              : `Abono a capital de RD$${capitalPaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} registrado exitosamente`;
+            toast.success(successMessage);
+            
+            // NO cerrar el modal ni retornar aquí - dejar que el flujo continúe para que se actualice el préstamo
+          }
+          break;
       }
 
       // Agregar notas de auditoría
@@ -2041,7 +3277,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
       // Para cargos y otros cambios que afectan el balance, asegurarse de que la actualización se complete
       // antes de continuar, para que los datos estén actualizados cuando se recarguen
-      if (updateType === 'add_charge' || updateType === 'remove_late_fee' || updateType === 'term_extension') {
+      if (updateType === 'add_charge' || updateType === 'remove_late_fee' || updateType === 'term_extension' || updateType === 'capital_payment') {
         // Verificar que la actualización se completó correctamente leyendo los datos actualizados
         const { data: updatedLoan, error: verifyError } = await supabase
           .from('loans')
@@ -2060,20 +3296,23 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       // Registrar en historial de cambios (si existe la tabla)
       try {
         // Mapear updateType a valores permitidos en loan_history.change_type
+        // Guardar el update_type original en notes para poder mostrar nombres descriptivos
         const mapChangeType = (type: string): string => {
           switch (type) {
             case 'settle_loan':
               return 'payment'; // Pago completo del préstamo
             case 'add_charge':
-              return 'balance_adjustment';
+              return 'balance_adjustment'; // Se guardará el tipo original en notes
             case 'remove_late_fee':
-              return 'balance_adjustment';
+              return 'balance_adjustment'; // Se guardará el tipo original en notes
             case 'term_extension':
               return 'term_extension';
             case 'edit_loan':
-              return 'balance_adjustment';
+              return 'balance_adjustment'; // Se guardará el tipo original en notes
             case 'payment_agreement':
-              return 'balance_adjustment';
+              return 'balance_adjustment'; // Se guardará el tipo original en notes
+            case 'capital_payment':
+              return 'capital_payment'; // Abono a capital
             case 'delete_loan':
               return 'status_change'; // Eliminación de préstamo
             default:
@@ -2081,50 +3320,34 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           }
         };
 
-        const historyData: any = {
-          loan_id: loan.id,
-          change_type: mapChangeType(updateType),
-          old_values: {
-            balance: loan.remaining_balance,
-            payment: loan.monthly_payment,
-            rate: loan.interest_rate
-          },
-          new_values: {
-            balance: calculatedValues.newBalance,
-            payment: calculatedValues.newPayment,
-            rate: loan.interest_rate
-          },
-          reason: data.adjustment_reason,
-          created_by: companyId,
+        // Construir old_value y new_value como strings JSON
+        let oldValueObj: any = {
+          balance: loan.remaining_balance,
+          payment: loan.monthly_payment,
+          rate: loan.interest_rate
         };
         
+        let newValueObj: any = {
+          balance: calculatedValues.newBalance,
+          payment: calculatedValues.newPayment,
+          rate: loan.interest_rate
+        };
+        
+        let description = `${updateType}: ${data.adjustment_reason}`;
+        
         if (updateType === 'remove_late_fee') {
-          historyData.old_values.current_late_fee = currentLateFee;
-          historyData.new_values.current_late_fee = (currentLateFee || 0) - (data.late_fee_amount || 0);
-          historyData.amount = data.late_fee_amount;
+          oldValueObj.current_late_fee = currentLateFee;
+          newValueObj.current_late_fee = (currentLateFee || 0) - (data.late_fee_amount || 0);
+          description = `Eliminar Mora: ${data.adjustment_reason}. Monto eliminado: RD$${(data.late_fee_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         } else if (updateType === 'add_charge') {
-          // Para agregar cargo, incluir información adicional
-          historyData.amount = data.amount;
-          historyData.old_values.balance = loan.remaining_balance;
-          historyData.new_values.balance = calculatedValues.newBalance;
-          // Agregar información adicional en notes si está disponible
+          oldValueObj.balance = loan.remaining_balance;
+          newValueObj.balance = calculatedValues.newBalance;
+          description = `Agregar Cargo: ${data.adjustment_reason}. Monto: RD$${(data.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           if (data.notes) {
-            historyData.notes = data.notes;
-          }
-          if (data.reference_number) {
-            historyData.reference_number = data.reference_number;
-          }
-          if (data.charge_date) {
-            // CORRECCIÓN: Guardar la fecha del cargo como está (ya está en formato YYYY-MM-DD)
-            // No usar toISOString() que puede cambiar la fecha por zona horaria
-            historyData.charge_date = data.charge_date;
-          }
-          if (data.charge_due_date) {
-            // Guardar también la fecha de vencimiento si fue especificada
-            historyData.charge_due_date = data.charge_due_date;
+            description += `. Notas: ${data.notes}`;
           }
         } else if (updateType === 'edit_loan') {
-          historyData.old_values = {
+          oldValueObj = {
             amount: loan.amount,
             balance: loan.remaining_balance,
             payment: loan.monthly_payment,
@@ -2132,9 +3355,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             term_months: loan.term_months,
             amortization_type: loan.amortization_type || 'simple'
           };
-          // Si el préstamo es pendiente, no modificar el monto en el historial
           const finalAmountForHistory = loan.status === 'pending' ? loan.amount : (data.edit_amount || loan.amount);
-          historyData.new_values = {
+          newValueObj = {
             amount: finalAmountForHistory,
             balance: calculatedValues.newBalance,
             payment: calculatedValues.newPayment,
@@ -2142,26 +3364,83 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             term_months: data.edit_term_months || loan.term_months,
             amortization_type: data.edit_amortization_type || loan.amortization_type || 'simple'
           };
-          historyData.amount = finalAmountForHistory;
+          description = `Editar Préstamo: ${data.adjustment_reason}`;
         } else if (updateType === 'settle_loan') {
-          // Para settle_loan, incluir el método de pago, el monto y la fecha del pago
-          historyData.amount = (data.settle_capital || 0) + (data.settle_interest || 0) + (data.settle_late_fee || 0);
-          // Usar charge_date para guardar la fecha del pago (ya existe en loan_history)
-          if (settlePaymentDate) {
-            historyData.charge_date = settlePaymentDate;
-          }
+          const totalAmount = (data.settle_capital || 0) + (data.settle_interest || 0) + (data.settle_late_fee || 0);
+          description = `Saldar Préstamo: ${data.adjustment_reason}. Monto total: RD$${totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           if (data.payment_method) {
-            historyData.payment_method = data.payment_method;
-          }
-          if (data.reference_number) {
-            historyData.reference_number = data.reference_number;
+            description += `. Método: ${data.payment_method}`;
           }
           if (data.notes) {
-            historyData.notes = data.notes;
+            description += `. Notas: ${data.notes}`;
           }
-        } else {
-          historyData.amount = data.amount;
+        } else if (updateType === 'capital_payment') {
+          const capitalAfter = Math.max(0, originalPendingCapital - (data.capital_payment_amount || 0));
+          let newBalance = capitalAfter;
+          if (loan.amortization_type !== 'indefinite') {
+            const unpaidInstallments = installments.filter(inst => !inst.is_paid);
+            const remainingInstallmentsCount = unpaidInstallments.length;
+            const keepInstallments = data.keep_installments || false;
+            
+            if (keepInstallments && remainingInstallmentsCount > 0) {
+              const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+              newBalance = capitalAfter + (newInterestPerPayment * remainingInstallmentsCount);
+            } else {
+              const interestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+              const originalPrincipalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
+              const newInstallmentCount = originalPrincipalPerPayment > 0 ? Math.ceil(capitalAfter / originalPrincipalPerPayment) : remainingInstallmentsCount;
+              newBalance = capitalAfter + (interestPerPayment * newInstallmentCount);
+            }
+          } else {
+            const unpaidInstallments = installments.filter(inst => !inst.is_paid);
+            const unpaidInterest = unpaidInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+            const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+            const pendingInterest = unpaidInterest > 0 ? unpaidInterest : newInterestPerPayment;
+            newBalance = capitalAfter + pendingInterest;
+          }
+          
+          oldValueObj = {
+            balance: loan.remaining_balance,
+            capital_before: originalPendingCapital,
+            payment: loan.monthly_payment,
+            rate: loan.interest_rate
+          };
+          newValueObj = {
+            balance: newBalance,
+            capital_after: capitalAfter,
+            payment: calculatedValues.newPayment || loan.monthly_payment,
+            rate: loan.interest_rate
+          };
+          
+          if (data.is_penalty && data.penalty_percentage) {
+            const calculatedPenalty = (originalPendingCapital * data.penalty_percentage) / 100;
+            description = `Abono a capital: RD$${(data.capital_payment_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Penalidad (${data.penalty_percentage}%): RD$${calculatedPenalty.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. ${data.adjustment_reason || ''}`;
+            if (data.notes) {
+              description += `. ${data.notes}`;
+            }
+          } else {
+            description = `Abono a capital: RD$${(data.capital_payment_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. ${data.adjustment_reason || ''}`;
+            if (data.notes) {
+              description += `. ${data.notes}`;
+            }
+          }
         }
+        
+        const historyData: any = {
+          loan_id: loan.id,
+          change_type: mapChangeType(updateType),
+          old_value: JSON.stringify(oldValueObj),
+          new_value: JSON.stringify(newValueObj),
+          description: description,
+          created_by: companyId
+        };
+        
+        console.log('📝 INSERTANDO EN HISTORIAL:', {
+          updateType,
+          change_type: mapChangeType(updateType),
+          historyData,
+          loan_id: loan.id
+        });
         
         const { data: insertedHistory, error: historyInsertError } = await supabase
           .from('loan_history')
@@ -2175,8 +3454,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           toast.error(`Error al guardar en historial: ${historyInsertError.message}`);
         } else {
           console.log('✅ Historial guardado exitosamente:', insertedHistory);
+          console.log('📊 Historial insertado - ID:', insertedHistory?.[0]?.id);
           // Disparar evento inmediatamente después de guardar exitosamente
-          if (updateType === 'add_charge' || updateType === 'remove_late_fee') {
+          if (updateType === 'add_charge' || updateType === 'remove_late_fee' || updateType === 'capital_payment') {
+            console.log('🔄 Disparando evento loanHistoryRefresh para:', updateType);
             window.dispatchEvent(new CustomEvent('loanHistoryRefresh', { 
               detail: { loanId: loan.id } 
             }));
@@ -2234,6 +3515,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       case 'delete_loan': return <Trash2 className="h-4 w-4" />;
       case 'remove_late_fee': return <MinusCircle className="h-4 w-4" />;
       case 'payment_agreement': return <Handshake className="h-4 w-4" />;
+      case 'capital_payment': return <CreditCard className="h-4 w-4" />;
       case 'edit_loan': return <Edit className="h-4 w-4" />;
       default: return <Edit className="h-4 w-4" />;
     }
@@ -2247,6 +3529,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       delete_loan: 'Eliminar Préstamo',
       remove_late_fee: 'Eliminar Mora',
       payment_agreement: 'Acuerdos de Pago',
+      capital_payment: 'Abono a Capital',
       edit_loan: 'Editar Préstamo'
     };
     return labels[type as keyof typeof labels] || type;
@@ -2362,6 +3645,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           { value: 'amount_adjustment', label: 'Ajuste de Monto' },
           { value: 'other', label: 'Otra Razón' }
         ];
+      case 'capital_payment':
+        return [
+          { value: 'client_request', label: 'Solicitud del Cliente' },
+          { value: 'early_payment', label: 'Pago Anticipado' },
+          { value: 'extra_payment', label: 'Pago Extraordinario' },
+          { value: 'capital_reduction', label: 'Reducción de Capital' },
+          { value: 'payment_agreement', label: 'Acuerdo de Pago' },
+          { value: 'other', label: 'Otra Razón' }
+        ];
       default:
         return [
           { value: 'other', label: 'Otra Razón' }
@@ -2442,6 +3734,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     <div className="flex items-center gap-2">
                                       <Handshake className="h-4 w-4" />
                                       Acuerdos de Pago
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="capital_payment">
+                                    <div className="flex items-center gap-2">
+                                      <CreditCard className="h-4 w-4" />
+                                      Abono a Capital
                                     </div>
                                   </SelectItem>
                                 </>
@@ -2713,6 +4011,186 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         >
                           Eliminar Toda la Mora
                         </Button>
+                      </div>
+                    )}
+
+                    {form.watch('update_type') === 'capital_payment' && (
+                      <div className="space-y-4">
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                          <div className="text-sm text-green-800 space-y-1">
+                            <div><strong>Capital Pendiente Actual:</strong> RD${pendingCapital.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                          </div>
+                        </div>
+
+                        <FormField
+                          control={form.control}
+                          name="capital_payment_amount"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Monto a Abonar</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  placeholder="0.00"
+                                  step="0.01"
+                                  min="0.01"
+                                  max={pendingCapital}
+                                  {...field}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    if (value === '') {
+                                      field.onChange(undefined);
+                                    } else {
+                                      const numValue = parseFloat(value);
+                                      if (!isNaN(numValue) && numValue >= 0.01) {
+                                        field.onChange(Math.min(numValue, pendingCapital));
+                                      }
+                                    }
+                                  }}
+                                />
+                              </FormControl>
+                              <div className="text-xs text-gray-500">
+                                Máximo: RD${pendingCapital.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="keep_installments"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                              <FormControl>
+                                <input
+                                  type="checkbox"
+                                  checked={field.value || false}
+                                  onChange={field.onChange}
+                                  className="mt-1"
+                                />
+                              </FormControl>
+                              <div className="space-y-1 leading-none">
+                                <FormLabel>Mantener Cuotas</FormLabel>
+                                <p className="text-xs text-gray-500">
+                                  Si está marcado: El número de cuotas no cambia, se recalcula el interés y las cuotas futuras disminuyen de monto.
+                                  <br />
+                                  Si no está marcado: Se mantiene el monto de la cuota y se reduce el número de cuotas.
+                                </p>
+                              </div>
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name="is_penalty"
+                          render={({ field }) => (
+                            <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                              <FormControl>
+                                <input
+                                  type="checkbox"
+                                  checked={field.value || false}
+                                  onChange={(e) => {
+                                    field.onChange(e.target.checked);
+                                    if (!e.target.checked) {
+                                      form.setValue('penalty_percentage', undefined);
+                                      setPenaltyAmount(0);
+                                    }
+                                  }}
+                                  className="mt-1"
+                                />
+                              </FormControl>
+                              <div className="space-y-1 leading-none flex-1">
+                                <FormLabel>Penalidad</FormLabel>
+                                <p className="text-xs text-gray-500">
+                                  Aplicar una penalidad como porcentaje del capital pendiente. El monto de la penalidad se agregará como un cargo adicional.
+                                </p>
+                              </div>
+                            </FormItem>
+                          )}
+                        />
+
+                        {form.watch('is_penalty') && (
+                          <div className="space-y-4 pl-6 border-l-2 border-orange-300">
+                            <FormField
+                              control={form.control}
+                              name="penalty_percentage"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Porcentaje de Penalidad (%)</FormLabel>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      placeholder="0.00"
+                                      step="0.01"
+                                      min="0"
+                                      max="100"
+                                      {...field}
+                                      value={field.value || ''}
+                                      onChange={(e) => {
+                                        const value = e.target.value;
+                                        if (value === '') {
+                                          field.onChange(undefined);
+                                          setPenaltyAmount(0);
+                                        } else {
+                                          const numValue = parseFloat(value);
+                                          if (!isNaN(numValue) && numValue >= 0 && numValue <= 100) {
+                                            field.onChange(numValue);
+                                            // El monto se calculará automáticamente en el useEffect
+                                          }
+                                        }
+                                      }}
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+
+                            {penaltyAmount > 0 && (
+                              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                                <div className="text-sm text-orange-800 space-y-1">
+                                  <div><strong>Monto de Penalidad:</strong> RD${penaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                  <div className="text-xs text-orange-700">
+                                    Este monto se agregará como un cargo adicional al préstamo.
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {form.watch('capital_payment_amount') && form.watch('capital_payment_amount')! > 0 && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
+                            <div className="text-sm font-semibold text-blue-900">Vista Previa del Impacto:</div>
+                            <div className="text-sm text-blue-800 space-y-1">
+                              <div><strong>Nuevo Capital Pendiente:</strong> RD${capitalPaymentPreview.newPendingCapital.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              {form.watch('is_penalty') && penaltyAmount > 0 && (
+                                <div className="pt-2 border-t border-blue-300">
+                                  <div className="text-orange-700"><strong>Cargo de Penalidad:</strong> RD${penaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                </div>
+                              )}
+                              {capitalPaymentPreview.installmentsImpact && (
+                                <div className="pt-2 border-t border-blue-300">
+                                  <strong>Impacto en Cuotas:</strong> {capitalPaymentPreview.installmentsImpact}
+                                </div>
+                              )}
+                            </div>
+                            <div className="pt-3">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={handlePreviewTable}
+                                className="w-full"
+                              >
+                                <Eye className="h-4 w-4 mr-2" />
+                                Previsualizar Tabla de Cuotas
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -3056,6 +4534,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                  form.watch('update_type') === 'remove_late_fee' ? 'Razón de Eliminación de Mora' :
                                  form.watch('update_type') === 'edit_loan' ? 'Razón de Edición' :
                                  form.watch('update_type') === 'settle_loan' ? 'Razón de Saldo' :
+                                 form.watch('update_type') === 'capital_payment' ? 'Razón del Abono a Capital' :
                                  'Razón del Ajuste'}
                               </FormLabel>
                               <Select onValueChange={field.onChange} value={field.value}>
@@ -3129,11 +4608,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">Balance Actual:</span>
-                      <span className="font-semibold">${(
+                      <span className="font-semibold">RD${Math.round(calculatedValues.currentBalance || (
                         loan.amortization_type === 'indefinite' 
                           ? loan.amount + pendingInterestForIndefinite
                           : loan.remaining_balance
-                      ).toLocaleString()}</span>
+                      )).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                     
                     {form.watch('update_type') === 'add_charge' && form.watch('amount') && (
@@ -3601,13 +5080,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Printer className="h-5 w-5" />
-            Seleccionar Formato de Impresión
+            {lastCapitalPaymentData ? 'Recibo de Abono a Capital' : 'Seleccionar Formato de Impresión'}
           </DialogTitle>
         </DialogHeader>
         
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            Selecciona el formato de impresión según tu impresora:
+            {lastCapitalPaymentData 
+              ? 'Selecciona el formato de impresión para el recibo del abono a capital:'
+              : 'Selecciona el formato de impresión según tu impresora:'}
           </p>
           
           <div className="grid grid-cols-1 gap-3">
@@ -3893,6 +5374,108 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             Enviar por WhatsApp
           </Button>
         </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Modal de Previsualización de Tabla de Cuotas */}
+    <Dialog open={showPreviewTable} onOpenChange={setShowPreviewTable}>
+      <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Table className="h-5 w-5" />
+            Previsualización de Cuotas después del Abono a Capital
+          </DialogTitle>
+          <DialogDescription>
+            Esta es una vista previa de cómo quedarán las cuotas después del abono. Los cambios se aplicarán al confirmar el abono.
+          </DialogDescription>
+        </DialogHeader>
+
+        {previewInstallments.length > 0 ? (
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="text-sm space-y-1">
+                <div><strong>Capital Pendiente Original:</strong> RD${originalPendingCapital.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div><strong>Monto del Abono:</strong> RD${(form.watch('capital_payment_amount') || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                {form.watch('is_penalty') && penaltyAmount > 0 && (
+                  <>
+                    <div className="text-orange-700"><strong>Cargo de Penalidad:</strong> RD${penaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="text-orange-700 font-semibold pt-1 border-t border-orange-300"><strong>Total a Pagar (Abono + Penalidad):</strong> RD${((form.watch('capital_payment_amount') || 0) + penaltyAmount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  </>
+                )}
+                <div className="pt-1 border-t border-blue-300"><strong>Nuevo Capital Pendiente:</strong> RD${capitalPaymentPreview.newPendingCapital.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              </div>
+            </div>
+
+            <div className="border rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-100 border-b">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-semibold">#</th>
+                      <th className="px-4 py-2 text-left font-semibold">Fecha Vencimiento</th>
+                      <th className="px-4 py-2 text-right font-semibold">Capital</th>
+                      <th className="px-4 py-2 text-right font-semibold">Interés</th>
+                      <th className="px-4 py-2 text-right font-semibold">Total</th>
+                      <th className="px-4 py-2 text-center font-semibold">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewInstallments.map((inst, index) => (
+                      <tr 
+                        key={index} 
+                        className={`border-b ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}
+                      >
+                        <td className="px-4 py-2">{inst.installment_number}</td>
+                        <td className="px-4 py-2">
+                          {inst.due_date ? formatDateStringForSantoDomingo(inst.due_date) : '-'}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {inst.principal_amount > 0 ? `RD$${inst.principal_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {inst.interest_amount > 0 ? `RD$${inst.interest_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                        </td>
+                        <td className="px-4 py-2 text-right font-semibold">
+                          RD${inst.total_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <Badge variant="outline" className="bg-gray-100 text-gray-600">
+                            Pendiente
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-100 border-t-2">
+                    <tr>
+                      <td colSpan={2} className="px-4 py-2 font-semibold">Total</td>
+                      <td className="px-4 py-2 text-right font-semibold">
+                        RD${previewInstallments.reduce((sum, inst) => sum + (inst.principal_amount || 0), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-4 py-2 text-right font-semibold">
+                        RD${previewInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-4 py-2 text-right font-semibold">
+                        RD${previewInstallments.reduce((sum, inst) => sum + (inst.total_amount || 0), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowPreviewTable(false)}>
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-8 text-gray-500">
+            No hay cuotas futuras para previsualizar
+          </div>
+        )}
       </DialogContent>
     </Dialog>
     </>

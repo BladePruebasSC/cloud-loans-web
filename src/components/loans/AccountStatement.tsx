@@ -328,6 +328,16 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       if (paymentsError) throw paymentsError;
       setPayments(paymentsData || []);
       
+      // Obtener abonos a capital
+      const { data: capitalPaymentsData, error: capitalPaymentsError } = await supabase
+        .from('capital_payments')
+        .select('amount')
+        .eq('loan_id', loanId);
+      
+      if (capitalPaymentsError) {
+        console.error('Error obteniendo abonos a capital:', capitalPaymentsError);
+      }
+      
       // Calcular el balance correcto (capital + interés total - pagos realizados)
       // Si total_amount está disponible y es mayor que amount, usarlo; si no, calcularlo
       let correctTotalAmount = loanData.total_amount;
@@ -647,13 +657,46 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         
         finalRemainingBalance = Math.max(0, loanData.amount + pendingInterest + totalChargesAmount - totalPaidCapital);
       } else {
-        // Para otros tipos, usar lógica tradicional
-        const allCharges = (installmentsData || [])
-          .filter(inst => inst.interest_amount === 0 && inst.principal_amount === inst.total_amount);
-        const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+        // CORRECCIÓN: Calcular balance igual que LoanDetailsView
+        // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
         
-        const totalAmountWithCharges = correctTotalAmount + totalChargesAmount;
-        finalRemainingBalance = Math.max(0, totalAmountWithCharges - totalPaid);
+        // 1. Calcular cargos
+        const allCharges = (installmentsData || []).filter(inst => {
+          const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                          Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+          return isCharge;
+        });
+      const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+        const paidChargesAmount = allCharges
+          .filter(inst => inst.is_paid)
+          .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+        const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
+        
+        // 2. Calcular capital pagado y abonos a capital
+        const totalPaidFromPayments = (paymentsData || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
+        const totalCapitalPayments = (capitalPaymentsData || []).reduce((sum, cp) => sum + (cp.amount || 0), 0);
+        const capitalPaidFromLoan = totalPaidFromPayments - paidChargesAmount;
+        
+        // 3. Calcular capital pendiente
+        const capitalPending = loanData.amount - capitalPaidFromLoan - totalCapitalPayments + unpaidChargesAmount;
+      
+        // 4. Calcular interés pendiente
+        const interestPending = (installmentsData || [])
+          .filter(inst => !inst.is_paid && !(Math.abs(inst.interest_amount || 0) < 0.01 && 
+                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01))
+          .reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+        
+        // 5. Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
+        finalRemainingBalance = capitalPending + interestPending + unpaidChargesAmount;
+        
+        console.log('🔍 AccountStatement - Cálculo de balance (fixed-term, corregido):', {
+          loanId: loanData.id,
+          capitalPending,
+          interestPending,
+          unpaidChargesAmount,
+          finalRemainingBalance,
+          dbRemainingBalance: loanData.remaining_balance
+        });
       }
       
       // Actualizar el loan con el balance que incluye cargos
@@ -1103,8 +1146,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           }
           
           // Asignar este pago a esta cuota
-          assignedPaymentIds.add(payment.id);
-          paymentToInstallmentMap.set(payment.id, i);
+            assignedPaymentIds.add(payment.id);
+            paymentToInstallmentMap.set(payment.id, i);
           
           accumulatedInterest += paymentInterest;
           paymentIndex++;
@@ -1487,14 +1530,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           }
         } else {
           // Para cuotas regulares de interés, verificar que el interés acumulado sea suficiente
-          const interestPerPayment = (loanData.amount * loanData.interest_rate) / 100;
-          if (interestPaidForThisInstallment >= interestPerPayment * 0.99) {
-            paymentStatus = 'paid';
-            if (foundPayment && !displayPaidDate) {
-              displayPaidDate = foundPayment.payment_date?.split('T')[0] || foundPayment.payment_date;
-            }
-          } else if (interestPaidForThisInstallment > 0) {
-            paymentStatus = 'partial';
+        const interestPerPayment = (loanData.amount * loanData.interest_rate) / 100;
+        if (interestPaidForThisInstallment >= interestPerPayment * 0.99) {
+          paymentStatus = 'paid';
+          if (foundPayment && !displayPaidDate) {
+            displayPaidDate = foundPayment.payment_date?.split('T')[0] || foundPayment.payment_date;
+          }
+        } else if (interestPaidForThisInstallment > 0) {
+          paymentStatus = 'partial';
           }
         }
       } else {

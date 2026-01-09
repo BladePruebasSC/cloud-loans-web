@@ -49,6 +49,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   const [loading, setLoading] = useState(false);
   const [loanInfo, setLoanInfo] = useState<any>(null);
   const [totalPaidFromPayments, setTotalPaidFromPayments] = useState(0);
+  const [capitalPayments, setCapitalPayments] = useState<any[]>([]);
 
   useEffect(() => {
     if (isOpen && loanId) {
@@ -826,6 +827,18 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       // Establecer las cuotas inmediatamente para mostrar los datos
       setInstallments(sortedInstallments);
 
+      // Obtener abonos a capital
+      const { data: capitalPaymentsData, error: capitalPaymentsError } = await supabase
+        .from('capital_payments')
+        .select('amount')
+        .eq('loan_id', loanId);
+      
+      if (!capitalPaymentsError && capitalPaymentsData) {
+        setCapitalPayments(capitalPaymentsData || []);
+      } else {
+        setCapitalPayments([]);
+      }
+
       // Calcular el total pagado desde los pagos reales (no desde cuotas marcadas como pagadas)
       const { data: payments, error: paymentsError } = await supabase
         .from('payments')
@@ -989,13 +1002,22 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   // Para evitar que la suma de valores redondeados cause diferencias (ej: 13,002 vs 13,000)
   let totalAmount = 0;
   let totalPaid = 0;
+  let balancePending = 0; // Declarar fuera para usarlo después
+  
+  // Calcular total de abonos a capital
+  const totalCapitalPayments = capitalPayments.reduce((sum, cp) => sum + (cp.amount || 0), 0);
   
   if (loanInfo) {
     const isIndefinite = loanInfo.amortization_type === 'indefinite';
     
     if (isIndefinite) {
-      // Para préstamos indefinidos: Total = Capital + Interés total + Todos los cargos
+      // Para préstamos indefinidos: Total = Capital (después de abonos) + Interés total + Todos los cargos
+      // IMPORTANTE: El capital base debe reducirse por los abonos a capital
+      const capitalAfterAbonos = Math.max(0, loanInfo.amount - totalCapitalPayments);
+      
       // Calcular todos los cargos (cuotas con interest_amount = 0 y principal_amount = total_amount)
+      // IMPORTANTE: Excluir cargos que sean penalidades de abonos a capital
+      // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
       const chargesTotal = installments.reduce((sum, inst) => {
         const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 && 
                         Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01 &&
@@ -1005,12 +1027,14 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           const chargeAmount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
             ? (inst as any).total_amount
             : (inst.amount || 0);
-          return sum + Number(chargeAmount);
+          // Redondear cada valor individual antes de sumar
+          return sum + Math.round(Number(chargeAmount));
         }
         return sum;
       }, 0);
       
       // Calcular el interés total sumando todas las cuotas de interés (excluyendo cargos)
+      // IMPORTANTE: Para préstamos indefinidos, el interés se calcula sobre el capital después de abonos
       const interestTotal = installments.reduce((sum, inst) => {
         const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 && 
                         Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01 &&
@@ -1020,106 +1044,284 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           const interestAmount = (inst as any).interest_amount !== undefined && (inst as any).interest_amount !== null
             ? (inst as any).interest_amount
             : (inst.interest_amount || 0);
-          return sum + Number(interestAmount);
+          // Redondear cada valor individual antes de sumar
+          return sum + Math.round(Number(interestAmount));
         }
         return sum;
       }, 0);
       
-      // Total = Capital + Interés total + Todos los cargos
-      totalAmount = loanInfo.amount + interestTotal + chargesTotal;
+      // Total = Capital (después de abonos) + Interés total + Todos los cargos
+      // IMPORTANTE: Redondear cada componente antes de sumar
+      totalAmount = Math.round(capitalAfterAbonos) + interestTotal + chargesTotal;
       
       // Total pagado: usar los pagos reales si están disponibles
       if (totalPaidFromPayments > 0) {
         totalPaid = totalPaidFromPayments;
       } else {
         // Fallback: calcular desde cuotas pagadas sumando sus montos reales
+        // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
         totalPaid = installments
           .filter(inst => inst.is_paid)
           .reduce((sum, inst) => {
             const amount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
               ? (inst as any).total_amount
               : (inst.amount || 0);
-            return sum + Number(amount);
+            // Redondear cada valor individual antes de sumar
+            return sum + Math.round(Number(amount));
           }, 0);
       }
+      
+      // Calcular balance pendiente para préstamos indefinidos
+      // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
+      const unpaidChargesAmountIndefinite = installments
+        .filter(inst => {
+          const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 && 
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01 &&
+                          (inst as any).principal_amount > 0;
+          return isCharge && !inst.is_paid;
+        })
+        .reduce((sum, inst) => {
+          const chargeAmount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
+            ? (inst as any).total_amount
+            : (inst.amount || 0);
+          // Redondear cada valor individual antes de sumar
+          return sum + Math.round(Number(chargeAmount));
+        }, 0);
+      
+      const unpaidInterestTotal = installments
+        .filter(inst => {
+          const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 && 
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01 &&
+                          (inst as any).principal_amount > 0;
+          return !isCharge && !inst.is_paid;
+        })
+        .reduce((sum, inst) => {
+          const interestAmount = (inst as any).interest_amount !== undefined && (inst as any).interest_amount !== null
+            ? (inst as any).interest_amount
+            : (inst.interest_amount || 0);
+          // Redondear cada valor individual antes de sumar
+          return sum + Math.round(Number(interestAmount));
+        }, 0);
+      
+      // Balance pendiente = suma de todas las cuotas pendientes (regular) + cargos no pagados
+      // IMPORTANTE: Redondear cada componente antes de sumar
+      balancePending = Math.round(capitalAfterAbonos) + unpaidInterestTotal + unpaidChargesAmountIndefinite;
     } else {
       // Para préstamos con plazo definido: calcular el total correctamente
       // IMPORTANTE: Usar total_amount del préstamo como base (sin redondear) y sumar solo los cargos
       // Esto evita problemas de redondeo acumulativo al sumar cuotas individuales
+      // IMPORTANTE: El capital base debe reducirse por los abonos a capital
+      const capitalAfterAbonos = Math.max(0, loanInfo.amount - totalCapitalPayments);
       const baseLoanTotal = (loanInfo as any).total_amount;
       
       if (baseLoanTotal && baseLoanTotal > 0) {
-        // Si hay total_amount del préstamo, usarlo como base
-        // Luego sumar solo los cargos (cuotas con interest_amount = 0 y principal_amount = total_amount)
+        // CORRECCIÓN: El total a pagar debe ser la suma de TODAS las cuotas (pagadas y pendientes) + todos los cargos
+        // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
+        const allChargesTotal = installments.reduce((sum, inst) => {
+          const isCharge = (inst as any).interest_amount === 0 && 
+                          (inst as any).principal_amount > 0 && 
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+          if (isCharge) {
+            const chargeAmount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
+              ? (inst as any).total_amount
+              : (inst.amount || 0);
+            // Redondear cada valor individual antes de sumar
+            return sum + Math.round(Number(chargeAmount));
+          }
+          return sum;
+        }, 0);
+        
+        // Calcular suma de TODAS las cuotas (pagadas + pendientes, regulares, no cargos)
+        const allRegularInstallmentsTotal = installments.reduce((sum, inst) => {
+          const isCharge = (inst as any).interest_amount === 0 && 
+                          (inst as any).principal_amount > 0 && 
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+          if (!isCharge) {
+            const amount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
+              ? (inst as any).total_amount
+              : (inst.amount || 0);
+            // Redondear cada valor individual antes de sumar
+            return sum + Math.round(Number(amount));
+          }
+          return sum;
+        }, 0);
+        
+        // Total a pagar = Suma de TODAS las cuotas regulares (pagadas + pendientes) + Todos los cargos
+        totalAmount = allRegularInstallmentsTotal + allChargesTotal;
+        
+        console.log('🔍 InstallmentsTable - Cálculo detallado de totalAmount:', {
+          loanId,
+          baseLoanTotal,
+          allRegularInstallmentsTotal,
+          allChargesTotal,
+          totalAmount,
+          installmentsCount: installments.length
+        });
+      } else {
+        // Si no hay total_amount del préstamo, calcular usando la fórmula con capital ORIGINAL
+        // El interés se calcula sobre el capital original, NO sobre el capital después de abonos
+        const totalInterest = (loanInfo.amount * loanInfo.interest_rate * (loanInfo.term_months || installments.length)) / 100;
+        // El total base usa el capital después de abonos pero el interés original
+        const calculatedBaseTotal = capitalAfterAbonos + totalInterest;
+        
+        // Sumar solo los cargos (excluyendo penalidades)
+        // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
         const chargesTotal = installments.reduce((sum, inst) => {
           const isCharge = (inst as any).interest_amount === 0 && 
                           (inst as any).principal_amount > 0 && 
                           Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
           if (isCharge) {
-            // Usar total_amount de la BD si está disponible, sino usar amount
             const chargeAmount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
               ? (inst as any).total_amount
               : (inst.amount || 0);
-            return sum + Number(chargeAmount);
+            // Redondear cada valor individual antes de sumar
+            return sum + Math.round(Number(chargeAmount));
           }
           return sum;
         }, 0);
         
-        totalAmount = baseLoanTotal + chargesTotal;
-      } else {
-        // Si no hay total_amount del préstamo, sumar todas las cuotas (incluyendo cargos)
-        // Usar SIEMPRE total_amount de la BD sin redondear
-        totalAmount = installments.reduce((sum, inst) => {
+        totalAmount = Math.round(calculatedBaseTotal) + chargesTotal;
+      }
+      
+      // Total pagado: sumar montos de todas las cuotas pagadas (regulares + cargos pagados)
+      // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
+      const paidRegularInstallmentsTotal = installments
+        .filter(inst => {
+          const isCharge = (inst as any).interest_amount === 0 && 
+                          (inst as any).principal_amount > 0 && 
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+          return inst.is_paid && !isCharge;
+        })
+        .reduce((sum, inst) => {
           const amount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
             ? (inst as any).total_amount
             : (inst.amount || 0);
-          return sum + Number(amount);
+          // Redondear cada valor individual antes de sumar
+          return sum + Math.round(Number(amount));
         }, 0);
-        
-        // Si el total es 0, calcular usando la fórmula
-        if (totalAmount === 0) {
-          const totalInterest = (loanInfo.amount * loanInfo.interest_rate * (loanInfo.term_months || installments.length)) / 100;
-          totalAmount = loanInfo.amount + totalInterest;
-        }
-      }
       
-      // Total pagado: usar los pagos reales si están disponibles, sino calcular desde cuotas pagadas
-      if (totalPaidFromPayments > 0) {
-        totalPaid = totalPaidFromPayments;
-      } else {
-        // Calcular usando el monto real por cuota (sin redondear) × número de cuotas pagadas
-        const paidInstallments = installments.filter(inst => inst.is_paid).length;
-        if ((loanInfo as any).total_amount && (loanInfo as any).total_amount > 0) {
-          // Usar total_amount / term_months para obtener el monto real por cuota
-          const realAmountPerPayment = (loanInfo as any).total_amount / (loanInfo.term_months || installments.length);
-          totalPaid = realAmountPerPayment * paidInstallments;
-        } else {
-          // Fallback: calcular usando la fórmula
-          const totalInterest = (loanInfo.amount * loanInfo.interest_rate * (loanInfo.term_months || installments.length)) / 100;
-          const realAmountPerPayment = (loanInfo.amount + totalInterest) / (loanInfo.term_months || installments.length);
-          totalPaid = realAmountPerPayment * paidInstallments;
-        }
-      }
+      const paidChargesTotal = installments
+        .filter(inst => {
+          const isCharge = (inst as any).interest_amount === 0 && 
+                          (inst as any).principal_amount > 0 && 
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+          return isCharge && inst.is_paid;
+        })
+        .reduce((sum, inst) => {
+          const chargeAmount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
+            ? (inst as any).total_amount
+            : (inst.amount || 0);
+          // Redondear cada valor individual antes de sumar
+          return sum + Math.round(Number(chargeAmount));
+        }, 0);
+      
+      // Total pagado = suma de todas las cuotas pagadas (regulares + cargos pagados)
+      totalPaid = paidRegularInstallmentsTotal + paidChargesTotal;
+      
+      console.log('🔍 InstallmentsTable - Cálculo detallado de totalPaid:', {
+        loanId,
+        paidRegularInstallmentsTotal,
+        paidChargesTotal,
+        totalPaid,
+        totalPaidFromPayments
+      });
+      
+      // CORRECCIÓN: Calcular el balance pendiente como suma de cuotas pendientes + cargos no pagados
+      // Las cuotas pendientes incluyen tanto capital como interés
+      // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
+      const unpaidChargesAmount = installments
+        .filter(inst => {
+          const isCharge = (inst as any).interest_amount === 0 && 
+                          (inst as any).principal_amount > 0 && 
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+          return isCharge && !inst.is_paid;
+        })
+        .reduce((sum, inst) => {
+          const chargeAmount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
+            ? (inst as any).total_amount
+            : (inst.amount || 0);
+          // Redondear cada valor individual antes de sumar
+          return sum + Math.round(Number(chargeAmount));
+        }, 0);
+      
+      // Sumar el monto total de todas las cuotas pendientes (capital + interés juntos, no por separado)
+      const unpaidRegularInstallmentsTotal = installments
+        .filter(inst => {
+          const isCharge = (inst as any).interest_amount === 0 && 
+                          (inst as any).principal_amount > 0 && 
+                          Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+          return !inst.is_paid && !isCharge;
+        })
+        .reduce((sum, inst) => {
+          const amount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
+            ? (inst as any).total_amount
+            : (inst.amount || 0);
+          // Redondear cada valor individual antes de sumar
+          return sum + Math.round(Number(amount));
+        }, 0);
+      
+      // Balance pendiente = suma de todas las cuotas pendientes (regular) + cargos no pagados
+      balancePending = unpaidRegularInstallmentsTotal + unpaidChargesAmount;
+      
+      // Asegurar que totalAmount = totalPaid + balancePending para consistencia
+      // Esto corrige cualquier diferencia por redondeo acumulativo
+      const recalculatedTotalAmount = totalPaid + balancePending;
+      // Usar el recalculado para mantener consistencia: Total = Pagado + Pendiente
+      totalAmount = recalculatedTotalAmount;
+      
+      console.log('🔍 InstallmentsTable - Cálculo detallado de balance:', {
+        loanId,
+        unpaidRegularInstallmentsTotal,
+        unpaidChargesAmount,
+        balancePending,
+        totalPaid,
+        totalAmount,
+        totalAmountRecalculated: totalPaid + balancePending
+      });
     }
   } else {
     // Fallback: usar valores de la BD si no hay loanInfo
-    totalAmount = installments.reduce((sum, inst) => {
-      const amount = (inst as any).total_amount || inst.amount || 0;
-      return sum + amount;
-    }, 0);
-    
-    totalPaid = totalPaidFromPayments > 0 ? totalPaidFromPayments : 
+    // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
+    totalPaid = totalPaidFromPayments > 0 ? Math.round(totalPaidFromPayments) : 
       installments.filter(inst => inst.is_paid).reduce((sum, inst) => {
         const amount = (inst as any).total_amount || inst.amount || 0;
-        return sum + amount;
+        return sum + Math.round(Number(amount));
       }, 0);
+    
+    // Calcular balance pendiente
+    const unpaidChargesAmount = installments
+      .filter(inst => {
+        const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 && 
+                        Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
+        return isCharge && !inst.is_paid;
+      })
+      .reduce((sum, inst) => sum + Math.round((inst as any).total_amount || inst.amount || 0), 0);
+    
+    const capitalPending = Math.round((loanInfo?.amount || 0) - totalPaidFromPayments);
+    const interestPending = installments
+      .filter(inst => !inst.is_paid && !(Math.abs((inst as any).interest_amount || 0) < 0.01))
+      .reduce((sum, inst) => sum + Math.round((inst as any).interest_amount || 0), 0);
+    
+    balancePending = capitalPending + interestPending + unpaidChargesAmount;
+    totalAmount = totalPaid + balancePending;
   }
   
   // Si el préstamo está saldado, el total pendiente debe ser 0
   const isLoanSettled = loanInfo?.status === 'paid';
   
-  // Si el préstamo está saldado, el total pendiente es 0
-  const totalPending = isLoanSettled ? 0 : totalAmount - totalPaid;
+  // CORRECCIÓN: Usar directamente balancePending calculado anteriormente
+  // Esto evita problemas de redondeo al usar totalAmount - totalPaid
+  // Asegurar que totalPending nunca sea negativo y sea 0 si el préstamo está saldado
+  const totalPending = isLoanSettled ? 0 : Math.max(0, balancePending);
+  
+  console.log('🔍 InstallmentsTable - Cálculo de totales finales:', {
+    loanId,
+    totalAmount,
+    totalPaid,
+    totalCapitalPayments,
+    totalPending,
+    isLoanSettled
+  });
   const paidCount = installments.filter(inst => inst.is_paid).length;
   const pendingCount = installments.length - paidCount;
 

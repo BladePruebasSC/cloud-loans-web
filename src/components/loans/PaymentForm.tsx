@@ -1034,7 +1034,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         firstUnpaid = unpaidInstallments[0];
         // Un cargo es una cuota donde interest_amount es 0 y principal_amount es igual a total_amount
         isCharge = firstUnpaid.interest_amount === 0 && 
-                      firstUnpaid.principal_amount === firstUnpaid.total_amount;
+                        firstUnpaid.principal_amount === firstUnpaid.total_amount;
         
         // CORRECCIÓN: Si es un cargo y va antes que next_payment_date, usarlo (prioridad cronológica)
         // No ignorar cargos que van antes, solo ignorar si va después
@@ -1192,14 +1192,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                 remainingAmount = Math.max(0, nextUnpaid.total_amount - nextTotalPaidForCharge);
                 firstUnpaid = nextUnpaid;
                 isCharge = true;
-                
+          
                 console.log('🔍 PaymentForm: Siguiente cargo encontrado:', {
                   installmentNumber: nextUnpaid.installment_number,
                   totalAmount: nextUnpaid.total_amount,
                   totalPaid: nextTotalPaidForCharge,
-                  remainingAmount,
+            remainingAmount,
                   dueDate: nextUnpaid.due_date
-                });
+          });
               } else {
                 // Es una cuota regular, usar el monto total
                 remainingAmount = nextUnpaid.total_amount;

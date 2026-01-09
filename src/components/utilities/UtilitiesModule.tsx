@@ -990,19 +990,19 @@ const UtilitiesModule = () => {
   const confirmDeleteCategory = async () => {
     if (!categoryToDelete) return;
 
-    const oldCategories = [...expenseCategories];
+      const oldCategories = [...expenseCategories];
     const updated = expenseCategories.filter((_, i) => i !== categoryToDelete.index);
-    setExpenseCategories(updated);
-    
-    // Guardar en la base de datos
-    try {
-      await saveExpenseCategories();
-      toast.success('Categoría eliminada exitosamente');
+      setExpenseCategories(updated);
+      
+      // Guardar en la base de datos
+      try {
+        await saveExpenseCategories();
+        toast.success('Categoría eliminada exitosamente');
       setCategoryToDelete(null);
-    } catch (error) {
-      // Revertir cambio local si falla
-      setExpenseCategories(oldCategories);
-      toast.error('Error al eliminar la categoría');
+      } catch (error) {
+        // Revertir cambio local si falla
+        setExpenseCategories(oldCategories);
+        toast.error('Error al eliminar la categoría');
       setCategoryToDelete(null);
     }
   };

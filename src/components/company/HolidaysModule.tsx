@@ -96,7 +96,7 @@ export const HolidaysModule = () => {
   const confirmDelete = () => {
     if (!holidayToDelete) return;
     setHolidays(prev => prev.filter(holiday => holiday.id !== holidayToDelete));
-    toast.success('Día feriado eliminado exitosamente');
+      toast.success('Día feriado eliminado exitosamente');
     setHolidayToDelete(null);
   };
 
