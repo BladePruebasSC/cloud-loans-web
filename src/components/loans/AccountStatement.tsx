@@ -183,8 +183,21 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         )
         .subscribe();
 
+      // Escuchar evento personalizado para refrescar después de abono a capital
+      const handleInstallmentsUpdated = (event: CustomEvent) => {
+        if (event.detail?.loanId === loanId) {
+          console.log('🔔 AccountStatement: Evento installmentsUpdated recibido, refrescando datos');
+          setTimeout(() => {
+            fetchAccountData();
+          }, 500);
+        }
+      };
+
+      window.addEventListener('installmentsUpdated', handleInstallmentsUpdated as EventListener);
+
       return () => {
         supabase.removeChannel(updatesChannel);
+        window.removeEventListener('installmentsUpdated', handleInstallmentsUpdated as EventListener);
       };
     }
   }, [isOpen, loanId]);
@@ -725,12 +738,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             const installmentDueDate = inst.due_date?.split('T')[0];
             let principalPaidForThisInstallment = 0;
             if (installmentDueDate) {
-                const paymentsForThisInstallment = (paymentsData || []).filter(p => {
-                  const paymentDueDate = p.due_date?.split('T')[0];
-                  return paymentDueDate === installmentDueDate;
-                });
-                principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
-              }
+              const paymentsForThisInstallment = (paymentsData || []).filter(p => {
+                const paymentDueDate = p.due_date?.split('T')[0];
+                return paymentDueDate === installmentDueDate;
+              });
+              principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
             }
             
             // Capital pendiente de esta cuota = principal original - principal ya pagado

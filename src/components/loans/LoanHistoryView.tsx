@@ -25,6 +25,7 @@ import {
 import { PaymentActions } from './PaymentActions';
 import { formatInTimeZone } from 'date-fns-tz';
 import { addHours } from 'date-fns';
+import { useAuth } from '@/hooks/useAuth';
 
 interface LoanHistoryEntry {
   id: string;
@@ -90,10 +91,12 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   onClose,
   onRefresh
 }) => {
+  const { companyId } = useAuth();
   const [history, setHistory] = useState<LoanHistoryEntry[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loan, setLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(true);
+  const [companySettings, setCompanySettings] = useState<any>(null);
 
   // Función para formatear fecha y hora de pagos
   const formatPaymentDateTime = (payment: Payment) => {
@@ -121,8 +124,28 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       fetchLoanHistory();
       fetchPayments();
       fetchLoanDetails();
+      fetchCompanySettings();
     }
-  }, [isOpen, loanId]);
+  }, [isOpen, loanId, companyId]);
+
+  const fetchCompanySettings = async () => {
+    if (!companyId) return;
+    try {
+      const { data, error } = await supabase
+        .from('company_settings')
+        .select('*')
+        .eq('user_id', companyId)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error fetching company settings:', error);
+      } else if (data) {
+        setCompanySettings(data);
+      }
+    } catch (error) {
+      console.error('Error fetching company settings:', error);
+    }
+  };
 
   // Escuchar eventos de actualización del préstamo para recargar el historial
   useEffect(() => {
@@ -353,6 +376,189 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     return notes;
   };
 
+  // Función para generar el HTML del recibo de abono a capital
+  const generateCapitalPaymentReceiptHTML = (
+    entry: LoanHistoryEntry,
+    capitalAmount: number,
+    penaltyAmount: number,
+    oldValues: any,
+    newValues: any,
+    format: string = 'LETTER'
+  ): string => {
+    if (!loan || !companySettings) return '';
+    
+    const client = loan.client;
+    const paymentDate = formatInTimeZone(
+      addHours(new Date(entry.created_at), 2),
+      'America/Santo_Domingo',
+      'dd MMM yyyy'
+    );
+    
+    const totalAmount = capitalAmount + penaltyAmount;
+
+    const getFormatStyles = (format: string) => {
+      switch (format) {
+        case 'POS58':
+          return `
+            * { box-sizing: border-box; }
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0 !important; 
+              padding: 0 !important;
+              font-size: 12px;
+              line-height: 1.2;
+              color: #000;
+            }
+            .receipt-container { width: 100%; padding: 5px; }
+            .header { text-align: center; margin-bottom: 10px; }
+            .receipt-title { font-size: 14px; font-weight: bold; margin-bottom: 5px; }
+            .section { margin-bottom: 10px; }
+            .section-title { font-weight: bold; font-size: 11px; margin-bottom: 5px; }
+            .info-row { margin-bottom: 3px; font-size: 10px; }
+            .amount-section { margin: 10px 0; }
+            .total-amount { font-size: 14px; font-weight: bold; text-align: center; }
+          `;
+        case 'POS80':
+          return `
+            * { box-sizing: border-box; }
+            body { 
+              font-family: 'Courier New', monospace; 
+              margin: 0 !important; 
+              padding: 0 !important;
+              font-size: 14px;
+              line-height: 1.3;
+            }
+            .receipt-container { width: 100%; padding: 8px; }
+            .header { text-align: center; margin-bottom: 15px; }
+            .receipt-title { font-size: 16px; font-weight: bold; }
+            .section { margin-bottom: 15px; }
+            .section-title { font-weight: bold; font-size: 13px; }
+            .info-row { margin-bottom: 4px; font-size: 12px; }
+            .amount-section { margin: 15px 0; }
+            .total-amount { font-size: 16px; font-weight: bold; text-align: center; }
+          `;
+        default:
+          return `
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .receipt-container { max-width: 8.5in; margin: 0 auto; padding: 30px; border: 1px solid #ddd; }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
+            .receipt-title { font-size: 24px; font-weight: bold; }
+            .section { margin-bottom: 25px; }
+            .section-title { font-weight: bold; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #eee; }
+            .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .amount-section { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .total-amount { font-size: 20px; font-weight: bold; color: #28a745; text-align: center; }
+          `;
+      }
+    };
+
+    return `
+      <html>
+        <head>
+          <title>Recibo de Abono a Capital - ${client?.full_name || ''}</title>
+          <style>${getFormatStyles(format)}</style>
+        </head>
+        <body>
+          <div class="receipt-container">
+            <div class="header">
+              <div style="font-size: ${format.includes('POS') ? '14px' : '18px'}; font-weight: bold;">
+                ${companySettings.company_name || 'LA EMPRESA'}
+              </div>
+              ${companySettings.address ? `<div>${companySettings.address}</div>` : ''}
+              ${companySettings.tax_id ? `<div>RNC: ${companySettings.tax_id}</div>` : ''}
+              <div class="receipt-title">RECIBO DE ABONO A CAPITAL</div>
+              <div>Fecha: ${paymentDate}</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">INFORMACIÓN DEL CLIENTE</div>
+              <div class="info-row">
+                <span>Nombre: ${client?.full_name || 'N/A'}</span>
+              </div>
+              ${client?.dni ? `<div class="info-row"><span>Cédula: ${client.dni}</span></div>` : ''}
+              ${client?.phone ? `<div class="info-row"><span>Teléfono: ${client.phone}</span></div>` : ''}
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL PRÉSTAMO</div>
+              <div class="info-row">
+                <span>Monto Original: RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div class="info-row">
+                <span>Tasa de Interés: ${loan.interest_rate}%</span>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">DETALLES DEL ABONO A CAPITAL</div>
+              <div class="info-row">
+                <span>Fecha: ${paymentDate}</span>
+              </div>
+              ${oldValues.capital_before !== undefined ? `
+                <div class="info-row">
+                  <span>Capital pendiente antes: RD$${oldValues.capital_before.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              ` : ''}
+              <div class="info-row">
+                <span>Monto del abono: RD$${capitalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              ${penaltyAmount > 0 ? `
+                <div class="info-row">
+                  <span>Penalidad aplicada: RD$${penaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              ` : ''}
+              ${newValues.capital_after !== undefined ? `
+                <div class="info-row">
+                  <span>Capital pendiente después: RD$${newValues.capital_after.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              ` : ''}
+              ${newValues.balance !== undefined ? `
+                <div class="info-row">
+                  <span>Balance restante: RD$${newValues.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
+              ` : ''}
+            </div>
+
+            <div class="amount-section">
+              <div class="total-amount">
+                TOTAL ABONADO: RD$${totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+            </div>
+
+            <div style="margin-top: 30px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 20px;">
+              <p>Este documento es un comprobante oficial de abono a capital.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+  };
+
+  const printCapitalPaymentReceipt = (entry: LoanHistoryEntry, capitalAmount: number, penaltyAmount: number, oldValues: any, newValues: any) => {
+    const receiptHTML = generateCapitalPaymentReceiptHTML(entry, capitalAmount, penaltyAmount, oldValues, newValues, 'LETTER');
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(receiptHTML);
+      printWindow.document.close();
+      printWindow.print();
+    }
+  };
+
+  const downloadCapitalPaymentReceipt = (entry: LoanHistoryEntry, capitalAmount: number, penaltyAmount: number, oldValues: any, newValues: any) => {
+    if (!loan) return;
+    const receiptHTML = generateCapitalPaymentReceiptHTML(entry, capitalAmount, penaltyAmount, oldValues, newValues, 'LETTER');
+    const client = loan.client;
+    const blob = new Blob([receiptHTML], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `recibo_abono_capital_${client?.full_name?.replace(/\s+/g, '_') || 'cliente'}_${new Date(entry.created_at).toISOString().split('T')[0]}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const translateReason = (reason: string) => {
     const translations: Record<string, string> = {
       // Razones para cargos (add_charge)
@@ -425,7 +631,11 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                   <History className="h-5 w-5" />
                   Movimientos ({(() => {
                     const movements = payments.length + 
-                      history.filter(h => h.change_type === 'add_charge' || h.change_type === 'remove_late_fee' || h.change_type === 'capital_payment').length;
+                      history.filter(h => {
+                        const isCapitalPayment = h.change_type === 'capital_payment' || 
+                          (h.change_type === 'balance_adjustment' && h.description && h.description.includes('Abono a capital'));
+                        return h.change_type === 'add_charge' || h.change_type === 'remove_late_fee' || isCapitalPayment;
+                      }).length;
                     return movements;
                   })()})
                 </CardTitle>
@@ -457,12 +667,15 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                   console.log('🔍 Processing history entries:', history.length);
                   history.forEach(entry => {
                     console.log('🔍 Processing entry:', entry.change_type, entry.id);
-                    // Incluir abonos a capital en movimientos (ahora change_type es 'capital_payment')
-                    if (entry.change_type === 'add_charge' || entry.change_type === 'remove_late_fee' || entry.change_type === 'capital_payment') {
-                      console.log('✅ Adding movement:', entry.change_type);
+                    // Detectar abonos a capital: puede ser 'capital_payment' o 'balance_adjustment' con descripción "Abono a capital"
+                    const isCapitalPayment = entry.change_type === 'capital_payment' || 
+                      (entry.change_type === 'balance_adjustment' && entry.description && entry.description.includes('Abono a capital'));
+                    
+                    if (entry.change_type === 'add_charge' || entry.change_type === 'remove_late_fee' || isCapitalPayment) {
+                      console.log('✅ Adding movement:', entry.change_type, isCapitalPayment ? '(capital_payment)' : '');
                       movements.push({
                         id: entry.id,
-                        type: entry.change_type === 'capital_payment' ? 'capital_payment' : entry.change_type as 'add_charge' | 'remove_late_fee',
+                        type: isCapitalPayment ? 'capital_payment' : entry.change_type as 'add_charge' | 'remove_late_fee',
                         date: new Date(entry.created_at),
                         data: entry
                       });
@@ -731,6 +944,27 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                   <span className="font-medium">Detalles:</span> {description}
                                 </div>
                               )}
+
+                              <div className="flex items-center gap-2 mt-3 pt-3 border-t">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => printCapitalPaymentReceipt(entry, capitalAmount, penaltyAmount, oldValues, newValues)}
+                                  className="flex items-center gap-2"
+                                >
+                                  <Printer className="h-4 w-4" />
+                                  Imprimir Recibo
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => downloadCapitalPaymentReceipt(entry, capitalAmount, penaltyAmount, oldValues, newValues)}
+                                  className="flex items-center gap-2"
+                                >
+                                  <Download className="h-4 w-4" />
+                                  Descargar Recibo
+                                </Button>
+                              </div>
                             </div>
                           );
                         } else if (movement.type === 'remove_late_fee') {
@@ -825,21 +1059,27 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
             {/* Historial de Cambios (excluyendo add_charge, remove_late_fee y capital_payment que ya están en movimientos) */}
             {history.filter(h => {
-              return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && h.change_type !== 'capital_payment';
+              const isCapitalPayment = h.change_type === 'capital_payment' || 
+                (h.change_type === 'balance_adjustment' && h.description && h.description.includes('Abono a capital'));
+              return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && !isCapitalPayment;
             }).length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Edit className="h-5 w-5" />
                     Historial de Modificaciones ({history.filter(h => {
-                      return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && h.change_type !== 'capital_payment';
+                      const isCapitalPayment = h.change_type === 'capital_payment' || 
+                        (h.change_type === 'balance_adjustment' && h.description && h.description.includes('Abono a capital'));
+                      return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && !isCapitalPayment;
                     }).length})
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
                     {history.filter(h => {
-                      return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && h.change_type !== 'capital_payment';
+                      const isCapitalPayment = h.change_type === 'capital_payment' || 
+                        (h.change_type === 'balance_adjustment' && h.description && h.description.includes('Abono a capital'));
+                      return h.change_type !== 'add_charge' && h.change_type !== 'remove_late_fee' && !isCapitalPayment;
                     }).map((entry) => {
                       // Parsear old_value y new_value como JSON strings si es necesario
                       let oldValues: any = null;

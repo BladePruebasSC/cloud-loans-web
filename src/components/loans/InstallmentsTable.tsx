@@ -104,8 +104,21 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         )
         .subscribe();
 
+      // Escuchar evento personalizado para refrescar después de abono a capital
+      const handleInstallmentsUpdated = (event: CustomEvent) => {
+        if (event.detail?.loanId === loanId) {
+          console.log('🔔 Evento installmentsUpdated recibido, refrescando datos');
+          setTimeout(() => {
+            fetchData();
+          }, 500);
+        }
+      };
+
+      window.addEventListener('installmentsUpdated', handleInstallmentsUpdated as EventListener);
+
       return () => {
         supabase.removeChannel(paymentsChannel);
+        window.removeEventListener('installmentsUpdated', handleInstallmentsUpdated as EventListener);
       };
     }
   }, [isOpen, loanId]);
@@ -1357,7 +1370,8 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       
       console.log('🔍 InstallmentsTable - Cálculo detallado de balance:', {
         loanId,
-        unpaidRegularInstallmentsTotal,
+        unpaidCapitalFromRegular,
+        unpaidInterestFromRegular,
         unpaidChargesAmount,
         balancePending,
         totalPaid,
