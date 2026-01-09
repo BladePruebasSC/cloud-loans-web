@@ -113,10 +113,10 @@ export const LoansModule = () => {
   // Esto asegura que el preview muestre el mismo valor que Detalles incluso cuando la BD no se actualiza
   const calculateRemainingBalance = async (loan: any): Promise<number> => {
     try {
-      // Obtener todos los pagos del préstamo (necesitamos principal_amount, interest_amount)
+      // Obtener todos los pagos del préstamo (necesitamos principal_amount, interest_amount, due_date)
       const { data: payments, error: paymentsError } = await supabase
         .from('payments')
-        .select('amount, principal_amount, interest_amount')
+        .select('amount, principal_amount, interest_amount, due_date')
         .eq('loan_id', loan.id);
       
       // Obtener abonos a capital
@@ -241,23 +241,78 @@ export const LoansModule = () => {
         return isCharge;
       });
       const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
-      const paidChargesAmount = allCharges
-        .filter(inst => inst.is_paid)
-        .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+      // CORRECCIÓN: Calcular cargos pagados considerando pagos parciales
+      const paidChargesAmount = allCharges.reduce((sum, inst) => {
+        const chargeDueDate = inst.due_date?.split('T')[0];
+        if (!chargeDueDate) return sum;
+        
+        const chargesWithSameDate = allCharges.filter(c => c.due_date?.split('T')[0] === chargeDueDate)
+          .sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
+        
+        const paymentsForCharges = (payments || []).filter(p => {
+          const paymentDueDate = p.due_date?.split('T')[0];
+          const hasNoInterest = Math.abs(p.interest_amount || 0) < 0.01;
+          return paymentDueDate === chargeDueDate && hasNoInterest;
+        });
+        
+        const totalPaidForDate = paymentsForCharges.reduce((s, p) => s + (p.principal_amount || p.amount || 0), 0);
+        const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
+        
+        let principalPaidForThisCharge = 0;
+        if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
+          let remainingPayments = totalPaidForDate;
+          for (let i = 0; i < chargeIndex; i++) {
+            const prevCharge = chargesWithSameDate[i];
+            remainingPayments -= Math.min(remainingPayments, prevCharge.total_amount || 0);
+          }
+          principalPaidForThisCharge = Math.min(remainingPayments, inst.total_amount || 0);
+        } else {
+          principalPaidForThisCharge = Math.min(totalPaidForDate, inst.total_amount || 0);
+        }
+        
+        return sum + principalPaidForThisCharge;
+      }, 0);
       const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
       
       // 2. Calcular capital pagado y abonos a capital
       const totalPaidFromPayments = (payments || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
       const totalCapitalPayments = (capitalPayments || []).reduce((sum, cp) => sum + (cp.amount || 0), 0);
-      const capitalPaidFromLoan = totalPaidFromPayments - paidChargesAmount;
+      // CORRECCIÓN: Capital pagado es la suma de todos los pagos de capital (incluyendo cargos)
+      const capitalPaidFromLoan = totalPaidFromPayments;
       
-      // 3. Calcular capital pendiente desde las cuotas pendientes (igual que LoanDetailsView)
-      // IMPORTANTE: Calcular desde las cuotas pendientes para obtener el valor exacto
-      // Incluir tanto cuotas regulares como cargos pendientes (ambos tienen principal_amount)
+      // 3. Calcular capital pendiente desde TODAS las CUOTAS REGULARES (excluyendo cargos)
+      // IMPORTANTE: Calcular desde TODAS las cuotas (no solo is_paid = false) para incluir pagos parciales
+      // CORRECCIÓN CRÍTICA: Considerar pagos parciales - restar lo que ya se pagó de cada cuota
+      // IMPORTANTE: Excluir cargos del capital pendiente - los cargos se calculan por separado como unpaidChargesAmount
       // Redondear cada valor individual antes de sumar
       const capitalPendingFromInstallments = (allInstallments || [])
-        .filter(inst => !inst.is_paid) // Incluir todas las cuotas pendientes (regulares y cargos)
-        .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+        .filter(inst => {
+          // Excluir cargos del capital pendiente
+          const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                          Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+          return !isCharge;
+        })
+        .reduce((sum, inst) => {
+          const originalPrincipal = inst.principal_amount || 0;
+          
+          // Es una cuota regular: buscar pagos asignados a esta cuota
+          const installmentDueDate = inst.due_date?.split('T')[0];
+          let principalPaidForThisInstallment = 0;
+          if (installmentDueDate) {
+            const paymentsForThisInstallment = (payments || []).filter(p => {
+              const paymentDueDate = p.due_date?.split('T')[0];
+              return paymentDueDate === installmentDueDate;
+            });
+            principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
+          }
+          
+          const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
+          // Solo incluir si hay algo pendiente (remainingPrincipal > 0.01)
+          if (remainingPrincipal > 0.01) {
+            return sum + Math.round(remainingPrincipal);
+          }
+          return sum;
+        }, 0);
       
       // Si hay cuotas pendientes, usar ese cálculo; sino usar el cálculo tradicional
       const capitalPending = capitalPendingFromInstallments > 0 
@@ -265,19 +320,41 @@ export const LoansModule = () => {
         : Math.round(loan.amount - capitalPaidFromLoan - totalCapitalPayments);
       
       // 4. Calcular interés pendiente (solo de cuotas regulares, no cargos)
+      // CORRECCIÓN CRÍTICA: Considerar pagos parciales - restar lo que ya se pagó de interés de cada cuota
+      // IMPORTANTE: Incluir TODAS las cuotas regulares (no solo is_paid = false) para incluir pagos parciales
       // IMPORTANTE: Redondear cada valor individual antes de sumar
       const interestPending = (allInstallments || [])
         .filter(inst => {
           const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
                           Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-          return !inst.is_paid && !isCharge;
+          return !isCharge;
         })
-        .reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+        .reduce((sum, inst) => {
+          const originalInterest = inst.interest_amount || 0;
+          const installmentDueDate = inst.due_date?.split('T')[0];
+          let interestPaidForThisInstallment = 0;
+          
+          if (installmentDueDate) {
+            const paymentsForThisInstallment = (payments || []).filter(p => {
+              const paymentDueDate = p.due_date?.split('T')[0];
+              return paymentDueDate === installmentDueDate;
+            });
+            interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
+          }
+          
+          const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
+          // Solo incluir si hay algo pendiente (remainingInterest > 0.01)
+          if (remainingInterest > 0.01) {
+            return sum + Math.round(remainingInterest);
+          }
+          return sum;
+        }, 0);
       
-      // 5. Balance = Capital Pendiente + Interés Pendiente
-      // IMPORTANTE: El capital pendiente ya incluye los cargos pendientes cuando se calcula desde las cuotas
+      // 5. Balance = Capital Pendiente + Interés Pendiente + Cargos No Pagados
+      // IMPORTANTE: El capital pendiente incluye solo el capital de cuotas regulares pendientes
+      // IMPORTANTE: Los cargos parcialmente pagados se calculan por separado como unpaidChargesAmount
       // IMPORTANTE: Redondear el resultado final
-      const remainingBalance = Math.round(capitalPending + interestPending);
+      const remainingBalance = Math.round(capitalPending + interestPending + unpaidChargesAmount);
       
       console.log('🔍 calculateRemainingBalance: Balance calculado dinámicamente (fixed-term, corregido)', {
         loanId: loan.id,

@@ -441,10 +441,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     if (isOpen && loan.id) {
       const calculatePendingCapital = async () => {
         try {
-          // Obtener todos los pagos del préstamo
+          // Obtener todos los pagos del préstamo (con due_date para calcular pagos parciales)
           const { data: payments, error: paymentsError } = await supabase
             .from('payments')
-            .select('principal_amount')
+            .select('principal_amount, interest_amount, due_date')
             .eq('loan_id', loan.id);
 
           if (paymentsError) throw paymentsError;
@@ -463,17 +463,41 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01
           );
           
-          const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
-          const paidChargesAmount = allCharges
-            .filter(inst => inst.is_paid)
-            .reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
-          const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
+          // CORRECCIÓN: Calcular cargos pagados considerando pagos parciales
+          const paidChargesAmount = allCharges.reduce((sum, inst) => {
+            const chargeDueDate = inst.due_date?.split('T')[0];
+            if (!chargeDueDate) return sum;
+            
+            const chargesWithSameDate = allCharges.filter(c => c.due_date?.split('T')[0] === chargeDueDate)
+              .sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
+            
+            const paymentsForCharges = (payments || []).filter(p => {
+              const paymentDueDate = p.due_date?.split('T')[0];
+              const hasNoInterest = Math.abs(p.interest_amount || 0) < 0.01;
+              return paymentDueDate === chargeDueDate && hasNoInterest;
+            });
+            
+            const totalPaidForDate = paymentsForCharges.reduce((s, p) => s + (p.principal_amount || 0), 0);
+            const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
+            
+            let principalPaidForThisCharge = 0;
+            if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
+              let remainingPayments = totalPaidForDate;
+              for (let i = 0; i < chargeIndex; i++) {
+                const prevCharge = chargesWithSameDate[i];
+                remainingPayments -= Math.min(remainingPayments, prevCharge.total_amount || 0);
+              }
+              principalPaidForThisCharge = Math.min(remainingPayments, inst.total_amount || 0);
+            } else {
+              principalPaidForThisCharge = Math.min(totalPaidForDate, inst.total_amount || 0);
+            }
+            
+            return sum + principalPaidForThisCharge;
+          }, 0);
 
-          // Calcular capital pagado desde pagos regulares (total principal_amount)
+          // Calcular capital pagado (todos los pagos de capital, incluyendo cargos)
           const totalPaid = (payments || []).reduce((sum, p) => sum + (p.principal_amount || 0), 0);
-          
-          // Capital pagado del préstamo original (excluyendo pagos de cargos)
-          const capitalPaidFromLoan = totalPaid - paidChargesAmount;
+          const capitalPaidFromLoan = totalPaid;
           
           // Calcular total de abonos a capital anteriores
           const totalCapitalPayments = (capitalPayments || []).reduce((sum, cp) => sum + (cp.amount || 0), 0);
@@ -486,10 +510,63 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // Para préstamos indefinidos, el capital pendiente es el monto original después de abonos
             calculatedPendingCapital = Math.round(loan.amount - totalCapitalPayments);
           } else {
-            // Para préstamos con plazo fijo: calcular desde las cuotas pendientes
-            const capitalPendingFromInstallments = installments
-              .filter(inst => !inst.is_paid) // Incluir todas las cuotas pendientes (regulares y cargos)
-              .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+            // Para préstamos con plazo fijo: calcular desde TODAS las cuotas (incluyendo parcialmente pagadas)
+            // CORRECCIÓN: Incluir todas las cuotas y calcular capital pendiente considerando pagos parciales
+            const capitalPendingFromInstallments = installments.reduce((sum, inst) => {
+              const originalPrincipal = inst.principal_amount || 0;
+              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                              Math.abs(originalPrincipal - (inst.total_amount || 0)) < 0.01;
+              
+              let principalPaidForThisInstallment = 0;
+              
+              if (isCharge) {
+                // Es un cargo: calcular pagos asignados a cargos con esta fecha
+                const chargeDueDate = inst.due_date?.split('T')[0];
+                if (chargeDueDate) {
+                  const chargesWithSameDate = installments.filter(otherInst => {
+                    const otherIsCharge = Math.abs(otherInst.interest_amount || 0) < 0.01 && 
+                                         Math.abs((otherInst.principal_amount || 0) - (otherInst.total_amount || 0)) < 0.01;
+                    return otherIsCharge && otherInst.due_date?.split('T')[0] === chargeDueDate;
+                  }).sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
+                  
+                  const paymentsForCharges = (payments || []).filter(p => {
+                    const paymentDueDate = p.due_date?.split('T')[0];
+                    const hasNoInterest = Math.abs(p.interest_amount || 0) < 0.01;
+                    return paymentDueDate === chargeDueDate && hasNoInterest;
+                  });
+                  
+                  const totalPaidForDate = paymentsForCharges.reduce((s, p) => s + (p.principal_amount || 0), 0);
+                  const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
+                  
+                  if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
+                    let remainingPayments = totalPaidForDate;
+                    for (let i = 0; i < chargeIndex; i++) {
+                      const prevCharge = chargesWithSameDate[i];
+                      remainingPayments -= Math.min(remainingPayments, prevCharge.total_amount || 0);
+                    }
+                    principalPaidForThisInstallment = Math.min(remainingPayments, originalPrincipal);
+                  } else {
+                    principalPaidForThisInstallment = Math.min(totalPaidForDate, originalPrincipal);
+                  }
+                }
+              } else {
+                // Es una cuota regular: buscar pagos asignados a esta cuota
+                const installmentDueDate = inst.due_date?.split('T')[0];
+                if (installmentDueDate) {
+                  const paymentsForThisInstallment = (payments || []).filter(p => {
+                    const paymentDueDate = p.due_date?.split('T')[0];
+                    return paymentDueDate === installmentDueDate;
+                  });
+                  principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
+                }
+              }
+              
+              const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
+              if (remainingPrincipal > 0.01) {
+                return sum + Math.round(remainingPrincipal);
+              }
+              return sum;
+            }, 0);
             
             // Si hay cuotas pendientes, usar ese cálculo; sino usar el cálculo tradicional
             calculatedPendingCapital = capitalPendingFromInstallments > 0 
@@ -546,12 +623,33 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // Para préstamos con plazo fijo: capital pendiente + interés pendiente
             // IMPORTANTE: El capital pendiente ya incluye los cargos pendientes (cuando se calcula desde cuotas)
             // IMPORTANTE: Redondear cada valor individual antes de sumar
-            const unpaidRegularInstallments = installments.filter(inst => {
-              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-              return !inst.is_paid && !isCharge;
-            });
-            const interestPendingFromInstallments = unpaidRegularInstallments.reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+            // CORRECCIÓN: Calcular interés pendiente considerando pagos parciales
+            const interestPendingFromInstallments = installments
+              .filter(inst => {
+                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                return !isCharge;
+              })
+              .reduce((sum, inst) => {
+                const originalInterest = inst.interest_amount || 0;
+                const installmentDueDate = inst.due_date?.split('T')[0];
+                let interestPaidForThisInstallment = 0;
+                
+                if (installmentDueDate) {
+                  const paymentsForThisInstallment = (payments || []).filter(p => {
+                    const paymentDueDate = p.due_date?.split('T')[0];
+                    return paymentDueDate === installmentDueDate;
+                  });
+                  interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
+                }
+                
+                const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
+                if (remainingInterest > 0.01) {
+                  return sum + Math.round(remainingInterest);
+                }
+                return sum;
+              }, 0);
+            
             // Balance = Capital pendiente (ya incluye cargos) + Interés pendiente
             currentBalance = calculatedPendingCapital + interestPendingFromInstallments;
           }
@@ -1053,7 +1151,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   useEffect(() => {
     const updateType = form.watch('update_type');
     if (updateType !== 'payment_agreement') {
-      calculateUpdatedValues();
+      (async () => {
+        await calculateUpdatedValues();
+      })();
     }
   }, [watchedValues, pendingInterestForIndefinite, pendingCapital, installments]);
 
@@ -1146,7 +1246,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   }, [isOpen, loan.id]);
 
 
-  const calculateUpdatedValues = () => {
+  const calculateUpdatedValues = async () => {
     const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType, settleCapital, settleInterest, settleLateFee, capitalPaymentAmount, keepInstallments] = watchedValues;
     
     // CORRECCIÓN: Calcular el balance actual dinámicamente igual que LoanDetailsView
@@ -1197,19 +1297,93 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             !(Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01));
           const totalCapitalPaidFromInstallments = paidInstallments.reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
           
-          // Calcular capital pendiente desde todas las cuotas pendientes (regulares + cargos)
-          // IMPORTANTE: Calcular desde las cuotas pendientes para obtener el valor exacto
-          const calculatedCapitalPending = installments
-            .filter(inst => !inst.is_paid) // Incluir todas las cuotas pendientes (regulares y cargos)
-            .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+          // Calcular capital pendiente desde TODAS las cuotas (considerando pagos parciales)
+          // Necesitamos obtener pagos para calcular pagos parciales correctamente
+          const { data: allPaymentsForFallback } = await supabase
+            .from('payments')
+            .select('principal_amount, interest_amount, due_date')
+            .eq('loan_id', loan.id);
           
-          // Calcular interés pendiente (solo de cuotas regulares, no cargos)
-          const unpaidInstallments = installments.filter(inst => {
+          const calculatedCapitalPending = installments.reduce((sum, inst) => {
+            const originalPrincipal = inst.principal_amount || 0;
             const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-            return !inst.is_paid && !isCharge;
-          });
-          const interestPendingFromInstallments = unpaidInstallments.reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+                            Math.abs(originalPrincipal - (inst.total_amount || 0)) < 0.01;
+            
+            let principalPaidForThisInstallment = 0;
+            
+            if (isCharge) {
+              const chargeDueDate = inst.due_date?.split('T')[0];
+              if (chargeDueDate) {
+                const chargesWithSameDate = installments.filter(otherInst => {
+                  const otherIsCharge = Math.abs(otherInst.interest_amount || 0) < 0.01 && 
+                                       Math.abs((otherInst.principal_amount || 0) - (otherInst.total_amount || 0)) < 0.01;
+                  return otherIsCharge && otherInst.due_date?.split('T')[0] === chargeDueDate;
+                }).sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
+                
+                const paymentsForCharges = (allPaymentsForFallback || []).filter(p => {
+                  const paymentDueDate = p.due_date?.split('T')[0];
+                  const hasNoInterest = Math.abs(p.interest_amount || 0) < 0.01;
+                  return paymentDueDate === chargeDueDate && hasNoInterest;
+                });
+                
+                const totalPaidForDate = paymentsForCharges.reduce((s, p) => s + (p.principal_amount || 0), 0);
+                const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
+                
+                if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
+                  let remainingPayments = totalPaidForDate;
+                  for (let i = 0; i < chargeIndex; i++) {
+                    const prevCharge = chargesWithSameDate[i];
+                    remainingPayments -= Math.min(remainingPayments, prevCharge.total_amount || 0);
+                  }
+                  principalPaidForThisInstallment = Math.min(remainingPayments, originalPrincipal);
+                } else {
+                  principalPaidForThisInstallment = Math.min(totalPaidForDate, originalPrincipal);
+                }
+              }
+            } else {
+              const installmentDueDate = inst.due_date?.split('T')[0];
+              if (installmentDueDate) {
+                const paymentsForThisInstallment = (allPaymentsForFallback || []).filter(p => {
+                  const paymentDueDate = p.due_date?.split('T')[0];
+                  return paymentDueDate === installmentDueDate;
+                });
+                principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
+              }
+            }
+            
+            const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
+            if (remainingPrincipal > 0.01) {
+              return sum + Math.round(remainingPrincipal);
+            }
+            return sum;
+          }, 0);
+          
+          // Calcular interés pendiente considerando pagos parciales
+          const interestPendingFromInstallments = installments
+            .filter(inst => {
+              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+              return !isCharge;
+            })
+            .reduce((sum, inst) => {
+              const originalInterest = inst.interest_amount || 0;
+              const installmentDueDate = inst.due_date?.split('T')[0];
+              let interestPaidForThisInstallment = 0;
+              
+              if (installmentDueDate) {
+                const paymentsForThisInstallment = (allPaymentsForFallback || []).filter(p => {
+                  const paymentDueDate = p.due_date?.split('T')[0];
+                  return paymentDueDate === installmentDueDate;
+                });
+                interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
+              }
+              
+              const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
+              if (remainingInterest > 0.01) {
+                return sum + Math.round(remainingInterest);
+              }
+              return sum;
+            }, 0);
           
           // IMPORTANTE: Balance = Capital pendiente (ya incluye cargos) + Interés pendiente
           currentBalance = calculatedCapitalPending + interestPendingFromInstallments;
@@ -2377,11 +2551,106 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             return;
           }
 
+          // IMPORTANTE: Recalcular balance usando la misma lógica que LoanDetailsView
+          // Obtener TODAS las cuotas actualizadas (incluyendo el nuevo cargo) y pagos para considerar pagos parciales
+          const { data: updatedInstallments } = await supabase
+            .from('installments')
+            .select('id, principal_amount, interest_amount, total_amount, is_paid, due_date, installment_number')
+            .eq('loan_id', loan.id);
+          
+          const { data: allPaymentsForBalanceCalc } = await supabase
+            .from('payments')
+            .select('principal_amount, interest_amount, due_date')
+            .eq('loan_id', loan.id);
+          
+          // Calcular capital pendiente desde TODAS las cuotas (considerando pagos parciales)
+          const capitalPendingFromInstallments = (updatedInstallments || []).reduce((sum, inst) => {
+            const originalPrincipal = inst.principal_amount || 0;
+            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                            Math.abs(originalPrincipal - (inst.total_amount || 0)) < 0.01;
+            
+            let principalPaidForThisInstallment = 0;
+            
+            if (isCharge) {
+              const chargeDueDate = inst.due_date?.split('T')[0];
+              if (chargeDueDate) {
+                const chargesWithSameDate = (updatedInstallments || []).filter(otherInst => {
+                  const otherIsCharge = Math.abs(otherInst.interest_amount || 0) < 0.01 && 
+                                       Math.abs((otherInst.principal_amount || 0) - (otherInst.total_amount || 0)) < 0.01;
+                  return otherIsCharge && otherInst.due_date?.split('T')[0] === chargeDueDate;
+                }).sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
+                
+                const paymentsForCharges = (allPaymentsForBalanceCalc || []).filter(p => {
+                  const paymentDueDate = p.due_date?.split('T')[0];
+                  const hasNoInterest = Math.abs(p.interest_amount || 0) < 0.01;
+                  return paymentDueDate === chargeDueDate && hasNoInterest;
+                });
+                
+                const totalPaidForDate = paymentsForCharges.reduce((s, p) => s + (p.principal_amount || 0), 0);
+                const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
+                
+                if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
+                  let remainingPayments = totalPaidForDate;
+                  for (let i = 0; i < chargeIndex; i++) {
+                    const prevCharge = chargesWithSameDate[i];
+                    remainingPayments -= Math.min(remainingPayments, prevCharge.total_amount || 0);
+                  }
+                  principalPaidForThisInstallment = Math.min(remainingPayments, originalPrincipal);
+                } else {
+                  principalPaidForThisInstallment = Math.min(totalPaidForDate, originalPrincipal);
+                }
+              }
+            } else {
+              const installmentDueDate = inst.due_date?.split('T')[0];
+              if (installmentDueDate) {
+                const paymentsForThisInstallment = (allPaymentsForBalanceCalc || []).filter(p => {
+                  const paymentDueDate = p.due_date?.split('T')[0];
+                  return paymentDueDate === installmentDueDate;
+                });
+                principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
+              }
+            }
+            
+            const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
+            if (remainingPrincipal > 0.01) {
+              return sum + Math.round(remainingPrincipal);
+            }
+            return sum;
+          }, 0);
+          
+          // Calcular interés pendiente considerando pagos parciales
+          const interestPendingFromInstallments = (updatedInstallments || [])
+            .filter(inst => {
+              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+              return !isCharge;
+            })
+            .reduce((sum, inst) => {
+              const originalInterest = inst.interest_amount || 0;
+              const installmentDueDate = inst.due_date?.split('T')[0];
+              let interestPaidForThisInstallment = 0;
+              
+              if (installmentDueDate) {
+                const paymentsForThisInstallment = (allPaymentsForBalanceCalc || []).filter(p => {
+                  const paymentDueDate = p.due_date?.split('T')[0];
+                  return paymentDueDate === installmentDueDate;
+                });
+                interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
+              }
+              
+              const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
+              if (remainingInterest > 0.01) {
+                return sum + Math.round(remainingInterest);
+              }
+              return sum;
+            }, 0);
+          
+          // Balance = Capital pendiente + Interés pendiente (valores redondeados)
+          const newBalance = Math.round(capitalPendingFromInstallments + interestPendingFromInstallments);
+
           // Actualizar el balance del préstamo
-          // El balance debe ser: capital pendiente + interés pendiente + cargos no pagados (incluyendo el nuevo cargo)
-          // calculatedValues.newBalance ya incluye el nuevo cargo porque es currentBalance + amount
           loanUpdates = {
-            remaining_balance: calculatedValues.newBalance,
+            remaining_balance: newBalance,
             term_months: nextInstallmentNumber, // Actualizar el número total de cuotas
           };
 
@@ -3060,17 +3329,34 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               // Si no hay cuotas pendientes, usar el cálculo dinámico (al menos 1 cuota)
               const pendingInterest = unpaidInterest > 0 ? unpaidInterest : newInterestPerPayment;
               
-              // IMPORTANTE: Calcular cargos no pagados (los cargos NO se recalculan)
-              const unpaidCharges = installments.filter(inst => {
-                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                return isCharge && !inst.is_paid;
-              });
-              const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+              // IMPORTANTE: Recalcular balance usando la misma lógica que LoanDetailsView
+              // Obtener TODAS las cuotas pendientes actualizadas (después del abono y recálculo de cuotas)
+              const { data: updatedInstallments } = await supabase
+                .from('installments')
+                .select('principal_amount, interest_amount, is_paid')
+                .eq('loan_id', loan.id);
+              
+              // Calcular capital pendiente desde todas las cuotas pendientes (regulares + cargos)
+              // IMPORTANTE: Redondear cada valor individual antes de sumar
+              const capitalPendingFromInstallments = (updatedInstallments || [])
+                .filter(inst => !inst.is_paid)
+                .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+              
+              // Calcular interés pendiente (solo de cuotas regulares, no cargos)
+              const interestPendingFromInstallments = (updatedInstallments || [])
+                .filter(inst => {
+                  const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                  Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                  return !inst.is_paid && !isCharge;
+                })
+                .reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+              
+              // Balance = Capital pendiente + Interés pendiente (valores redondeados)
+              const newBalance = Math.round(capitalPendingFromInstallments + interestPendingFromInstallments);
               
               loanUpdates = {
                 amount: capitalAfter, // Actualizar el capital base
-                remaining_balance: capitalAfter + pendingInterest + unpaidChargesAmount // Incluir cargos no pagados
+                remaining_balance: newBalance
               };
             } else {
               // Para préstamos con plazo fijo
@@ -3092,13 +3378,30 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     .eq('id', installment.id);
                 }
 
-                  // Calcular cargos no pagados (los cargos NO se recalculan)
-                  const unpaidCharges = installments.filter(inst => {
-                    const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                    return isCharge && !inst.is_paid;
-                  });
-                  const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+                  // IMPORTANTE: Recalcular balance usando la misma lógica que LoanDetailsView
+                  // Obtener TODAS las cuotas pendientes actualizadas (después de actualizar las cuotas)
+                  const { data: updatedInstallments } = await supabase
+                    .from('installments')
+                    .select('principal_amount, interest_amount, is_paid')
+                    .eq('loan_id', loan.id);
+                  
+                  // Calcular capital pendiente desde todas las cuotas pendientes (regulares + cargos)
+                  // IMPORTANTE: Redondear cada valor individual antes de sumar
+                  const capitalPendingFromInstallments = (updatedInstallments || [])
+                    .filter(inst => !inst.is_paid)
+                    .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+                  
+                  // Calcular interés pendiente (solo de cuotas regulares, no cargos)
+                  const interestPendingFromInstallments = (updatedInstallments || [])
+                    .filter(inst => {
+                      const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                      Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                      return !inst.is_paid && !isCharge;
+                    })
+                    .reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+                  
+                  // Balance = Capital pendiente + Interés pendiente (valores redondeados)
+                  const newBalance = Math.round(capitalPendingFromInstallments + interestPendingFromInstallments);
 
                   // Calcular el nuevo total_amount del préstamo
                   const newTotalInterest = (capitalAfter * loan.interest_rate / 100) * loan.term_months;
@@ -3106,8 +3409,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   
                   loanUpdates = {
                     monthly_payment: newInstallmentAmount,
-                    // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
-                    remaining_balance: capitalAfter + (newInterestPerPayment * remainingInstallmentsCount) + unpaidChargesAmount,
+                    remaining_balance: newBalance,
                     total_amount: newTotalAmount
                   };
               } else {
@@ -3149,14 +3451,38 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       .eq('id', installment.id);
                   }
 
+                  // IMPORTANTE: Recalcular balance usando la misma lógica que LoanDetailsView
+                  // Obtener TODAS las cuotas pendientes actualizadas (después de actualizar/eliminar cuotas)
+                  const { data: updatedInstallments } = await supabase
+                    .from('installments')
+                    .select('principal_amount, interest_amount, is_paid')
+                    .eq('loan_id', loan.id);
+                  
+                  // Calcular capital pendiente desde todas las cuotas pendientes (regulares + cargos)
+                  // IMPORTANTE: Redondear cada valor individual antes de sumar
+                  const capitalPendingFromInstallments = (updatedInstallments || [])
+                    .filter(inst => !inst.is_paid)
+                    .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+                  
+                  // Calcular interés pendiente (solo de cuotas regulares, no cargos)
+                  const interestPendingFromInstallments = (updatedInstallments || [])
+                    .filter(inst => {
+                      const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                      Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                      return !inst.is_paid && !isCharge;
+                    })
+                    .reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+                  
+                  // Balance = Capital pendiente + Interés pendiente (valores redondeados)
+                  const newBalance = Math.round(capitalPendingFromInstallments + interestPendingFromInstallments);
+
                   // Calcular el nuevo total_amount del préstamo (sin incluir cargos en el total_amount)
                   const newTotalInterest = (capitalAfter * loan.interest_rate / 100) * newInstallmentCount;
                   const newTotalAmount = capitalAfter + newTotalInterest;
                   
                   loanUpdates = {
                     term_months: loan.term_months - (remainingInstallmentsCount - newInstallmentCount),
-                    // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
-                    remaining_balance: capitalAfter + (interestPerPayment * newInstallmentCount) + unpaidChargesAmount,
+                    remaining_balance: newBalance,
                     total_amount: newTotalAmount
                   };
 
@@ -3179,21 +3505,37 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       .eq('id', installment.id);
                   }
 
-                  // Calcular cargos no pagados (los cargos NO se recalculan)
-                  const unpaidCharges = installments.filter(inst => {
-                    const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                    return isCharge && !inst.is_paid;
-                  });
-                  const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+                  // IMPORTANTE: Recalcular balance usando la misma lógica que LoanDetailsView
+                  // Obtener TODAS las cuotas pendientes actualizadas (después de actualizar los montos)
+                  const { data: updatedInstallments } = await supabase
+                    .from('installments')
+                    .select('principal_amount, interest_amount, is_paid')
+                    .eq('loan_id', loan.id);
+                  
+                  // Calcular capital pendiente desde todas las cuotas pendientes (regulares + cargos)
+                  // IMPORTANTE: Redondear cada valor individual antes de sumar
+                  const capitalPendingFromInstallments = (updatedInstallments || [])
+                    .filter(inst => !inst.is_paid)
+                    .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+                  
+                  // Calcular interés pendiente (solo de cuotas regulares, no cargos)
+                  const interestPendingFromInstallments = (updatedInstallments || [])
+                    .filter(inst => {
+                      const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                      Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                      return !inst.is_paid && !isCharge;
+                    })
+                    .reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+                  
+                  // Balance = Capital pendiente + Interés pendiente (valores redondeados)
+                  const newBalance = Math.round(capitalPendingFromInstallments + interestPendingFromInstallments);
 
                   // Calcular el nuevo total_amount del préstamo
                   const newTotalInterest = (capitalAfter * loan.interest_rate / 100) * remainingInstallmentsCount;
                   const newTotalAmount = capitalAfter + newTotalInterest;
                   
                   loanUpdates = {
-                    // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
-                    remaining_balance: capitalAfter + (interestPerPayment * remainingInstallmentsCount) + unpaidChargesAmount,
+                    remaining_balance: newBalance,
                     total_amount: newTotalAmount
                   };
                 }
