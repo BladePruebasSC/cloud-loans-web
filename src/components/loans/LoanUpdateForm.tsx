@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -218,7 +218,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [originalPendingCapital, setOriginalPendingCapital] = useState<number>(0); // Capital pendiente original antes del abono
   const [showPreviewTable, setShowPreviewTable] = useState(false);
   const [previewInstallments, setPreviewInstallments] = useState<any[]>([]);
-  const { user, companyId } = useAuth();
+  const { user, companyId, companySettings: authCompanySettings } = useAuth();
 
   const form = useForm<UpdateFormData>({
     resolver: zodResolver(updateSchema),
@@ -260,13 +260,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     if (isOpen && loan.id && updateType === 'settle_loan') {
       const calculateSettleBreakdown = async () => {
         try {
-          console.log('🔍 Calculando desglose para saldar préstamo:', {
-            loanId: loan.id,
-            loanAmount: loan.amount,
-            installmentsCount: installments.length,
-            currentLateFee,
-            remainingBalance: loan.remaining_balance
-          });
 
           // Obtener todos los pagos para calcular el capital e interés pagados
           const { data: payments, error: paymentsError } = await supabase
@@ -329,11 +322,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             const totalPaidCapital = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
             const totalPaidInterest = payments?.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0) || 0;
             
-            console.log('🔍 Capital total de cuotas:', totalCapitalFromInstallments);
-            console.log('🔍 Interés total de cuotas:', totalInterestFromInstallments);
-            console.log('🔍 Capital pagado:', totalPaidCapital);
-            console.log('🔍 Interés pagado:', totalPaidInterest);
-            console.log('🔍 Remaining balance:', loan.remaining_balance);
             
             if (unpaidInstallments.length > 0) {
               // Si hay cuotas no pagadas, calcular desde ellas directamente
@@ -368,16 +356,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }
           }
 
-          console.log('🔍 Interés pendiente:', interestPending, 'de', unpaidInstallments.length, 'cuotas no pagadas');
-          console.log('🔍 Cuotas no pagadas:', unpaidInstallments.map(inst => ({
-            num: inst.installment_number,
-            principal: inst.principal_amount,
-            interest: inst.interest_amount,
-            isPaid: inst.is_paid
-          })));
-          console.log('🔍 Capital pendiente calculado:', capitalPending);
-          console.log('🔍 Interés pendiente calculado:', interestPending);
-
           // Mora pendiente
           const lateFeePending = currentLateFee || 0;
 
@@ -391,7 +369,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             totalToSettle: Math.round(totalToSettle * 100) / 100
           };
 
-          console.log('🔍 Desglose calculado:', breakdown);
           setSettleBreakdown(breakdown);
         } catch (error) {
           console.error('Error calculando desglose:', error);
@@ -402,7 +379,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             lateFeePending: Math.round((currentLateFee || 0) * 100) / 100,
             totalToSettle: Math.round((loan.remaining_balance + (currentLateFee || 0)) * 100) / 100
           };
-          console.log('🔍 Usando desglose de respaldo:', fallbackBreakdown);
           setSettleBreakdown(fallbackBreakdown);
         }
       };
@@ -562,46 +538,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // El capital pendiente total = Capital de cuotas regulares + Capital pendiente de cargos
             calculatedPendingCapital = Math.round(capitalPendingFromRegular + unpaidChargesAmount);
           }
-
-          console.log('🔍 LoanUpdateForm - Capital pendiente calculado para abono:', {
-            loanId: loan.id,
-            loanAmount: loan.amount,
-            capitalPaidFromLoan,
-            totalCapitalPayments,
-            calculatedPendingCapital,
-            unpaidChargesAmount,
-            currentBalance: calculatedPendingCapital + (loan.amortization_type === 'indefinite' ? 0 : 
-              installments
-                .filter(inst => {
-                  const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                  Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                  return !isCharge;
-                })
-                .reduce((sum, inst) => {
-                  const originalInterest = inst.interest_amount || 0;
-                  const installmentDueDate = inst.due_date?.split('T')[0];
-                  let interestPaidForThisInstallment = 0;
-                  if (installmentDueDate) {
-                    const paymentsForThisInstallment = (payments || []).filter(p => {
-                      const paymentDueDate = p.due_date?.split('T')[0];
-                      return paymentDueDate === installmentDueDate;
-                    });
-                    interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
-                  }
-                  const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
-                  if (remainingInterest > 0.01) {
-                    return sum + Math.round(remainingInterest);
-                  }
-                  return sum;
-                }, 0)) + unpaidChargesAmount,
-            paymentsSummary: (payments || []).map(p => ({
-              id: p.id,
-              due_date: p.due_date,
-              principal_amount: p.principal_amount,
-              interest_amount: p.interest_amount,
-              hasInterest: Math.abs(p.interest_amount || 0) >= 0.01
-            }))
-          });
           
           setPendingCapital(calculatedPendingCapital);
           setOriginalPendingCapital(calculatedPendingCapital); // Guardar el capital pendiente original para calcular penalidad
@@ -836,6 +772,27 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     }
   }, [form.watch('capital_payment_amount'), form.watch('keep_installments'), form.watch('is_penalty'), penaltyAmount, originalPendingCapital, installments, loan, form.watch('update_type')]);
 
+  // Calcular cuotas vencidas para validación de abono a capital
+  const overdueInstallmentsCount = useMemo(() => {
+    if (form.watch('update_type') !== 'capital_payment') return 0;
+    
+    const today = getCurrentDateInSantoDomingo();
+    const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    
+    return installments.filter(inst => {
+      if (inst.is_paid) return false;
+      
+      const dueDateStr = inst.due_date?.split('T')[0];
+      if (!dueDateStr) return false;
+      
+      const [dueYear, dueMonth, dueDay] = dueDateStr.split('-').map(Number);
+      const dueDate = new Date(dueYear, dueMonth - 1, dueDay);
+      const dueDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+      
+      return dueDateOnly < todayDateOnly;
+    }).length;
+  }, [form.watch('update_type'), installments]);
+
   // Función para calcular las cuotas futuras después del abono
   const calculatePreviewInstallments = () => {
     const capitalPaymentAmount = form.watch('capital_payment_amount') || 0;
@@ -1029,14 +986,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       // Total de cuotas que deberían existir desde el inicio hasta hoy
       const totalExpectedInstallments = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
 
-      console.log('🔍 LoanUpdateForm - calculatePendingInterestForIndefinite: Cálculo dinámico', {
-        loanId: loan.id,
-        startDate: loan.start_date,
-        currentDate: currentDate.toISOString().split('T')[0],
-        monthsElapsed,
-        totalExpectedInstallments
-      });
-
       // Calcular cuántas cuotas se han pagado desde los pagos
       let paidCount = 0;
       if (loan.id) {
@@ -1049,10 +998,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
           paidCount = Math.floor(totalInterestPaid / interestPerPayment);
 
-          console.log('🔍 LoanUpdateForm - calculatePendingInterestForIndefinite: Cuotas pagadas desde pagos', {
-            totalInterestPaid,
-            paidFromPayments: paidCount
-          });
         }
       }
 
@@ -1061,15 +1006,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
       // Calcular interés pendiente total
       const totalPendingInterest = unpaidCount * interestPerPayment;
-
-      console.log('🔍 LoanUpdateForm - calculatePendingInterestForIndefinite: Resumen final', {
-        loanId: loan.id,
-        totalExpectedInstallments,
-        paidCount,
-        unpaidCount,
-        interestPerPayment,
-        totalPendingInterest
-      });
 
       setPendingInterestForIndefinite(totalPendingInterest);
     } catch (error) {
@@ -1158,18 +1094,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 if (breakdown && breakdown.totalLateFee !== undefined) {
                   const calculatedLateFee = Math.round(breakdown.totalLateFee * 100) / 100;
                   setCurrentLateFee(calculatedLateFee);
-                  console.log('🔍 LoanUpdateForm: Mora calculada desde BD completa:', calculatedLateFee);
                   return;
                 }
               }
             }
             
             setCurrentLateFee(data.current_late_fee || 0);
-            console.log('🔍 LoanUpdateForm: Mora leída de BD:', data.current_late_fee);
           } else {
             // Fallback al valor del préstamo
             setCurrentLateFee(loan.current_late_fee || 0);
-            console.log('🔍 LoanUpdateForm: Usando mora del objeto loan:', loan.current_late_fee);
           }
         } catch (error) {
           console.error('Error obteniendo mora actual:', error);
@@ -1209,7 +1142,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     form.setValue('capital_payment_amount', undefined);
     form.setValue('keep_installments', false);
     form.setValue('is_penalty', false);
-    form.setValue('penalty_percentage', undefined);
+    
+    // Si es "capital_payment", establecer el valor por defecto del porcentaje de penalidad desde companySettings
+    if (updateType === 'capital_payment' && authCompanySettings) {
+      const defaultPenaltyPercentage = authCompanySettings.default_capital_payment_penalty_percentage;
+      if (defaultPenaltyPercentage !== null && defaultPenaltyPercentage !== undefined) {
+        form.setValue('penalty_percentage', defaultPenaltyPercentage, { shouldDirty: false });
+      } else {
+        form.setValue('penalty_percentage', undefined);
+      }
+    } else {
+      form.setValue('penalty_percentage', undefined);
+    }
+    
     setPenaltyAmount(0);
     setOriginalPendingCapital(0);
     
@@ -1261,7 +1206,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       
       recalculateLateFee();
     }
-  }, [form.watch('update_type'), isOpen, loan.id]);
+  }, [form.watch('update_type'), isOpen, loan.id, authCompanySettings]);
 
   // Cargar acuerdos de pago
   const fetchAgreements = async () => {
@@ -1437,13 +1382,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     // IMPORTANTE: Redondear el balance final para evitar diferencias de redondeo
     currentBalance = Math.round(currentBalance);
     
-    console.log('🔍 Preview - Balance Actual calculado:', {
-      updateType,
-      pendingCapital,
-      pendingInterestForIndefinite,
-      currentBalance,
-      loanRemainingBalance: loan.remaining_balance
-    });
     
     let newBalance = currentBalance;
     let newPayment = loan.monthly_payment;
@@ -1582,25 +1520,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             
             // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
             newBalance = capitalAfter + newInterestPending + unpaidChargesAmount;
-            
-            console.log('🔍 Preview - Cálculo de balance (capital_payment, fixed-term):', {
-              capitalAfter,
-              newInterestPending,
-              unpaidChargesAmount,
-              newBalance,
-              keepInstallments,
-              remainingInstallmentsCount
-            });
           } else {
             // Para préstamos indefinidos: Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
             newBalance = capitalAfter + pendingInterestForIndefinite + unpaidChargesAmount;
-            
-            console.log('🔍 Preview - Cálculo de balance (capital_payment, indefinite):', {
-              capitalAfter,
-              pendingInterestForIndefinite,
-              unpaidChargesAmount,
-              newBalance
-            });
           }
         }
         break;
@@ -3302,6 +3224,29 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               return;
             }
 
+            // Validar que no haya cuotas vencidas antes de permitir el abono a capital
+            const today = getCurrentDateInSantoDomingo();
+            const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            
+            const overdueInstallments = installments.filter(inst => {
+              if (inst.is_paid) return false; // Excluir cuotas pagadas
+              
+              const dueDateStr = inst.due_date?.split('T')[0];
+              if (!dueDateStr) return false;
+              
+              const [dueYear, dueMonth, dueDay] = dueDateStr.split('-').map(Number);
+              const dueDate = new Date(dueYear, dueMonth - 1, dueDay);
+              const dueDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+              
+              return dueDateOnly < todayDateOnly;
+            });
+
+            if (overdueInstallments.length > 0) {
+              toast.error(`No se puede realizar un abono a capital mientras haya cuotas vencidas. Tiene ${overdueInstallments.length} cuota(s) vencida(s). Por favor, pague las cuotas vencidas primero.`);
+              setLoading(false);
+              return;
+            }
+
             const keepInstallments = data.keep_installments || false;
             const isPenalty = data.is_penalty || false;
             const penaltyPercentage = data.penalty_percentage || 0;
@@ -3869,6 +3814,34 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           break;
       }
 
+      // IMPORTANTE: Obtener valores actuales de la BD ANTES de la actualización
+      // para asegurar que los valores anteriores en el historial sean correctos
+      const { data: loanBeforeUpdate, error: fetchError } = await supabase
+        .from('loans')
+        .select('remaining_balance, monthly_payment, interest_rate, term_months')
+        .eq('id', loan.id)
+        .single();
+      
+      if (fetchError) {
+        console.error('⚠️ Error obteniendo valores antes de actualización:', fetchError);
+      }
+      
+      // Usar valores de la BD si están disponibles, sino usar los valores del objeto loan
+      const actualBalance = loanBeforeUpdate?.remaining_balance ?? loan.remaining_balance;
+      const actualPayment = loanBeforeUpdate?.monthly_payment ?? loan.monthly_payment;
+      const actualRate = loanBeforeUpdate?.interest_rate ?? loan.interest_rate;
+      const actualTermMonths = loanBeforeUpdate?.term_months ?? loan.term_months;
+      
+      console.log('📝 Valores obtenidos de BD ANTES de actualización:', {
+        from_bd: !!loanBeforeUpdate,
+        actualBalance,
+        actualPayment,
+        actualRate,
+        actualTermMonths,
+        loanBalance_prop: loan.remaining_balance,
+        loanPayment_prop: loan.monthly_payment
+      });
+
       // Agregar notas de auditoría
       const auditNote = `${new Date().toLocaleDateString()} - ${updateType}: ${data.adjustment_reason}`;
       // Note: loan.notes doesn't exist in the Loan interface, using purpose instead
@@ -3946,21 +3919,52 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           ? loanUpdates.monthly_payment
           : (updateType === 'capital_payment' ? loan.monthly_payment : calculatedValues.newPayment);
         
+        // IMPORTANTE: Los valores anteriores deben ser los valores ANTES de cualquier cambio
+        // Usar los valores obtenidos de la BD ANTES de la actualización (actualBalance, actualPayment, etc.)
         let oldValueObj: any = {
-          balance: loan.remaining_balance,
-          payment: loan.monthly_payment,
-          rate: loan.interest_rate
+          balance: actualBalance,
+          payment: actualPayment,
+          rate: actualRate
         };
         
         let newValueObj: any = {
           balance: finalNewBalance,
           payment: finalNewPayment,
-          rate: loan.interest_rate
+          rate: actualRate
         };
+        
+        // Agregar term_months para extensiones de plazo
+        if (updateType === 'term_extension') {
+          oldValueObj.term_months = actualTermMonths;
+          newValueObj.term_months = (actualTermMonths || 0) + (data.additional_months || 0);
+        }
         
         let description = `${updateType}: ${data.adjustment_reason}`;
         
-        if (updateType === 'remove_late_fee') {
+        if (updateType === 'term_extension') {
+          const additionalMonths = data.additional_months || 0;
+          const paymentFrequency = loan.payment_frequency || 'monthly';
+          
+          // Agregar información sobre el período agregado según la frecuencia
+          let periodInfo = '';
+          if (paymentFrequency === 'daily') {
+            const days = additionalMonths * 30; // Aproximación
+            periodInfo = `${days} días`;
+          } else if (paymentFrequency === 'weekly') {
+            const weeks = additionalMonths * 4; // Aproximación
+            periodInfo = `${weeks} semanas`;
+          } else if (paymentFrequency === 'biweekly') {
+            const quincenas = additionalMonths * 2; // Aproximación
+            periodInfo = `${quincenas} quincenas`;
+          } else {
+            periodInfo = `${additionalMonths} mes${additionalMonths !== 1 ? 'es' : ''}`;
+          }
+          
+          description = `Extensión de Plazo: ${data.adjustment_reason}. ${periodInfo} agregados.`;
+          if (data.notes) {
+            description += ` Notas: ${data.notes}`;
+          }
+        } else if (updateType === 'remove_late_fee') {
           oldValueObj.current_late_fee = currentLateFee;
           newValueObj.current_late_fee = (currentLateFee || 0) - (data.late_fee_amount || 0);
           description = `Eliminar Mora: ${data.adjustment_reason}. Monto eliminado: RD$${(data.late_fee_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -4621,7 +4625,21 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
                     {form.watch('update_type') === 'capital_payment' && (
                       <div className="space-y-4">
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                        {overdueInstallmentsCount > 0 && (
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                            <div className="text-sm text-red-800 space-y-1">
+                              <div className="font-semibold flex items-center gap-2">
+                                <AlertCircle className="h-4 w-4" />
+                                No se puede realizar abono a capital
+                              </div>
+                              <div>
+                                Tiene {overdueInstallmentsCount} cuota(s) vencida(s). Debe pagar todas las cuotas vencidas antes de realizar un abono a capital.
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        <div className={`space-y-4 ${overdueInstallmentsCount > 0 ? 'opacity-50' : ''}`}>
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                           <div className="text-sm text-green-800 space-y-1">
                             <div><strong>Capital Pendiente Actual:</strong> RD${pendingCapital.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                           </div>
@@ -4640,6 +4658,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   step="0.01"
                                   min="0.01"
                                   max={pendingCapital}
+                                  disabled={overdueInstallmentsCount > 0}
                                   {...field}
                                   value={field.value || ''}
                                   onChange={(e) => {
@@ -4673,6 +4692,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   type="checkbox"
                                   checked={field.value || false}
                                   onChange={field.onChange}
+                                  disabled={overdueInstallmentsCount > 0}
                                   className="mt-1"
                                 />
                               </FormControl>
@@ -4704,6 +4724,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                       setPenaltyAmount(0);
                                     }
                                   }}
+                                  disabled={overdueInstallmentsCount > 0}
                                   className="mt-1"
                                 />
                               </FormControl>
@@ -4732,6 +4753,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                       step="0.01"
                                       min="0"
                                       max="100"
+                                      disabled={overdueInstallmentsCount > 0}
                                       {...field}
                                       value={field.value || ''}
                                       onChange={(e) => {
@@ -4788,6 +4810,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                 type="button"
                                 variant="outline"
                                 onClick={handlePreviewTable}
+                                disabled={overdueInstallmentsCount > 0}
                                 className="w-full"
                               >
                                 <Eye className="h-4 w-4 mr-2" />
@@ -4796,6 +4819,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             </div>
                           </div>
                         )}
+                        </div>
                       </div>
                     )}
 
@@ -5185,7 +5209,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     <Button type="button" variant="outline" onClick={onClose}>
                       Cancelar
                     </Button>
-                    <Button type="submit" disabled={loading}>
+                    <Button 
+                      type="submit" 
+                      disabled={loading || (form.watch('update_type') === 'capital_payment' && overdueInstallmentsCount > 0)}
+                    >
                       {loading ? 'Procesando...' : 'Guardar Cambios'}
                     </Button>
                   </div>

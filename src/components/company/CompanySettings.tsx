@@ -53,6 +53,7 @@ const CompanySettings = () => {
     company_code: '',
     default_late_fee_rate: 2.0,
     default_pawn_period_days: 90,
+    default_capital_payment_penalty_percentage: 0,
     auto_backup_enabled: false,
     auto_backup_interval_hours: 24,
     auto_backup_format: 'excel' as 'excel' | 'csv' | 'pdf',
@@ -92,6 +93,7 @@ const CompanySettings = () => {
           grace_period_days: sanitizeNumber(data.grace_period_days, prev.grace_period_days),
           default_late_fee_rate: sanitizeNumber(data.default_late_fee_rate, prev.default_late_fee_rate),
           default_pawn_period_days: sanitizeNumber(data.default_pawn_period_days, prev.default_pawn_period_days),
+          default_capital_payment_penalty_percentage: sanitizeNumber(data.default_capital_payment_penalty_percentage, prev.default_capital_payment_penalty_percentage),
           min_loan_amount: sanitizeNumber(data.min_loan_amount, prev.min_loan_amount),
           max_loan_amount: sanitizeNumber(data.max_loan_amount, prev.max_loan_amount),
           min_term_months: sanitizeNumber(data.min_term_months, prev.min_term_months),
@@ -941,6 +943,16 @@ const CompanySettings = () => {
                       type="number"
                       value={formData.default_pawn_period_days ?? ''}
                       onChange={(e) => handleInputChange('default_pawn_period_days', sanitizeNumber(e.target.value, 0))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="default_capital_payment_penalty_percentage">Penalización Abono a Capital (% por defecto)</Label>
+                    <Input
+                      id="default_capital_payment_penalty_percentage"
+                      type="number"
+                      step="0.1"
+                      value={formData.default_capital_payment_penalty_percentage ?? ''}
+                      onChange={(e) => handleInputChange('default_capital_payment_penalty_percentage', sanitizeNumber(e.target.value, 0))}
                     />
                   </div>
                 </div>

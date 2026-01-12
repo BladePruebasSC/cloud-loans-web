@@ -63,33 +63,15 @@ export const calculateLateFee = (
       principalPerPayment = Math.round((loan.amount / loan.term) * 100) / 100;
     }
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔍 Préstamo indefinido - Mora calculada sobre interés:', {
-        monthlyPayment: loan.monthly_payment,
-        interestRate: loan.interest_rate,
-        principalPerPayment
-      });
-    }
   } else if (loan.monthly_payment && loan.interest_rate) {
     // Calcular el capital real: Cuota mensual - Interés fijo por cuota
     const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
     principalPerPayment = Math.round((loan.monthly_payment - fixedInterestPerPayment) * 100) / 100;
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log('🔍 Capital real por cuota calculado:', {
-        monthlyPayment: loan.monthly_payment,
-        interestRate: loan.interest_rate,
-        fixedInterestPerPayment,
-        principalPerPayment
-      });
-    }
   } else {
     // Fallback: usar el monto total dividido entre cuotas (método anterior)
     principalPerPayment = Math.round((loan.amount / loan.term) * 100) / 100;
     
-    if (process.env.NODE_ENV === 'development') {
-      console.log('⚠️ Usando cálculo de capital simplificado (sin datos de interés)');
-    }
   }
   
   // Obtener información de frecuencia de pago
@@ -122,13 +104,6 @@ export const calculateLateFee = (
   // Obtener cuotas pagadas (si no se proporciona, asumir que ninguna está pagada)
   const paidInstallments = loan.paid_installments || [];
   
-  if (process.env.NODE_ENV === 'development') {
-    console.log('🔍 DEBUG - Cuotas pagadas recibidas:', {
-      paidInstallments,
-      nextPaymentDate: loan.next_payment_date,
-      loanTerm: loan.term
-    });
-  }
   
   
   
@@ -188,8 +163,6 @@ export const calculateLateFee = (
         firstPaymentDate.setMonth(firstPaymentDate.getMonth() + periodsToAdd);
     }
     
-    console.log(`🔍 DEBUG - Cuota ${installment}: Fecha calculada: ${firstPaymentDate.toISOString().split('T')[0]}`);
-    
     const installmentDueDate = new Date(firstPaymentDate);
     
     // Calcular días de atraso para esta cuota específica
@@ -197,21 +170,6 @@ export const calculateLateFee = (
     // Si una cuota vence el 01/01, la mora comienza el 01/01
     const rawDaysDifference = calculateDaysDifference(installmentDueDate, calculationDate);
     let daysOverdueForThisInstallment = Math.max(0, rawDaysDifference - gracePeriod);
-    
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`🔍 ===== CÁLCULO DETALLADO DE DÍAS DE ATRASO - CUOTA ${installment} =====`);
-      console.log(`🔍 Préstamo: $${loan.amount} con next_payment_date: ${loan.next_payment_date}`);
-      console.log(`🔍 Fecha base calculada: ${firstPaymentDate.toISOString().split('T')[0]}`);
-      console.log(`🔍 Períodos a agregar: ${periodsToAdd}`);
-      console.log(`🔍 Frecuencia de pago: ${loan.payment_frequency}`);
-      console.log(`🔍 Fecha de vencimiento: ${installmentDueDate.toISOString().split('T')[0]}`);
-      console.log(`🔍 Fecha de cálculo: ${calculationDate.toISOString().split('T')[0]}`);
-      console.log(`🔍 Días de diferencia (crudos): ${rawDaysDifference}`);
-      console.log(`🔍 Período de gracia: ${gracePeriod} días`);
-      console.log(`🔍 Días de mora finales: ${daysOverdueForThisInstallment}`);
-      console.log(`🔍 Cálculo manual: Del ${installmentDueDate.toISOString().split('T')[0]} al ${calculationDate.toISOString().split('T')[0]} = ${rawDaysDifference} días`);
-      console.log(`🔍 ================================================================`);
-    }
     
     
     
@@ -316,46 +274,19 @@ export const calculateLateFee = (
     
     const installmentDueDate = new Date(firstPaymentDate);
     
-    console.log(`🔍 DEBUG - Cuota ${installment}: Fecha calculada: ${installmentDueDate.toISOString().split('T')[0]}`);
-    
     // Calcular días de mora para esta cuota
     const daysOverdueForThisInstallment = Math.max(0, 
       calculateDaysDifference(installmentDueDate, calculationDate) - gracePeriod
     );
-    
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`🔍 DEBUG - Cuota ${installment}:`, {
-        installment,
-        dueDate: installmentDueDate.toISOString().split('T')[0],
-        daysOverdue: daysOverdueForThisInstallment,
-        isPaid: paidInstallments.includes(installment)
-      });
-    }
     
     // Si esta cuota tiene menos días de mora, es la próxima a vencer
     if (daysOverdueForThisInstallment < minDaysOverdue) {
       minDaysOverdue = daysOverdueForThisInstallment;
       nextDueInstallment = installment;
       displayDaysOverdue = daysOverdueForThisInstallment;
-      
-      console.log(`🔍 DEBUG - Nueva próxima cuota: ${installment} con ${daysOverdueForThisInstallment} días`);
-      console.log(`🔍 DEBUG - Fecha de vencimiento: ${installmentDueDate.toISOString().split('T')[0]}`);
-      console.log(`🔍 DEBUG - Fecha de cálculo: ${calculationDate.toISOString().split('T')[0]}`);
-      console.log(`🔍 DEBUG - Días anteriores: ${minDaysOverdue === Infinity ? 'N/A' : minDaysOverdue}`);
-    } else {
-      console.log(`🔍 DEBUG - Cuota ${installment} NO seleccionada: ${daysOverdueForThisInstallment} días (mínimo actual: ${minDaysOverdue === Infinity ? 'N/A' : minDaysOverdue})`);
     }
   }
   
-  console.log('🔍 DEBUG - Próxima cuota a vencer:', {
-    nextDueInstallment,
-    displayDaysOverdue,
-    paidInstallments,
-    allInstallments: Array.from({length: loan.term}, (_, i) => i + 1)
-  });
-  console.log('🔍 DEBUG - Días que se mostrarán en la interfaz:', displayDaysOverdue);
-  console.log('🔍 DEBUG - ¿Es 365 días?', displayDaysOverdue === 365 ? '❌ INCORRECTO' : '✅ CORRECTO');
-  console.log('🔍 DEBUG - ¿Es 273 días?', displayDaysOverdue === 273 ? '✅ CORRECTO' : '❌ INCORRECTO');
 
 
   return {
@@ -661,14 +592,6 @@ export const getDetailedLateFeeBreakdown = (
     const daysSinceDue = Math.floor((today.getTime() - installmentDueDate.getTime()) / (1000 * 60 * 60 * 24));
     const daysOverdue = Math.max(0, daysSinceDue - gracePeriod);
     
-    console.log(`🔍 DEBUG getDetailedLateFeeBreakdown - Cuota ${installment}:`, {
-      installmentDueDate: installmentDueDate.toISOString().split('T')[0],
-      today: today.toISOString().split('T')[0],
-      daysSinceDue,
-      gracePeriod,
-      daysOverdue
-    });
-    
     if (daysOverdue > 0) {
       let lateFee = 0;
       
@@ -726,9 +649,6 @@ export const calculateLateFeeAfterPayment = (
     ...loan,
     paid_installments: [...(loan.paid_installments || []), paidInstallment]
   };
-  
-  console.log(`🔍 Calculando mora después de pagar cuota ${paidInstallment}`);
-  console.log('🔍 Cuotas pagadas:', updatedLoan.paid_installments);
   
   return calculateLateFee(updatedLoan, calculationDate);
 };

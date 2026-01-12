@@ -24,8 +24,8 @@ import {
 } from 'lucide-react';
 import { PaymentActions } from './PaymentActions';
 import { formatInTimeZone } from 'date-fns-tz';
-import { addHours } from 'date-fns';
 import { useAuth } from '@/hooks/useAuth';
+import jsPDF from 'jspdf';
 
 interface LoanHistoryEntry {
   id: string;
@@ -151,7 +151,6 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   useEffect(() => {
     const handleLoanHistoryRefresh = (event: CustomEvent) => {
       if (event.detail && event.detail.loanId === loanId && isOpen) {
-        console.log('🔄 Recargando historial después de actualización del préstamo...');
         fetchLoanHistory();
         fetchPayments();
         fetchLoanDetails();
@@ -204,7 +203,6 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
   const fetchLoanHistory = async () => {
     try {
-      console.log('🔍 Fetching loan history for loan:', loanId);
       // Intentar obtener historial si la tabla existe
       const { data, error } = await supabase
         .from('loan_history')
@@ -215,15 +213,12 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       if (error) {
         // Si la tabla no existe (42P01) o no hay permisos, simplemente no mostrar historial
         if (error.code === '42P01' || error.code === 'PGRST116') {
-          console.log('⚠️ Loan history table not available:', error);
           setHistory([]);
         } else {
           console.error('❌ Error fetching loan history:', error);
           setHistory([]);
         }
       } else {
-        console.log('✅ Loan history fetched:', data?.length || 0, 'entries');
-        console.log('📋 History entries:', data);
         setHistory(data || []);
       }
     } catch (error) {
@@ -318,6 +313,44 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     return labels[type as keyof typeof labels] || type;
   };
 
+  // Función para extraer información de la descripción
+  const extractDescriptionInfo = (description: string) => {
+    if (!description) return { reason: null, amount: null, months: null, days: null, quincenas: null };
+    
+    // Extraer razón - buscar después del primer ":" hasta el siguiente "." o final
+    let reason: string | null = null;
+    const colonIndex = description.indexOf(':');
+    if (colonIndex !== -1) {
+      const afterColon = description.substring(colonIndex + 1);
+      // Buscar el siguiente punto que no sea parte de un número
+      const dotMatch = afterColon.match(/^([^.]+?)(?:\.\s|$)/);
+      if (dotMatch) {
+        reason = dotMatch[1].trim();
+      } else {
+        reason = afterColon.trim();
+      }
+    }
+    
+    // Extraer monto (para cargos, abonos, etc.)
+    const amountMatch = description.match(/RD\$([\d,]+\.?\d*)/);
+    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
+    
+    // Extraer meses/días/quincenas para extensiones de plazo
+    // Buscar patrones como "3 meses", "3 meses agregados", "2 días", "4 quincenas", etc.
+    const monthsMatch = description.match(/(\d+)\s*mes(es)?(?:\s+agregados?)?/i);
+    const daysMatch = description.match(/(\d+)\s*d[íi]a(s)?(?:\s+agregados?)?/i);
+    const quincenasMatch = description.match(/(\d+)\s*quincena(s)?(?:\s+agregadas?)?/i);
+    const weeksMatch = description.match(/(\d+)\s*semana(s)?(?:\s+agregadas?)?/i);
+    
+    return {
+      reason,
+      amount,
+      months: monthsMatch ? parseInt(monthsMatch[1]) : null,
+      days: daysMatch ? parseInt(daysMatch[1]) : (weeksMatch ? parseInt(weeksMatch[1]) * 7 : null),
+      quincenas: quincenasMatch ? parseInt(quincenasMatch[1]) : null
+    };
+  };
+  
   const getChangeTypeLabelWithUpdateType = (entry: LoanHistoryEntry) => {
     // Si la descripción contiene información específica, extraerla para una etiqueta más descriptiva
     const description = entry.description || '';
@@ -334,6 +367,9 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     }
     if (description.includes('Acuerdo de Pago')) {
       return 'Acuerdo de Pago';
+    }
+    if (description.includes('Extensión de Plazo') || entry.change_type === 'term_extension') {
+      return 'Extensión de Plazo';
     }
     
     // Usar la función básica como fallback
@@ -389,7 +425,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     
     const client = loan.client;
     const paymentDate = formatInTimeZone(
-      addHours(new Date(entry.created_at), 2),
+      new Date(entry.created_at),
       'America/Santo_Domingo',
       'dd MMM yyyy'
     );
@@ -534,29 +570,153 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     `;
   };
 
+  // Función para generar PDF del recibo de abono a capital
+  const generateCapitalPaymentReceiptPDF = (
+    entry: LoanHistoryEntry,
+    capitalAmount: number,
+    penaltyAmount: number,
+    oldValues: any,
+    newValues: any
+  ) => {
+    if (!loan || !companySettings) return null;
+    
+    const doc = new jsPDF();
+    const client = loan.client;
+    const paymentDate = formatInTimeZone(
+      new Date(entry.created_at),
+      'America/Santo_Domingo',
+      'dd MMM yyyy'
+    );
+    const totalAmount = capitalAmount + penaltyAmount;
+    
+    // Configuración
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 20;
+    const lineHeight = 7;
+    let yPos = margin;
+    
+    // Título
+    doc.setFontSize(18);
+    doc.setFont(undefined, 'bold');
+    doc.text('RECIBO DE ABONO A CAPITAL', pageWidth / 2, yPos, { align: 'center' });
+    yPos += lineHeight * 2;
+    
+    // Información de la empresa
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text(companySettings.company_name || 'LA EMPRESA', margin, yPos);
+    yPos += lineHeight;
+    
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    if (companySettings.tax_id) {
+      doc.text(`RNC: ${companySettings.tax_id}`, margin, yPos);
+      yPos += lineHeight;
+    }
+    if (companySettings.address) {
+      doc.text(companySettings.address, margin, yPos);
+      yPos += lineHeight * 1.5;
+    }
+    
+    // Línea separadora
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += lineHeight * 1.5;
+    
+    // Información del cliente
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text('INFORMACIÓN DEL CLIENTE', margin, yPos);
+    yPos += lineHeight;
+    
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Cliente: ${client?.full_name || 'Cliente'}`, margin, yPos);
+    yPos += lineHeight;
+    if (client?.dni) {
+      doc.text(`Cédula: ${client.dni}`, margin, yPos);
+      yPos += lineHeight;
+    }
+    yPos += lineHeight * 0.5;
+    
+    // Información del préstamo
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text('INFORMACIÓN DEL PRÉSTAMO', margin, yPos);
+    yPos += lineHeight;
+    
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Monto Original: RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin, yPos);
+    yPos += lineHeight;
+    doc.text(`Tasa de Interés: ${loan.interest_rate}%`, margin, yPos);
+    yPos += lineHeight * 1.5;
+    
+    // Detalles del abono
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text('DETALLES DEL ABONO A CAPITAL', margin, yPos);
+    yPos += lineHeight;
+    
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Fecha: ${paymentDate}`, margin, yPos);
+    yPos += lineHeight;
+    
+    if (oldValues.capital_before !== undefined) {
+      doc.text(`Capital pendiente antes: RD$${oldValues.capital_before.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin, yPos);
+      yPos += lineHeight;
+    }
+    
+    doc.text(`Monto del abono: RD$${capitalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin, yPos);
+    yPos += lineHeight;
+    
+    if (penaltyAmount > 0) {
+      doc.text(`Penalidad aplicada: RD$${penaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin, yPos);
+      yPos += lineHeight;
+    }
+    
+    if (newValues.capital_after !== undefined) {
+      doc.text(`Capital pendiente después: RD$${newValues.capital_after.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin, yPos);
+      yPos += lineHeight;
+    }
+    
+    if (newValues.balance !== undefined) {
+      doc.text(`Balance restante: RD$${newValues.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin, yPos);
+      yPos += lineHeight;
+    }
+    
+    yPos += lineHeight;
+    
+    // Total
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(`TOTAL ABONADO: RD$${totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth / 2, yPos, { align: 'center' });
+    yPos += lineHeight * 2;
+    
+    // Nota final
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'italic');
+    doc.text('Este documento es un comprobante oficial de abono a capital.', pageWidth / 2, yPos, { align: 'center' });
+    
+    return doc;
+  };
+  
   const printCapitalPaymentReceipt = (entry: LoanHistoryEntry, capitalAmount: number, penaltyAmount: number, oldValues: any, newValues: any) => {
-    const receiptHTML = generateCapitalPaymentReceiptHTML(entry, capitalAmount, penaltyAmount, oldValues, newValues, 'LETTER');
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(receiptHTML);
-      printWindow.document.close();
-      printWindow.print();
+    const doc = generateCapitalPaymentReceiptPDF(entry, capitalAmount, penaltyAmount, oldValues, newValues);
+    if (doc) {
+      doc.autoPrint();
+      window.open(doc.output('bloburl'), '_blank');
     }
   };
 
   const downloadCapitalPaymentReceipt = (entry: LoanHistoryEntry, capitalAmount: number, penaltyAmount: number, oldValues: any, newValues: any) => {
     if (!loan) return;
-    const receiptHTML = generateCapitalPaymentReceiptHTML(entry, capitalAmount, penaltyAmount, oldValues, newValues, 'LETTER');
-    const client = loan.client;
-    const blob = new Blob([receiptHTML], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `recibo_abono_capital_${client?.full_name?.replace(/\s+/g, '_') || 'cliente'}_${new Date(entry.created_at).toISOString().split('T')[0]}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const doc = generateCapitalPaymentReceiptPDF(entry, capitalAmount, penaltyAmount, oldValues, newValues);
+    if (doc) {
+      const client = loan.client;
+      const fileName = `recibo_abono_capital_${client?.full_name?.replace(/\s+/g, '_') || 'cliente'}_${formatInTimeZone(new Date(entry.created_at), 'America/Santo_Domingo', 'yyyy-MM-dd')}.pdf`;
+      doc.save(fileName);
+    }
   };
 
   const translateReason = (reason: string) => {
@@ -664,15 +824,12 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                   });
 
                   // Agregar cargos, eliminaciones de mora y abonos a capital del historial
-                  console.log('🔍 Processing history entries:', history.length);
                   history.forEach(entry => {
-                    console.log('🔍 Processing entry:', entry.change_type, entry.id);
                     // Detectar abonos a capital: puede ser 'capital_payment' o 'balance_adjustment' con descripción "Abono a capital"
                     const isCapitalPayment = entry.change_type === 'capital_payment' || 
                       (entry.change_type === 'balance_adjustment' && entry.description && entry.description.includes('Abono a capital'));
                     
                     if (entry.change_type === 'add_charge' || entry.change_type === 'remove_late_fee' || isCapitalPayment) {
-                      console.log('✅ Adding movement:', entry.change_type, isCapitalPayment ? '(capital_payment)' : '');
                       movements.push({
                         id: entry.id,
                         type: isCapitalPayment ? 'capital_payment' : entry.change_type as 'add_charge' | 'remove_late_fee',
@@ -681,8 +838,6 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                       });
                     }
                   });
-                  
-                  console.log('📊 Total movements:', movements.length);
 
                   // Ordenar por fecha (más reciente primero)
                   movements.sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -822,7 +977,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                               <div className="text-sm text-gray-600 mb-2">
                                 <span className="font-medium">Fecha:</span>{' '}
                                 {formatInTimeZone(
-                                  addHours(new Date(entry.created_at), 2),
+                                  new Date(entry.created_at),
                                   'America/Santo_Domingo',
                                   'dd MMM yyyy, hh:mm a'
                                 )}
@@ -915,7 +1070,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                               <div className="text-sm text-gray-600 mb-2">
                                 <span className="font-medium">Fecha:</span>{' '}
                                 {formatInTimeZone(
-                                  addHours(new Date(entry.created_at), 2),
+                                  new Date(entry.created_at),
                                   'America/Santo_Domingo',
                                   'dd MMM yyyy, hh:mm a'
                                 )}
@@ -983,7 +1138,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                               <div className="text-sm text-gray-600 mb-2">
                                 <span className="font-medium">Fecha:</span>{' '}
                                 {formatInTimeZone(
-                                  addHours(new Date(entry.created_at), 2),
+                                  new Date(entry.created_at),
                                   'America/Santo_Domingo',
                                   'dd MMM yyyy, hh:mm a'
                                 )}
@@ -1123,26 +1278,128 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                           <span className="font-semibold">{getChangeTypeLabelWithUpdateType(entry)}</span>
                           <span className="text-sm text-gray-500">
                             {formatInTimeZone(
-                              addHours(new Date(entry.created_at), 2),
+                              new Date(entry.created_at),
                               'America/Santo_Domingo',
                               'dd MMM yyyy, hh:mm a'
                             )}
                           </span>
                         </div>
                         
-                        <div className="text-sm text-gray-600 mb-2">
-                          <span className="font-medium">Razón:</span> {translateReason(entry.reason)}
-                        </div>
+                        {(() => {
+                          // Extraer información de la descripción
+                          const descInfo = extractDescriptionInfo(entry.description || '');
+                          const displayReason = entry.reason || descInfo.reason;
+                          const displayAmount = entry.amount || descInfo.amount;
+                          
+                          return (
+                            <>
+                              {displayReason && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Razón:</span> {translateReason(displayReason)}
+                                </div>
+                              )}
 
-                        {entry.amount && (
-                          <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">
-                              {entry.change_type === 'add_charge' ? 'Monto del Cargo:' :
-                               entry.change_type === 'remove_late_fee' ? 'Mora Eliminada:' :
-                               'Monto:'} 
-                            </span> ${entry.amount.toLocaleString()}
-                          </div>
-                        )}
+                              {/* Mostrar monto del cargo si existe */}
+                              {entry.change_type === 'balance_adjustment' && entry.description?.includes('Agregar Cargo') && displayAmount && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Monto del Cargo:</span> RD${displayAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              )}
+
+                              {/* Mostrar meses/días/quincenas para extensión de plazo */}
+                              {entry.change_type === 'term_extension' && (
+                                <>
+                                  {(() => {
+                                    
+                                    // Primero intentar obtener de la descripción (formato nuevo: "Extensión de Plazo: ... X meses agregados")
+                                    if (descInfo.months && descInfo.months > 0) {
+                                      return (
+                                        <div className="text-sm text-gray-600 mb-2">
+                                          <span className="font-medium">Meses Agregados:</span> {descInfo.months}
+                                        </div>
+                                      );
+                                    }
+                                    if (descInfo.quincenas && descInfo.quincenas > 0) {
+                                      return (
+                                        <div className="text-sm text-gray-600 mb-2">
+                                          <span className="font-medium">Quincenas Agregadas:</span> {descInfo.quincenas}
+                                        </div>
+                                      );
+                                    }
+                                    if (descInfo.days && descInfo.days > 0) {
+                                      return (
+                                        <div className="text-sm text-gray-600 mb-2">
+                                          <span className="font-medium">Días Agregados:</span> {descInfo.days}
+                                        </div>
+                                      );
+                                    }
+                                    
+                                    // Segundo: calcular desde term_months en oldValues/newValues (para nuevas extensiones)
+                                    if (oldValues && newValues && 
+                                        oldValues.term_months !== undefined && newValues.term_months !== undefined &&
+                                        typeof oldValues.term_months === 'number' && typeof newValues.term_months === 'number') {
+                                      const monthsAdded = newValues.term_months - oldValues.term_months;
+                                      if (monthsAdded > 0) {
+                                        return (
+                                          <div className="text-sm text-gray-600 mb-2">
+                                            <span className="font-medium">Meses Agregados:</span> {monthsAdded}
+                                          </div>
+                                        );
+                                      }
+                                    }
+                                    
+                                    // Tercero: intentar extraer de descripción en formato antiguo "term_extension: ..." 
+                                    // buscando números seguidos de palabras relacionadas con tiempo
+                                    const timePattern = /(\d+)\s*(mes|día|semana|quincena)/i;
+                                    const timeMatch = entry.description?.match(timePattern);
+                                    if (timeMatch) {
+                                      const amount = parseInt(timeMatch[1]);
+                                      const unit = timeMatch[2].toLowerCase();
+                                      if (unit.includes('mes')) {
+                                        return (
+                                          <div className="text-sm text-gray-600 mb-2">
+                                            <span className="font-medium">Meses Agregados:</span> {amount}
+                                          </div>
+                                        );
+                                      } else if (unit.includes('quincena')) {
+                                        return (
+                                          <div className="text-sm text-gray-600 mb-2">
+                                            <span className="font-medium">Quincenas Agregadas:</span> {amount}
+                                          </div>
+                                        );
+                                      } else if (unit.includes('día')) {
+                                        return (
+                                          <div className="text-sm text-gray-600 mb-2">
+                                            <span className="font-medium">Días Agregados:</span> {amount}
+                                          </div>
+                                        );
+                                      } else if (unit.includes('semana')) {
+                                        return (
+                                          <div className="text-sm text-gray-600 mb-2">
+                                            <span className="font-medium">Semanas Agregadas:</span> {amount}
+                                          </div>
+                                        );
+                                      }
+                                    }
+                                    
+                                    // Si aún no se encontró, no mostrar nada (entrada antigua sin información disponible)
+                                    return null;
+                                  })()}
+                                </>
+                              )}
+
+                              {entry.amount && !(entry.change_type === 'balance_adjustment' && entry.description?.includes('Agregar Cargo')) && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">
+                                    {entry.change_type === 'add_charge' ? 'Monto del Cargo:' :
+                                     entry.change_type === 'remove_late_fee' ? 'Mora Eliminada:' :
+                                     'Monto:'} 
+                                  </span> ${entry.amount.toLocaleString()}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
 
                         {/* Información específica para agregar cargo */}
                         {entry.change_type === 'add_charge' && (entry as any).charge_date && (

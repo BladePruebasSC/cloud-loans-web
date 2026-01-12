@@ -57,14 +57,11 @@ export const ClientsModule = () => {
 
   const fetchClients = async () => {
     if (!user || !companyId) {
-      console.log('Missing user or companyId:', { user: !!user, companyId });
       return;
     }
 
     try {
       setLoading(true);
-      
-      console.log('Fetching clients for companyId:', companyId);
       
       const { data, error } = await supabase
         .from('clients')
@@ -78,7 +75,6 @@ export const ClientsModule = () => {
         return;
       }
 
-      console.log('Fetched clients:', data);
       setClients(data || []);
     } catch (error) {
       console.error('Error fetching clients:', error);

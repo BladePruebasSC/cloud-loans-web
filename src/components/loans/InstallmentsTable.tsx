@@ -82,7 +82,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             filter: `loan_id=eq.${loanId}`
           },
           (payload) => {
-            console.log('🔔 Cambio detectado en cuotas:', payload);
             setTimeout(() => {
               fetchData();
             }, 500);
@@ -96,7 +95,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             filter: `id=eq.${loanId}`
           },
           (payload) => {
-            console.log('🔔 Cambio detectado en préstamo:', payload);
             setTimeout(() => {
               fetchData();
             }, 500);
@@ -107,7 +105,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       // Escuchar evento personalizado para refrescar después de abono a capital
       const handleInstallmentsUpdated = (event: CustomEvent) => {
         if (event.detail?.loanId === loanId) {
-          console.log('🔔 Evento installmentsUpdated recibido, refrescando datos');
           setTimeout(() => {
             fetchData();
           }, 500);
