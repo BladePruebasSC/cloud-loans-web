@@ -2246,23 +2246,51 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
         }
 
-        // CORRECCIÓN: Marcar la PRIMERA cuota NO pagada ordenada por fecha de vencimiento
-        // Buscar la primera cuota pendiente ordenada por due_date para priorizar cargos
+        // CORRECCIÓN: Si el pago es para un cargo, buscar específicamente ese cargo
+        // Si no es cargo, buscar la primera cuota NO pagada ordenada por fecha de vencimiento
         let firstUnpaidInstallment = null;
         let firstUnpaidInstallmentNumber = null;
 
-        // Obtener todas las cuotas pendientes ordenadas por fecha de vencimiento
-        const { data: unpaidInstallments, error: unpaidError } = await supabase
-          .from('installments')
-          .select('installment_number, due_date, is_paid, principal_amount, interest_amount, total_amount')
-          .eq('loan_id', data.loan_id)
-          .eq('is_paid', false)
-          .order('due_date', { ascending: true })
-          .limit(1);
+        // Si es un cargo, buscar específicamente ese cargo
+        if (nextPaymentInfo?.isCharge && nextPaymentInfo.dueDate) {
+          const chargeDueDate = nextPaymentInfo.dueDate.split('T')[0];
+          const { data: chargeInstallments, error: chargeError } = await supabase
+            .from('installments')
+            .select('installment_number, due_date, is_paid, principal_amount, interest_amount, total_amount')
+            .eq('loan_id', data.loan_id)
+            .eq('due_date', chargeDueDate)
+            .eq('is_paid', false)
+            .eq('interest_amount', 0) // Solo cargos
+            .order('installment_number', { ascending: true })
+            .limit(1);
+          
+          if (!chargeError && chargeInstallments && chargeInstallments.length > 0) {
+            firstUnpaidInstallment = chargeInstallments[0];
+            firstUnpaidInstallmentNumber = firstUnpaidInstallment.installment_number;
+            console.log('🔍 PaymentForm: Cargo encontrado para el pago:', {
+              installmentNumber: firstUnpaidInstallmentNumber,
+              dueDate: chargeDueDate
+            });
+          }
+        }
 
-        if (!unpaidError && unpaidInstallments && unpaidInstallments.length > 0) {
-          firstUnpaidInstallment = unpaidInstallments[0];
-          firstUnpaidInstallmentNumber = firstUnpaidInstallment.installment_number;
+        // Si no se encontró un cargo específico, buscar la primera cuota pendiente ordenada por fecha
+        if (!firstUnpaidInstallment) {
+          const { data: unpaidInstallments, error: unpaidError } = await supabase
+            .from('installments')
+            .select('installment_number, due_date, is_paid, principal_amount, interest_amount, total_amount')
+            .eq('loan_id', data.loan_id)
+            .eq('is_paid', false)
+            .order('due_date', { ascending: true })
+            .limit(1);
+
+          if (!unpaidError && unpaidInstallments && unpaidInstallments.length > 0) {
+            firstUnpaidInstallment = unpaidInstallments[0];
+            firstUnpaidInstallmentNumber = firstUnpaidInstallment.installment_number;
+          }
+        }
+
+        if (firstUnpaidInstallment) {
           
           // Verificar si el pago cubre esta cuota
           const installmentAmount = firstUnpaidInstallment.total_amount;
@@ -2337,7 +2365,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             
             // El cargo está cubierto si el total pagado (incluyendo este pago) cubre el monto del cargo
             // IMPORTANTE: Solo marcar como pagado si está completamente cubierto
-            paymentCoversInstallment = totalPaidAfter >= installmentAmount * 0.99; // 99% para tolerancia de redondeo
+            // Usar >= sin tolerancia para asegurar que solo se marca como pagado cuando está completamente cubierto
+            paymentCoversInstallment = totalPaidAfter >= installmentAmount;
             
             console.log('🔍 PaymentForm: Verificando cargo (con acumulación corregida):', {
               installmentNumber: firstUnpaidInstallmentNumber,

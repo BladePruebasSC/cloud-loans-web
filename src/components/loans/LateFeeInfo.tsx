@@ -275,20 +275,13 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
       // Encontrar la próxima cuota pendiente de pago para mostrar sus días de atraso
       console.log('🔍 LateFeeInfo: Desglose completo para encontrar próxima cuota:', breakdown.breakdown);
       
-      // CORRECCIÓN: Buscar la primera cuota NO pagada, independientemente de si tiene mora > 0
-      // Esto asegura que siempre mostremos los días vencidos de la primera cuota pendiente
-      const nextUnpaidInstallment = breakdown.breakdown.find(item => !item.isPaid);
-      console.log('🔍 LateFeeInfo: Próxima cuota pendiente encontrada:', nextUnpaidInstallment);
-      
-      // Si encontramos una cuota pendiente, usar sus días de atraso (incluso si es 0)
-      // Si no encontramos ninguna, buscar la primera cuota vencida (con días > 0)
+      // CORRECCIÓN: Buscar el MÁXIMO de días vencidos entre todas las cuotas no pagadas
+      // Esto incluye cargos y cuotas regulares - debemos mostrar el mayor número de días vencidos
+      const unpaidInstallments = breakdown.breakdown.filter(item => !item.isPaid);
       let daysOverdue = 0;
-      if (nextUnpaidInstallment) {
-        daysOverdue = nextUnpaidInstallment.daysOverdue || 0;
-      } else {
-        // Fallback: buscar cualquier cuota vencida
-        const overdueInstallment = breakdown.breakdown.find(item => !item.isPaid && item.daysOverdue > 0);
-        daysOverdue = overdueInstallment ? overdueInstallment.daysOverdue : 0;
+      if (unpaidInstallments.length > 0) {
+        // Encontrar el máximo de días vencidos
+        daysOverdue = Math.max(...unpaidInstallments.map(item => item.daysOverdue || 0));
       }
       console.log('🔍 LateFeeInfo: Días de atraso para mostrar:', daysOverdue);
       

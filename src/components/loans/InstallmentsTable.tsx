@@ -1440,10 +1440,14 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   // Si el préstamo está saldado, el total pendiente debe ser 0
   const isLoanSettled = loanInfo?.status === 'paid';
   
-  // CORRECCIÓN: Usar directamente balancePending calculado anteriormente
+  // CORRECCIÓN: Priorizar valor de BD si está disponible (es más confiable que el cálculo dinámico)
   // Esto evita problemas de redondeo al usar totalAmount - totalPaid
   // Asegurar que totalPending nunca sea negativo y sea 0 si el préstamo está saldado
-  const totalPending = isLoanSettled ? 0 : Math.max(0, balancePending);
+  const totalPending = isLoanSettled ? 0 : Math.max(0, 
+    (loanInfo?.remaining_balance !== null && loanInfo?.remaining_balance !== undefined)
+      ? loanInfo.remaining_balance
+      : balancePending
+  );
   
   console.log('🔍 InstallmentsTable - Cálculo de totales finales:', {
     loanId,

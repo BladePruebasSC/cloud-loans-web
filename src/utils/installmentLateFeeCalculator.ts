@@ -71,7 +71,7 @@ export const getLateFeeBreakdownFromInstallments = async (
     // Obtener todos los pagos del préstamo para verificar si hay pagos que cubren cuotas
     const { data: payments, error: paymentsError } = await supabase
       .from('payments')
-      .select('id, principal_amount, interest_amount, payment_date, amount')
+      .select('id, principal_amount, interest_amount, payment_date, amount, due_date')
       .eq('loan_id', loanId)
       .order('payment_date', { ascending: true });
     
@@ -79,7 +79,7 @@ export const getLateFeeBreakdownFromInstallments = async (
       console.error('Error obteniendo pagos:', paymentsError);
     }
     
-    // Asignar pagos a cuotas en orden cronológico
+    // Asignar pagos a cuotas: primero por due_date, luego secuencialmente
     const paymentToInstallmentMap = new Map<string, number>();
     const assignedPaymentIds = new Set<string>();
     
@@ -89,11 +89,26 @@ export const getLateFeeBreakdownFromInstallments = async (
         return new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime();
       });
       
-      // ESTRATEGIA SIMPLIFICADA: Asignar TODOS los pagos en orden cronológico a TODAS las cuotas en orden secuencial
-      // Sin importar si están marcadas como pagadas o no
-      // Esto asegura que cada pago se asigne a la cuota correcta
-      let paymentIndex = 0;
+      // PRIMERO: Asignar pagos que tienen due_date específico a la cuota correspondiente
+      for (const payment of sortedPayments) {
+        if (payment.due_date && !assignedPaymentIds.has(payment.id)) {
+          // Buscar la cuota que corresponde a este due_date
+          const matchingInstallment = installments.find(inst => {
+            const installmentDueDate = new Date(inst.due_date).toISOString().split('T')[0];
+            const paymentDueDate = new Date(payment.due_date).toISOString().split('T')[0];
+            return installmentDueDate === paymentDueDate;
+          });
+          
+          if (matchingInstallment) {
+            assignedPaymentIds.add(payment.id);
+            paymentToInstallmentMap.set(payment.id, matchingInstallment.installment_number);
+            console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación por due_date - Cuota ${matchingInstallment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount}, due_date: ${payment.due_date})`);
+          }
+        }
+      }
       
+      // SEGUNDO: Asignar pagos restantes (sin due_date o sin coincidencia) secuencialmente
+      let paymentIndex = 0;
       for (let i = 0; i < installments.length && paymentIndex < sortedPayments.length; i++) {
         const installment = installments[i];
         const payment = sortedPayments[paymentIndex];
@@ -102,7 +117,7 @@ export const getLateFeeBreakdownFromInstallments = async (
           assignedPaymentIds.add(payment.id);
           paymentToInstallmentMap.set(payment.id, installment.installment_number);
           paymentIndex++;
-          console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
+          console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación secuencial - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
         }
       }
     }
@@ -111,23 +126,32 @@ export const getLateFeeBreakdownFromInstallments = async (
     for (const installment of installments) {
       let daysOverdue = 0;
       let lateFee = 0;
-      let isActuallyPaid = installment.is_paid;
       
-      // Verificar si hay un pago asignado a esta cuota aunque no esté marcada como pagada
-      if (!isActuallyPaid && paymentToInstallmentMap.size > 0) {
+      // SIEMPRE calcular el total pagado para verificar si realmente está pagada completamente
+      // Incluso si installment.is_paid es true en la BD, puede que no esté completamente pagada
+      let totalPaidForInstallment = 0;
+      if (paymentToInstallmentMap.size > 0) {
         for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
           if (installmentNum === installment.installment_number) {
-            isActuallyPaid = true;
             const assignedPayment = payments?.find(p => p.id === paymentId);
-            console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} marcada como pagada por pago asignado:`, {
-              paymentId,
-              paymentDate: assignedPayment?.payment_date,
-              paymentAmount: assignedPayment?.amount,
-              installmentNumber: installmentNum
-            });
-            break;
+            if (assignedPayment) {
+              totalPaidForInstallment += assignedPayment.amount || 0;
+            }
           }
         }
+      }
+      
+      // Obtener el monto total de la cuota
+      const installmentTotalAmount = installment.total_amount || (installment.principal_amount || 0) + (installment.interest_amount || 0);
+      
+      // Determinar si está realmente pagada: el total pagado debe ser >= monto total
+      // Ignorar installment.is_paid de la BD y calcular basándose en los pagos reales
+      const isActuallyPaid = totalPaidForInstallment >= installmentTotalAmount - 0.01;
+      
+      if (isActuallyPaid && totalPaidForInstallment > 0) {
+        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} marcada como pagada - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${installmentTotalAmount}`);
+      } else if (totalPaidForInstallment > 0 && totalPaidForInstallment < installmentTotalAmount) {
+        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} con pago parcial - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${installmentTotalAmount}, Pendiente: RD$${installmentTotalAmount - totalPaidForInstallment}`);
       }
       
       console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} - Estado final:`, {

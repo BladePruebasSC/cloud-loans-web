@@ -523,7 +523,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               
               const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
               if (remainingPrincipal > 0.01) {
-                return sum + Math.round(remainingPrincipal);
+                return sum + remainingPrincipal;
               }
               return sum;
             }, 0);
@@ -1237,11 +1237,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const calculateUpdatedValues = async () => {
     const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType, settleCapital, settleInterest, settleLateFee, capitalPaymentAmount, keepInstallments] = watchedValues;
     
-    // CORRECCIÓN: Calcular el balance actual dinámicamente igual que LoanDetailsView
-    // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
+    // CORRECCIÓN: Usar valor de BD directamente (es más confiable que el cálculo dinámico)
     // Si el balance ya fue calculado correctamente, usarlo para evitar mostrar un valor incorrecto
-    // Solo recalcular si los datos necesarios están disponibles
-    let currentBalance = balanceCalculated ? calculatedValues.currentBalance : loan.remaining_balance;
+    // Solo recalcular si los datos necesarios están disponibles y no se ha calculado previamente
+    let currentBalance = (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+      ? loan.remaining_balance
+      : (balanceCalculated ? calculatedValues.currentBalance : loan.remaining_balance);
     
     // Solo recalcular el balance si los datos necesarios están disponibles
     // Si balanceCalculated es true, ya tenemos el balance correcto y no necesitamos recalcular
@@ -1379,10 +1380,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       }
     }
     
-    // IMPORTANTE: Redondear el balance final para evitar diferencias de redondeo
-    currentBalance = Math.round(currentBalance);
-    
-    
     let newBalance = currentBalance;
     let newPayment = loan.monthly_payment;
     let newEndDate = '';
@@ -1392,7 +1389,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     switch (updateType) {
       case 'add_charge':
         if (amount) {
-          // Agregar el monto del cargo al balance
+          // Agregar el monto del cargo al balance (sin redondear aún)
           newBalance = currentBalance + amount;
           principalAmount = amount;
         }
@@ -1528,14 +1525,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         break;
     }
 
-    // IMPORTANTE: Redondear a números enteros para evitar diferencias de redondeo
+    // IMPORTANTE: Redondear a 2 decimales para evitar diferencias de redondeo
     setCalculatedValues({
-      currentBalance: Math.round(currentBalance),
-      newBalance: Math.round(newBalance),
-      newPayment: Math.round(newPayment),
+      currentBalance: Math.round(currentBalance * 100) / 100,
+      newBalance: Math.round(newBalance * 100) / 100,
+      newPayment: Math.round(newPayment * 100) / 100,
       newEndDate,
-      interestAmount: Math.round(interestAmount),
-      principalAmount: Math.round(principalAmount)
+      interestAmount: Math.round(interestAmount * 100) / 100,
+      principalAmount: Math.round(principalAmount * 100) / 100
     });
   };
 
@@ -5240,10 +5237,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">Balance Actual:</span>
-                      <span className="font-semibold">RD${Math.round(calculatedValues.currentBalance || (
-                        loan.amortization_type === 'indefinite' 
-                          ? loan.amount + pendingInterestForIndefinite
-                          : loan.remaining_balance
+                      <span className="font-semibold">RD${Math.round((
+                        (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+                          ? loan.remaining_balance
+                          : (calculatedValues.currentBalance || (
+                              loan.amortization_type === 'indefinite' 
+                                ? loan.amount + pendingInterestForIndefinite
+                                : loan.remaining_balance
+                            ))
                       )).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                     

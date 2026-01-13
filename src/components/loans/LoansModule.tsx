@@ -272,7 +272,8 @@ export const LoansModule = () => {
         
         return sum + principalPaidForThisCharge;
       }, 0);
-      const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
+      // IMPORTANTE: Redondear a 2 decimales usando Math.round(value * 100) / 100 para valores monetarios
+      const unpaidChargesAmount = Math.round((totalChargesAmount - paidChargesAmount) * 100) / 100;
       
       // 2. Calcular capital pagado y abonos a capital
       const totalPaidFromPayments = (payments || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
@@ -296,12 +297,15 @@ export const LoansModule = () => {
           const originalPrincipal = inst.principal_amount || 0;
           
           // Es una cuota regular: buscar pagos asignados a esta cuota
+          // IMPORTANTE: Solo incluir pagos que tienen interés (para excluir pagos a cargos)
+          // Los pagos a cargos no deben restarse del capital pendiente de cuotas regulares
           const installmentDueDate = inst.due_date?.split('T')[0];
           let principalPaidForThisInstallment = 0;
           if (installmentDueDate) {
             const paymentsForThisInstallment = (payments || []).filter(p => {
               const paymentDueDate = p.due_date?.split('T')[0];
-              return paymentDueDate === installmentDueDate;
+              const hasInterest = Math.abs(p.interest_amount || 0) >= 0.01; // Solo pagos con interés (cuotas regulares)
+              return paymentDueDate === installmentDueDate && hasInterest;
             });
             principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
           }
@@ -309,15 +313,16 @@ export const LoansModule = () => {
           const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
           // Solo incluir si hay algo pendiente (remainingPrincipal > 0.01)
           if (remainingPrincipal > 0.01) {
-            return sum + Math.round(remainingPrincipal);
+            return sum + remainingPrincipal;
           }
           return sum;
         }, 0);
       
       // Si hay cuotas pendientes, usar ese cálculo; sino usar el cálculo tradicional
+      // IMPORTANTE: Redondear a 2 decimales usando Math.round(value * 100) / 100 para valores monetarios
       const capitalPending = capitalPendingFromInstallments > 0 
-        ? capitalPendingFromInstallments 
-        : Math.round(loan.amount - capitalPaidFromLoan - totalCapitalPayments);
+        ? Math.round(capitalPendingFromInstallments * 100) / 100
+        : Math.round((loan.amount - capitalPaidFromLoan - totalCapitalPayments) * 100) / 100;
       
       // 4. Calcular interés pendiente (solo de cuotas regulares, no cargos)
       // CORRECCIÓN CRÍTICA: Considerar pagos parciales - restar lo que ya se pagó de interés de cada cuota
@@ -345,21 +350,24 @@ export const LoansModule = () => {
           const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
           // Solo incluir si hay algo pendiente (remainingInterest > 0.01)
           if (remainingInterest > 0.01) {
-            return sum + Math.round(remainingInterest);
+            return sum + remainingInterest;
           }
           return sum;
         }, 0);
       
+      // IMPORTANTE: Redondear interés pendiente a 2 decimales usando Math.round(value * 100) / 100 para valores monetarios
+      const interestPendingRounded = Math.round(interestPending * 100) / 100;
+      
       // 5. Balance = Capital Pendiente + Interés Pendiente + Cargos No Pagados
       // IMPORTANTE: El capital pendiente incluye solo el capital de cuotas regulares pendientes
       // IMPORTANTE: Los cargos parcialmente pagados se calculan por separado como unpaidChargesAmount
-      // IMPORTANTE: Redondear el resultado final
-      const remainingBalance = Math.round(capitalPending + interestPending + unpaidChargesAmount);
+      // IMPORTANTE: Redondear a 2 decimales usando Math.round(value * 100) / 100 para valores monetarios
+      const remainingBalance = Math.round((capitalPending + interestPendingRounded + unpaidChargesAmount) * 100) / 100;
       
       console.log('🔍 calculateRemainingBalance: Balance calculado dinámicamente (fixed-term, corregido)', {
         loanId: loan.id,
         capitalPending,
-        interestPending,
+        interestPending: interestPendingRounded,
         unpaidChargesAmount,
         remainingBalance,
         bdRemainingBalance: loan.remaining_balance
@@ -744,8 +752,8 @@ export const LoansModule = () => {
         const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
         
         if (timeSinceOptimistic > 2000) {
-          // IMPORTANTE: Redondear el balance antes de guardarlo para evitar diferencias de redondeo
-          remainingBalances[loanId] = Math.round(remainingBalance);
+          // IMPORTANTE: Redondear el balance a 2 decimales antes de guardarlo para evitar diferencias de redondeo
+          remainingBalances[loanId] = Math.round(remainingBalance * 100) / 100;
         }
       });
       
@@ -2275,20 +2283,18 @@ export const LoansModule = () => {
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
                               ${formatCurrencyNumber(
-                                // CORRECCIÓN: Usar balance calculado dinámicamente si está disponible, 
-                                // de lo contrario usar valor de BD redondeado
-                                // IMPORTANTE: Redondear todos los valores antes de mostrar para evitar diferencias de redondeo
-                                Math.round(calculatedRemainingBalances[loan.id] !== undefined
-                                  ? calculatedRemainingBalances[loan.id]
-                                  : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
-                                      ? loan.remaining_balance
+                                // CORRECCIÓN: Priorizar valor de BD si está disponible (es más confiable que el cálculo dinámico)
+                                (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+                                  ? loan.remaining_balance
+                                  : (calculatedRemainingBalances[loan.id] !== undefined
+                                      ? calculatedRemainingBalances[loan.id]
                                   : (loan.amortization_type === 'indefinite' 
                                       ? (() => {
                                           const baseAmount = loan.amount || 0;
                                           const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
                                           return baseAmount + pendingInterest;
                                         })()
-                                          : loan.amount || 0)))
+                                          : loan.amount || 0))
                               )}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
@@ -2304,17 +2310,17 @@ export const LoansModule = () => {
                               ${formatCurrencyNumber(
                                 loan.status === 'paid' 
                                   ? 0 
-                                  : Math.round((// CORRECCIÓN: Usar balance calculado dinámicamente si está disponible,
-                                     // de lo contrario usar valor de BD (actualizado por triggers)
-                                     // IMPORTANTE: Redondear cada componente antes de sumar
-                                     Math.round(calculatedRemainingBalances[loan.id] !== undefined
-                                      ? calculatedRemainingBalances[loan.id]
-                                      : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
-                                          ? loan.remaining_balance
-                                      : (loan.amortization_type === 'indefinite' 
-                                          ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
-                                              : loan.amount || 0))) + 
-                                     Math.round(dynamicLateFees[loan.id] || loan.current_late_fee || 0)))
+                                  : Math.round(((
+                                      (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+                                        ? loan.remaining_balance
+                                        : (calculatedRemainingBalances[loan.id] !== undefined
+                                            ? calculatedRemainingBalances[loan.id]
+                                        : (loan.amortization_type === 'indefinite' 
+                                            ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
+                                                : loan.amount || 0))
+                                    ) + 
+                                    (dynamicLateFees[loan.id] || loan.current_late_fee || 0)
+                                  ) * 100) / 100
                               )}
                             </div>
                             <div className="text-sm text-purple-600 font-medium">Balance Total Pendiente</div>
@@ -2748,11 +2754,11 @@ export const LoansModule = () => {
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Balance:</span> 
                                <span className="text-xs sm:text-sm">${formatCurrencyNumber(
-                                 // CORRECCIÓN: Usar balance calculado dinámicamente si está disponible
-                                 calculatedRemainingBalances[loan.id] !== undefined
-                                   ? calculatedRemainingBalances[loan.id]
-                                   : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
-                                       ? loan.remaining_balance
+                                 // CORRECCIÓN: Priorizar valor de BD si está disponible (es más confiable que el cálculo dinámico)
+                                 (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+                                   ? loan.remaining_balance
+                                   : (calculatedRemainingBalances[loan.id] !== undefined
+                                       ? calculatedRemainingBalances[loan.id]
                                        : loan.amount || 0)
                                )}</span>
                              </div>
@@ -3079,11 +3085,11 @@ export const LoansModule = () => {
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Balance Total:</span> 
                                    <span className="text-xs sm:text-sm font-semibold text-red-600">${formatCurrencyNumber(
-                                     // CORRECCIÓN: Usar balance calculado dinámicamente si está disponible
-                                     calculatedRemainingBalances[loan.id] !== undefined
-                                       ? calculatedRemainingBalances[loan.id]
-                                       : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
-                                           ? loan.remaining_balance
+                                     // CORRECCIÓN: Priorizar valor de BD si está disponible (es más confiable que el cálculo dinámico)
+                                     (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+                                       ? loan.remaining_balance
+                                       : (calculatedRemainingBalances[loan.id] !== undefined
+                                           ? calculatedRemainingBalances[loan.id]
                                            : loan.amount || 0)
                                    )}</span>
                                  </div>
@@ -4074,10 +4080,10 @@ export const LoansModule = () => {
                                  <div className="flex items-center">
                                    <DollarSign className="h-3 w-3 mr-1" />
                                    Balance: ${formatCurrencyNumber(
-                                     calculatedRemainingBalances[loan.id] !== undefined
-                                       ? calculatedRemainingBalances[loan.id]
-                                       : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
-                                           ? loan.remaining_balance
+                                     (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+                                       ? loan.remaining_balance
+                                       : (calculatedRemainingBalances[loan.id] !== undefined
+                                           ? calculatedRemainingBalances[loan.id]
                                            : loan.amount || 0)
                                    )}
                                  </div>

@@ -966,34 +966,31 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       // Solo incluir en el capital pendiente si hay algo pendiente (remainingPrincipal > 0.01)
       // Esto asegura que cuotas completamente pagadas no se incluyan, pero cuotas parcialmente pagadas sí
       if (remainingPrincipal > 0.01) {
-        return sum + Math.round(remainingPrincipal);
+        return sum + remainingPrincipal;
       }
       return sum;
     }, 0);
   
   // Si hay cuotas pendientes, usar ese cálculo; sino usar el cálculo tradicional
   // IMPORTANTE: El capital pendiente incluye tanto el capital de cuotas regulares como el capital pendiente de cargos
+  // IMPORTANTE: NO redondear hasta el final para evitar errores de redondeo acumulados
   let capitalPendingFromRegular: number;
   if (loan.amortization_type === 'indefinite') {
     // Para préstamos indefinidos, calcular desde el monto original menos abonos
-    capitalPendingFromRegular = Math.round(loan.amount - totalCapitalPayments);
+    capitalPendingFromRegular = loan.amount - totalCapitalPayments;
   } else {
     capitalPendingFromRegular = capitalPendingFromInstallments > 0 
-      ? capitalPendingFromInstallments 
-      : Math.round(loan.amount - capitalPaidFromLoan - totalCapitalPayments);
+      ? capitalPendingFromInstallments
+      : loan.amount - capitalPaidFromLoan - totalCapitalPayments;
   }
   
-  // Capital pendiente total = Capital pendiente de cuotas regulares + Capital pendiente de cargos
-  // Los cargos también representan capital pendiente (principal_amount pendiente)
-  const capitalPending = Math.round(capitalPendingFromRegular + unpaidChargesAmount);
-  
-  // Calcular interés pendiente
+  // Calcular interés pendiente primero (necesario para calcular capital pendiente desde balance)
   // Para préstamos indefinidos, usar el cálculo dinámico
   // Para otros tipos, usar el cálculo basado en cuotas
   // IMPORTANTE: Redondear cada valor individual antes de sumar para evitar diferencias de redondeo
   let interestPending = 0;
   if (loan.amortization_type === 'indefinite') {
-    interestPending = Math.round(pendingInterestForIndefinite);
+    interestPending = Math.round(pendingInterestForIndefinite * 100) / 100;
   } else {
     // Calcular interés pendiente basado en cuotas no pagadas (solo cuotas regulares, no cargos)
     // CORRECCIÓN CRÍTICA: Considerar pagos parciales - restar lo que ya se pagó de interés de cada cuota
@@ -1026,13 +1023,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         // Interés pendiente de esta cuota = interés original - interés ya pagado
         const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
         
-        return sum + Math.round(remainingInterest);
+        return sum + remainingInterest; // No redondear aquí
       }, 0);
     
     // Usar el cálculo de cuotas si está disponible, sino usar el cálculo estimado
+    // IMPORTANTE: Redondear a 2 decimales solo al final
     interestPending = interestPendingFromInstallments > 0 
-      ? interestPendingFromInstallments 
-      : Math.round((loan.amount * loan.interest_rate / 100 * loan.term_months) - totalInterestPaid);
+      ? Math.round(interestPendingFromInstallments * 100) / 100
+      : Math.round(((loan.amount * loan.interest_rate / 100 * loan.term_months) - totalInterestPaid) * 100) / 100;
   }
   
   // Calcular balance restante
@@ -1043,30 +1041,34 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   if (loan.amortization_type === 'indefinite') {
     // CORRECCIÓN: Balance = Capital Pendiente + Interés Pendiente
     // IMPORTANTE: El capital pendiente YA incluye tanto el capital base como los cargos pendientes
-    // IMPORTANTE: capitalPending ya está calculado arriba incluyendo los cargos
-    // IMPORTANTE: Redondear el resultado final para evitar diferencias de redondeo acumulativo
-    remainingBalance = Math.round(capitalPending + pendingInterestForIndefinite);
+    const calculatedCapitalPending = Math.round((capitalPendingFromRegular + unpaidChargesAmount) * 100) / 100;
+    const calculatedBalance = Math.round((calculatedCapitalPending + pendingInterestForIndefinite) * 100) / 100;
+    // CORRECCIÓN: Usar valor de BD si está disponible (es más confiable que el cálculo dinámico)
+    remainingBalance = (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+      ? loan.remaining_balance
+      : calculatedBalance;
   } else {
     // CORRECCIÓN: Balance Pendiente = Capital Pendiente + Interés Pendiente
     // IMPORTANTE: El capital pendiente YA incluye tanto el capital de cuotas regulares como el capital de cargos pendientes
-    // IMPORTANTE: Los cargos ya están incluidos en capitalPending, por lo que NO se suman de nuevo
-    // IMPORTANTE: El balance pendiente = capital pendiente (con cargos) + interés pendiente
+    const calculatedCapitalPending = Math.round((capitalPendingFromRegular + unpaidChargesAmount) * 100) / 100;
+    const calculatedBalance = Math.round((calculatedCapitalPending + interestPending) * 100) / 100;
     
-    // Capital pendiente ya está calculado arriba incluyendo cargos - ya redondeado
-    // Interés pendiente ya está calculado arriba - ya redondeado
-    
-    // IMPORTANTE: Redondear el resultado final para evitar diferencias de redondeo acumulativo
-    remainingBalance = Math.round(capitalPending + interestPending);
-    
-    console.log('🔍 LoanDetailsView - Cálculo de balance (fixed-term, corregido):', {
-      loanId: loan.id,
-      capitalPending,
-      interestPending,
-      unpaidChargesAmount,
-      calculatedBalance: remainingBalance,
-      dbBalance: loan.remaining_balance,
-      discrepancy: Math.abs(remainingBalance - loan.remaining_balance)
-    });
+    // CORRECCIÓN: Usar valor de BD si está disponible (es más confiable que el cálculo dinámico)
+    remainingBalance = (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+      ? loan.remaining_balance
+      : calculatedBalance;
+  }
+  
+  // CORRECCIÓN: Calcular capital pendiente desde balance restante si está disponible
+  // Capital pendiente = Balance restante - Interés pendiente (cuando el balance viene de BD)
+  // Esto asegura que el capital pendiente sea consistente con el balance restante
+  let capitalPending: number;
+  if (loan.remaining_balance !== null && loan.remaining_balance !== undefined && loan.amortization_type !== 'indefinite') {
+    // Si tenemos el balance de BD, calcular capital pendiente desde ahí para mantener consistencia
+    capitalPending = Math.round((remainingBalance - interestPending) * 100) / 100;
+  } else {
+    // Si no tenemos balance de BD, usar el cálculo tradicional
+    capitalPending = Math.round((capitalPendingFromRegular + unpaidChargesAmount) * 100) / 100;
   }
   
   // Log para préstamos indefinidos también
