@@ -1357,11 +1357,21 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       
       // Balance pendiente = Capital pendiente (incluye cargos) + Interés pendiente
       // El capital pendiente de las cuotas regulares NO incluye los cargos, entonces se suman por separado
-      balancePending = unpaidCapitalFromRegular + unpaidInterestFromRegular + unpaidChargesAmount;
+      balancePending = Math.round((unpaidCapitalFromRegular + unpaidInterestFromRegular + unpaidChargesAmount) * 100) / 100;
+      
+      // CORRECCIÓN: Priorizar valor de BD para balancePending si está disponible
+      if (loanInfo.remaining_balance !== null && loanInfo.remaining_balance !== undefined) {
+        const diff = Math.abs(balancePending - loanInfo.remaining_balance);
+        // Si la diferencia es pequeña (menos de 5 pesos), usar el valor de la BD como fuente de verdad
+        if (diff < 5) {
+          balancePending = Math.round(loanInfo.remaining_balance * 100) / 100;
+        }
+      }
       
       // Asegurar que totalAmount = totalPaid + balancePending para consistencia
       // Esto corrige cualquier diferencia por redondeo acumulativo
-      const recalculatedTotalAmount = totalPaid + balancePending;
+      // IMPORTANTE: Redondear a 2 decimales para evitar errores de redondeo
+      const recalculatedTotalAmount = Math.round((totalPaid + balancePending) * 100) / 100;
       // Usar el recalculado para mantener consistencia: Total = Pagado + Pendiente
       totalAmount = recalculatedTotalAmount;
       

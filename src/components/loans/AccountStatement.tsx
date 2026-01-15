@@ -668,7 +668,16 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         // Solo restar pagos de capital/cargos, NO pagos de interés
         const totalPaidCapital = (paymentsData || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
         
-        finalRemainingBalance = Math.max(0, loanData.amount + pendingInterest + totalChargesAmount - totalPaidCapital);
+        finalRemainingBalance = Math.round((Math.max(0, loanData.amount + pendingInterest + totalChargesAmount - totalPaidCapital)) * 100) / 100;
+        
+        // CORRECCIÓN: Priorizar valor de BD si está disponible y la diferencia es pequeña (por redondeo)
+        if (loanData.remaining_balance !== null && loanData.remaining_balance !== undefined) {
+          const diff = Math.abs(finalRemainingBalance - loanData.remaining_balance);
+          // Si la diferencia es pequeña (menos de 5 pesos), usar el valor de la BD como fuente de verdad
+          if (diff < 5) {
+            finalRemainingBalance = Math.round(loanData.remaining_balance * 100) / 100;
+          }
+        }
       } else {
         // CORRECCIÓN: Calcular balance igual que LoanDetailsView
         // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
@@ -793,8 +802,17 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         // 5. Balance = Capital Pendiente + Interés Pendiente + Cargos No Pagados
         // IMPORTANTE: El capital pendiente incluye solo el capital de cuotas regulares pendientes
         // IMPORTANTE: Los cargos parcialmente pagados se calculan por separado como unpaidChargesAmount
-        // IMPORTANTE: Redondear el resultado final
-        finalRemainingBalance = Math.round(capitalPending + interestPending + unpaidChargesAmount);
+        // IMPORTANTE: Redondear el resultado final a 2 decimales
+        finalRemainingBalance = Math.round((capitalPending + interestPending + unpaidChargesAmount) * 100) / 100;
+        
+        // CORRECCIÓN: Priorizar valor de BD si está disponible y la diferencia es pequeña (por redondeo)
+        if (loanData.remaining_balance !== null && loanData.remaining_balance !== undefined) {
+          const diff = Math.abs(finalRemainingBalance - loanData.remaining_balance);
+          // Si la diferencia es pequeña (menos de 5 pesos), usar el valor de la BD como fuente de verdad
+          if (diff < 5) {
+            finalRemainingBalance = Math.round(loanData.remaining_balance * 100) / 100;
+          }
+        }
         
         console.log('🔍 AccountStatement - Cálculo de balance (fixed-term, corregido):', {
           loanId: loanData.id,
