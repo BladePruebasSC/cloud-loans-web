@@ -3300,19 +3300,35 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             const remainingInstallmentsCount = unpaidInstallments.length;
 
             if (loan.amortization_type === 'indefinite') {
-              // Para préstamos indefinidos, actualizar el capital y recalcular el balance
-              // El interés se recalculará automáticamente en las próximas cuotas
-              // No necesitamos modificar cuotas existentes
+              // CORRECCIÓN: Para préstamos indefinidos, las cuotas solo tienen interés (sin capital)
+              // Cuando se reduce el capital base con un abono, el interés DEBE reducirse proporcionalmente
+              // Por lo tanto, debemos actualizar TODAS las cuotas pendientes con el nuevo interés
               const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
-              // Calcular cuántas cuotas de interés pendientes hay (EXCLUIR CARGOS)
+              
+              // Obtener todas las cuotas regulares pendientes (excluyendo cargos)
               const unpaidRegularInstallments = installments.filter(inst => {
                 const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
                                 Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
                 return !inst.is_paid && !isCharge; // Solo cuotas regulares no pagadas
               });
-              const unpaidInterest = unpaidRegularInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
-              // Si no hay cuotas pendientes, usar el cálculo dinámico (al menos 1 cuota)
-              const pendingInterest = unpaidInterest > 0 ? unpaidInterest : newInterestPerPayment;
+              
+              // IMPORTANTE: Actualizar el interés de TODAS las cuotas pendientes
+              // En préstamos indefinidos, el interés depende directamente del capital base
+              // Si el capital se reduce, el interés de las cuotas pendientes también debe reducirse
+              for (const installment of unpaidRegularInstallments) {
+                await supabase
+                  .from('installments')
+                  .update({
+                    interest_amount: Math.round(newInterestPerPayment * 100) / 100,
+                    total_amount: Math.round(newInterestPerPayment * 100) / 100, // En indefinidos, total = interés (sin capital)
+                    principal_amount: 0 // Asegurar que no tenga capital
+                  })
+                  .eq('id', installment.id);
+              }
+              
+              // Calcular interés pendiente actualizado (todas las cuotas pendientes ahora tienen el nuevo interés)
+              const updatedPendingInterest = unpaidRegularInstallments.length * newInterestPerPayment;
+              const pendingInterest = updatedPendingInterest > 0 ? updatedPendingInterest : newInterestPerPayment;
               
               // IMPORTANTE: Recalcular balance usando la misma lógica que LoanDetailsView
               // Obtener TODAS las cuotas pendientes actualizadas (después del abono y recálculo de cuotas)
@@ -3370,16 +3386,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 return sum + Math.round(remainingChargeAmount);
               }, 0);
               
-              // Calcular capital pendiente desde cuotas regulares (excluyendo cargos)
-              const capitalPendingFromInstallments = (updatedInstallments || [])
-                .filter(inst => {
-                  const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                  Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                  return !inst.is_paid && !isCharge;
-                })
-                .reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
+              // CORRECCIÓN: Para préstamos indefinidos, el capital pendiente es el capital base (amount)
+              // porque las cuotas no tienen principal_amount (solo interés)
+              // Balance = Capital base + Interés pendiente + Cargos pendientes
               
               // Calcular interés pendiente (solo de cuotas regulares, no cargos)
+              // Después de actualizar las cuotas pendientes, todas deberían tener el nuevo interés
               const interestPendingFromInstallments = (updatedInstallments || [])
                 .filter(inst => {
                   const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
@@ -3388,11 +3400,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 })
                 .reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
               
-              // Balance = Capital pendiente + Interés pendiente + Cargos pendientes (valores redondeados)
-              const newBalance = Math.round(capitalPendingFromInstallments + interestPendingFromInstallments + unpaidChargesAmount);
+              // Para préstamos indefinidos: Balance = Capital base + Interés pendiente + Cargos pendientes
+              // El capital pendiente es el capital base (capitalAfter) porque no hay capital en las cuotas
+              const newBalance = Math.round((capitalAfter + interestPendingFromInstallments + unpaidChargesAmount) * 100) / 100;
               
+              // IMPORTANTE: Actualizar monthly_payment para reflejar el nuevo interés
+              // En préstamos indefinidos, monthly_payment = interés mensual (no hay capital en la cuota)
               loanUpdates = {
                 amount: capitalAfter, // Actualizar el capital base
+                monthly_payment: Math.round(newInterestPerPayment * 100) / 100, // Actualizar cuota mensual con nuevo interés
                 remaining_balance: newBalance
               };
               

@@ -919,10 +919,10 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   // Calcular total de abonos a capital
   const totalCapitalPayments = capitalPayments.reduce((sum, cp) => sum + (cp.amount || 0), 0);
   
-  // Capital pagado = capital de TODOS los pagos (incluyendo pagos de cargos)
-  // CORRECCIÓN: El capital pagado es simplemente la suma del principal_amount de todos los pagos
-  // Los abonos a capital NO son "capital pagado" en el sentido de pagos, son reducciones de capital
-  const capitalPaidFromLoan = totalPaidFromPayments;
+  // CORRECCIÓN: Capital pagado = capital de TODOS los pagos + abonos a capital
+  // Los abonos a capital son pagos al capital y deben reflejarse en "Capital pagado"
+  // El abono a capital reduce el capital pendiente y debe mostrarse como capital pagado
+  const capitalPaidFromLoan = totalPaidFromPayments + totalCapitalPayments;
   
   // Total pagado = capital + interés de los pagos (NO incluye abonos a capital)
   const totalPaidFromAllPayments = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
@@ -976,12 +976,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   // IMPORTANTE: NO redondear hasta el final para evitar errores de redondeo acumulados
   let capitalPendingFromRegular: number;
   if (loan.amortization_type === 'indefinite') {
-    // Para préstamos indefinidos, calcular desde el monto original menos abonos
-    capitalPendingFromRegular = loan.amount - totalCapitalPayments;
+    // CORRECCIÓN: Para préstamos indefinidos, el capital pendiente es directamente loan.amount
+    // porque loan.amount ya refleja el capital después de los abonos (se actualiza en LoanUpdateForm)
+    // No necesitamos restar totalCapitalPayments porque loan.amount ya está actualizado
+    capitalPendingFromRegular = loan.amount;
   } else {
     capitalPendingFromRegular = capitalPendingFromInstallments > 0 
       ? capitalPendingFromInstallments
-      : loan.amount - capitalPaidFromLoan - totalCapitalPayments;
+      : loan.amount - capitalPaidFromLoan;
   }
   
   // Calcular interés pendiente primero (necesario para calcular capital pendiente desde balance)
