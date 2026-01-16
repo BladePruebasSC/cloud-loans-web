@@ -278,7 +278,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           let interestPending = 0;
           
           // Para préstamos indefinidos, el capital pendiente es siempre el monto original
-          if (loan.amortization_type === 'indefinite') {
+          if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
             capitalPending = loan.amount;
             
             // Calcular interés pendiente usando el cálculo dinámico
@@ -398,7 +398,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
   // Calcular interés pendiente para préstamos indefinidos
   useEffect(() => {
-    if (isOpen && loan.id && loan.amortization_type === 'indefinite') {
+    if (isOpen && loan.id && (loan.amortization_type || '').toLowerCase() === 'indefinite') {
       calculatePendingInterestForIndefinite();
     } else {
       setPendingInterestForIndefinite(0);
@@ -489,11 +489,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // IMPORTANTE: Calcular desde las cuotas pendientes para obtener el valor exacto (igual que LoanDetailsView)
           // Incluir tanto cuotas regulares como cargos pendientes (ambos tienen principal_amount)
           let calculatedPendingCapital: number;
-          if (loan.amortization_type === 'indefinite') {
-            // Para préstamos indefinidos, el capital pendiente es el monto original después de abonos
+          if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
+            // CORRECCIÓN: Para préstamos indefinidos, el capital pendiente es directamente loan.amount
+            // porque loan.amount ya refleja el capital después de los abonos (se actualiza en LoanUpdateForm cuando se hace un abono)
             // IMPORTANTE: También incluir los cargos pendientes en el capital pendiente
-            const capitalPendingBase = Math.round(loan.amount - totalCapitalPayments);
-            calculatedPendingCapital = Math.round(capitalPendingBase + unpaidChargesAmount);
+            // No restar totalCapitalPayments porque loan.amount ya está actualizado
+            calculatedPendingCapital = Math.round(loan.amount + unpaidChargesAmount);
           } else {
             // Para préstamos con plazo fijo: calcular desde TODAS las cuotas REGULARES (excluyendo cargos)
             // CORRECCIÓN CRÍTICA: El capital pendiente para abono a capital debe EXCLUIR cargos
@@ -545,7 +546,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // Calcular el balance actual correcto inmediatamente
           let currentBalance = loan.remaining_balance;
           
-          if (loan.amortization_type === 'indefinite') {
+          if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
             // Para préstamos indefinidos: usar calculatedPendingCapital + pendingInterestForIndefinite
             // Si pendingInterestForIndefinite aún no está calculado, calcularlo aquí
             const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
@@ -633,7 +634,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         } catch (error) {
           console.error('Error calculando capital pendiente:', error);
           // Fallback: usar el monto original para indefinidos, o remaining_balance para otros
-          setPendingCapital(loan.amortization_type === 'indefinite' ? loan.amount : loan.remaining_balance);
+          setPendingCapital((loan.amortization_type || '').toLowerCase() === 'indefinite' ? loan.amount : loan.remaining_balance);
         }
       };
 
@@ -708,7 +709,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         // IMPORTANTE: Usar originalPendingCapital, no pendingCapital
         const newPendingCapital = originalPendingCapital - capitalPaymentAmount;
         
-        if (loan.amortization_type === 'indefinite') {
+        if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
           // Para préstamos indefinidos, el interés se recalcula con el nuevo capital
           const newInterestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
           const currentInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
@@ -822,7 +823,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     
     const remainingInstallmentsCount = unpaidRegularInstallments.length;
 
-    if (loan.amortization_type === 'indefinite') {
+    if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
       // Para préstamos indefinidos: solo interés
       const newInterestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
       const previewInsts = unpaidRegularInstallments.map((inst) => {
@@ -1256,7 +1257,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       });
       const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + Math.round(inst.total_amount || 0), 0);
       
-      if (loan.amortization_type === 'indefinite') {
+      if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
         // Para préstamos indefinidos: usar pendingCapital y pendingInterestForIndefinite
         // IMPORTANTE: Redondear cada componente antes de sumar
         if (pendingCapital > 0) {
@@ -1518,8 +1519,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
             newBalance = capitalAfter + newInterestPending + unpaidChargesAmount;
           } else {
-            // Para préstamos indefinidos: Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
-            newBalance = capitalAfter + pendingInterestForIndefinite + unpaidChargesAmount;
+            // CORRECCIÓN: Para préstamos indefinidos, el interés pendiente se recalcula con el nuevo capital
+            // Nuevo interés por cuota = (capitalAfter * interés) / 100
+            // El interés pendiente típicamente es 1 cuota (la próxima cuota pendiente)
+            const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+            // Para préstamos indefinidos, típicamente hay 1 cuota pendiente de interés
+            // Balance = Capital Pendiente + Interés Pendiente (nuevo) + Cargos no pagados
+            newBalance = capitalAfter + newInterestPerPayment + unpaidChargesAmount;
           }
         }
         break;
@@ -3299,7 +3305,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }).sort((a, b) => a.installment_number - b.installment_number);
             const remainingInstallmentsCount = unpaidInstallments.length;
 
-            if (loan.amortization_type === 'indefinite') {
+            if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
               // CORRECCIÓN: Para préstamos indefinidos, las cuotas solo tienen interés (sin capital)
               // Cuando se reduce el capital base con un abono, el interés DEBE reducirse proporcionalmente
               // Por lo tanto, debemos actualizar TODAS las cuotas pendientes con el nuevo interés
@@ -5257,7 +5263,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
                           ? loan.remaining_balance
                           : (calculatedValues.currentBalance || (
-                              loan.amortization_type === 'indefinite' 
+                              (loan.amortization_type || '').toLowerCase() === 'indefinite' 
                                 ? loan.amount + pendingInterestForIndefinite
                                 : loan.remaining_balance
                             ))
