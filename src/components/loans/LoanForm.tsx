@@ -1154,7 +1154,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
           .from('system_settings')
           .select('*')
           .eq('key', 'default_late_fee_config')
-          .single();
+          .maybeSingle();
 
         if (data && !error) {
           const config = JSON.parse(data.value);
@@ -2166,6 +2166,17 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
     console.log('Company ID:', companyId);
     console.log('Form valid:', form.formState.isValid);
     console.log('Form errors:', form.formState.errors);
+
+    // Normalizar amortization_type (por seguridad, aunque el schema lo transforma)
+    const amortizationType = (data.amortization_type || '').toLowerCase();
+    const isIndefinite = amortizationType === 'indefinite';
+
+    // CORRECCIÓN: En indefinido el plazo NO aplica, así que lo ignoramos por completo
+    // Esto evita que quede term_months=2 (o cualquier valor inválido) bloqueando el submit.
+    if (isIndefinite) {
+      data.term_months = 1 as any;
+      form.clearErrors('term_months');
+    }
     
     if (!user || !companyId || !selectedClient) {
       console.log('Validation failed: missing user, companyId, or selectedClient');
@@ -2212,7 +2223,8 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         });
         return;
       }
-      if (companySettings.min_term_months !== null && companySettings.min_term_months !== undefined && data.term_months < companySettings.min_term_months) {
+      // CORRECCIÓN: No validar plazo mínimo/máximo para préstamos indefinidos
+      if (!isIndefinite && companySettings.min_term_months !== null && companySettings.min_term_months !== undefined && (data.term_months || 0) < companySettings.min_term_months) {
         toast.error(`El plazo mínimo permitido es ${companySettings.min_term_months} meses`);
         form.setError('term_months', {
           type: 'manual',
@@ -2220,7 +2232,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         });
         return;
       }
-      if (companySettings.max_term_months !== null && companySettings.max_term_months !== undefined && data.term_months > companySettings.max_term_months) {
+      if (!isIndefinite && companySettings.max_term_months !== null && companySettings.max_term_months !== undefined && (data.term_months || 0) > companySettings.max_term_months) {
         toast.error(`El plazo máximo permitido es ${companySettings.max_term_months} meses`);
         form.setError('term_months', {
           type: 'manual',
@@ -2238,7 +2250,8 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       // Usar la fecha de inicio seleccionada por el usuario
       const startDate = createLocalDate(data.first_payment_date);
       const endDate = new Date(startDate);
-      endDate.setMonth(endDate.getMonth() + data.term_months);
+      const effectiveTermMonths = isIndefinite ? 1 : (data.term_months || 1);
+      endDate.setMonth(endDate.getMonth() + effectiveTermMonths);
       
       // Calcular la primera fecha de pago basándose en la fecha de inicio + frecuencia
       const startDateForCalculation = createLocalDate(data.first_payment_date);

@@ -56,7 +56,7 @@ export const GlobalLateFeeConfig: React.FC<GlobalLateFeeConfigProps> = ({ onConf
         .from('system_settings')
         .select('*')
         .eq('key', 'default_late_fee_config')
-        .single();
+        .maybeSingle();
 
       if (data && !error) {
         setConfig(JSON.parse(data.value));
@@ -75,7 +75,7 @@ export const GlobalLateFeeConfig: React.FC<GlobalLateFeeConfigProps> = ({ onConf
         .from('system_settings')
         .select('id')
         .eq('key', 'default_late_fee_config')
-        .single();
+        .maybeSingle();
 
       let error;
       

@@ -473,7 +473,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
           // Calcular cargos pendientes (considerando pagos parciales)
           const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
-          const unpaidChargesAmount = Math.round(totalChargesAmount - paidChargesAmount);
+          const unpaidChargesAmount = Math.round((totalChargesAmount - paidChargesAmount) * 100) / 100;
 
           // Calcular capital pagado solo de cuotas regulares (excluyendo cargos)
           // IMPORTANTE: Solo incluir pagos que tienen interés para excluir pagos a cargos
@@ -494,7 +494,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // porque loan.amount ya refleja el capital después de los abonos (se actualiza en LoanUpdateForm cuando se hace un abono)
             // IMPORTANTE: También incluir los cargos pendientes en el capital pendiente
             // No restar totalCapitalPayments porque loan.amount ya está actualizado
-            calculatedPendingCapital = Math.round(loan.amount + unpaidChargesAmount);
+            calculatedPendingCapital = Math.round((loan.amount + unpaidChargesAmount) * 100) / 100;
           } else {
             // Para préstamos con plazo fijo: calcular desde TODAS las cuotas REGULARES (excluyendo cargos)
             // CORRECCIÓN CRÍTICA: El capital pendiente para abono a capital debe EXCLUIR cargos
@@ -532,12 +532,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // Si hay cuotas pendientes, usar ese cálculo; sino usar el cálculo tradicional
             const capitalPendingFromRegular = capitalPendingFromInstallments > 0 
               ? capitalPendingFromInstallments 
-              : Math.round(loan.amount - capitalPaidFromLoan - totalCapitalPayments);
+              : Math.round((loan.amount - capitalPaidFromLoan - totalCapitalPayments) * 100) / 100;
             
             // IMPORTANTE: El capital pendiente para "Abono a Capital" debe incluir también los cargos pendientes
             // porque los cargos representan capital pendiente (principal_amount pendiente)
             // El capital pendiente total = Capital de cuotas regulares + Capital pendiente de cargos
-            calculatedPendingCapital = Math.round(capitalPendingFromRegular + unpaidChargesAmount);
+            calculatedPendingCapital = Math.round((capitalPendingFromRegular + unpaidChargesAmount) * 100) / 100;
           }
           
           setPendingCapital(calculatedPendingCapital);
@@ -575,7 +575,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
               const pendingInterest = unpaidCount * interestPerPayment;
               // IMPORTANTE: El capital pendiente YA incluye los cargos, por lo que NO se suman de nuevo
-              currentBalance = Math.round(calculatedPendingCapital + pendingInterest);
+              currentBalance = Math.round((calculatedPendingCapital + pendingInterest) * 100) / 100;
             } else {
               // Fallback: usar installments si están disponibles
               const unpaidRegularInstallments = installments.filter(inst => {
@@ -585,7 +585,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               });
               const unpaidInterest = unpaidRegularInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
               // IMPORTANTE: El capital pendiente YA incluye los cargos, por lo que NO se suman de nuevo
-              currentBalance = Math.round(calculatedPendingCapital + unpaidInterest);
+              currentBalance = Math.round((calculatedPendingCapital + unpaidInterest) * 100) / 100;
             }
           } else {
             // Para préstamos con plazo fijo: capital pendiente + interés pendiente
@@ -620,15 +620,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             
             // Balance = Capital pendiente (incluye cuotas regulares + cargos) + Interés pendiente
             // IMPORTANTE: El capital pendiente YA incluye los cargos pendientes, por lo que NO se suman de nuevo
-            currentBalance = Math.round(calculatedPendingCapital + interestPendingFromInstallments);
+            currentBalance = Math.round((calculatedPendingCapital + interestPendingFromInstallments) * 100) / 100;
           }
           
           // Actualizar el balance actual inmediatamente
-          // IMPORTANTE: Redondear a número entero para evitar diferencias de redondeo
+          // IMPORTANTE: Mantener 2 decimales para evitar perder centavos (ej: 525.01)
           setCalculatedValues(prev => ({
             ...prev,
-            currentBalance: Math.round(currentBalance),
-            newBalance: Math.round(currentBalance)
+            currentBalance: Math.round(currentBalance * 100) / 100,
+            newBalance: Math.round(currentBalance * 100) / 100
           }));
           setBalanceCalculated(true);
         } catch (error) {

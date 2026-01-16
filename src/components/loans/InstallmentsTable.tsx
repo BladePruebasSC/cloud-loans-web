@@ -155,10 +155,23 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       if (loanInfoResult.error) throw loanInfoResult.error;
 
       const loanInfo = loanInfoResult.data;
+      const isIndefinite = (loanInfo?.amortization_type || '').toLowerCase() === 'indefinite';
+
+      // Para préstamos indefinidos, necesitamos la línea de tiempo de abonos a capital
+      // y los pagos con due_date para no "partir" pagos históricos cuando cambia el interés.
+      const { data: capitalPaymentsDataRaw, error: capitalPaymentsError } = await supabase
+        .from('capital_payments')
+        .select('amount, capital_before, capital_after, keep_installments, created_at')
+        .eq('loan_id', loanId)
+        .order('created_at', { ascending: true });
+
+      if (capitalPaymentsError) {
+        console.error('Error obteniendo abonos a capital:', capitalPaymentsError);
+      }
+      setCapitalPayments(capitalPaymentsDataRaw || []);
       
       // CORRECCIÓN: Para préstamos indefinidos, obtener TODAS las cuotas (incluyendo cargos)
       // Antes solo se obtenía 1 cuota, lo que excluía los cargos
-      const isIndefinite = loanInfo?.amortization_type === 'indefinite';
       const installmentsQuery = supabase
         .from('installments')
         .select('*, is_settled, total_amount')
@@ -262,23 +275,40 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           // Obtener todos los pagos para determinar cuántas cuotas se han pagado
           const { data: allPayments, error: paymentsError } = await supabase
             .from('payments')
-            .select('id, interest_amount, payment_date')
+            .select('id, amount, principal_amount, interest_amount, payment_date, due_date')
             .eq('loan_id', loanId)
             .order('payment_date', { ascending: true });
 
-          // Calcular cuántas cuotas se han pagado basándose en los pagos
-          // Para préstamos indefinidos, acumular interés pagado para manejar múltiples pagos
-          const interestPerPayment = (loanInfo.amount || 0) * ((loanInfo.interest_rate || 0) / 100);
-          let paidInstallmentsCount = 0;
-          if (allPayments && interestPerPayment > 0) {
-            // CORRECCIÓN: Acumular interés pagado para contar correctamente cuando hay múltiples pagos
-            let totalInterestPaid = 0;
-            for (const payment of allPayments) {
-              totalInterestPaid += payment.interest_amount || 0;
+          if (paymentsError) throw paymentsError;
+
+          // Para indefinidos: mapear pagos de interés por due_date para respetar el historial
+          // (ej: un pago de RD$50 con due_date 2026-02-16 debe quedarse como 50, aunque hoy el interés sea 25)
+          const interestPaidByDueDate = new Map<string, { sum: number; firstPaidDate: string | null }>();
+          let maxDueDateFromPayments: string | null = null;
+          for (const p of allPayments || []) {
+            const dueKey = (p as any).due_date ? String((p as any).due_date).split('T')[0] : null;
+            if (!dueKey) continue;
+            const interest = Number((p as any).interest_amount) || 0;
+            if (interest <= 0) continue; // ignorar pagos de cargos (interés 0)
+            const paymentDateKey = (p as any).payment_date ? String((p as any).payment_date).split('T')[0] : null;
+
+            const prev = interestPaidByDueDate.get(dueKey);
+            const nextSum = (prev?.sum || 0) + interest;
+            const nextPaidDate =
+              !prev?.firstPaidDate || (paymentDateKey && paymentDateKey < prev.firstPaidDate)
+                ? paymentDateKey
+                : prev.firstPaidDate;
+            interestPaidByDueDate.set(dueKey, { sum: nextSum, firstPaidDate: nextPaidDate });
+
+            if (!maxDueDateFromPayments || dueKey > maxDueDateFromPayments) {
+              maxDueDateFromPayments = dueKey;
             }
-            // Calcular cuántas cuotas completas se han pagado
-            paidInstallmentsCount = Math.floor(totalInterestPaid / interestPerPayment);
           }
+
+          // Interés "actual" (para cuotas futuras sin pagos): usar monthly_payment si está alineado, sino calcularlo
+          const interestPerPayment = (loanInfo.monthly_payment && loanInfo.monthly_payment > 0)
+            ? Number(loanInfo.monthly_payment)
+            : (Number(loanInfo.amount || 0) * (Number(loanInfo.interest_rate || 0) / 100));
 
           // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
           let monthsElapsed = 0;
@@ -306,19 +336,47 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               break;
           }
           
-          // CORRECCIÓN: Para préstamos indefinidos, usar el máximo entre:
-          // 1. Cuotas pagadas (basadas en pagos reales)
-          // 2. Meses transcurridos + 1 mes futuro
-          // Esto asegura que se muestren todas las cuotas pagadas y al menos 1 mes futuro
-          const monthsFromTime = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes siguiente
-          const monthsFromPayments = Math.max(1, paidInstallmentsCount + 1); // +1 para incluir la próxima cuota
-          monthsElapsed = Math.max(monthsFromTime, monthsFromPayments);
+          // CORRECCIÓN: Para préstamos indefinidos, generar al menos hasta:
+          // - el mes actual + 1 futuro (monthsFromTime)
+          // - la mayor due_date que ya tenga pagos (para mostrar el historial sin re-asignar)
+          const monthsFromTime = Math.max(1, monthsElapsed + 1);
+          if (maxDueDateFromPayments) {
+            // Extender generación hasta cubrir maxDueDateFromPayments
+            let probeCount = 1;
+            while (probeCount < 500) { // safety
+              const probeDate = new Date(firstPaymentDateBase);
+              switch (frequency) {
+                case 'daily':
+                  probeDate.setDate(firstPaymentDateBase.getDate() + (probeCount - 1));
+                  break;
+                case 'weekly':
+                  probeDate.setDate(firstPaymentDateBase.getDate() + ((probeCount - 1) * 7));
+                  break;
+                case 'biweekly':
+                  probeDate.setDate(firstPaymentDateBase.getDate() + ((probeCount - 1) * 14));
+                  break;
+                case 'monthly':
+                default:
+                  probeDate.setFullYear(firstPaymentDateBase.getFullYear(), firstPaymentDateBase.getMonth() + (probeCount - 1), firstPaymentDateBase.getDate());
+                  break;
+              }
+              const y = probeDate.getFullYear();
+              const m = probeDate.getMonth() + 1;
+              const d = probeDate.getDate();
+              const probeKey = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+              if (probeKey >= maxDueDateFromPayments) {
+                break;
+              }
+              probeCount++;
+            }
+            monthsElapsed = Math.max(monthsFromTime, probeCount);
+          } else {
+            monthsElapsed = monthsFromTime;
+          }
           
           console.log('🔍 InstallmentsTable: Cálculo de cuotas para préstamo indefinido:', {
             loanId,
-            paidInstallmentsCount,
             monthsFromTime,
-            monthsFromPayments,
             finalMonthsElapsed: monthsElapsed,
             totalPayments: allPayments?.length || 0,
             interestPerPayment
@@ -376,68 +434,35 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                                    existingInstallment.principal_amount > 0 &&
                                    Math.abs(existingInstallment.principal_amount - (existingInstallment.total_amount || existingInstallment.amount || 0)) < 0.01;
             
+            // Si hay pagos de interés para esta due_date, usar ese monto como "interés" histórico
+            const paidInfo = interestPaidByDueDate.get(finalDueDate);
+            const interestForThisInstallment =
+              paidInfo?.sum !== undefined
+                ? paidInfo.sum
+                : (existingInstallment?.interest_amount || interestPerPayment);
+
             dynamicInstallments.push({
               id: existingInstallment?.id || `dynamic-${i}`,
               loan_id: loanId,
               installment_number: i,
               due_date: finalDueDate,
-              amount: existingInstallment?.amount || interestPerPayment,
+              amount: isChargeFromDB
+                ? (existingInstallment?.amount || (existingInstallment as any)?.total_amount || existingInstallment?.principal_amount || 0)
+                : interestForThisInstallment,
               // CORRECCIÓN: Para préstamos indefinidos, las cuotas normales (con interés) deben tener principal_amount = 0
               // Solo los cargos (sin interés) tienen principal_amount > 0
               principal_amount: isChargeFromDB ? (existingInstallment.principal_amount || 0) : 0,
-              interest_amount: existingInstallment?.interest_amount || interestPerPayment,
+              interest_amount: isChargeFromDB ? (existingInstallment?.interest_amount || 0) : interestForThisInstallment,
               late_fee_paid: existingInstallment?.late_fee_paid || 0,
-              is_paid: existingInstallment?.is_paid || false,
+              is_paid: isChargeFromDB ? (existingInstallment?.is_paid || false) : !!paidInfo,
               is_settled: existingInstallment?.is_settled || false,
-              paid_date: existingInstallment?.paid_date || null,
+              paid_date: isChargeFromDB ? (existingInstallment?.paid_date || null) : (paidInfo?.firstPaidDate || null),
               created_at: existingInstallment?.created_at || new Date().toISOString(),
               updated_at: existingInstallment?.updated_at || new Date().toISOString(),
-              total_amount: existingInstallment?.total_amount || interestPerPayment
+              total_amount: isChargeFromDB
+                ? (existingInstallment?.total_amount || existingInstallment?.amount || existingInstallment?.principal_amount || 0)
+                : interestForThisInstallment
             });
-          }
-          
-          // Asignar pagos a las cuotas generadas - CORRECCIÓN: Acumular interés pagado para manejar múltiples pagos
-          if (allPayments && allPayments.length > 0 && interestPerPayment > 0) {
-            // Ordenar pagos por fecha
-            const sortedPayments = [...allPayments].sort((a, b) => 
-              new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime()
-            );
-            
-            // Acumular interés pagado para asignar correctamente cuando hay múltiples pagos
-            let accumulatedInterest = 0;
-            let paymentIndex = 0;
-            let firstPaymentDateForInstallment: string | null = null;
-            
-            for (let i = 0; i < dynamicInstallments.length && paymentIndex < sortedPayments.length; i++) {
-              const installment = dynamicInstallments[i];
-              
-              // Acumular interés de los pagos hasta que se complete esta cuota
-              while (paymentIndex < sortedPayments.length && accumulatedInterest < interestPerPayment * 0.99) {
-                const payment = sortedPayments[paymentIndex];
-                const paymentInterest = payment.interest_amount || 0;
-                
-                if (firstPaymentDateForInstallment === null) {
-                  firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;
-                }
-                
-                accumulatedInterest += paymentInterest;
-                paymentIndex++;
-              }
-              
-              // Si se acumuló suficiente interés, marcar la cuota como pagada
-              if (accumulatedInterest >= interestPerPayment * 0.99) {
-                installment.is_paid = true;
-                installment.paid_date = firstPaymentDateForInstallment;
-                installment.amount = interestPerPayment;
-                installment.interest_amount = interestPerPayment;
-                
-                // Restar el interés usado para esta cuota (el excedente se usa para la siguiente)
-                accumulatedInterest -= interestPerPayment;
-                
-                // Resetear la fecha del primer pago para la siguiente cuota
-                firstPaymentDateForInstallment = null;
-              }
-            }
           }
           
           // CORRECCIÓN: Mezclar cuotas dinámicas con cargos de la BD
@@ -535,6 +560,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         // Si las fechas son iguales o no hay fecha, ordenar por número de cuota
         return a.installment_number - b.installment_number;
       });
+      
+      // Lista final que se mostrará en UI (puede diferir de lo que viene de BD, especialmente en indefinidos)
+      let finalInstallmentsForUI = sortedInstallments;
 
       // CORRECCIÓN: Calcular dinámicamente qué cuotas están pagadas basándose en los pagos reales
       // Esto asegura que cuando se elimina un pago, las cuotas se actualicen correctamente
@@ -623,60 +651,104 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             }
           }
 
-          // SEGUNDO: Procesar cuotas regulares (de interés) - Igual que AccountStatement
-          const interestPerPayment = (loanInfo.amount || 0) * ((loanInfo.interest_rate || 0) / 100);
-          let accumulatedInterest = 0;
-          let paymentIndex = 0;
-          let firstPaymentDateForInstallment: string | null = null;
-
-          // Filtrar y ordenar las cuotas regulares (excluyendo cargos) por installment_number
-          const regularInstallments = sortedInstallments
-            .filter(inst => {
-              const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 &&
-                              (inst as any).principal_amount > 0 &&
-                              Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
-              return !isCharge;
-            })
-            .sort((a, b) => a.installment_number - b.installment_number);
-
-          // Procesar cuotas regulares en orden
-          for (const installment of regularInstallments) {
-            // Acumular interés de los pagos hasta que se complete esta cuota (excluyendo pagos ya asignados)
-            while (paymentIndex < sortedPayments.length && accumulatedInterest < interestPerPayment * 0.99) {
-              const payment = sortedPayments[paymentIndex];
-              
-              // Saltar pagos ya asignados (a cargos o a otras cuotas)
-              if (assignedPaymentIds.has(payment.id)) {
-                paymentIndex++;
-                continue;
+          // SEGUNDO: En indefinidos, mostrar cuotas regulares basadas en los PAGOS DE INTERÉS (no colapsarlas por due_date).
+          // Ej: si hay pagos de RD$50 y RD$25, se muestran como 2 cuotas pagadas (50 y 25) y una cuota futura (25).
+          const round2 = (v: number) => Math.round(v * 100) / 100;
+          const interestPayments = sortedPayments.filter(p => {
+            if (assignedPaymentIds.has(p.id)) return false; // ya fue asignado a un cargo
+            return (p.interest_amount || 0) > 0.01;
+          });
+          const interestPerPayment = round2(((loanInfo?.amount || 0) * (loanInfo?.interest_rate || 0)) / 100);
+          const nowIso = new Date().toISOString();
+          
+          const regularFromPayments = interestPayments.map((p, idx) => {
+            const due = (p.due_date as string)?.split('T')[0] || (p.due_date as string) || null;
+            const paidDate = p.payment_date?.split('T')[0] || p.payment_date || null;
+            const paidInterest = round2(Number(p.interest_amount || p.amount || 0));
+            return {
+              id: `interest-payment-${p.id}`,
+              loan_id: loanId,
+              installment_number: idx + 1,
+              due_date: due,
+              amount: paidInterest,
+              principal_amount: 0,
+              interest_amount: paidInterest,
+              late_fee_paid: 0,
+              is_paid: true,
+              is_settled: false,
+              paid_date: paidDate,
+              created_at: nowIso,
+              updated_at: nowIso,
+              total_amount: paidInterest
+            } as any;
+          });
+          
+          // Cuota futura (normal) — siempre mostrar al menos 1
+          const computeDueDateFromStart = (startDateStr: string, frequency: string, periodsToAdd: number) => {
+            const base = startDateStr.split('T')[0];
+            const [y, m, d] = base.split('-').map(Number);
+            const date = new Date(y, m - 1, d);
+            const out = new Date(date);
+            switch (frequency) {
+              case 'daily':
+                out.setDate(date.getDate() + periodsToAdd);
+                break;
+              case 'weekly':
+                out.setDate(date.getDate() + (periodsToAdd * 7));
+                break;
+              case 'biweekly':
+                out.setDate(date.getDate() + (periodsToAdd * 14));
+                break;
+              case 'monthly':
+              default: {
+                const paymentDay = date.getDate();
+                const targetMonth = date.getMonth() + periodsToAdd;
+                const targetYear = date.getFullYear();
+                const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+                const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
+                out.setFullYear(targetYear, targetMonth, dayToUse);
+                break;
               }
-
-              const paymentInterest = payment.interest_amount || 0;
-
-              if (firstPaymentDateForInstallment === null && paymentInterest > 0) {
-                firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;
-              }
-
-              // Asignar este pago a esta cuota
-              assignedPaymentIds.add(payment.id);
-              accumulatedInterest += paymentInterest;
-              paymentIndex++;
             }
+            const yy = out.getFullYear();
+            const mm = out.getMonth() + 1;
+            const dd = out.getDate();
+            return `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+          };
 
-            // Si se acumuló suficiente interés, marcar la cuota como pagada
-            if (accumulatedInterest >= interestPerPayment * 0.99) {
-              installment.is_paid = true;
-              installment.paid_date = firstPaymentDateForInstallment;
-              // Restar el interés usado para esta cuota (el excedente se usa para la siguiente)
-              accumulatedInterest -= interestPerPayment;
-              firstPaymentDateForInstallment = null;
-            } else {
-              // Si no hay suficiente interés acumulado, la cuota no está pagada y detener el procesamiento
-              installment.is_paid = false;
-              installment.paid_date = null;
-              break; // Detener el procesamiento, las cuotas siguientes están pendientes
-            }
-          }
+          const nextDue =
+            (loanInfo?.next_payment_date as any)?.split?.('T')?.[0] ||
+            (loanInfo?.next_payment_date as any) ||
+            (loanInfo?.start_date
+              ? computeDueDateFromStart(
+                  String(loanInfo.start_date),
+                  String(loanInfo.payment_frequency || 'monthly'),
+                  regularFromPayments.length + 1
+                )
+              : null);
+          const pendingRegular = {
+            id: `interest-pending-${loanId}`,
+            loan_id: loanId,
+            installment_number: regularFromPayments.length + 1,
+            due_date: nextDue,
+            amount: interestPerPayment,
+            principal_amount: 0,
+            interest_amount: interestPerPayment,
+            late_fee_paid: 0,
+            is_paid: false,
+            is_settled: false,
+            paid_date: null,
+            created_at: nowIso,
+            updated_at: nowIso,
+            total_amount: interestPerPayment
+          } as any;
+          
+          // En UI: cargos (si existen) + cuotas regulares desde pagos + 1 cuota futura
+          finalInstallmentsForUI = [
+            ...chargeInstallments,
+            ...regularFromPayments,
+            pendingRegular
+          ];
         } else {
           // Para préstamos no indefinidos, procesar primero cargos y luego cuotas regulares
           let paymentIndex = 0;
@@ -836,19 +908,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       }
 
       // Establecer las cuotas inmediatamente para mostrar los datos
-      setInstallments(sortedInstallments);
+      setInstallments(finalInstallmentsForUI);
 
-      // Obtener abonos a capital
-      const { data: capitalPaymentsData, error: capitalPaymentsError } = await supabase
-        .from('capital_payments')
-        .select('amount')
-        .eq('loan_id', loanId);
-      
-      if (!capitalPaymentsError && capitalPaymentsData) {
-        setCapitalPayments(capitalPaymentsData || []);
-      } else {
-        setCapitalPayments([]);
-      }
+      // Abonos a capital ya se obtuvieron al inicio de fetchData()
 
       // Calcular el total pagado desde los pagos reales (no desde cuotas marcadas como pagadas)
       const { data: payments, error: paymentsError } = await supabase
