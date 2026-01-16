@@ -1013,11 +1013,17 @@ const loanSchema = z.object({
   client_id: z.string().min(1, 'Debe seleccionar un cliente'),
   amount: z.number().min(1, 'El monto debe ser mayor a 0'),
   interest_rate: z.number().min(0, 'La tasa de interés debe ser mayor o igual a 0'),
-  term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes'),
+  // Para préstamos indefinidos, el plazo no aplica (se ignora en UI y en creación se fuerza a 1)
+  term_months: z.number().min(1, 'El plazo debe ser al menos 1 mes').optional(),
   loan_type: z.string().min(1, 'Debe seleccionar un tipo de préstamo'),
-  amortization_type: z.string().default('simple').refine((val) => ['simple', 'french', 'german', 'american', 'indefinite'].includes(val), {
-    message: 'Tipo de amortización no válido'
-  }),
+  // Normalizar a minúsculas para evitar bugs por valores como "INDEFINITE"
+  amortization_type: z
+    .string()
+    .default('simple')
+    .transform((val) => (val || '').toLowerCase())
+    .refine((val) => ['simple', 'french', 'german', 'american', 'indefinite'].includes(val), {
+      message: 'Tipo de amortización no válido',
+    }),
   payment_frequency: z.string().default('monthly'),
   first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
   closing_costs: z.number().min(0).default(0),
@@ -1041,6 +1047,18 @@ const loanSchema = z.object({
   fixed_payment_enabled: z.boolean().default(false),
   fixed_payment_amount: z.number().default(0),
   excluded_days: z.array(z.string()).default([]),
+}).superRefine((data, ctx) => {
+  // CORRECCIÓN: Si es indefinido, no validar plazo mínimo/máximo aquí
+  // (la UI oculta el campo y en creación se fuerza term_months=1)
+  if (data.amortization_type === 'indefinite') return;
+
+  if (data.term_months === undefined || data.term_months === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['term_months'],
+      message: 'Debe especificar el plazo',
+    });
+  }
 });
 
 type LoanFormData = z.infer<typeof loanSchema>;
@@ -1271,8 +1289,20 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
 
   const watchedAmount = form.watch('amount');
   const watchedTerm = form.watch('term_months');
+  // Normalizar a minúsculas para que "INDEFINITE" no rompa las validaciones/limpiezas
+  const watchedAmortizationType = (form.watch('amortization_type') || '').toLowerCase();
+  const isIndefinite = watchedAmortizationType === 'indefinite';
   const [isAmountFocused, setIsAmountFocused] = useState(false);
   const [isTermFocused, setIsTermFocused] = useState(false);
+
+  // Si cambia a indefinido, limpiar errores de plazo y asegurar un valor válido
+  // (evita que quede un error manual por mínimo 6 meses cuando el plazo ya no aplica)
+  useEffect(() => {
+    if (!isIndefinite) return;
+    form.clearErrors('term_months');
+    // Forzar un valor neutro para que ningún validador/rama lo tome como "2 meses"
+    form.setValue('term_months', 1, { shouldDirty: false, shouldValidate: false });
+  }, [isIndefinite, form]);
 
   // Validación en tiempo real para mostrar errores sin bloquear la escritura
   // Solo validar cuando el campo no está siendo editado activamente
@@ -1302,6 +1332,11 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
   useEffect(() => {
     if (!companySettings) return;
     if (watchedTerm === undefined || watchedTerm === null) return;
+    // Si es indefinido, el plazo no aplica; limpiar errores y salir
+    if (isIndefinite) {
+      form.clearErrors('term_months');
+      return;
+    }
     if (isTermFocused) return; // No validar mientras el usuario está escribiendo
     
     const min = companySettings.min_term_months;
@@ -1320,7 +1355,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
     } else {
       form.clearErrors('term_months');
     }
-  }, [watchedTerm, companySettings, form, isTermFocused]);
+  }, [watchedTerm, isIndefinite, companySettings, form, isTermFocused]);
 
   useEffect(() => {
     fetchClients();
@@ -2830,7 +2865,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                                    onBlur={() => {
                                      setIsTermFocused(false);
                                      // Validar cuando el campo pierde el foco
-                                     if (companySettings) {
+                                     if (companySettings && (form.getValues('amortization_type') || '').toLowerCase() !== 'indefinite') {
                                        const min = companySettings.min_term_months;
                                        const max = companySettings.max_term_months;
                                        const currentValue = form.getValues('term_months');
