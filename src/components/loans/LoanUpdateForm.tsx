@@ -340,6 +340,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           const unpaidInstallments = installments.filter(inst => !inst.is_paid);
           let capitalPending = 0;
           let interestPending = 0;
+
+          // remaining_balance (sin mora) como fuente de verdad cuando exista
+          const remainingFromDb =
+            (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
+              ? freshRemainingBalance
+              : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                  ? Number(loan.remaining_balance)
+                  : null);
           
           // Para préstamos indefinidos, el capital pendiente debe incluir el capital base + cargos pendientes
           if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
@@ -355,13 +363,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             );
 
             // 2) Interés pendiente: usar remaining_balance (BD) como fuente de verdad cuando exista
-            const remainingFromDb =
-              (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
-                ? freshRemainingBalance
-                : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
-                    ? Number(loan.remaining_balance)
-                    : null);
-
             if (remainingFromDb !== null) {
               // remaining_balance = capital + cargos + interés (mora se suma aparte en lateFeePending)
               // IMPORTANTE: si por algún motivo la lista de cuotas contiene “cargos” inconsistentes
@@ -452,6 +453,23 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 capitalPending = loan.amount;
               }
             }
+
+            // 🔒 Fuente de verdad: si tenemos remaining_balance (BD) y no coincide con capital+interés calculados,
+            // ajustamos para que el total sea consistente con el balance restante real.
+            // Esto evita casos donde las cuotas/principal_amount estén desfasadas y “Saldar” muestre un capital distinto.
+            if (remainingFromDb !== null) {
+              const calculatedTotal = round2(capitalPending + interestPending);
+              if (Math.abs(calculatedTotal - Number(remainingFromDb)) > 0.01) {
+                // Preferimos mantener el interés calculado (suele ser más estable) y ajustar capital.
+                let adjustedCapital = round2(Number(remainingFromDb) - round2(interestPending));
+                if (adjustedCapital < 0) {
+                  // Si el interés excede el balance, todo es interés.
+                  interestPending = round2(Number(remainingFromDb));
+                  adjustedCapital = 0;
+                }
+                capitalPending = round2(adjustedCapital);
+              }
+            }
           }
 
           // Mora pendiente
@@ -492,7 +510,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         totalToSettle: 0
       });
     }
-  }, [isOpen, loan.id, loan.amount, loan.remaining_balance, installments, currentLateFee, updateType]);
+  }, [isOpen, loan.id, loan.amount, loan.remaining_balance, freshRemainingBalance, loan.amortization_type, loan.interest_rate, loan.start_date, installments, currentLateFee, updateType]);
 
   // Calcular interés pendiente para préstamos indefinidos
   useEffect(() => {
