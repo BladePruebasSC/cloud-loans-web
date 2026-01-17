@@ -618,95 +618,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           
           setPendingCapital(calculatedPendingCapital);
           setOriginalPendingCapital(calculatedPendingCapital); // Guardar el capital pendiente original para calcular penalidad
-          
-          // Calcular el balance actual correcto inmediatamente
-          let currentBalance = loan.remaining_balance;
-          
-          if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
-            // Para préstamos indefinidos: usar calculatedPendingCapital + pendingInterestForIndefinite
-            // Si pendingInterestForIndefinite aún no está calculado, calcularlo aquí
-            const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
-            
-            // Calcular interés pendiente usando el cálculo dinámico
-            if (loan.start_date) {
-              const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
-              const startDate = new Date(startYear, startMonth - 1, startDay);
-              const currentDate = new Date();
-              currentDate.setHours(0, 0, 0, 0);
-              
-              const monthsElapsed = Math.max(0, 
-                (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
-                (currentDate.getMonth() - startDate.getMonth())
-              );
-              
-              const totalExpectedInstallments = Math.max(1, monthsElapsed + 1);
-              
-              // Calcular cuántas cuotas se han pagado
-              let paidCount = 0;
-              if (payments && payments.length > 0) {
-                const totalInterestPaid = payments.reduce((sum: number, p: any) => sum + (p.interest_amount || 0), 0);
-                paidCount = Math.floor(totalInterestPaid / interestPerPayment);
-              }
-              
-              const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
-              const pendingInterest = unpaidCount * interestPerPayment;
-              // IMPORTANTE: El capital pendiente YA incluye los cargos, por lo que NO se suman de nuevo
-              currentBalance = Math.round((calculatedPendingCapital + pendingInterest) * 100) / 100;
-            } else {
-              // Fallback: usar installments si están disponibles
-              const unpaidRegularInstallments = installments.filter(inst => {
-                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                return !inst.is_paid && !isCharge;
-              });
-              const unpaidInterest = unpaidRegularInstallments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
-              // IMPORTANTE: El capital pendiente YA incluye los cargos, por lo que NO se suman de nuevo
-              currentBalance = Math.round((calculatedPendingCapital + unpaidInterest) * 100) / 100;
-            }
-          } else {
-            // Para préstamos con plazo fijo: capital pendiente + interés pendiente
-            // IMPORTANTE: El capital pendiente ya incluye los cargos pendientes (cuando se calcula desde cuotas)
-            // IMPORTANTE: Redondear cada valor individual antes de sumar
-            // CORRECCIÓN: Calcular interés pendiente considerando pagos parciales
-            const interestPendingFromInstallments = installments
-              .filter(inst => {
-                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                return !isCharge;
-              })
-              .reduce((sum, inst) => {
-                const originalInterest = inst.interest_amount || 0;
-                const installmentDueDate = inst.due_date?.split('T')[0];
-                let interestPaidForThisInstallment = 0;
-                
-                if (installmentDueDate) {
-                  const paymentsForThisInstallment = (payments || []).filter(p => {
-                    const paymentDueDate = p.due_date?.split('T')[0];
-                    return paymentDueDate === installmentDueDate;
-                  });
-                  interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
-                }
-                
-                const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
-                if (remainingInterest > 0.01) {
-                  return sum + Math.round(remainingInterest);
-                }
-                return sum;
-              }, 0);
-            
-            // Balance = Capital pendiente (incluye cuotas regulares + cargos) + Interés pendiente
-            // IMPORTANTE: El capital pendiente YA incluye los cargos pendientes, por lo que NO se suman de nuevo
-            currentBalance = Math.round((calculatedPendingCapital + interestPendingFromInstallments) * 100) / 100;
-          }
-          
-          // Actualizar el balance actual inmediatamente
-          // IMPORTANTE: Mantener 2 decimales para evitar perder centavos (ej: 525.01)
-          setCalculatedValues(prev => ({
-            ...prev,
-            currentBalance: Math.round(currentBalance * 100) / 100,
-            newBalance: Math.round(currentBalance * 100) / 100
-          }));
-          setBalanceCalculated(true);
         } catch (error) {
           console.error('Error calculando capital pendiente:', error);
           // Fallback: usar el monto original para indefinidos, o remaining_balance para otros
@@ -1314,145 +1225,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const calculateUpdatedValues = async () => {
     const [updateType, amount, additionalMonths, , editAmount, editInterestRate, editTermMonths, editAmortizationType, settleCapital, settleInterest, settleLateFee, capitalPaymentAmount, keepInstallments] = watchedValues;
     
-    // CORRECCIÓN: Usar valor de BD directamente (es más confiable que el cálculo dinámico)
-    // Si el balance ya fue calculado correctamente, usarlo para evitar mostrar un valor incorrecto
-    // Solo recalcular si los datos necesarios están disponibles y no se ha calculado previamente
-    let currentBalance = (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
-      ? freshRemainingBalance
-      : ((loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-          ? loan.remaining_balance
-          : (balanceCalculated ? calculatedValues.currentBalance : loan.remaining_balance));
-    
-    // Solo recalcular el balance si los datos necesarios están disponibles
-    // Si balanceCalculated es true, ya tenemos el balance correcto y no necesitamos recalcular
-    if (!balanceCalculated && installments.length > 0) {
-      // Calcular cargos no pagados
-      // IMPORTANTE: Redondear cada valor individual antes de sumar para evitar diferencias de redondeo
-      const unpaidCharges = installments.filter(inst => {
-        const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                        Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-        return isCharge && !inst.is_paid;
-      });
-      const unpaidChargesAmount = round2(unpaidCharges.reduce((sum, inst) => sum + round2(inst.total_amount || 0), 0));
-      
-      if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
-        // Para préstamos indefinidos: usar pendingCapital y pendingInterestForIndefinite
-        const capitalNow = pendingCapital > 0 ? pendingCapital : (loan.amount || 0);
-        currentBalance = round2(capitalNow + (pendingInterestForIndefinite || 0) + unpaidChargesAmount);
-      } else {
-        // Para préstamos con plazo fijo: calcular capital pendiente + interés pendiente
-        if (pendingCapital > 0) {
-          // Calcular interés pendiente
-          const unpaidInstallments = installments.filter(inst => !inst.is_paid && 
-            !(Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01));
-          // IMPORTANTE: Redondear cada valor individual antes de sumar para evitar diferencias de redondeo
-          const interestPendingFromInstallments = round2(unpaidInstallments.reduce((sum, inst) => sum + round2(inst.interest_amount || 0), 0));
-          
-          // Balance actual = Capital pendiente + Interés pendiente
-          // IMPORTANTE: El capital pendiente ya incluye los cargos pendientes cuando se calcula desde las cuotas
-          // IMPORTANTE: Redondear cada componente antes de sumar
-          currentBalance = round2((pendingCapital || 0) + interestPendingFromInstallments);
-        } else {
-          // Fallback: calcular usando installments disponibles
-          // Si pendingCapital no está disponible, calcular capital pendiente desde installments
-          // IMPORTANTE: Redondear cada valor individual antes de sumar para evitar diferencias de redondeo
-          const paidInstallments = installments.filter(inst => inst.is_paid && 
-            !(Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01));
-          const totalCapitalPaidFromInstallments = paidInstallments.reduce((sum, inst) => sum + Math.round(inst.principal_amount || 0), 0);
-          
-          // Calcular capital pendiente desde TODAS las cuotas (considerando pagos parciales)
-          // Necesitamos obtener pagos para calcular pagos parciales correctamente
-          const { data: allPaymentsForFallback } = await supabase
-            .from('payments')
-            .select('principal_amount, interest_amount, due_date')
-            .eq('loan_id', loan.id);
-          
-          const calculatedCapitalPending = installments.reduce((sum, inst) => {
-            const originalPrincipal = inst.principal_amount || 0;
-            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                            Math.abs(originalPrincipal - (inst.total_amount || 0)) < 0.01;
-            
-            let principalPaidForThisInstallment = 0;
-            
-            if (isCharge) {
-              const chargeDueDate = inst.due_date?.split('T')[0];
-              if (chargeDueDate) {
-                const chargesWithSameDate = installments.filter(otherInst => {
-                  const otherIsCharge = Math.abs(otherInst.interest_amount || 0) < 0.01 && 
-                                       Math.abs((otherInst.principal_amount || 0) - (otherInst.total_amount || 0)) < 0.01;
-                  return otherIsCharge && otherInst.due_date?.split('T')[0] === chargeDueDate;
-                }).sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
-                
-                const paymentsForCharges = (allPaymentsForFallback || []).filter(p => {
-                  const paymentDueDate = p.due_date?.split('T')[0];
-                  const hasNoInterest = Math.abs(p.interest_amount || 0) < 0.01;
-                  return paymentDueDate === chargeDueDate && hasNoInterest;
-                });
-                
-                const totalPaidForDate = paymentsForCharges.reduce((s, p) => s + (p.principal_amount || 0), 0);
-                const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
-                
-                if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
-                  let remainingPayments = totalPaidForDate;
-                  for (let i = 0; i < chargeIndex; i++) {
-                    const prevCharge = chargesWithSameDate[i];
-                    remainingPayments -= Math.min(remainingPayments, prevCharge.total_amount || 0);
-                  }
-                  principalPaidForThisInstallment = Math.min(remainingPayments, originalPrincipal);
-                } else {
-                  principalPaidForThisInstallment = Math.min(totalPaidForDate, originalPrincipal);
-                }
-              }
-            } else {
-              const installmentDueDate = inst.due_date?.split('T')[0];
-              if (installmentDueDate) {
-                const paymentsForThisInstallment = (allPaymentsForFallback || []).filter(p => {
-                  const paymentDueDate = p.due_date?.split('T')[0];
-                  return paymentDueDate === installmentDueDate;
-                });
-                principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
-              }
-            }
-            
-            const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
-            if (remainingPrincipal > 0.01) {
-              return sum + Math.round(remainingPrincipal);
-            }
-            return sum;
-          }, 0);
-          
-          // Calcular interés pendiente considerando pagos parciales
-          const interestPendingFromInstallments = installments
-            .filter(inst => {
-              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-              return !isCharge;
-            })
-            .reduce((sum, inst) => {
-              const originalInterest = inst.interest_amount || 0;
-              const installmentDueDate = inst.due_date?.split('T')[0];
-              let interestPaidForThisInstallment = 0;
-              
-              if (installmentDueDate) {
-                const paymentsForThisInstallment = (allPaymentsForFallback || []).filter(p => {
-                  const paymentDueDate = p.due_date?.split('T')[0];
-                  return paymentDueDate === installmentDueDate;
-                });
-                interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
-              }
-              
-              const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
-              if (remainingInterest > 0.01) {
-                return sum + Math.round(remainingInterest);
-              }
-              return sum;
-            }, 0);
-          
-          // IMPORTANTE: Balance = Capital pendiente (ya incluye cargos) + Interés pendiente
-          currentBalance = calculatedCapitalPending + interestPendingFromInstallments;
-        }
-      }
-    }
+    // ✅ Fuente de verdad: remaining_balance en BD.
+    // Esto evita “cargar lento”/parpadeos y errores por cálculos temporales en el cliente.
+    const currentBalance = round2(
+      (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
+        ? freshRemainingBalance
+        : (loan.remaining_balance ?? 0)
+    );
     
     let newBalance = currentBalance;
     let newPayment = loan.monthly_payment;
@@ -5364,19 +5143,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">Balance Actual:</span>
-                      <span className="font-semibold">RD${(() => {
-                        const base =
-                          (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
-                            ? freshRemainingBalance
-                            : ((loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-                                ? loan.remaining_balance
-                                : (calculatedValues.currentBalance || (
-                                    (loan.amortization_type || '').toLowerCase() === 'indefinite'
-                                      ? (loan.amount || 0) + (pendingInterestForIndefinite || 0)
-                                      : (loan.amount || 0)
-                                  )));
-                        return round2(Number(base || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                      })()}</span>
+                      <span className="font-semibold">RD${round2(
+                        (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
+                          ? freshRemainingBalance
+                          : (loan.remaining_balance ?? 0)
+                      ).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                     
                     {form.watch('update_type') === 'add_charge' && form.watch('amount') && (
