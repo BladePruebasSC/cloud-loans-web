@@ -321,40 +321,58 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           let capitalPending = 0;
           let interestPending = 0;
           
-          // Para préstamos indefinidos, el capital pendiente es siempre el monto original
+          // Para préstamos indefinidos, el capital pendiente debe incluir el capital base + cargos pendientes
           if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
-            capitalPending = loan.amount;
+            // 1) Cargos pendientes (principal puro)
+            const unpaidChargesAmount = round2(
+              installments
+                .filter(inst => {
+                  const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 &&
+                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                  return isCharge && !inst.is_paid;
+                })
+                .reduce((sum, inst) => sum + Number((inst.total_amount ?? inst.amount ?? inst.principal_amount) || 0), 0)
+            );
+
+            // 2) Capital pendiente = capital base (loan.amount) + cargos pendientes
+            capitalPending = round2(Number(loan.amount || 0) + unpaidChargesAmount);
             
-            // Calcular interés pendiente usando el cálculo dinámico
-            const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
-            
-            // Calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
-            if (loan.start_date) {
-              const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
-              const startDate = new Date(startYear, startMonth - 1, startDay);
-              const currentDate = getCurrentDateInSantoDomingo();
-              
-              const monthsElapsed = Math.max(0, 
-                (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
-                (currentDate.getMonth() - startDate.getMonth())
-              );
-              
-              const totalExpectedInstallments = Math.max(1, monthsElapsed + 1);
-              
-              // Calcular cuántas cuotas se han pagado desde los pagos
-              let paidCount = 0;
-              if (payments && payments.length > 0) {
-                const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
-                paidCount = Math.floor(totalInterestPaid / interestPerPayment);
-              }
-              
-              const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
-              interestPending = unpaidCount * interestPerPayment;
+            // 3) Interés pendiente: usar remaining_balance (BD) como fuente de verdad cuando exista
+            const remainingFromDb =
+              (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
+                ? freshRemainingBalance
+                : (loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                    ? Number(loan.remaining_balance)
+                    : null);
+
+            if (remainingFromDb !== null) {
+              // remaining_balance = capital (base + cargos) + interés + mora (mora se suma aparte en lateFeePending)
+              interestPending = round2(Math.max(0, Number(remainingFromDb) - capitalPending));
             } else {
-              // Si no hay start_date, usar el cálculo basado en cuotas
-              const totalInterestFromInstallments = installments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
-              const totalPaidInterest = payments?.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0) || 0;
-              interestPending = Math.max(0, totalInterestFromInstallments - totalPaidInterest);
+              // Fallback: calcular interés pendiente dinámicamente (asegurando que siempre haya 1 cuota pendiente)
+              const interestPerPayment = (Number(loan.amount || 0) * Number(loan.interest_rate || 0)) / 100;
+
+              if (loan.start_date && interestPerPayment > 0) {
+                const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
+                const startDate = new Date(startYear, startMonth - 1, startDay);
+                const currentDate = getCurrentDateInSantoDomingo();
+
+                const monthsElapsed = Math.max(0,
+                  (currentDate.getFullYear() - startDate.getFullYear()) * 12 +
+                  (currentDate.getMonth() - startDate.getMonth())
+                );
+
+                // En indefinidos siempre existe una próxima cuota de interés.
+                const paidCount = (payments || []).filter(p => (p.interest_amount || 0) > 0.01).length;
+                const totalExpectedInstallments = Math.max(paidCount + 1, monthsElapsed + 1);
+                const unpaidCount = Math.max(1, totalExpectedInstallments - paidCount);
+                interestPending = round2(unpaidCount * interestPerPayment);
+              } else {
+                // Si no hay start_date, usar cuotas vs pagos (simple)
+                const totalInterestFromInstallments = installments.reduce((sum, inst) => sum + (inst.interest_amount || 0), 0);
+                const totalPaidInterest = payments?.reduce((sum, payment) => sum + (payment.interest_amount || 0), 0) || 0;
+                interestPending = round2(Math.max(0, totalInterestFromInstallments - totalPaidInterest));
+              }
             }
           } else {
             // Para préstamos con plazo fijo, usar la lógica original
@@ -407,10 +425,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           const totalToSettle = capitalPending + interestPending + lateFeePending;
 
           const breakdown = {
-            capitalPending: Math.round(capitalPending * 100) / 100,
-            interestPending: Math.round(interestPending * 100) / 100,
-            lateFeePending: Math.round(lateFeePending * 100) / 100,
-            totalToSettle: Math.round(totalToSettle * 100) / 100
+            capitalPending: round2(capitalPending),
+            interestPending: round2(interestPending),
+            lateFeePending: round2(lateFeePending),
+            totalToSettle: round2(totalToSettle)
           };
 
           setSettleBreakdown(breakdown);
