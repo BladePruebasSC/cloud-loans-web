@@ -1212,20 +1212,117 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         return interest < 0.01 && principalAmt > 0 && Math.abs(principalAmt - total) < 0.01;
       };
 
+      // Para cargos, NO confiar en inst.is_paid (puede estar mal cuando hay pagos parciales).
+      // Calcular pagado vs parcial vs pendiente desde payments (por due_date).
+      const { data: paymentsRaw, error: paymentsFetchError } = await supabase
+        .from('payments')
+        .select('id, principal_amount, interest_amount, amount, due_date, payment_date, status')
+        .eq('loan_id', loanData.id)
+        .order('payment_date', { ascending: true });
+
+      if (paymentsFetchError) {
+        console.error('AccountStatement: Error obteniendo pagos para cargos:', paymentsFetchError);
+      }
+
+      const paymentsForCalc = (paymentsRaw || []).filter((p: any) => {
+        // Contar pagos "pending" también (para reflejar inmediatamente en UI), pero excluir fallidos.
+        const st = String(p?.status || '').toLowerCase();
+        return st !== 'failed';
+      });
+
+      const dueKeyOf = (d: any) => (String(d || '').split('T')[0] || '').trim() || null;
+      const chargeKey = (inst: any, idx: number) => {
+        const dueKey = dueKeyOf(inst?.due_date);
+        const n = Number(inst?.installment_number) || 0;
+        return String(inst?.id || `${dueKey || 'no-due'}-${n}-${idx}`);
+      };
+
+      const chargePaidByKey = new Map<string, number>();
+      const chargePaidDateByKey = new Map<string, string | null>();
+
+      // Agrupar cargos por fecha de vencimiento
+      const charges = (installmentsData || []).filter((inst: any) => isCharge(inst));
+      const chargesByDue = new Map<string, Array<{ inst: any; idx: number }>>();
+      charges.forEach((inst: any, idx: number) => {
+        const key = dueKeyOf(inst?.due_date) || 'no-due';
+        const list = chargesByDue.get(key) || [];
+        list.push({ inst, idx });
+        chargesByDue.set(key, list);
+      });
+
+      // Para cada fecha, repartir pagos de cargo en orden de installment_number (maneja múltiples cargos misma fecha)
+      for (const [dueKey, list] of chargesByDue.entries()) {
+        const chargesSorted = [...list].sort((a, b) => {
+          const an = Number(a.inst?.installment_number) || 0;
+          const bn = Number(b.inst?.installment_number) || 0;
+          if (an !== bn) return an - bn;
+          return a.idx - b.idx;
+        });
+
+        const paymentsForThisDue = paymentsForCalc
+          .filter((p: any) => {
+            const pDue = dueKeyOf(p?.due_date) || 'no-due';
+            const noInterest = Math.abs(Number(p?.interest_amount || 0)) < 0.01;
+            return pDue === dueKey && noInterest;
+          })
+          .sort((a: any, b: any) => new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime());
+
+        let remainingPaid = round2(
+          paymentsForThisDue.reduce((sum: number, p: any) => {
+            const paidAmount = Number(p?.principal_amount ?? p?.amount ?? 0) || 0;
+            return sum + paidAmount;
+          }, 0)
+        );
+
+        const paidDateForThisDue =
+          paymentsForThisDue.length > 0
+            ? (String(paymentsForThisDue[paymentsForThisDue.length - 1].payment_date || '').split('T')[0] || null)
+            : null;
+
+        for (const { inst, idx } of chargesSorted) {
+          const total = round2(Number(inst?.total_amount ?? inst?.amount ?? inst?.principal_amount ?? 0));
+          const paid = round2(Math.min(Math.max(0, remainingPaid), total));
+          remainingPaid = round2(Math.max(0, remainingPaid - paid));
+          const key = chargeKey(inst, idx);
+          chargePaidByKey.set(key, paid);
+          if (paid > 0.01) {
+            chargePaidDateByKey.set(key, paidDateForThisDue);
+          }
+        }
+      }
+
       const normalized = (installmentsData || []).map((inst: any, idx: number) => {
         const total = round2(Number(inst?.total_amount ?? inst?.amount ?? 0));
-        const principalPayment = isCharge(inst) ? round2(Number(inst?.principal_amount ?? total)) : round2(Number(inst?.principal_amount || 0));
-        const interestPayment = isCharge(inst) ? 0 : round2(Number(inst?.interest_amount ?? inst?.amount ?? 0));
+        const charge = isCharge(inst);
+        const principalPayment = charge ? round2(Number(inst?.principal_amount ?? total)) : round2(Number(inst?.principal_amount || 0));
+        const interestPayment = charge ? 0 : round2(Number(inst?.interest_amount ?? inst?.amount ?? 0));
         const monthlyPayment = total > 0 ? total : round2(principalPayment + interestPayment);
 
         const dueDate = (inst?.due_date as string | undefined)?.split?.('T')?.[0] || (inst?.due_date as string | undefined) || null;
-        const paidDate = (inst?.paid_date as string | undefined)?.split?.('T')?.[0] || (inst?.paid_date as string | undefined) || null;
+        const paidDateFromDb = (inst?.paid_date as string | undefined)?.split?.('T')?.[0] || (inst?.paid_date as string | undefined) || null;
 
-        const paid = !!inst?.is_paid;
+        // Estado calculado (cargos: por pagos; regulares: por is_paid)
+        let paid = !!inst?.is_paid;
+        let isPartial = false;
+        let principalPaid = paid ? principalPayment : 0;
+        let interestPaid = paid ? interestPayment : 0;
+        let paidDate = paidDateFromDb;
+
+        if (charge) {
+          const key = chargeKey(inst, idx);
+          const paidAmt = round2(chargePaidByKey.get(key) || 0);
+          principalPaid = paidAmt;
+          interestPaid = 0;
+          const remaining = round2(Math.max(0, principalPayment - paidAmt));
+          paid = remaining <= 0.01;
+          isPartial = !paid && paidAmt > 0.01;
+          paidDate = (paid || isPartial) ? (chargePaidDateByKey.get(key) || paidDateFromDb) : null;
+        }
+
         const settled = !!inst?.is_settled;
 
-        const remainingPrincipal = paid ? 0 : principalPayment;
-        const remainingInterest = paid ? 0 : interestPayment;
+        const remainingPrincipal = round2(Math.max(0, principalPayment - principalPaid));
+        const remainingInterest = round2(Math.max(0, interestPayment - interestPaid));
         const remainingPayment = round2(remainingPrincipal + remainingInterest);
 
         const displayInstallmentNumber = Number(inst?.installment_number) || (idx + 1);
@@ -1234,24 +1331,24 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           // display
           installment: `${displayInstallmentNumber}/X`,
           // unique key for React (avoid collapse when installment repeats)
-          rowKey: String(inst?.id || `${displayInstallmentNumber}-${isCharge(inst) ? 'charge' : 'regular'}-${idx}`),
+          rowKey: String(inst?.id || `${displayInstallmentNumber}-${charge ? 'charge' : 'regular'}-${idx}`),
           dueDate: dueDate || (loanData?.start_date?.split?.('T')?.[0] || null),
           monthlyPayment,
           principalPayment,
           interestPayment,
-          principalPaid: paid ? principalPayment : 0,
-          interestPaid: paid ? interestPayment : 0,
+          principalPaid,
+          interestPaid,
           remainingPrincipal,
           remainingInterest,
           remainingPayment,
           remainingBalance: remainingBalanceNow,
           isPaid: paid,
-          isPartial: false,
+          isPartial,
           isSettled: settled && !paid,
           paidDate,
           hasRealData: true,
-          paymentStatus: paid ? 'paid' : 'pending',
-          actualPaymentAmount: paid ? monthlyPayment : 0
+          paymentStatus: paid ? 'paid' : isPartial ? 'partial' : 'pending',
+          actualPaymentAmount: paid ? monthlyPayment : isPartial ? principalPaid : 0
         };
       });
 
