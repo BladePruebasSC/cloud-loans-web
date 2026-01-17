@@ -5301,7 +5301,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     <div className="flex justify-between">
                       <span className="text-gray-600">Nuevo Balance:</span>
                       <span className="font-bold text-lg text-green-600">
-                        RD${(Math.round((calculatedValues.newBalance || 0) * 100) / 100).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {(isFetchingFreshBalance || freshRemainingBalance === null || freshRemainingBalance === undefined)
+                          ? 'Cargando...'
+                          : `RD$${(Math.round((calculatedValues.newBalance || 0) * 100) / 100).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                       </span>
                     </div>
 
