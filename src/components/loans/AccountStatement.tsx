@@ -1237,8 +1237,16 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         return String(inst?.id || `${dueKey || 'no-due'}-${n}-${idx}`);
       };
 
+      const regularKey = (inst: any, idx: number) => {
+        const dueKey = dueKeyOf(inst?.due_date);
+        const n = Number(inst?.installment_number) || 0;
+        return String(inst?.id || `${dueKey || 'no-due'}-${n}-regular-${idx}`);
+      };
+
       const chargePaidByKey = new Map<string, number>();
       const chargePaidDateByKey = new Map<string, string | null>();
+      const regularPaidByKey = new Map<string, number>();
+      const regularPaidDateByKey = new Map<string, string | null>();
 
       // Agrupar cargos por fecha de vencimiento
       const charges = (installmentsData || []).filter((inst: any) => isCharge(inst));
@@ -1291,6 +1299,78 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
       }
 
+      // Para cuotas regulares (interés), también soportar pagos parciales por due_date.
+      // Regla: primero se aplican pagos sin interés a cargos de esa fecha; lo que sobre + pagos con interés se aplican a cuotas regulares de esa fecha.
+      const regulars = (installmentsData || []).filter((inst: any) => !isCharge(inst));
+      const regularsByDue = new Map<string, Array<{ inst: any; idx: number }>>();
+      regulars.forEach((inst: any, idx: number) => {
+        const key = dueKeyOf(inst?.due_date) || 'no-due';
+        const list = regularsByDue.get(key) || [];
+        list.push({ inst, idx });
+        regularsByDue.set(key, list);
+      });
+
+      // helper: cuánto principal (sin interés) ya fue asignado a cargos en esa fecha
+      const assignedToChargesByDue = new Map<string, number>();
+      for (const [dueKey, list] of chargesByDue.entries()) {
+        let assigned = 0;
+        list.forEach(({ inst, idx }) => {
+          const key = chargeKey(inst, idx);
+          assigned += Number(chargePaidByKey.get(key) || 0);
+        });
+        assignedToChargesByDue.set(dueKey, round2(assigned));
+      }
+
+      for (const [dueKey, list] of regularsByDue.entries()) {
+        const regsSorted = [...list].sort((a, b) => {
+          const an = Number(a.inst?.installment_number) || 0;
+          const bn = Number(b.inst?.installment_number) || 0;
+          if (an !== bn) return an - bn;
+          return a.idx - b.idx;
+        });
+
+        const paymentsThisDueAll = paymentsForCalc
+          .filter((p: any) => (dueKeyOf(p?.due_date) || 'no-due') === dueKey)
+          .sort((a: any, b: any) => new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime());
+
+        const interestPaidPool = round2(
+          paymentsThisDueAll.reduce((sum: number, p: any) => {
+            const iAmt = Number(p?.interest_amount || 0) || 0;
+            return sum + (iAmt > 0.01 ? iAmt : 0);
+          }, 0)
+        );
+
+        const principalPaidPool = round2(
+          paymentsThisDueAll.reduce((sum: number, p: any) => {
+            const noInterest = Math.abs(Number(p?.interest_amount || 0)) < 0.01;
+            if (!noInterest) return sum;
+            const pAmt = Number(p?.principal_amount ?? p?.amount ?? 0) || 0;
+            return sum + pAmt;
+          }, 0)
+        );
+
+        const assignedToCharges = assignedToChargesByDue.get(dueKey) || 0;
+        const principalRemainingAfterCharges = round2(Math.max(0, principalPaidPool - assignedToCharges));
+        let remainingForRegular = round2(interestPaidPool + principalRemainingAfterCharges);
+
+        const paidDateForThisDue =
+          paymentsThisDueAll.length > 0
+            ? (String(paymentsThisDueAll[paymentsThisDueAll.length - 1].payment_date || '').split('T')[0] || null)
+            : null;
+
+        for (const { inst, idx } of regsSorted) {
+          const dueAmount = round2(Number(inst?.total_amount ?? inst?.amount ?? inst?.interest_amount ?? 0));
+          if (dueAmount <= 0) continue;
+          const paidAmt = round2(Math.min(Math.max(0, remainingForRegular), dueAmount));
+          remainingForRegular = round2(Math.max(0, remainingForRegular - paidAmt));
+          const key = regularKey(inst, idx);
+          regularPaidByKey.set(key, paidAmt);
+          if (paidAmt > 0.01) {
+            regularPaidDateByKey.set(key, paidDateForThisDue);
+          }
+        }
+      }
+
       const normalized = (installmentsData || []).map((inst: any, idx: number) => {
         const total = round2(Number(inst?.total_amount ?? inst?.amount ?? 0));
         const charge = isCharge(inst);
@@ -1317,6 +1397,20 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           paid = remaining <= 0.01;
           isPartial = !paid && paidAmt > 0.01;
           paidDate = (paid || isPartial) ? (chargePaidDateByKey.get(key) || paidDateFromDb) : null;
+        } else {
+          // Cuota regular de interés: permitir parcial por pagos en la misma due_date
+          const key = regularKey(inst, idx);
+          const paidAmt = round2(regularPaidByKey.get(key) || 0);
+          // Si la cuota ya está marcada como pagada en la data, respetarla (histórico)
+          // pero aún así permitir reflejar parciales para cuotas pendientes.
+          if (!paid) {
+            interestPaid = paidAmt;
+            principalPaid = 0;
+            const remaining = round2(Math.max(0, monthlyPayment - paidAmt));
+            paid = remaining <= 0.01;
+            isPartial = !paid && paidAmt > 0.01;
+            paidDate = (paid || isPartial) ? (regularPaidDateByKey.get(key) || paidDateFromDb) : null;
+          }
         }
 
         const settled = !!inst?.is_settled;
