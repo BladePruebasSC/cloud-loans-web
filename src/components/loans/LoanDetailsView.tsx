@@ -1143,10 +1143,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     effectiveLateFee = Math.round(calculatedLateFee * 100) / 100;
   }
   
+  const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
+
   const totalPending = capitalPending + interestPending + effectiveLateFee;
-  // IMPORTANTE: Redondear cada componente antes de sumar para evitar diferencias de redondeo
-  const amountToPay = Math.round(loan.monthly_payment) + Math.round(effectiveLateFee);
-  const toSettle = Math.round(remainingBalance) + Math.round(effectiveLateFee);
+  // IMPORTANTE: Mantener centavos (no redondear a entero).
+  const amountToPay = round2((loan.monthly_payment || 0) + (effectiveLateFee || 0));
+  const toSettle = round2((remainingBalance || 0) + (effectiveLateFee || 0));
 
   // Calcular porcentaje pagado basándose en el total correcto (capital + interés + cargos)
   // Para préstamos indefinidos: total = capital + interés pendiente + todos los cargos
@@ -1484,7 +1486,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                 <CardContent className="pt-6">
                   <div className="text-center">
                     <div className="text-sm text-gray-600">Pago mínimo</div>
-                    <div className="text-2xl font-bold">RD {Math.round(loan.monthly_payment).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="text-2xl font-bold">RD {round2(loan.monthly_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                 </CardContent>
               </Card>

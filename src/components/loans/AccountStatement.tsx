@@ -268,7 +268,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   // Calcular tabla de amortización cuando se cargan los datos del préstamo y las cuotas
   useEffect(() => {
     const calculateSchedule = async () => {
-      if (loan && installments.length > 0) {
+      // En préstamos indefinidos, las cuotas pueden ser generadas dinámicamente desde pagos.
+      // Aun si no hay cuotas reales en BD, queremos generar la tabla.
+      if (loan) {
         console.log('🔍 AccountStatement: Loan data for amortization:', {
           id: loan.id,
           amount: loan.amount,
@@ -278,7 +280,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           amortization_type: loan.amortization_type,
           start_date: loan.start_date,
         });
-        const schedule = await calculateAmortizationSchedule(loan, installments);
+        const schedule = await calculateAmortizationSchedule(loan, installments || []);
         setAmortizationSchedule(schedule);
       }
     };
@@ -379,7 +381,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       setLoan(combinedLoanData as Loan);
 
       // Obtener las cuotas del préstamo
-      const isIndefinite = loanData.amortization_type === 'indefinite';
+      const amortizationTypeLower = String(loanData.amortization_type || '').toLowerCase();
+      const isIndefinite = amortizationTypeLower === 'indefinite';
       let installmentsQuery = supabase
         .from('installments')
         .select('*, is_settled, total_amount')
@@ -551,7 +554,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             
             // Para préstamos indefinidos, inicializar is_paid como false
             // Se determinará correctamente basándose en el interés acumulado de los pagos
-            const initialIsPaid = loanData.amortization_type === 'indefinite' 
+            const initialIsPaid = isIndefinite 
               ? false 
               : (existingInstallment?.is_paid || false);
             
@@ -1029,12 +1032,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     });
 
     const schedule = [];
-    const principal = loanData.amount;
-    const amortizationType = loanData.amortization_type || 'simple';
-    const interestRate = loanData.interest_rate;
+    const principal = Number(loanData.amount || 0);
+    const amortizationType = String(loanData.amortization_type || 'simple').toLowerCase();
+    const interestRate = Number(loanData.interest_rate || 0);
     // Para préstamos indefinidos, usar el número de cuotas generadas dinámicamente
     const isIndefinite = amortizationType === 'indefinite';
-    const numberOfPayments = isIndefinite ? (installmentsData?.length || 1) : loanData.term_months;
+    const numberOfPayments = Math.max(
+      1,
+      isIndefinite ? (installmentsData?.length || 1) : (Number(loanData.term_months) || 1)
+    );
     
     console.log('🔍 TIPO DE AMORTIZACIÓN DETECTADO:', {
       amortizationType,
@@ -1187,9 +1193,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     }
 
     // Parsear la fecha de inicio correctamente en zona horaria de Santo Domingo
-    const startDateStr = loanData.start_date.split('T')[0]; // Obtener solo la parte de fecha
-    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-    const startDate = createDateInSantoDomingo(startYear, startMonth, startDay);
+    const startDateStrRaw = (loanData.start_date as string | undefined)?.split?.('T')?.[0]; // Obtener solo la parte de fecha
+    let startDate: Date;
+    if (startDateStrRaw) {
+      const [startYear, startMonth, startDay] = startDateStrRaw.split('-').map(Number);
+      startDate = createDateInSantoDomingo(startYear, startMonth, startDay);
+    } else {
+      const now = getCurrentDateInSantoDomingo();
+      startDate = createDateInSantoDomingo(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    }
 
     // Crear un mapa de cuotas para acceso rápido
     const installmentsMap = new Map();
@@ -1231,7 +1243,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     }) : [];
     
     // Para préstamos indefinidos, PRIMERO procesar todos los cargos, LUEGO las cuotas regulares de interés
-    if (loanData.amortization_type === 'indefinite' && sortedPayments.length > 0) {
+    if (amortizationType === 'indefinite' && sortedPayments.length > 0) {
       // PRIMERO: Procesar TODOS los cargos
       const chargeInstallments: number[] = [];
       for (let i = 1; i <= numberOfPayments; i++) {
@@ -1478,7 +1490,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // No acumular/redistribuir un pago grande entre múltiples cuotas.
       // En préstamos indefinidos, cada PAGO DE INTERÉS es una cuota pagada (mismo monto histórico),
       // y la cuota pendiente es la que cambia cuando hay abono a capital.
-      if (loanData.amortization_type === 'indefinite') {
+      if (amortizationType === 'indefinite') {
         const interestPaymentsOnly = sortedPayments.filter(p => {
           if (paymentsAssignedToCharges.has(p.id)) return false;
           if (assignedPaymentIds.has(p.id)) return false;
@@ -1687,7 +1699,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       } else if (!isPaid && payments && payments.length > 0) {
         // Para préstamos indefinidos, no buscar pagos no asignados aquí
         // porque la asignación ya se hizo con acumulación de interés arriba
-        if (loanData.amortization_type === 'indefinite') {
+        if (amortizationType === 'indefinite') {
           // No hacer nada, la asignación ya se hizo arriba
         } else {
           // Para préstamos no indefinidos, la asignación ya se hizo en la pasada inicial
@@ -1716,7 +1728,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       let displayPaidDate = paidDate; // Fecha de pago a mostrar
       
       // Para préstamos indefinidos, verificar cargos y cuotas de interés por separado
-      if (loanData.amortization_type === 'indefinite') {
+      if (amortizationType === 'indefinite') {
         // Si es un cargo, verificar si el total pagado cubre el cargo completo
         if (isCharge && realInstallment) {
           const chargeTotal = realInstallment.total_amount || realInstallment.amount || monthlyPayment;
