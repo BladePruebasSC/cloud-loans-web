@@ -88,6 +88,8 @@ export const LoansModule = () => {
   const [calculatedRemainingBalances, setCalculatedRemainingBalances] = useState<{[key: string]: number}>({});
   // Timestamp de última actualización optimista por préstamo para evitar sobrescrituras
   const optimisticUpdateTimestampsRef = useRef<{[key: string]: number}>({});
+  // Timestamp de última autocorrección de remaining_balance (evita loops/spam)
+  const lastBalanceFixTimestampsRef = useRef<{[key: string]: number}>({});
   // Ref para rastrear si ya se procesó una acción desde la URL (evitar re-ejecuciones)
   const processedActionRef = useRef<string | null>(null);
   // Ref para rastrear si el usuario cerró el formulario manualmente (evitar re-abrir)
@@ -717,12 +719,15 @@ export const LoansModule = () => {
       try {
         const remainingBalances: { [loanId: string]: number } = {};
         const loansToUpdate: string[] = [];
+        const balanceFixes: Array<{ loanId: string; newBalance: number }> = [];
     
         // Calcular balances para todos los préstamos
         const calculations = loans.map(async (loan) => {
           const calculatedBalance = await calculateRemainingBalance(loan);
           const dbBalance = loan.remaining_balance || 0;
           const discrepancy = Math.abs(calculatedBalance - dbBalance);
+          const amortizationTypeLower = ((loan as any).amortization_type || loan.amortization_type || '').toLowerCase();
+          const isIndefinite = amortizationTypeLower === 'indefinite';
           
           // Si hay discrepancia significativa (> 0.01), marcar para actualización
           if (discrepancy > 0.01 && loan.status !== 'deleted' && loan.status !== 'paid') {
@@ -733,6 +738,13 @@ export const LoansModule = () => {
               db: dbBalance,
               discrepancy
             });
+
+            // FIX CRÍTICO: en indefinidos la BD puede quedarse desactualizada (ej. después de abono + cargo)
+            // Autocorregir remaining_balance en BD para que el preview no quede pegado en el valor errado.
+            if (isIndefinite) {
+              const rounded = Math.round(calculatedBalance * 100) / 100;
+              balanceFixes.push({ loanId: loan.id, newBalance: rounded });
+            }
           }
           
           return { 
@@ -765,13 +777,32 @@ export const LoansModule = () => {
         }));
       }
         
-        // OPTIMIZADO: Ya no forzamos actualización ni refetch
-        // Los triggers de la BD actualizan balances automáticamente
-        // Eliminamos el refetch para evitar múltiples cargas
-        if (loansToUpdate.length > 0) {
-          console.log('🔍 Discrepancia detectada en balances, pero confiando en triggers de BD');
-          // Los triggers de la BD ya actualizan remaining_balance automáticamente
-          // No necesitamos forzar actualización ni refetch
+        // Autocorrección: solo para indefinidos y con rate-limit por préstamo
+        if (balanceFixes.length > 0) {
+          const now = Date.now();
+          const fixesToApply = balanceFixes.filter(f => {
+            const lastFix = lastBalanceFixTimestampsRef.current[f.loanId] || 0;
+            return now - lastFix > 60_000; // 60s por préstamo
+          });
+
+          if (fixesToApply.length > 0) {
+            await Promise.all(
+              fixesToApply.map(async ({ loanId, newBalance }) => {
+                const { error } = await supabase
+                  .from('loans')
+                  .update({ remaining_balance: newBalance })
+                  .eq('id', loanId);
+                if (!error) {
+                  lastBalanceFixTimestampsRef.current[loanId] = now;
+                  console.log('✅ Autocorrección remaining_balance (indefinido):', { loanId, newBalance });
+                } else {
+                  console.error('❌ Error autocorrigiendo remaining_balance:', { loanId, error });
+                }
+              })
+            );
+          }
+        } else if (loansToUpdate.length > 0) {
+          console.log('🔍 Discrepancia detectada en balances, pero sin autocorrección aplicada (no indefinido)');
         }
       } catch (error) {
         console.error('Error calculando y verificando balances:', error);
@@ -2283,18 +2314,26 @@ export const LoansModule = () => {
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
                               ${formatCurrencyNumber(
-                                // CORRECCIÓN: Priorizar valor de BD si está disponible (es más confiable que el cálculo dinámico)
-                                (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-                                  ? loan.remaining_balance
-                                  : (calculatedRemainingBalances[loan.id] !== undefined
-                                      ? calculatedRemainingBalances[loan.id]
-                                  : (loan.amortization_type === 'indefinite' 
-                                      ? (() => {
-                                          const baseAmount = loan.amount || 0;
-                                          const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
-                                          return baseAmount + pendingInterest;
-                                        })()
-                                          : loan.amount || 0))
+                                (() => {
+                                  const amortizationTypeLower = ((loan.amortization_type || '') as string).toLowerCase();
+                                  const isIndefinite = amortizationTypeLower === 'indefinite';
+                                  const calculated = calculatedRemainingBalances[loan.id];
+                                  const db = loan.remaining_balance;
+
+                                  // En indefinidos: preferir balance calculado (la BD puede quedarse desactualizada tras abono+cargo)
+                                  if (isIndefinite) {
+                                    if (calculated !== undefined) return calculated;
+                                    if (db !== null && db !== undefined) return db;
+                                    const baseAmount = loan.amount || 0;
+                                    const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
+                                    return baseAmount + pendingInterest;
+                                  }
+
+                                  // En otros: priorizar BD, pero usar cálculo si ya está disponible
+                                  if (db !== null && db !== undefined) return db;
+                                  if (calculated !== undefined) return calculated;
+                                  return loan.amount || 0;
+                                })()
                               )}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
@@ -2311,13 +2350,22 @@ export const LoansModule = () => {
                                 loan.status === 'paid' 
                                   ? 0 
                                   : Math.round(((
-                                      (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-                                        ? loan.remaining_balance
-                                        : (calculatedRemainingBalances[loan.id] !== undefined
-                                            ? calculatedRemainingBalances[loan.id]
-                                        : (loan.amortization_type === 'indefinite' 
-                                            ? loan.amount + (pendingInterestForIndefinite[loan.id] || 0)
-                                                : loan.amount || 0))
+                                      (() => {
+                                        const amortizationTypeLower = ((loan.amortization_type || '') as string).toLowerCase();
+                                        const isIndefinite = amortizationTypeLower === 'indefinite';
+                                        const calculated = calculatedRemainingBalances[loan.id];
+                                        const db = loan.remaining_balance;
+
+                                        if (isIndefinite) {
+                                          if (calculated !== undefined) return calculated;
+                                          if (db !== null && db !== undefined) return db;
+                                          return (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
+                                        }
+
+                                        if (db !== null && db !== undefined) return db;
+                                        if (calculated !== undefined) return calculated;
+                                        return loan.amount || 0;
+                                      })()
                                     ) + 
                                     (dynamicLateFees[loan.id] || loan.current_late_fee || 0)
                                   ) * 100) / 100
