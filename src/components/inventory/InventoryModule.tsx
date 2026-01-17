@@ -99,6 +99,7 @@ const InventoryModule = () => {
   const [selectedBrand, setSelectedBrand] = useState('all');
   const [showProductForm, setShowProductForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [productToDelete, setProductToDelete] = useState<string | null>(null);
   const [showPasswordVerification, setShowPasswordVerification] = useState(false);
   
   // Estados para filtros de Stock Bajo
