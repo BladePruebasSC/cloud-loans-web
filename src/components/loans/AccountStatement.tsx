@@ -1035,11 +1035,17 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     const principal = Number(loanData.amount || 0);
     const amortizationType = String(loanData.amortization_type || 'simple').toLowerCase();
     const interestRate = Number(loanData.interest_rate || 0);
-    // Para préstamos indefinidos, usar el número de cuotas generadas dinámicamente
+    // Para préstamos indefinidos, NO usar installmentsData.length porque puede incluir duplicados
+    // (ej: cargos + pagos de interés con mismo installment_number), lo que rompe el cálculo.
     const isIndefinite = amortizationType === 'indefinite';
+    const maxInstallmentNumberFromData = (installmentsData || []).reduce((max: number, inst: any) => {
+      const n = Number(inst?.installment_number);
+      if (!Number.isFinite(n) || n <= 0) return max;
+      return Math.max(max, n);
+    }, 0);
     const numberOfPayments = Math.max(
       1,
-      isIndefinite ? (installmentsData?.length || 1) : (Number(loanData.term_months) || 1)
+      isIndefinite ? (maxInstallmentNumberFromData || 1) : (Number(loanData.term_months) || 1)
     );
     
     console.log('🔍 TIPO DE AMORTIZACIÓN DETECTADO:', {
@@ -1578,7 +1584,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const realInstallment = installmentsMap.get(i);
       
       // Usar datos calculados según el tipo de amortización
-      const installmentData = amortizationData[i - 1];
+      // (fallback para evitar crash si amortizationData no tiene entrada para i)
+      const installmentData =
+        amortizationData[i - 1] || { principalPayment: 0, interestPayment: 0, monthlyPayment: 0 };
       
       // CORRECCIÓN: Siempre usar los valores reales de la cuota cuando estén disponibles
       // Esto asegura que coincida con InstallmentsTable
