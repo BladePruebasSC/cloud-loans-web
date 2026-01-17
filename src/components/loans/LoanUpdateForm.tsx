@@ -177,6 +177,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   editOnly = false
 }) => {
   const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
+  const isIndefiniteLoan = (loan?.amortization_type || '').toLowerCase() === 'indefinite';
 
   const [loading, setLoading] = useState(false);
   const [currentLateFee, setCurrentLateFee] = useState(loan.current_late_fee || 0);
@@ -298,6 +299,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     control: form.control,
     name: 'update_type'
   });
+
+  // Si el préstamo es indefinido, NO permitir extensión de plazo.
+  // Si por estado previo quedó seleccionado, forzarlo a "Agregar Cargo".
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!isIndefiniteLoan) return;
+    if (updateType === 'term_extension') {
+      form.setValue('update_type', 'add_charge' as any);
+      form.clearErrors('additional_months' as any);
+      toast.error('No puedes usar "Extensión de Plazo" en un préstamo indefinido.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isIndefiniteLoan, updateType]);
 
   // Calcular desglose para saldar préstamo
   useEffect(() => {
@@ -1456,6 +1470,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         break;
         
       case 'term_extension':
+        if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
+          // No aplica para indefinidos.
+          break;
+        }
         if (additionalMonths) {
           // Calcular meses restantes actuales
           const totalPayments = loan.term_months;
@@ -2464,6 +2482,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     if (loading) return;
     
     const updateType = data.update_type;
+    if (isIndefiniteLoan && updateType === 'term_extension') {
+      toast.error('No puedes usar "Extensión de Plazo" en un préstamo indefinido.');
+      return;
+    }
     // Variable para guardar la fecha del pago cuando se salda un préstamo
     let settlePaymentDate: string | null = null;
     
@@ -4415,12 +4437,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                       Agregar Cargo
                                     </div>
                                   </SelectItem>
+                                {!isIndefiniteLoan && (
                                   <SelectItem value="term_extension">
                                     <div className="flex items-center gap-2">
                                       <Calendar className="h-4 w-4" />
                                       Extensión de Plazo
                                     </div>
                                   </SelectItem>
+                                )}
                                   <SelectItem value="settle_loan">
                                     <div className="flex items-center gap-2">
                                       <DollarSign className="h-4 w-4" />
