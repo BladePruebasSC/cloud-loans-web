@@ -22,6 +22,8 @@ interface PaymentStatus {
   currentPaymentRemaining: number;
   isCurrentPaymentComplete: boolean;
   hasPartialPayments: boolean;
+  currentDueDate: string | null;
+  isCharge: boolean;
 }
 
 // Estado inicial: null indica que aún no se ha cargado (evita render con valores incorrectos)
@@ -95,9 +97,11 @@ export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
 
       console.log('All payments found:', payments);
 
+      const normalizeDate = (d: any) => (String(d || '').split('T')[0] || '').trim();
+
       // Filtrar pagos que corresponden a la cuota/cargo actual (usar targetDueDate)
       const currentPayments = (payments || []).filter(payment => 
-        payment.due_date === targetDueDate
+        normalizeDate((payment as any).due_date) === normalizeDate(targetDueDate)
       );
 
       console.log('Current payments for date', targetDueDate, ':', currentPayments);
@@ -140,6 +144,8 @@ export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
           currentPaymentRemaining,
           isCurrentPaymentComplete,
           hasPartialPayments,
+          currentDueDate: targetDueDate,
+          isCharge,
         });
       }
     } catch (error) {
@@ -182,6 +188,8 @@ export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
       currentPaymentRemaining: 0,
       isCurrentPaymentComplete: false,
       hasPartialPayments: false,
+      currentDueDate: loan?.next_payment_date || null,
+      isCharge: false,
     },
     loading,
     refetch: fetchPaymentStatus,

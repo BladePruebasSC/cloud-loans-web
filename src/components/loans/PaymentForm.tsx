@@ -1850,7 +1850,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         paymentDueDate = nextPaymentInfo.dueDate.split('T')[0]; // Asegurar formato YYYY-MM-DD
         console.log('🔍 PaymentForm: Usando due_date del cargo:', paymentDueDate);
       } else {
-        console.log('🔍 PaymentForm: Usando next_payment_date del préstamo:', paymentDueDate);
+        // En indefinidos, si hay pago parcial, NO usar next_payment_date (puede haberse movido).
+        // Usar la fecha real de la cuota actual calculada por paymentStatus.
+        const currentDue = (paymentStatus as any)?.currentDueDate;
+        if (selectedLoan.amortization_type === 'indefinite' && currentDue) {
+          paymentDueDate = String(currentDue).split('T')[0];
+          console.log('🔍 PaymentForm: (Indefinido) Usando due_date de la cuota actual:', paymentDueDate);
+        } else {
+          console.log('🔍 PaymentForm: Usando next_payment_date del préstamo:', paymentDueDate);
+        }
       }
       
       const paymentData = {
@@ -1992,9 +2000,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Incluirlo aquí sobrescribiría el valor correcto calculado por los triggers (que incluye cargos)
       // Solo necesitamos obtener el valor actualizado de la BD después de que los triggers lo calculen
       // Por ahora, usamos el valor actual como placeholder, pero NO lo incluiremos en el update
-      const placeholderBalance = selectedLoan.amortization_type === 'indefinite'
-        ? selectedLoan.amount  // Para indefinidos, el balance siempre es el monto original
-        : remainingBalance; // Usar el valor actual, pero los triggers lo actualizarán
+      // Placeholder: usar el balance actual del préstamo (no el monto original).
+      const placeholderBalance = remainingBalance;
       
       // Actualizar la fecha del próximo pago
       // Para cargos, mantener el due_date del cargo hasta que se complete completamente
@@ -2381,44 +2388,50 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             });
           } else {
             // Para cuotas regulares, verificar si el pago acumulado cubre esta cuota
-            const interestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
-            const principalPerPayment = monthlyPayment - interestPerPayment;
+            // En indefinidos NO usar acumulación global (y evita división por 0 cuando principalPerPayment = 0).
+            // La cuota se considera cubierta si este pago completa lo que falta de la cuota actual (isFullPayment).
+            if (selectedLoan.amortization_type === 'indefinite') {
+              paymentCoversInstallment = isFullPayment;
+            } else {
+              const interestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
+              const principalPerPayment = monthlyPayment - interestPerPayment;
             
-            // Obtener todos los pagos anteriores para calcular el acumulado
-            const { data: allPreviousPayments } = await supabase
-              .from('payments')
-              .select('principal_amount, interest_amount, payment_date')
-              .eq('loan_id', data.loan_id)
-              .order('payment_date', { ascending: true });
+              // Obtener todos los pagos anteriores para calcular el acumulado
+              const { data: allPreviousPayments } = await supabase
+                .from('payments')
+                .select('principal_amount, interest_amount, payment_date')
+                .eq('loan_id', data.loan_id)
+                .order('payment_date', { ascending: true });
             
-            // Calcular cuánto se ha pagado acumulado (incluyendo este pago)
-            let totalPrincipalPaid = allPreviousPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
-            let totalInterestPaid = allPreviousPayments?.reduce((sum, p) => sum + (p.interest_amount || 0), 0) || 0;
+              // Calcular cuánto se ha pagado acumulado (incluyendo este pago)
+              let totalPrincipalPaid = allPreviousPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
+              let totalInterestPaid = allPreviousPayments?.reduce((sum, p) => sum + (p.interest_amount || 0), 0) || 0;
             
-            // Agregar el pago actual
-            totalPrincipalPaid += principalPayment;
-            totalInterestPaid += interestPayment;
+              // Agregar el pago actual
+              totalPrincipalPaid += principalPayment;
+              totalInterestPaid += interestPayment;
             
-            // Calcular cuántas cuotas completas se han pagado
-            const completedInstallments = Math.min(
-              Math.floor(totalInterestPaid / interestPerPayment),
-              Math.floor(totalPrincipalPaid / principalPerPayment)
-            );
+              // Calcular cuántas cuotas completas se han pagado
+              const completedInstallments = Math.min(
+                Math.floor(totalInterestPaid / interestPerPayment),
+                Math.floor(totalPrincipalPaid / principalPerPayment)
+              );
             
-            // Verificar si esta cuota específica está cubierta
-            // Si el pago acumulado cubre al menos una cuota completa, marcar como pagada
-            paymentCoversInstallment = completedInstallments >= 1 && 
-                                      totalPrincipalPaid >= principalPerPayment * 0.99 && 
-                                      totalInterestPaid >= interestPerPayment * 0.99;
+              // Verificar si esta cuota específica está cubierta
+              // Si el pago acumulado cubre al menos una cuota completa, marcar como pagada
+              paymentCoversInstallment = completedInstallments >= 1 && 
+                                        totalPrincipalPaid >= principalPerPayment * 0.99 && 
+                                        totalInterestPaid >= interestPerPayment * 0.99;
             
-            console.log('🔍 PaymentForm: Verificando cuota regular:', {
-              totalPrincipalPaid,
-              totalInterestPaid,
-              principalPerPayment,
-              interestPerPayment,
-              completedInstallments,
-              paymentCoversInstallment
-            });
+              console.log('🔍 PaymentForm: Verificando cuota regular:', {
+                totalPrincipalPaid,
+                totalInterestPaid,
+                principalPerPayment,
+                interestPerPayment,
+                completedInstallments,
+                paymentCoversInstallment
+              });
+            }
           }
           
           if (paymentCoversInstallment) {
@@ -2517,6 +2530,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           finalNextPaymentDate = updatedLoanData.next_payment_date.split('T')[0];
         }
       }
+
+      // 🔥 CORRECCIÓN (INDEFINIDOS): el remaining_balance debe bajar también con pagos de interés (parciales o completos).
+      // Los triggers en algunos casos solo reducen con pagos a capital, así que lo fijamos desde el cliente.
+      if (selectedLoan.amortization_type === 'indefinite') {
+        const paidToInstallment = roundToTwoDecimals(data.amount || 0); // NO incluir mora aquí
+        if (paidToInstallment > 0) {
+          finalBalance = roundToTwoDecimals(Math.max(0, (remainingBalance || 0) - paidToInstallment));
+        } else {
+          finalBalance = roundToTwoDecimals(Math.max(0, remainingBalance || 0));
+        }
+
+        // Si es pago parcial de cuota regular, NO avanzar next_payment_date: debe seguir en la misma cuota.
+        if (!isFullPayment && !(nextPaymentInfo?.isCharge)) {
+          finalNextPaymentDate = paymentDueDate;
+        }
+      }
       
       console.log('🔍 PaymentForm: Valores obtenidos de BD (calculados por triggers con cargos):', {
         loanId: data.loan_id,
@@ -2535,6 +2564,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         status: finalBalance <= 0 ? 'paid' : 'active',
         paid_installments: updatedPaidInstallments,
       };
+
+      // Para indefinidos: forzar remaining_balance (y next_payment_date en pagos parciales) para no “saltar” de cuota.
+      if (selectedLoan.amortization_type === 'indefinite') {
+        loanUpdateData.remaining_balance = finalBalance;
+        if (!isFullPayment && !(nextPaymentInfo?.isCharge)) {
+          loanUpdateData.next_payment_date = paymentDueDate;
+        }
+      }
       
       // Solo incluir next_payment_date si los triggers no lo actualizaron
       if (fetchError || !updatedLoanData?.next_payment_date) {
