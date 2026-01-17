@@ -2298,7 +2298,7 @@ export const LoansModule = () => {
                               )}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
-                            {loan.amortization_type === 'indefinite' && (pendingInterestForIndefinite[loan.id] || 0) > 0 && (
+                            {((loan.amortization_type || '').toLowerCase() === 'indefinite') && (pendingInterestForIndefinite[loan.id] || 0) > 0 && (
                               <div className="text-xs text-red-500 mt-1">
                                 Balance + Interés Pendiente
                               </div>
@@ -2326,7 +2326,7 @@ export const LoansModule = () => {
                             <div className="text-sm text-purple-600 font-medium">Balance Total Pendiente</div>
                             {loan.status !== 'paid' && (
                               <div className="text-xs text-purple-500 mt-1">
-                                {loan.amortization_type === 'indefinite' 
+                                {((loan.amortization_type || '').toLowerCase() === 'indefinite')
                                   ? 'Balance + Interés + Mora'
                                   : 'Balance + Mora Actual'}
                               </div>

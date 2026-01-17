@@ -2530,9 +2530,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             .from('payments')
             .select('principal_amount, interest_amount, due_date')
             .eq('loan_id', loan.id);
+
+          const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
+          const amortizationTypeLower = ((loan as any).amortization_type || loan.amortization_type || '').toLowerCase();
+          const isIndefinite = amortizationTypeLower === 'indefinite';
           
           // Calcular capital pendiente desde TODAS las cuotas (considerando pagos parciales)
-          const capitalPendingFromInstallments = (updatedInstallments || []).reduce((sum, inst) => {
+          const principalPendingTotals = (updatedInstallments || []).reduce((acc, inst) => {
             const originalPrincipal = inst.principal_amount || 0;
             const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
                             Math.abs(originalPrincipal - (inst.total_amount || 0)) < 0.01;
@@ -2581,10 +2585,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             
             const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
             if (remainingPrincipal > 0.01) {
-              return sum + Math.round(remainingPrincipal);
+              acc.total = round2(acc.total + remainingPrincipal);
+              if (isCharge) acc.charges = round2(acc.charges + remainingPrincipal);
+              return acc;
             }
-            return sum;
-          }, 0);
+            return acc;
+          }, { total: 0, charges: 0 });
+
+          const capitalPendingFromInstallments = round2(principalPendingTotals.total);
+          const unpaidChargesAmountFromInstallments = round2(principalPendingTotals.charges);
           
           // Calcular interés pendiente considerando pagos parciales
           const interestPendingFromInstallments = (updatedInstallments || [])
@@ -2608,18 +2617,31 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               
               const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
               if (remainingInterest > 0.01) {
-                return sum + Math.round(remainingInterest);
+                return round2(sum + remainingInterest);
               }
               return sum;
             }, 0);
           
-          // Balance = Capital pendiente + Interés pendiente (valores redondeados)
-          const newBalance = Math.round(capitalPendingFromInstallments + interestPendingFromInstallments);
+          // Balance:
+          // - Plazo fijo: capital pendiente (incluye cargos) + interés pendiente
+          // - Indefinido: capital actual (loan.amount) + interés del período + cargos pendientes
+          const newBalance = isIndefinite
+            ? (() => {
+                const capitalNow = round2(loan.amount || 0);
+                const fallbackInterestPerPayment = round2((capitalNow * (loan.interest_rate || 0)) / 100);
+                const pendingInterest = round2(
+                  (interestPendingFromInstallments || 0) > 0.01
+                    ? (interestPendingFromInstallments || 0)
+                    : fallbackInterestPerPayment
+                );
+                return round2(capitalNow + pendingInterest + unpaidChargesAmountFromInstallments);
+              })()
+            : round2(capitalPendingFromInstallments + (interestPendingFromInstallments || 0));
 
           // Actualizar el balance del préstamo
           loanUpdates = {
             remaining_balance: newBalance,
-            term_months: nextInstallmentNumber, // Actualizar el número total de cuotas
+            ...(isIndefinite ? {} : { term_months: nextInstallmentNumber }), // no tocar term_months en indefinidos
           };
 
           console.log(`✅ Nueva cuota ${nextInstallmentNumber} creada con cargo de RD$${data.amount.toLocaleString()}`);
