@@ -1033,6 +1033,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Verificar que el loan sigue siendo el mismo
       if (selectedLoan?.id !== loanId) return;
       
+      const amortizationType = String(selectedLoan.amortization_type || '').toLowerCase();
+      const isIndefiniteLoan = amortizationType === 'indefinite';
+
       // Buscar la primera cuota/cargo con saldo pendiente (incluyendo parciales)
       let firstUnpaid = null;
       let remainingAmount = 0;
@@ -1099,6 +1102,46 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           remainingAmount = instRemainingAmount;
           isCharge = chargeCheck;
           break;
+        }
+      }
+
+      // ✅ CORRECCIÓN (INDEFINIDOS): si no existe una cuota regular en installments para la fecha actual,
+      // calcular el faltante usando pagos por due_date contra next_payment_date (sin depender de BD).
+      // Esto permite autollenar RD$10.00 cuando pagaste RD$15.00 de una cuota de RD$25.00.
+      if (isIndefiniteLoan && !firstUnpaid) {
+        const targetDue =
+          (selectedLoan.next_payment_date as any)?.split?.('T')?.[0] ||
+          (selectedLoan.next_payment_date as any) ||
+          null;
+
+        if (targetDue) {
+          const expectedInterest =
+            Number(selectedLoan.monthly_payment || 0) > 0
+              ? Number(selectedLoan.monthly_payment)
+              : (Number(selectedLoan.amount || 0) * (Number(selectedLoan.interest_rate || 0) / 100));
+
+          const paidInterestForDue = (allPaymentsForLoan || [])
+            .filter(p => {
+              const pDue = (p.due_date as any)?.split?.('T')?.[0] || (p.due_date as any) || null;
+              return pDue === targetDue;
+            })
+            .reduce((s, p) => s + (Number(p.interest_amount || 0) || 0), 0);
+
+          const fallbackRemaining = Math.max(0, expectedInterest - paidInterestForDue);
+
+          if (fallbackRemaining > 0.01) {
+            firstUnpaid = {
+              id: `indefinite-virtual-${loanId}-${targetDue}`,
+              due_date: targetDue,
+              installment_number: 1,
+              is_paid: false,
+              principal_amount: 0,
+              interest_amount: expectedInterest,
+              total_amount: expectedInterest
+            } as any;
+            remainingAmount = fallbackRemaining;
+            isCharge = false;
+          }
         }
       }
       
@@ -1296,29 +1339,18 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   // EFECTO CONSOLIDADO: Actualizar monto SOLO cuando los datos estén listos
   // Usa useMemo para calcular el monto correcto y evita renders innecesarios
   const calculatedAmount = useMemo(() => {
-    // NO renderizar con valores incorrectos - esperar hasta que los datos estén listos
-    if (!selectedLoan || !paymentStatusReady) {
-      return null; // null indica que aún no hay datos válidos
-    }
+    if (!selectedLoan) return null;
 
-    // CORRECCIÓN: Prioridad cronológica - si nextPaymentInfo (cargo o cuota regular) corresponde a lo que toca pagar, usar su remaining real.
-    const nextPaymentDateStr = selectedLoan.next_payment_date?.split('T')[0];
-    const nextPaymentInfoDateStr = nextPaymentInfo?.dueDate?.split('T')[0];
-    
-    // Si nextPaymentInfo tiene una fecha válida y no está "después" de next_payment_date (o es indefinido), tiene prioridad.
-    const shouldUseNextPaymentInfo =
-      !!nextPaymentInfo &&
-      nextPaymentInfo.amount > 0 &&
-      !!nextPaymentInfoDateStr &&
-      (!!selectedLoan?.amortization_type && String(selectedLoan.amortization_type).toLowerCase() === 'indefinite'
-        ? true
-        : (!!nextPaymentDateStr && nextPaymentInfoDateStr <= nextPaymentDateStr));
-
-    // Prioridad 1: usar remaining real (sirve para parciales: 15/25 => 10)
-    if (shouldUseNextPaymentInfo) {
+    // Prioridad 0: si nextPaymentInfo ya está listo (incluye parciales), usarlo aunque paymentStatus no esté listo aún
+    if (nextPaymentInfo && nextPaymentInfo.amount > 0) {
       return roundToTwoDecimals(nextPaymentInfo.amount);
     }
-    
+
+    // Si aún no está listo paymentStatus, no autollenar (evita parpadeos)
+    if (!paymentStatusReady) {
+      return null;
+    }
+
     // Prioridad 2: Usar paymentStatus (basado en next_payment_date)
     if (paymentStatus.currentPaymentRemaining > 0) {
       if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
