@@ -182,6 +182,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [loading, setLoading] = useState(false);
   const [currentLateFee, setCurrentLateFee] = useState(loan.current_late_fee || 0);
   const [freshRemainingBalance, setFreshRemainingBalance] = useState<number | null>(null);
+  const [isFetchingFreshBalance, setIsFetchingFreshBalance] = useState(false);
   const [showAgreementsDialog, setShowAgreementsDialog] = useState(false);
   const [agreements, setAgreements] = useState<any[]>([]);
   const [selectedAgreement, setSelectedAgreement] = useState<any | null>(null);
@@ -239,6 +240,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
     const fetchFreshRemainingBalance = async () => {
       try {
+        setIsFetchingFreshBalance(true);
+        // Evitar mostrar un valor stale al abrir: esperamos el valor de BD.
+        setFreshRemainingBalance(null);
         const { data, error } = await supabase
           .from('loans')
           .select('remaining_balance, monthly_payment, amount')
@@ -263,6 +267,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         }));
       } catch (e) {
         console.warn('LoanUpdateForm: no se pudo obtener remaining_balance actualizado, usando props.', e);
+      } finally {
+        if (!cancelled) setIsFetchingFreshBalance(false);
       }
     };
 
@@ -1227,11 +1233,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     
     // ✅ Fuente de verdad: remaining_balance en BD.
     // Esto evita “cargar lento”/parpadeos y errores por cálculos temporales en el cliente.
-    const currentBalance = round2(
-      (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
-        ? freshRemainingBalance
-        : (loan.remaining_balance ?? 0)
-    );
+    if (freshRemainingBalance === null || freshRemainingBalance === undefined) {
+      // Aún no hay balance de BD. No calcular preview para evitar mostrar valores erróneos.
+      return;
+    }
+    const currentBalance = round2(freshRemainingBalance);
     
     let newBalance = currentBalance;
     let newPayment = loan.monthly_payment;
@@ -5143,11 +5149,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">Balance Actual:</span>
-                      <span className="font-semibold">RD${round2(
-                        (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
-                          ? freshRemainingBalance
-                          : (loan.remaining_balance ?? 0)
-                      ).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <span className="font-semibold">
+                        {isFetchingFreshBalance || freshRemainingBalance === null || freshRemainingBalance === undefined
+                          ? 'Cargando...'
+                          : `RD$${round2(freshRemainingBalance).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                      </span>
                     </div>
                     
                     {form.watch('update_type') === 'add_charge' && form.watch('amount') && (
