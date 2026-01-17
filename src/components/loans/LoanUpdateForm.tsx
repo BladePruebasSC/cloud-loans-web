@@ -344,7 +344,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // Para préstamos indefinidos, el capital pendiente debe incluir el capital base + cargos pendientes
           if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
             // 1) Cargos pendientes (principal puro)
-            const unpaidChargesAmount = round2(
+            const unpaidChargesAmountRaw = round2(
               installments
                 .filter(inst => {
                   const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 &&
@@ -354,10 +354,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 .reduce((sum, inst) => sum + Number((inst.total_amount ?? inst.amount ?? inst.principal_amount) || 0), 0)
             );
 
-            // 2) Capital pendiente = capital base (loan.amount) + cargos pendientes
-            capitalPending = round2(Number(loan.amount || 0) + unpaidChargesAmount);
-            
-            // 3) Interés pendiente: usar remaining_balance (BD) como fuente de verdad cuando exista
+            // 2) Interés pendiente: usar remaining_balance (BD) como fuente de verdad cuando exista
             const remainingFromDb =
               (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
                 ? freshRemainingBalance
@@ -366,11 +363,30 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     : null);
 
             if (remainingFromDb !== null) {
-              // remaining_balance = capital (base + cargos) + interés + mora (mora se suma aparte en lateFeePending)
+              // remaining_balance = capital + cargos + interés (mora se suma aparte en lateFeePending)
+              // IMPORTANTE: si por algún motivo la lista de cuotas contiene “cargos” inconsistentes
+              // (ej. de otro estado/trigger) y el remaining_balance de BD no los refleja,
+              // priorizamos BD para evitar inflar el capital pendiente.
+              const baseCapital = round2(Number(loan.amount || 0));
+              const maxNonPrincipal = round2(Math.max(0, Number(remainingFromDb) - baseCapital));
+
+              // Si los cargos detectados exceden lo que “cabe” en remaining_balance - capital base,
+              // asumimos que están stale/mal clasificados y los ignoramos.
+              const unpaidChargesAmount =
+                unpaidChargesAmountRaw > (maxNonPrincipal + 0.01)
+                  ? 0
+                  : unpaidChargesAmountRaw;
+
+              // 3) Capital pendiente = capital base + cargos pendientes (si aplican)
+              capitalPending = round2(baseCapital + unpaidChargesAmount);
+
+              // 4) Interés pendiente = restante - (capital + cargos)
               interestPending = round2(Math.max(0, Number(remainingFromDb) - capitalPending));
             } else {
               // Fallback: calcular interés pendiente dinámicamente (asegurando que siempre haya 1 cuota pendiente)
               const interestPerPayment = (Number(loan.amount || 0) * Number(loan.interest_rate || 0)) / 100;
+              // En fallback, los cargos se consideran capital pendiente si existen
+              capitalPending = round2(Number(loan.amount || 0) + unpaidChargesAmountRaw);
 
               if (loan.start_date && interestPerPayment > 0) {
                 const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
