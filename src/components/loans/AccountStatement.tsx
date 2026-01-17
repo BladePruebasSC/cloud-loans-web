@@ -1198,6 +1198,76 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
     }
 
+    // ✅ INDEFINIDOS: La tabla debe incluir también CARGOS.
+    // El `installment_number` puede repetirse (ej: #2/X cargo y #2/X interés), así que NO usamos Map por installment_number.
+    // Construimos el schedule directamente desde installmentsData (igual que "Ver Cuotas") y damos una key única.
+    if (amortizationType === 'indefinite') {
+      const round2 = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 100) / 100;
+      const remainingBalanceNow = round2(Number(loanData.remaining_balance ?? principal));
+
+      const isCharge = (inst: any) => {
+        const interest = Math.abs(Number(inst?.interest_amount || 0));
+        const principalAmt = Number(inst?.principal_amount || 0);
+        const total = Number(inst?.total_amount ?? inst?.amount ?? principalAmt);
+        return interest < 0.01 && principalAmt > 0 && Math.abs(principalAmt - total) < 0.01;
+      };
+
+      const normalized = (installmentsData || []).map((inst: any, idx: number) => {
+        const total = round2(Number(inst?.total_amount ?? inst?.amount ?? 0));
+        const principalPayment = isCharge(inst) ? round2(Number(inst?.principal_amount ?? total)) : round2(Number(inst?.principal_amount || 0));
+        const interestPayment = isCharge(inst) ? 0 : round2(Number(inst?.interest_amount ?? inst?.amount ?? 0));
+        const monthlyPayment = total > 0 ? total : round2(principalPayment + interestPayment);
+
+        const dueDate = (inst?.due_date as string | undefined)?.split?.('T')?.[0] || (inst?.due_date as string | undefined) || null;
+        const paidDate = (inst?.paid_date as string | undefined)?.split?.('T')?.[0] || (inst?.paid_date as string | undefined) || null;
+
+        const paid = !!inst?.is_paid;
+        const settled = !!inst?.is_settled;
+
+        const remainingPrincipal = paid ? 0 : principalPayment;
+        const remainingInterest = paid ? 0 : interestPayment;
+        const remainingPayment = round2(remainingPrincipal + remainingInterest);
+
+        const displayInstallmentNumber = Number(inst?.installment_number) || (idx + 1);
+
+        return {
+          // display
+          installment: `${displayInstallmentNumber}/X`,
+          // unique key for React (avoid collapse when installment repeats)
+          rowKey: String(inst?.id || `${displayInstallmentNumber}-${isCharge(inst) ? 'charge' : 'regular'}-${idx}`),
+          dueDate: dueDate || (loanData?.start_date?.split?.('T')?.[0] || null),
+          monthlyPayment,
+          principalPayment,
+          interestPayment,
+          principalPaid: paid ? principalPayment : 0,
+          interestPaid: paid ? interestPayment : 0,
+          remainingPrincipal,
+          remainingInterest,
+          remainingPayment,
+          remainingBalance: remainingBalanceNow,
+          isPaid: paid,
+          isPartial: false,
+          isSettled: settled && !paid,
+          paidDate,
+          hasRealData: true,
+          paymentStatus: paid ? 'paid' : 'pending',
+          actualPaymentAmount: paid ? monthlyPayment : 0
+        };
+      });
+
+      const sorted = normalized.sort((a, b) => {
+        if (a.dueDate && b.dueDate) {
+          const da = new Date(a.dueDate).getTime();
+          const db = new Date(b.dueDate).getTime();
+          if (da !== db) return da - db;
+        }
+        // secondary: keep stable by rowKey
+        return String(a.rowKey).localeCompare(String(b.rowKey));
+      });
+
+      return sorted;
+    }
+
     // Parsear la fecha de inicio correctamente en zona horaria de Santo Domingo
     const startDateStrRaw = (loanData.start_date as string | undefined)?.split?.('T')?.[0]; // Obtener solo la parte de fecha
     let startDate: Date;
@@ -1928,7 +1998,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
 
       schedule.push({
-        installment: isIndefinite ? '1/X' : i,
+        installment: isIndefinite ? `${i}/X` : i,
         dueDate: dueDate.toISOString().split('T')[0],
         monthlyPayment: displayAmount, // Mostrar monto real pagado si existe, sino el monto de la cuota
         principalPayment: originalPrincipal,
@@ -2663,7 +2733,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                           return index < limit;
                         })
                         .map((installment) => (
-                          <tr key={installment.installment} className={`border-b hover:bg-gray-50 ${(installment as any).isSettled ? 'bg-blue-50' : installment.isPaid ? 'bg-green-50' : ''}`}>
+                          <tr key={(installment as any).rowKey || installment.installment} className={`border-b hover:bg-gray-50 ${(installment as any).isSettled ? 'bg-blue-50' : installment.isPaid ? 'bg-green-50' : ''}`}>
                             <td className="p-3">
                               <div className="flex items-center gap-2">
                                 <span className="font-medium">{installment.installment}</span>
