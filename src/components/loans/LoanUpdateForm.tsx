@@ -176,8 +176,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   onUpdate,
   editOnly = false
 }) => {
+  const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
+
   const [loading, setLoading] = useState(false);
   const [currentLateFee, setCurrentLateFee] = useState(loan.current_late_fee || 0);
+  const [freshRemainingBalance, setFreshRemainingBalance] = useState<number | null>(null);
   const [showAgreementsDialog, setShowAgreementsDialog] = useState(false);
   const [agreements, setAgreements] = useState<any[]>([]);
   const [selectedAgreement, setSelectedAgreement] = useState<any | null>(null);
@@ -227,6 +230,47 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       payment_method: 'cash',
     },
   });
+
+  // Al abrir, traer remaining_balance desde BD para que la Vista Previa muestre el valor correcto de inmediato.
+  useEffect(() => {
+    if (!isOpen || !loan?.id) return;
+    let cancelled = false;
+
+    const fetchFreshRemainingBalance = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('loans')
+          .select('remaining_balance, monthly_payment, amount')
+          .eq('id', loan.id)
+          .single();
+
+        if (error) throw error;
+        if (cancelled) return;
+
+        const rb = round2(Number((data as any)?.remaining_balance ?? loan.remaining_balance ?? (data as any)?.amount ?? loan.amount ?? 0));
+        setFreshRemainingBalance(rb);
+
+        const updateTypeNow = form.getValues('update_type');
+        const amountNow = Number(form.getValues('amount') || 0);
+        const newBalanceNow = updateTypeNow === 'add_charge' && amountNow > 0 ? round2(rb + amountNow) : rb;
+
+        setCalculatedValues(prev => ({
+          ...prev,
+          currentBalance: rb,
+          newBalance: newBalanceNow,
+          newPayment: Number((data as any)?.monthly_payment ?? prev.newPayment) || prev.newPayment,
+        }));
+      } catch (e) {
+        console.warn('LoanUpdateForm: no se pudo obtener remaining_balance actualizado, usando props.', e);
+      }
+    };
+
+    fetchFreshRemainingBalance();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, loan?.id]);
 
   // Obtener cuotas del préstamo
   useEffect(() => {
@@ -1241,9 +1285,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     // CORRECCIÓN: Usar valor de BD directamente (es más confiable que el cálculo dinámico)
     // Si el balance ya fue calculado correctamente, usarlo para evitar mostrar un valor incorrecto
     // Solo recalcular si los datos necesarios están disponibles y no se ha calculado previamente
-    let currentBalance = (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-      ? loan.remaining_balance
-      : (balanceCalculated ? calculatedValues.currentBalance : loan.remaining_balance);
+    let currentBalance = (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
+      ? freshRemainingBalance
+      : ((loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+          ? loan.remaining_balance
+          : (balanceCalculated ? calculatedValues.currentBalance : loan.remaining_balance));
     
     // Solo recalcular el balance si los datos necesarios están disponibles
     // Si balanceCalculated es true, ya tenemos el balance correcto y no necesitamos recalcular
@@ -1255,17 +1301,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
         return isCharge && !inst.is_paid;
       });
-      const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + Math.round(inst.total_amount || 0), 0);
+      const unpaidChargesAmount = round2(unpaidCharges.reduce((sum, inst) => sum + round2(inst.total_amount || 0), 0));
       
       if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
         // Para préstamos indefinidos: usar pendingCapital y pendingInterestForIndefinite
-        // IMPORTANTE: Redondear cada componente antes de sumar
-        if (pendingCapital > 0) {
-          currentBalance = Math.round(pendingCapital) + Math.round(pendingInterestForIndefinite) + unpaidChargesAmount;
-        } else {
-          // Fallback si pendingCapital no está calculado
-          currentBalance = Math.round(loan.amount) + Math.round(pendingInterestForIndefinite) + unpaidChargesAmount;
-        }
+        const capitalNow = pendingCapital > 0 ? pendingCapital : (loan.amount || 0);
+        currentBalance = round2(capitalNow + (pendingInterestForIndefinite || 0) + unpaidChargesAmount);
       } else {
         // Para préstamos con plazo fijo: calcular capital pendiente + interés pendiente
         if (pendingCapital > 0) {
@@ -1273,12 +1314,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           const unpaidInstallments = installments.filter(inst => !inst.is_paid && 
             !(Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01));
           // IMPORTANTE: Redondear cada valor individual antes de sumar para evitar diferencias de redondeo
-          const interestPendingFromInstallments = unpaidInstallments.reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+          const interestPendingFromInstallments = round2(unpaidInstallments.reduce((sum, inst) => sum + round2(inst.interest_amount || 0), 0));
           
           // Balance actual = Capital pendiente + Interés pendiente
           // IMPORTANTE: El capital pendiente ya incluye los cargos pendientes cuando se calcula desde las cuotas
           // IMPORTANTE: Redondear cada componente antes de sumar
-          currentBalance = Math.round(pendingCapital) + interestPendingFromInstallments;
+          currentBalance = round2((pendingCapital || 0) + interestPendingFromInstallments);
         } else {
           // Fallback: calcular usando installments disponibles
           // Si pendingCapital no está disponible, calcular capital pendiente desde installments
@@ -5281,15 +5322,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-600">Balance Actual:</span>
-                      <span className="font-semibold">RD${Math.round((
-                        (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-                          ? loan.remaining_balance
-                          : (calculatedValues.currentBalance || (
-                              (loan.amortization_type || '').toLowerCase() === 'indefinite' 
-                                ? loan.amount + pendingInterestForIndefinite
-                                : loan.remaining_balance
-                            ))
-                      )).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <span className="font-semibold">RD${(() => {
+                        const base =
+                          (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
+                            ? freshRemainingBalance
+                            : ((loan.remaining_balance !== null && loan.remaining_balance !== undefined)
+                                ? loan.remaining_balance
+                                : (calculatedValues.currentBalance || (
+                                    (loan.amortization_type || '').toLowerCase() === 'indefinite'
+                                      ? (loan.amount || 0) + (pendingInterestForIndefinite || 0)
+                                      : (loan.amount || 0)
+                                  )));
+                        return round2(Number(base || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                      })()}</span>
                     </div>
                     
                     {form.watch('update_type') === 'add_charge' && form.watch('amount') && (
