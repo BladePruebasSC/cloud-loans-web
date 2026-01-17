@@ -91,6 +91,27 @@ interface Movement {
   user_name?: string;
 }
 
+const getUnitLabelEs = (unitType: string | null | undefined, quantity: number): string => {
+  const unit = String(unitType || 'unit').toLowerCase();
+  const q = Number(quantity || 0);
+  const isPlural = Math.abs(q) !== 1;
+
+  switch (unit) {
+    case 'unit':
+      return isPlural ? 'unidades' : 'unidad';
+    case 'kg':
+    case 'kilogram':
+    case 'kilogramo':
+      return 'kg';
+    case 'liter':
+    case 'litro':
+      return isPlural ? 'litros' : 'litro';
+    default:
+      // Si viene un tipo desconocido, por lo menos lo mostramos tal cual (pero en minúscula)
+      return unit;
+  }
+};
+
 const InventoryModule = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2554,7 +2575,7 @@ const InventoryModule = () => {
                               <span className="font-medium">Código:</span> {product.sku || 'N/A'}
                             </div>
                             <div>
-                              <span className="font-medium">Stock:</span> {product.current_stock} {product.unit_type}
+                              <span className="font-medium">Stock:</span> {product.current_stock} {getUnitLabelEs(product.unit_type, product.current_stock)}
                             </div>
                             <div>
                               <span className="font-medium">Precio Compra:</span> ${product.purchase_price}
