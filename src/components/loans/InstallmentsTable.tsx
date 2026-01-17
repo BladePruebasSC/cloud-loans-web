@@ -651,8 +651,8 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             }
           }
 
-          // SEGUNDO: En indefinidos, mostrar cuotas regulares basadas en los PAGOS DE INTERÉS (no colapsarlas por due_date).
-          // Ej: si hay pagos de RD$50 y RD$25, se muestran como 2 cuotas pagadas (50 y 25) y una cuota futura (25).
+          // SEGUNDO: En indefinidos, mostrar cuotas regulares basadas en pagos de interés,
+          // PERO si hay pagos parciales para el MISMO due_date, mostrar el faltante en esa misma cuota (sin “saltar” a la siguiente).
           const round2 = (v: number) => Math.round(v * 100) / 100;
           const interestPayments = sortedPayments.filter(p => {
             if (assignedPaymentIds.has(p.id)) return false; // ya fue asignado a un cargo
@@ -660,30 +660,78 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           });
           const interestPerPayment = round2(((loanInfo?.amount || 0) * (loanInfo?.interest_rate || 0)) / 100);
           const nowIso = new Date().toISOString();
-          
-          const regularFromPayments = interestPayments.map((p, idx) => {
+
+          // Agrupar pagos de interés por due_date (manteniendo orden por fecha de pago)
+          const paymentsByDueDate = new Map<string, any[]>();
+          for (const p of interestPayments) {
             const due = (p.due_date as string)?.split('T')[0] || (p.due_date as string) || null;
-            const paidDate = p.payment_date?.split('T')[0] || p.payment_date || null;
-            const paidInterest = round2(Number(p.interest_amount || p.amount || 0));
-            return {
-              id: `interest-payment-${p.id}`,
-              loan_id: loanId,
-              installment_number: idx + 1,
-              due_date: due,
-              amount: paidInterest,
-              principal_amount: 0,
-              interest_amount: paidInterest,
-              late_fee_paid: 0,
-              is_paid: true,
-              is_settled: false,
-              paid_date: paidDate,
-              created_at: nowIso,
-              updated_at: nowIso,
-              total_amount: paidInterest
-            } as any;
-          });
+            if (!due) continue;
+            const arr = paymentsByDueDate.get(due) || [];
+            arr.push(p);
+            paymentsByDueDate.set(due, arr);
+          }
+
+          const dueDatesSorted = Array.from(paymentsByDueDate.keys()).sort((a, b) => a.localeCompare(b));
+
+          const regularFromPayments: any[] = [];
+          let hasAnyPendingFromPartial = false;
+
+          for (let dueIdx = 0; dueIdx < dueDatesSorted.length; dueIdx++) {
+            const due = dueDatesSorted[dueIdx];
+            const group = paymentsByDueDate.get(due) || [];
+            const installmentNumber = dueIdx + 1;
+
+            // Total pagado de interés para este due_date
+            const paidSum = round2(group.reduce((s, gp) => s + (Number(gp.interest_amount || gp.amount || 0) || 0), 0));
+            // Monto esperado: mínimo el interés “actual” y, si históricamente se pagó más, respetar ese histórico
+            const expected = round2(Math.max(interestPerPayment, paidSum));
+            const remaining = round2(Math.max(0, expected - paidSum));
+
+            // Crear filas “pagadas” por cada pago (para preservar recibos)
+            for (const p of group) {
+              const paidDate = p.payment_date?.split('T')[0] || p.payment_date || null;
+              const paidInterest = round2(Number(p.interest_amount || p.amount || 0));
+              regularFromPayments.push({
+                id: `interest-payment-${p.id}`,
+                loan_id: loanId,
+                installment_number: installmentNumber,
+                due_date: due,
+                amount: paidInterest,
+                principal_amount: 0,
+                interest_amount: paidInterest,
+                late_fee_paid: 0,
+                is_paid: true,
+                is_settled: false,
+                paid_date: paidDate,
+                created_at: nowIso,
+                updated_at: nowIso,
+                total_amount: paidInterest
+              });
+            }
+
+            // Si quedó pendiente (pago parcial), agregar fila pendiente para completar la MISMA cuota
+            if (remaining > 0.01) {
+              hasAnyPendingFromPartial = true;
+              regularFromPayments.push({
+                id: `interest-pending-${loanId}-${due}`,
+                loan_id: loanId,
+                installment_number: installmentNumber,
+                due_date: due,
+                amount: remaining,
+                principal_amount: 0,
+                interest_amount: remaining,
+                late_fee_paid: 0,
+                is_paid: false,
+                is_settled: false,
+                paid_date: null,
+                created_at: nowIso,
+                updated_at: nowIso,
+                total_amount: remaining
+              });
+            }
+          }
           
-          // Cuota futura (normal) — siempre mostrar al menos 1
+          // Cuota futura (normal) — mostrar 1 SOLO si no hay pendiente por pago parcial
           const computeDueDateFromStart = (startDateStr: string, frequency: string, periodsToAdd: number) => {
             const base = startDateStr.split('T')[0];
             const [y, m, d] = base.split('-').map(Number);
@@ -723,31 +771,34 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               ? computeDueDateFromStart(
                   String(loanInfo.start_date),
                   String(loanInfo.payment_frequency || 'monthly'),
-                  regularFromPayments.length + 1
+                  // Para el fallback por start_date, la “siguiente cuota” es el siguiente índice de due_date (no la cantidad de pagos)
+                  dueDatesSorted.length + 1
                 )
               : null);
-          const pendingRegular = {
-            id: `interest-pending-${loanId}`,
-            loan_id: loanId,
-            installment_number: regularFromPayments.length + 1,
-            due_date: nextDue,
-            amount: interestPerPayment,
-            principal_amount: 0,
-            interest_amount: interestPerPayment,
-            late_fee_paid: 0,
-            is_paid: false,
-            is_settled: false,
-            paid_date: null,
-            created_at: nowIso,
-            updated_at: nowIso,
-            total_amount: interestPerPayment
-          } as any;
+          const pendingRegular = !hasAnyPendingFromPartial
+            ? ({
+                id: `interest-pending-${loanId}`,
+                loan_id: loanId,
+                installment_number: dueDatesSorted.length + 1,
+                due_date: nextDue,
+                amount: interestPerPayment,
+                principal_amount: 0,
+                interest_amount: interestPerPayment,
+                late_fee_paid: 0,
+                is_paid: false,
+                is_settled: false,
+                paid_date: null,
+                created_at: nowIso,
+                updated_at: nowIso,
+                total_amount: interestPerPayment
+              } as any)
+            : null;
           
           // En UI: cargos (si existen) + cuotas regulares desde pagos + 1 cuota futura
           finalInstallmentsForUI = [
             ...chargeInstallments,
             ...regularFromPayments,
-            pendingRegular
+            ...(pendingRegular ? [pendingRegular] : [])
           ];
         } else {
           // Para préstamos no indefinidos, procesar primero cargos y luego cuotas regulares

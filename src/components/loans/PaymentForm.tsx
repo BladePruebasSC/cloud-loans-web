@@ -811,7 +811,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Encontrar la próxima cuota pendiente de pago para mostrar sus días de atraso
       console.log('🔍 PaymentForm: Desglose completo para encontrar próxima cuota:', breakdown.breakdown);
       
-      const nextUnpaidInstallment = breakdown.breakdown.find(item => !item.isPaid && item.lateFee > 0);
+      // Buscar la próxima cuota pendiente aunque NO tenga mora (lateFee puede ser 0).
+      // El filtro anterior (!isPaid && lateFee > 0) devolvía undefined en préstamos al día.
+      const nextUnpaidInstallment = breakdown.breakdown.find(item => !item.isPaid);
       console.log('🔍 PaymentForm: Próxima cuota pendiente encontrada:', nextUnpaidInstallment);
       
       const daysOverdueForNextUnpaid = nextUnpaidInstallment ? nextUnpaidInstallment.daysOverdue : 0;
@@ -1041,7 +1043,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         const chargeCheck = Math.abs(inst.interest_amount || 0) < 0.01 && 
                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
         
-        let instRemainingAmount = inst.total_amount || 0;
+        const instTotalAmount =
+          (inst.total_amount ?? ((inst.principal_amount || 0) + (inst.interest_amount || 0))) || 0;
+        let instRemainingAmount = instTotalAmount;
         
         // Calcular cuánto se ha pagado de esta cuota/cargo
         if (chargeCheck && instDueDate) {
@@ -1073,7 +1077,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             totalPaidForCharge = Math.min(totalPaidForDate, inst.total_amount || 0);
           }
           
-          instRemainingAmount = Math.max(0, inst.total_amount - totalPaidForCharge);
+          instRemainingAmount = Math.max(0, instTotalAmount - totalPaidForCharge);
         } else if (instDueDate) {
           // Es una cuota regular: buscar pagos asignados a esta cuota
           const paymentsForThisInstallment = (allPaymentsForLoan || []).filter(p => {
@@ -1086,7 +1090,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           
           // Si se pagó menos del total, hay saldo pendiente
           const totalPaid = principalPaid + interestPaid;
-          instRemainingAmount = Math.max(0, (inst.total_amount || 0) - totalPaid);
+          instRemainingAmount = Math.max(0, instTotalAmount - totalPaid);
         }
         
         // Si hay saldo pendiente, esta es la primera cuota a pagar
@@ -1175,7 +1179,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         // remainingAmount ya está calculado arriba en el loop
         console.log('🔍 PaymentForm: Cuota pendiente/parcial encontrada:', {
           installmentNumber: firstUnpaid.installment_number,
-          totalAmount: firstUnpaid.total_amount,
+          totalAmount: (firstUnpaid.total_amount ?? ((firstUnpaid.principal_amount || 0) + (firstUnpaid.interest_amount || 0))) || 0,
           remainingAmount,
           dueDate: firstUnpaid.due_date,
           isPaid: firstUnpaid.is_paid,
@@ -1297,33 +1301,35 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       return null; // null indica que aún no hay datos válidos
     }
 
-    // CORRECCIÓN: Prioridad cronológica - si nextPaymentInfo es un cargo que va antes o igual a next_payment_date, usarlo
+    // CORRECCIÓN: Prioridad cronológica - si nextPaymentInfo (cargo o cuota regular) corresponde a lo que toca pagar, usar su remaining real.
     const nextPaymentDateStr = selectedLoan.next_payment_date?.split('T')[0];
     const nextPaymentInfoDateStr = nextPaymentInfo?.dueDate?.split('T')[0];
     
-    // Si nextPaymentInfo es un cargo y su fecha es menor o igual a next_payment_date, tiene prioridad
-    const isChargeBeforeOrEqual = nextPaymentInfo?.isCharge && 
-                                   nextPaymentInfo.amount > 0 && 
-                                   nextPaymentInfoDateStr && 
-                                   nextPaymentDateStr &&
-                                   nextPaymentInfoDateStr <= nextPaymentDateStr;
+    // Si nextPaymentInfo tiene una fecha válida y no está "después" de next_payment_date (o es indefinido), tiene prioridad.
+    const shouldUseNextPaymentInfo =
+      !!nextPaymentInfo &&
+      nextPaymentInfo.amount > 0 &&
+      !!nextPaymentInfoDateStr &&
+      (!!selectedLoan?.amortization_type && String(selectedLoan.amortization_type).toLowerCase() === 'indefinite'
+        ? true
+        : (!!nextPaymentDateStr && nextPaymentInfoDateStr <= nextPaymentDateStr));
 
-    // Prioridad 1: Si nextPaymentInfo es un cargo Y va antes o es igual a next_payment_date
-    if (isChargeBeforeOrEqual) {
-      return Math.round(nextPaymentInfo.amount);
+    // Prioridad 1: usar remaining real (sirve para parciales: 15/25 => 10)
+    if (shouldUseNextPaymentInfo) {
+      return roundToTwoDecimals(nextPaymentInfo.amount);
     }
     
     // Prioridad 2: Usar paymentStatus (basado en next_payment_date)
     if (paymentStatus.currentPaymentRemaining > 0) {
       if (paymentStatus.currentPaymentRemaining < selectedLoan.monthly_payment) {
-        return Math.round(paymentStatus.currentPaymentRemaining);
+        return roundToTwoDecimals(paymentStatus.currentPaymentRemaining);
       } else {
-        return Math.round(selectedLoan.monthly_payment);
+        return roundToTwoDecimals(selectedLoan.monthly_payment);
       }
     }
 
     // Fallback: Si no hay paymentStatus, usar monthly_payment
-    return selectedLoan.monthly_payment ? Math.round(selectedLoan.monthly_payment) : null;
+    return selectedLoan.monthly_payment ? roundToTwoDecimals(selectedLoan.monthly_payment) : null;
   }, [selectedLoan, paymentStatusReady, paymentStatus.currentPaymentRemaining, nextPaymentInfo]);
 
   // Actualizar formulario y estado SOLO cuando calculatedAmount cambie y sea válido

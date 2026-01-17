@@ -79,7 +79,10 @@ export const getLateFeeBreakdownFromInstallments = async (
       console.error('Error obteniendo pagos:', paymentsError);
     }
     
-    // Asignar pagos a cuotas: primero por due_date, luego secuencialmente
+    const amortizationType = String(loan.amortization_type || '').toLowerCase();
+    const isIndefinite = amortizationType === 'indefinite';
+
+    // Asignar pagos a cuotas: primero por due_date, luego secuencialmente (NO secuencial en indefinidos)
     const paymentToInstallmentMap = new Map<string, number>();
     const assignedPaymentIds = new Set<string>();
     
@@ -108,16 +111,19 @@ export const getLateFeeBreakdownFromInstallments = async (
       }
       
       // SEGUNDO: Asignar pagos restantes (sin due_date o sin coincidencia) secuencialmente
-      let paymentIndex = 0;
-      for (let i = 0; i < installments.length && paymentIndex < sortedPayments.length; i++) {
-        const installment = installments[i];
-        const payment = sortedPayments[paymentIndex];
-        
-        if (payment && !assignedPaymentIds.has(payment.id)) {
-          assignedPaymentIds.add(payment.id);
-          paymentToInstallmentMap.set(payment.id, installment.installment_number);
-          paymentIndex++;
-          console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación secuencial - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
+      // IMPORTANTE: En préstamos indefinidos NO hacemos asignación secuencial, porque rompería el “pago parcial” (saltaría de cuota).
+      if (!isIndefinite) {
+        let paymentIndex = 0;
+        for (let i = 0; i < installments.length && paymentIndex < sortedPayments.length; i++) {
+          const installment = installments[i];
+          const payment = sortedPayments[paymentIndex];
+          
+          if (payment && !assignedPaymentIds.has(payment.id)) {
+            assignedPaymentIds.add(payment.id);
+            paymentToInstallmentMap.set(payment.id, installment.installment_number);
+            paymentIndex++;
+            console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación secuencial - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
+          }
         }
       }
     }
@@ -143,15 +149,20 @@ export const getLateFeeBreakdownFromInstallments = async (
       
       // Obtener el monto total de la cuota
       const installmentTotalAmount = installment.total_amount || (installment.principal_amount || 0) + (installment.interest_amount || 0);
+      // En indefinidos, el monto “histórico” pagado puede ser mayor que el total_amount actual (p.ej. tras abono a capital).
+      // Para evitar casos como “pagado 75 vs total 25”, tomamos el esperado como el máximo entre ambos.
+      const effectiveInstallmentTotalAmount = isIndefinite
+        ? Math.max(installmentTotalAmount || 0, totalPaidForInstallment || 0)
+        : installmentTotalAmount;
       
       // Determinar si está realmente pagada: el total pagado debe ser >= monto total
       // Ignorar installment.is_paid de la BD y calcular basándose en los pagos reales
-      const isActuallyPaid = totalPaidForInstallment >= installmentTotalAmount - 0.01;
+      const isActuallyPaid = totalPaidForInstallment >= effectiveInstallmentTotalAmount - 0.01;
       
       if (isActuallyPaid && totalPaidForInstallment > 0) {
-        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} marcada como pagada - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${installmentTotalAmount}`);
-      } else if (totalPaidForInstallment > 0 && totalPaidForInstallment < installmentTotalAmount) {
-        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} con pago parcial - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${installmentTotalAmount}, Pendiente: RD$${installmentTotalAmount - totalPaidForInstallment}`);
+        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} marcada como pagada - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${effectiveInstallmentTotalAmount}`);
+      } else if (totalPaidForInstallment > 0 && totalPaidForInstallment < effectiveInstallmentTotalAmount) {
+        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} con pago parcial - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${effectiveInstallmentTotalAmount}, Pendiente: RD$${effectiveInstallmentTotalAmount - totalPaidForInstallment}`);
       }
       
       console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} - Estado final:`, {

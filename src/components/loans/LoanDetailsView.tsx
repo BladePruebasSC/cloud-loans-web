@@ -252,74 +252,57 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         return;
       }
 
-      // Calcular interés por cuota para préstamos indefinidos
-      const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+      // CORRECCIÓN (INDEFINIDOS): El interés pendiente debe considerar pagos parciales por due_date.
+      // Ej: cuota 500, pagado 250 => pendiente 250 (no 500 completo).
+      const interestByDate = new Map<string, number>();
+      const interestPaidByDate = new Map<string, number>();
 
-      // SIEMPRE calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
-      const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
-      const startDate = new Date(startYear, startMonth - 1, startDay);
-      const currentDate = getCurrentDateInSantoDomingo();
+      const isCharge = (inst: any) => {
+        return Math.abs(inst?.interest_amount || 0) < 0.01 &&
+          Math.abs((inst?.principal_amount || 0) - (inst?.total_amount || 0)) < 0.01;
+      };
 
-      // Calcular meses transcurridos desde el inicio
-      const monthsElapsed = Math.max(0, 
-        (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
-        (currentDate.getMonth() - startDate.getMonth())
-      );
-
-      console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Cálculo dinámico', {
-        loanId: loan.id,
-        startDate: loan.start_date,
-        currentDate: currentDate.toISOString().split('T')[0],
-        monthsElapsed
-      });
-
-      // Calcular cuántas cuotas se han pagado
-      let paidCount = 0;
-
-      // Primero, intentar contar desde las cuotas en la BD
-      if (installments && installments.length > 0) {
-        paidCount = installments.filter((inst: any) => inst.is_paid).length;
-        console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Cuotas pagadas desde BD', {
-          totalInBD: installments.length,
-          paidInBD: paidCount
-        });
+      // 1) Esperado por fecha desde installments (solo cuotas regulares)
+      for (const inst of (installments || [])) {
+        if (!inst?.due_date || isCharge(inst)) continue;
+        const due = String(inst.due_date).split('T')[0];
+        const expected = Number(inst.interest_amount || (inst.total_amount || 0)) || 0;
+        if (!due || expected <= 0) continue;
+        interestByDate.set(due, (interestByDate.get(due) || 0) + expected);
       }
 
-      // También verificar pagos para calcular cuántas cuotas de interés se han pagado
-      if (payments && payments.length > 0) {
-        const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
-        const paidFromPayments = Math.floor(totalInterestPaid / interestPerPayment);
-
-        // Usar el mayor entre las cuotas pagadas en BD y las calculadas desde pagos
-        paidCount = Math.max(paidCount, paidFromPayments);
-
-        console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Cuotas pagadas desde pagos', {
-          totalInterestPaid,
-          paidFromPayments,
-          finalPaidCount: paidCount
-        });
+      // 2) Pagado por fecha desde payments
+      for (const p of (payments || [])) {
+        const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
+        if (!due) continue;
+        const paidInterest = Number(p.interest_amount || 0) || 0;
+        if (paidInterest <= 0) continue;
+        interestPaidByDate.set(due, (interestPaidByDate.get(due) || 0) + paidInterest);
       }
 
-      // CORRECCIÓN: El total esperado debe ser al menos (paidCount + 1) para asegurar que siempre hay 1 cuota pendiente
-      // También debe ser al menos (monthsElapsed + 1) para reflejar el tiempo transcurrido
-      const totalExpectedInstallments = Math.max(paidCount + 1, monthsElapsed + 1);
+      // 3) Asegurar que exista al menos la cuota actual (next_payment_date) aunque no haya installments aún
+      const nextDue = loan.next_payment_date ? String(loan.next_payment_date).split('T')[0] : null;
+      if (nextDue && !interestByDate.has(nextDue)) {
+        const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+        if (interestPerPayment > 0) {
+          interestByDate.set(nextDue, interestPerPayment);
+        }
+      }
 
-      // Cuotas pendientes = total esperadas - pagadas (siempre al menos 1)
-      const unpaidCount = Math.max(1, totalExpectedInstallments - paidCount);
+      // 4) Pendiente total = sum(max(0, expected - paid)) por fecha
+      let pending = 0;
+      for (const [due, expected] of interestByDate.entries()) {
+        const paid = interestPaidByDate.get(due) || 0;
+        pending += Math.max(0, expected - paid);
+      }
 
-      // Calcular interés pendiente total
-      const totalPendingInterest = unpaidCount * interestPerPayment;
-
-      console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Resumen final', {
+      console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Resumen final (by due_date)', {
         loanId: loan.id,
-        totalExpectedInstallments,
-        paidCount,
-        unpaidCount,
-        interestPerPayment,
-        totalPendingInterest
+        dates: interestByDate.size,
+        pending
       });
 
-      setPendingInterestForIndefinite(totalPendingInterest);
+      setPendingInterestForIndefinite(Math.round(pending * 100) / 100);
     } catch (error) {
       console.error('❌ Error calculando interés pendiente para préstamo indefinido en LoanDetailsView:', error);
       setPendingInterestForIndefinite(0);
@@ -1037,7 +1020,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   
   // Calcular balance restante
   // CORRECCIÓN: Para préstamos indefinidos, incluir cargos y restar solo pagos de capital/cargos
-  // Los pagos de interés NO reducen el balance en préstamos indefinidos
+  // En indefinidos, el balance incluye capital + interés pendiente + cargos pendientes, por lo que pagar interés SÍ baja el balance.
   // Para otros tipos: calcular basándose en total_amount o calcularlo
   let remainingBalance: number;
   if (loan.amortization_type === 'indefinite') {
@@ -1045,10 +1028,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     // IMPORTANTE: El capital pendiente YA incluye tanto el capital base como los cargos pendientes
     const calculatedCapitalPending = Math.round((capitalPendingFromRegular + unpaidChargesAmount) * 100) / 100;
     const calculatedBalance = Math.round((calculatedCapitalPending + pendingInterestForIndefinite) * 100) / 100;
-    // CORRECCIÓN: Usar valor de BD si está disponible (es más confiable que el cálculo dinámico)
-    remainingBalance = (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-      ? loan.remaining_balance
-      : calculatedBalance;
+    // En indefinidos, el valor de BD a veces queda desincronizado; usamos el cálculo.
+    remainingBalance = calculatedBalance;
   } else {
     // CORRECCIÓN: Balance Pendiente = Capital Pendiente + Interés Pendiente
     // IMPORTANTE: El capital pendiente YA incluye tanto el capital de cuotas regulares como el capital de cargos pendientes

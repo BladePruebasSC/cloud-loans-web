@@ -145,75 +145,94 @@ export const LoansModule = () => {
       // Calcular el total pagado usando amount (igual que InstallmentsTable)
       const totalPaid = (payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
       
-      // CORRECCIÓN: Para préstamos indefinidos, incluir cargos y restar solo pagos de capital/cargos
-      // Los pagos de interés NO reducen el balance en préstamos indefinidos
+      // CORRECCIÓN (INDEFINIDOS): el balance pendiente incluye capital + interés pendiente + cargos pendientes.
+      // Por tanto, pagar interés (parcial o completo) SÍ reduce el balance.
       if (loan.amortization_type === 'indefinite') {
         const baseAmount = loan.amount || 0;
-        
-        // Calcular interés pendiente directamente aquí para asegurar que esté disponible
+        const amortizationType = String(loan.amortization_type || '').toLowerCase();
+
+        // Calcular interés pendiente por due_date (soporta pagos parciales)
         let pendingInterest = 0;
-        if (loan.start_date) {
-          const interestPerPayment = (loan.amount || 0) * ((loan.interest_rate || 0) / 100);
-          const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
-          const startDate = new Date(startYear, startMonth - 1, startDay);
-          const currentDate = getCurrentDateInSantoDomingo();
-          const monthsElapsed = Math.max(0, 
-            (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
-            (currentDate.getMonth() - startDate.getMonth())
-          );
-          
-          // Calcular cuántas cuotas se han pagado desde los pagos
-          let paidCount = 0;
-          if (payments && payments.length > 0 && interestPerPayment > 0) {
-            // Obtener pagos con interés para calcular cuántas cuotas se han pagado
-            const { data: paymentsWithInterest } = await supabase
-              .from('payments')
-              .select('interest_amount')
-              .eq('loan_id', loan.id);
-            
-            const totalInterestPaid = (paymentsWithInterest || []).reduce((sum, p) => sum + (Number(p.interest_amount) || 0), 0);
-            paidCount = Math.floor(totalInterestPaid / interestPerPayment);
+        const isCharge = (inst: any) =>
+          Math.abs(inst?.interest_amount || 0) < 0.01 &&
+          Math.abs((inst?.principal_amount || 0) - (inst?.total_amount || 0)) < 0.01;
+
+        const expectedInterestByDate = new Map<string, number>();
+        const paidInterestByDate = new Map<string, number>();
+
+        if (allInstallments && allInstallments.length > 0) {
+          const regular = allInstallments.filter((inst: any) => !isCharge(inst));
+          for (const inst of regular) {
+            const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
+            if (!due) continue;
+            const expected = Number(inst.interest_amount || (inst.total_amount || 0)) || 0;
+            if (expected <= 0) continue;
+            expectedInterestByDate.set(due, (expectedInterestByDate.get(due) || 0) + expected);
           }
-          
-          // CORRECCIÓN: El total esperado debe ser al menos (paidCount + 1) para asegurar que siempre hay 1 cuota pendiente
-          // También debe ser al menos (monthsElapsed + 1) para reflejar el tiempo transcurrido
-          const totalExpectedInstallments = Math.max(paidCount + 1, monthsElapsed + 1);
-          
-          const unpaidCount = Math.max(1, totalExpectedInstallments - paidCount); // Siempre al menos 1 cuota pendiente
-          pendingInterest = unpaidCount * interestPerPayment;
+        }
+
+        if (payments && payments.length > 0) {
+          for (const p of payments) {
+            const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
+            if (!due) continue;
+            const paid = Number(p.interest_amount || 0) || 0;
+            if (paid <= 0) continue;
+            paidInterestByDate.set(due, (paidInterestByDate.get(due) || 0) + paid);
+          }
+        }
+
+        // Asegurar que exista al menos la cuota actual (next_payment_date) aunque no haya installment en BD
+        const nextDue = loan.next_payment_date ? String(loan.next_payment_date).split('T')[0] : null;
+        if (nextDue && !expectedInterestByDate.has(nextDue)) {
+          const interestPerPayment = (baseAmount || 0) * ((loan.interest_rate || 0) / 100);
+          if (interestPerPayment > 0) expectedInterestByDate.set(nextDue, interestPerPayment);
+        }
+
+        for (const [due, expected] of expectedInterestByDate.entries()) {
+          const paid = paidInterestByDate.get(due) || 0;
+          pendingInterest += Math.max(0, expected - paid);
         }
         
         // Calcular el total de TODOS los cargos (pagados y no pagados)
-        let totalChargesAmount = 0;
+        let pendingChargesAmount = 0;
         if (allInstallments && allInstallments.length > 0) {
           const allChargesList = allInstallments.filter(inst => {
             const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
                             Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
             return isCharge;
           });
-          totalChargesAmount = allChargesList.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+          // Calcular cargos pendientes considerando pagos parciales por due_date
+          const paidPrincipalByDate = new Map<string, number>();
+          for (const p of (payments || [])) {
+            const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
+            if (!due) continue;
+            const principalPaid = Number(p.principal_amount || 0) || 0;
+            if (principalPaid <= 0) continue;
+            paidPrincipalByDate.set(due, (paidPrincipalByDate.get(due) || 0) + principalPaid);
+          }
+
+          // Agrupar cargos por fecha
+          const chargeTotalByDate = new Map<string, number>();
+          for (const c of allChargesList) {
+            const due = c?.due_date ? String(c.due_date).split('T')[0] : null;
+            if (!due) continue;
+            chargeTotalByDate.set(due, (chargeTotalByDate.get(due) || 0) + (Number(c.total_amount || 0) || 0));
+          }
+
+          for (const [due, total] of chargeTotalByDate.entries()) {
+            const paid = paidPrincipalByDate.get(due) || 0;
+            pendingChargesAmount += Math.max(0, total - paid);
+          }
         }
-        
-        // CORRECCIÓN CRÍTICA: Solo restar pagos de capital/cargos, NO pagos de interés
-        // Obtener pagos de capital/cargos (principal_amount > 0)
-        const { data: paymentsWithPrincipal, error: paymentsPrincipalError } = await supabase
-          .from('payments')
-          .select('principal_amount')
-        .eq('loan_id', loan.id)
-          .gt('principal_amount', 0);
-        
-        const totalPaidCapital = (paymentsWithPrincipal || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
-      
-        // Balance = capital + interés pendiente + TODOS los cargos - pagos de capital/cargos
-        // Los pagos de interés NO reducen el balance
-        const remainingBalance = Math.max(0, baseAmount + pendingInterest + totalChargesAmount - totalPaidCapital);
+
+        // Balance = capital + interés pendiente + cargos pendientes
+        const remainingBalance = Math.max(0, baseAmount + pendingInterest + pendingChargesAmount);
         
         console.log('🔍 calculateRemainingBalance: Balance calculado para indefinido', {
           loanId: loan.id,
           baseAmount,
           pendingInterest,
-          totalChargesAmount,
-          totalPaidCapital,
+          pendingChargesAmount,
           totalPaid, // Para comparación
           remainingBalance,
           bdRemainingBalance: loan.remaining_balance
