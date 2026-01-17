@@ -1120,14 +1120,16 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               ? Number(selectedLoan.monthly_payment)
               : (Number(selectedLoan.amount || 0) * (Number(selectedLoan.interest_rate || 0) / 100));
 
-          const paidInterestForDue = (allPaymentsForLoan || [])
+          // En indefinidos, algunos pagos parciales pueden haberse guardado con interest_amount=0 (por redondeos/splits).
+          // Para el autollenado, usar el MONTO del pago por due_date (sin depender del split).
+          const paidAmountForDue = (allPaymentsForLoan || [])
             .filter(p => {
               const pDue = (p.due_date as any)?.split?.('T')?.[0] || (p.due_date as any) || null;
               return pDue === targetDue;
             })
-            .reduce((s, p) => s + (Number(p.interest_amount || 0) || 0), 0);
+            .reduce((s, p) => s + (Number(p.amount || 0) || 0), 0);
 
-          const fallbackRemaining = Math.max(0, expectedInterest - paidInterestForDue);
+          const fallbackRemaining = Math.max(0, expectedInterest - paidAmountForDue);
 
           if (fallbackRemaining > 0.01) {
             firstUnpaid = {
