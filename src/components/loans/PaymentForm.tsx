@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -7,6 +7,7 @@ import * as z from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -91,6 +92,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [filteredLoans, setFilteredLoans] = useState<Loan[]>([]);
   const [loanSearch, setLoanSearch] = useState('');
   const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
+  const [computedBalancePending, setComputedBalancePending] = useState<number | null>(null);
   const [showLoanDropdown, setShowLoanDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
@@ -109,6 +111,84 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus, isReady: paymentStatusReady } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
+
+  // ✅ CORRECCIÓN: Para plazo fijo, recomputar balance pendiente desde el plan real de cuotas (installments)
+  // y pagos por due_date (interest primero). No depender de `loan.total_amount` ni de `remaining_balance`.
+  useEffect(() => {
+    if (!selectedLoan?.id) return;
+    let cancelled = false;
+
+    const recompute = async () => {
+      try {
+        const amort = String((selectedLoan as any).amortization_type || '').toLowerCase();
+        if (amort === 'indefinite') {
+          setComputedBalancePending(null);
+          return;
+        }
+
+        const [{ data: payments }, { data: installments }] = await Promise.all([
+          supabase
+            .from('payments')
+            .select('amount, due_date')
+            .eq('loan_id', selectedLoan.id),
+          supabase
+            .from('installments')
+            .select('due_date, installment_number, principal_amount, interest_amount, total_amount, amount')
+            .eq('loan_id', selectedLoan.id),
+        ]);
+
+        if (cancelled) return;
+
+        const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
+        const isChargeInst = (inst: any) =>
+          Math.abs(Number(inst?.interest_amount || 0)) < 0.01 &&
+          Math.abs(Number(inst?.principal_amount || 0) - Number(inst?.total_amount || inst?.amount || 0)) < 0.01;
+
+        const paidByDue = new Map<string, number>();
+        for (const p of payments || []) {
+          const due = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
+          if (!due) continue;
+          paidByDue.set(due, round2((paidByDue.get(due) || 0) + (Number((p as any).amount) || 0)));
+        }
+
+        // Pendiente de cuotas regulares: interés primero, luego capital
+        const pendingRegular = round2((installments || [])
+          .filter(inst => !isChargeInst(inst))
+          .reduce((sum: number, inst: any) => {
+            const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
+            const totalPaid = due ? (paidByDue.get(due) || 0) : 0;
+            const expectedInterest = round2(Number(inst.interest_amount || 0));
+            const expectedPrincipal = round2(Number(inst.principal_amount || 0));
+            const paidInterest = Math.min(expectedInterest, totalPaid);
+            const paidPrincipal = Math.min(expectedPrincipal, Math.max(0, round2(totalPaid - expectedInterest)));
+            const remInterest = Math.max(0, round2(expectedInterest - paidInterest));
+            const remPrincipal = Math.max(0, round2(expectedPrincipal - paidPrincipal));
+            return sum + remInterest + remPrincipal;
+          }, 0));
+
+        // Pendiente de cargos (si existieran): sumar total de cargos (la UI los muestra aparte en tablas)
+        // Para este balance, basta con sumar cargos no pagados completos/por acumulación simple por due_date.
+        const pendingCharges = round2((installments || [])
+          .filter(inst => isChargeInst(inst))
+          .reduce((sum: number, inst: any) => {
+            const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
+            const chargeTotal = round2(Number(inst.total_amount || inst.amount || 0));
+            const totalPaid = due ? (paidByDue.get(due) || 0) : 0;
+            return sum + Math.max(0, round2(chargeTotal - totalPaid));
+          }, 0));
+
+        setComputedBalancePending(round2(pendingRegular + pendingCharges));
+      } catch (e) {
+        console.warn('PaymentForm: no se pudo recalcular balance pendiente', e);
+        setComputedBalancePending(null);
+      }
+    };
+
+    recompute();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedLoan?.id, (selectedLoan as any)?.amortization_type, (selectedLoan as any)?.total_amount, selectedLoan?.remaining_balance]);
   
   // Ref para evitar recrear listeners innecesariamente
   const realtimeChannelRef = useRef<any>(null);
@@ -1653,55 +1733,78 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       };
     }
 
-    // Calcular el interés fijo por cuota (amortización simple)
-    // Fórmula: Interés por cuota = (Monto Original × Tasa × Plazo) ÷ Plazo
-    // Simplificado: Interés por cuota = Monto Original × Tasa ÷ 100
-    const fixedInterestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
-    
-    console.log('🔍 Calculando distribución para préstamo:', selectedLoan.id);
-    console.log('🔍 Monto del préstamo:', selectedLoan.amount);
-    console.log('🔍 Tasa de interés:', selectedLoan.interest_rate);
-    console.log('🔍 Interés fijo por cuota:', fixedInterestPerPayment);
-    
-    // Calcular cuánto interés ya se ha pagado en esta cuota
-    console.log('🔍 Llamando a calculatePaidInterestForCurrentPayment para préstamo:', selectedLoan.id);
-    const alreadyPaidInterest = await calculatePaidInterestForCurrentPayment(selectedLoan.id);
-    
-    // Calcular cuánto interés queda por pagar
-    const remainingInterest = Math.max(0, fixedInterestPerPayment - alreadyPaidInterest);
-    
-    console.log('🔍 RESULTADO DE calculatePaidInterestForCurrentPayment:');
-    console.log('🔍 Interés ya pagado (valor devuelto):', alreadyPaidInterest);
-    console.log('🔍 Interés fijo por cuota:', fixedInterestPerPayment);
-    console.log('🔍 Interés pendiente calculado:', remainingInterest);
-    console.log('🔍 ¿El interés está completo?', alreadyPaidInterest >= fixedInterestPerPayment ? 'SÍ ✅' : 'NO ❌');
-    
-    let interestPayment = 0;
-    let principalPayment = 0;
-    
-    if (amount <= remainingInterest) {
-      // Si el pago es menor o igual al interés pendiente, todo va al interés
-      interestPayment = amount;
-      principalPayment = 0;
-    } else {
-      // Si el pago excede el interés pendiente, primero se paga el interés completo y el resto al capital
-      interestPayment = remainingInterest;
-      principalPayment = amount - remainingInterest;
+    // ✅ CORRECCIÓN (PRÉSTAMOS CON CUOTAS): NO usar el monto original para el interés.
+    // Después de un abono a capital, el interés por cuota cambia según la tabla de amortización.
+    // Aquí usamos la cuota real en `installments` (por due_date) y distribuimos el pago como:
+    // 1) Interés pendiente de esa cuota
+    // 2) Resto a capital
+    const round2 = (n: number) => Math.round((Number(n || 0) * 100)) / 100;
+
+    const dueKey =
+      (nextPaymentInfo?.dueDate ? String(nextPaymentInfo.dueDate).split('T')[0] : null) ||
+      (selectedLoan?.next_payment_date ? String(selectedLoan.next_payment_date).split('T')[0] : null);
+
+    // Fallback ultra defensivo (no debería pasar)
+    if (!dueKey) {
+      const fallbackInterest = round2((selectedLoan.amount * selectedLoan.interest_rate) / 100);
+      const interestPayment = Math.min(round2(amount), fallbackInterest);
+      return {
+        interestPayment,
+        principalPayment: round2(amount - interestPayment),
+        monthlyInterestAmount: fallbackInterest,
+        remainingInterest: Math.max(0, round2(fallbackInterest - interestPayment)),
+        alreadyPaidInterest: 0
+      };
     }
-    
-    console.log('🔍 Distribución final:', {
-      amount,
+
+    const [{ data: instRows, error: instErr }, { data: payRows, error: payErr }] = await Promise.all([
+      supabase
+        .from('installments')
+        .select('principal_amount, interest_amount, total_amount, amount, due_date')
+        .eq('loan_id', selectedLoan.id)
+        .eq('due_date', dueKey),
+      supabase
+        .from('payments')
+        .select('amount, due_date')
+        .eq('loan_id', selectedLoan.id)
+        .eq('due_date', dueKey)
+    ]);
+
+    if (instErr) console.error('Error obteniendo cuota para distribución:', instErr);
+    if (payErr) console.error('Error obteniendo pagos para distribución:', payErr);
+
+    // Elegir la cuota regular (no cargo): interest_amount > 0
+    const regularInst =
+      (instRows || []).find(r => Math.abs(Number(r.interest_amount || 0)) >= 0.01) ||
+      (instRows || [])[0];
+
+    const expectedInterest = round2(Number(regularInst?.interest_amount || 0));
+    const expectedPrincipal = round2(Number(regularInst?.principal_amount || 0));
+    const expectedTotal = round2(
+      Number(regularInst?.total_amount ?? (Number(regularInst?.amount || 0) || (expectedInterest + expectedPrincipal)))
+    );
+
+    const totalPaidForDue = round2(
+      (payRows || []).reduce((s, p) => s + (Number(p.amount || 0) || 0), 0)
+    );
+
+    // Interés primero
+    const alreadyPaidInterest = Math.min(expectedInterest, totalPaidForDue);
+    const alreadyPaidPrincipal = Math.min(expectedPrincipal, Math.max(0, totalPaidForDue - expectedInterest));
+
+    const remainingInterest = Math.max(0, round2(expectedInterest - alreadyPaidInterest));
+    const remainingPrincipal = Math.max(0, round2(expectedPrincipal - alreadyPaidPrincipal));
+    const remainingTotal = Math.max(0, round2(expectedTotal - totalPaidForDue));
+
+    const safeAmount = Math.min(round2(amount), remainingTotal > 0 ? remainingTotal : round2(amount));
+
+    const interestPayment = Math.min(safeAmount, remainingInterest);
+    const principalPayment = Math.min(round2(safeAmount - interestPayment), remainingPrincipal);
+
+    return {
       interestPayment,
       principalPayment,
-      fixedInterestPerPayment,
-      remainingInterest,
-      alreadyPaidInterest
-    });
-    
-    return { 
-      interestPayment, 
-      principalPayment, 
-      monthlyInterestAmount: fixedInterestPerPayment,
+      monthlyInterestAmount: expectedInterest,
       remainingInterest,
       alreadyPaidInterest
     };
@@ -1724,7 +1827,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Calcular el balance restante correcto (incluyendo intereses pendientes para indefinidos)
       const remainingBalance = selectedLoan.amortization_type === 'indefinite' 
         ? selectedLoan.amount + pendingInterestForIndefinite
-        : selectedLoan.remaining_balance;
+        : (computedBalancePending !== null ? computedBalancePending : selectedLoan.remaining_balance);
       const currentPaymentRemaining = paymentStatus.currentPaymentRemaining;
       const interestRate = selectedLoan.interest_rate; // Tasa de interés mensual [[memory:6311805]]
       
@@ -1787,9 +1890,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           }
         } else {
           // Para cuotas regulares, usar la validación original
-        const maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
-        const roundedMaxAllowed = Math.round(maxAllowedPayment);
-        if (data.amount > roundedMaxAllowed) {
+        const maxAllowedPayment =
+          (nextPaymentInfo?.amount && nextPaymentInfo.amount > 0)
+            ? nextPaymentInfo.amount
+            : (currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment);
+        const roundedMaxAllowed = roundToTwoDecimals(maxAllowedPayment);
+        const roundedAmount = roundToTwoDecimals(data.amount);
+        if (roundedAmount > roundedMaxAllowed + 0.05) {
           toast.error(`El pago de cuota no puede exceder lo que falta de la cuota actual: ${formatCurrency(roundedMaxAllowed)}`);
             setLoading(false);
           return;
@@ -1806,26 +1913,27 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       let remainingInterest = 0;
       
       if (data.amount > 0) {
-        distribution = await calculatePaymentDistribution(Math.round(data.amount));
+        distribution = await calculatePaymentDistribution(roundToTwoDecimals(data.amount));
         interestPayment = distribution.interestPayment;
         principalPayment = distribution.principalPayment;
         remainingInterest = distribution.remainingInterest;
         
         // Determinar si es un pago completo o parcial
         // Si es un cargo, usar el monto del cargo como referencia
-        let maxAllowedPayment: number;
-        if (nextPaymentInfo?.isCharge) {
-          maxAllowedPayment = nextPaymentInfo.amount;
-        } else {
-          maxAllowedPayment = currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment;
-        }
-        const roundedMaxAllowed = Math.round(maxAllowedPayment);
-        isFullPayment = Math.round(data.amount) >= roundedMaxAllowed;
+        let maxAllowedPayment: number =
+          (nextPaymentInfo?.amount && nextPaymentInfo.amount > 0)
+            ? nextPaymentInfo.amount
+            : (currentPaymentRemaining > 0 ? currentPaymentRemaining : monthlyPayment);
+
+        const roundedMaxAllowed = roundToTwoDecimals(maxAllowedPayment);
+        const roundedAmount = roundToTwoDecimals(data.amount);
+        // tolerancia por redondeos (centavos)
+        isFullPayment = (roundedAmount + 0.05) >= roundedMaxAllowed;
         paymentStatusValue = isFullPayment ? 'completed' : 'pending';
         
         // Si es pago parcial, mostrar advertencia
         if (!isFullPayment) {
-          const remainingAmount = roundedMaxAllowed - Math.round(data.amount);
+          const remainingAmount = roundToTwoDecimals(Math.max(0, roundedMaxAllowed - roundToTwoDecimals(data.amount)));
           const paymentType = nextPaymentInfo?.isCharge ? 'del cargo' : 'de la cuota mensual';
           toast.warning(`Pago parcial registrado. Queda pendiente ${formatCurrency(remainingAmount)} ${paymentType}.`);
         }
@@ -1903,10 +2011,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       const paymentData = {
         loan_id: data.loan_id,
-        amount: Math.round(data.amount), // Solo el monto de la cuota, sin incluir la mora (redondeado)
-        principal_amount: Math.round(principalPayment),
-        interest_amount: Math.round(interestPayment),
-        late_fee: roundToTwoDecimals(data.late_fee_amount || 0), // Mora como concepto separado (redondeado a 2 decimales)
+        amount: roundToTwoDecimals(data.amount), // Solo el monto de la cuota, sin incluir la mora (2 decimales)
+        principal_amount: roundToTwoDecimals(principalPayment),
+        interest_amount: roundToTwoDecimals(interestPayment),
+        late_fee: roundToTwoDecimals(data.late_fee_amount || 0), // Mora como concepto separado (2 decimales)
         due_date: paymentDueDate, // Usar el due_date del cargo si es un cargo, de lo contrario el next_payment_date del préstamo
         payment_date: paymentDate, // Usar fecha actual en zona horaria de Santo Domingo
         payment_time_local: paymentTimeLocal, // Timestamp con zona horaria local
@@ -2430,47 +2538,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             // Para cuotas regulares, verificar si el pago acumulado cubre esta cuota
             // En indefinidos NO usar acumulación global (y evita división por 0 cuando principalPerPayment = 0).
             // La cuota se considera cubierta si este pago completa lo que falta de la cuota actual (isFullPayment).
-            if (selectedLoan.amortization_type === 'indefinite') {
+            // ✅ CORRECCIÓN (FIJOS): cubrir por due_date contra el total de la cuota (no por monto original/tasa).
+            // Esto evita que, tras un abono a capital, una cuota "completa" quede como parcial por usar splits viejos.
+            const dueKey = firstUnpaidInstallment.due_date?.split('T')[0] || firstUnpaidInstallment.due_date;
+            const installmentTotal = (firstUnpaidInstallment.total_amount ?? ((firstUnpaidInstallment.principal_amount || 0) + (firstUnpaidInstallment.interest_amount || 0))) || 0;
+
+            if (!dueKey) {
               paymentCoversInstallment = isFullPayment;
             } else {
-              const interestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
-              const principalPerPayment = monthlyPayment - interestPerPayment;
-            
-              // Obtener todos los pagos anteriores para calcular el acumulado
-              const { data: allPreviousPayments } = await supabase
+              const { data: paymentsForDue } = await supabase
                 .from('payments')
-                .select('principal_amount, interest_amount, payment_date')
+                .select('amount, due_date')
                 .eq('loan_id', data.loan_id)
-                .order('payment_date', { ascending: true });
-            
-              // Calcular cuánto se ha pagado acumulado (incluyendo este pago)
-              let totalPrincipalPaid = allPreviousPayments?.reduce((sum, p) => sum + (p.principal_amount || 0), 0) || 0;
-              let totalInterestPaid = allPreviousPayments?.reduce((sum, p) => sum + (p.interest_amount || 0), 0) || 0;
-            
-              // Agregar el pago actual
-              totalPrincipalPaid += principalPayment;
-              totalInterestPaid += interestPayment;
-            
-              // Calcular cuántas cuotas completas se han pagado
-              const completedInstallments = Math.min(
-                Math.floor(totalInterestPaid / interestPerPayment),
-                Math.floor(totalPrincipalPaid / principalPerPayment)
-              );
-            
-              // Verificar si esta cuota específica está cubierta
-              // Si el pago acumulado cubre al menos una cuota completa, marcar como pagada
-              paymentCoversInstallment = completedInstallments >= 1 && 
-                                        totalPrincipalPaid >= principalPerPayment * 0.99 && 
-                                        totalInterestPaid >= interestPerPayment * 0.99;
-            
-              console.log('🔍 PaymentForm: Verificando cuota regular:', {
-                totalPrincipalPaid,
-                totalInterestPaid,
-                principalPerPayment,
-                interestPerPayment,
-                completedInstallments,
-                paymentCoversInstallment
-              });
+                .eq('due_date', dueKey);
+
+              const totalPaidForDue = (paymentsForDue || []).reduce((s, p) => s + (Number(p.amount || 0) || 0), 0);
+              paymentCoversInstallment = (totalPaidForDue + 0.05) >= Number(installmentTotal || 0);
             }
           }
           
@@ -2852,7 +2935,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                 ${formatCurrencyNumber(
                                   selectedLoan.amortization_type === 'indefinite' 
                                     ? selectedLoan.amount + pendingInterestForIndefinite
-                                    : selectedLoan.remaining_balance
+                                    : (computedBalancePending !== null ? computedBalancePending : selectedLoan.remaining_balance)
                                 )}
                               </div>
                             </div>
@@ -2951,8 +3034,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                         <FormItem>
                           <FormLabel>Monto del Pago (Cuota)</FormLabel>
                           <FormControl>
-                            <Input
-                              type="number"
+                            <NumberInput
                               step="0.01"
                               min="0"
                               placeholder={paymentStatusReady ? "0.00" : "Cargando..."}
@@ -3020,8 +3102,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                             </FormLabel>
                             <div className="flex gap-2">
                               <FormControl>
-                                <Input
-                                  type="number"
+                                <NumberInput
                                   step="0.01"
                                   min="0"
                                   max={roundToTwoDecimals(lateFeeAmount)}
@@ -3156,7 +3237,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                       ${formatCurrencyNumber(
                         selectedLoan.amortization_type === 'indefinite' 
                           ? selectedLoan.amount + pendingInterestForIndefinite
-                          : selectedLoan.remaining_balance
+                          : (computedBalancePending !== null ? computedBalancePending : selectedLoan.remaining_balance)
                       )}
                     </span>
                   </div>
@@ -3309,7 +3390,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                       <ul className="text-xs space-y-1">
                         <li>• Pago completo: ${formatCurrencyNumber(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment)} o más</li>
                         <li>• Pago parcial: Menos de ${formatCurrencyNumber(paymentStatus.currentPaymentRemaining > 0 ? paymentStatus.currentPaymentRemaining : selectedLoan.monthly_payment)}</li>
-                        <li>• Máximo permitido: ${formatCurrencyNumber(selectedLoan.remaining_balance)}</li>
+                        <li>• Máximo permitido: ${formatCurrencyNumber(computedBalancePending !== null ? computedBalancePending : selectedLoan.remaining_balance)}</li>
                         {selectedLoan.late_fee_enabled && lateFeeAmount > 0 && (
                           <li>• Mora pendiente: ${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (opcional pagar)</li>
                         )}

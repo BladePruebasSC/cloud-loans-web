@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -3809,18 +3810,16 @@ const InventoryModule = () => {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="current_stock">Stock Actual</Label>
-                <Input
+                <NumberInput
                   id="current_stock"
-                  type="number"
                   value={formData.current_stock}
                   onChange={(e) => setFormData({...formData, current_stock: Number(e.target.value)})}
                 />
               </div>
               <div>
                 <Label htmlFor="min_stock">Stock Mínimo</Label>
-                <Input
+                <NumberInput
                   id="min_stock"
-                  type="number"
                   value={formData.min_stock}
                   onChange={(e) => setFormData({...formData, min_stock: Number(e.target.value)})}
                 />
@@ -3831,8 +3830,7 @@ const InventoryModule = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Precio compra sin ITBIS</Label>
-                  <Input
-                    type="number"
+                  <NumberInput
                     step="0.01"
                     value={purchaseNoTax}
                     onChange={(e) => {
@@ -3844,8 +3842,7 @@ const InventoryModule = () => {
                 </div>
                 <div>
                   <Label>Precio compra con ITBIS</Label>
-                  <Input
-                    type="number"
+                  <NumberInput
                     step="0.01"
                     value={purchaseWithTax}
                     onChange={(e) => {
@@ -3860,8 +3857,7 @@ const InventoryModule = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Precio venta sin ITBIS</Label>
-                  <Input
-                    type="number"
+                  <NumberInput
                     step="0.01"
                     value={sellingNoTax}
                     onChange={(e) => {
@@ -3873,8 +3869,7 @@ const InventoryModule = () => {
                 </div>
                 <div>
                   <Label>Precio venta con ITBIS</Label>
-                  <Input
-                    type="number"
+                  <NumberInput
                     step="0.01"
                     value={sellingWithTax}
                     onChange={(e) => {
@@ -3887,9 +3882,8 @@ const InventoryModule = () => {
               </div>
               <div className="flex items-center gap-2">
                 <Label htmlFor="itbis_rate" className="text-sm">% ITBIS:</Label>
-                <Input
+                <NumberInput
                   id="itbis_rate"
-                  type="number"
                   step="0.01"
                   min="0"
                   max="100"
@@ -4116,8 +4110,7 @@ const InventoryModule = () => {
                             <div className="flex items-center gap-4 mt-1">
                               <div>
                                 <Label className="text-xs">Cantidad</Label>
-                                <Input
-                                  type="number"
+                                <NumberInput
                                   min="1"
                                   value={item.quantity}
                                   onChange={(e) => {
@@ -4132,8 +4125,7 @@ const InventoryModule = () => {
                               </div>
                               <div>
                                 <Label className="text-xs">Precio Unit.</Label>
-                                <Input
-                                  type="number"
+                                <NumberInput
                                   step="0.01"
                                   value={item.unit_price}
                                   onChange={(e) => {

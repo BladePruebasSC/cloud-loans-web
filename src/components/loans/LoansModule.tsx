@@ -1,4 +1,4 @@
-﻿
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -85,7 +85,14 @@ export const LoansModule = () => {
   const [paidInstallmentsCountForIndefinite, setPaidInstallmentsCountForIndefinite] = useState<{[key: string]: number}>({});
   const [loanAgreements, setLoanAgreements] = useState<{[key: string]: any[]}>({});
   const [calculatedTotalAmounts, setCalculatedTotalAmounts] = useState<{[key: string]: number}>({});
+  // Total (sin mora): balance del préstamo + cargos pendientes
   const [calculatedRemainingBalances, setCalculatedRemainingBalances] = useState<{[key: string]: number}>({});
+  // Base: balance del préstamo (capital + interés), SIN cargos
+  const [calculatedBaseBalances, setCalculatedBaseBalances] = useState<{[key: string]: number}>({});
+  // Cargos pendientes (para mostrar por separado / sumar al total)
+  const [calculatedPendingCharges, setCalculatedPendingCharges] = useState<{[key: string]: number}>({});
+  // Evitar mostrar balances "stale" al abrir: esperamos el cálculo inicial
+  const [balancesHydrated, setBalancesHydrated] = useState(false);
   // Timestamp de última actualización optimista por préstamo para evitar sobrescrituras
   const optimisticUpdateTimestampsRef = useRef<{[key: string]: number}>({});
   // Timestamp de última autocorrección de remaining_balance (evita loops/spam)
@@ -113,7 +120,7 @@ export const LoansModule = () => {
   // Función helper para calcular el balance pendiente correcto
   // CORRECCIÓN: Calcular dinámicamente igual que LoanDetailsView
   // Esto asegura que el preview muestre el mismo valor que Detalles incluso cuando la BD no se actualiza
-  const calculateRemainingBalance = async (loan: any): Promise<number> => {
+  const calculateBalanceBreakdown = async (loan: any): Promise<{ baseBalance: number; pendingCharges: number; totalBalance: number }> => {
     try {
       // Obtener todos los pagos del préstamo (necesitamos principal_amount, interest_amount, due_date)
       const { data: payments, error: paymentsError } = await supabase
@@ -133,7 +140,8 @@ export const LoansModule = () => {
       
       if (paymentsError) {
         console.error('Error obteniendo pagos para calcular balance:', paymentsError);
-        return loan.remaining_balance || 0; // Fallback al valor de BD
+        const fallback = Number(loan.remaining_balance || 0) || 0;
+        return { baseBalance: fallback, pendingCharges: 0, totalBalance: fallback };
       }
       
       // Obtener TODOS los installments (cuotas regulares y cargos)
@@ -225,8 +233,8 @@ export const LoansModule = () => {
           }
         }
 
-        // Balance = capital + interés pendiente + cargos pendientes
-        const remainingBalance = Math.max(0, baseAmount + pendingInterest + pendingChargesAmount);
+        const baseBalance = Math.max(0, baseAmount + pendingInterest);
+        const totalBalance = Math.max(0, baseBalance + pendingChargesAmount);
         
         console.log('🔍 calculateRemainingBalance: Balance calculado para indefinido', {
           loanId: loan.id,
@@ -234,11 +242,11 @@ export const LoansModule = () => {
           pendingInterest,
           pendingChargesAmount,
           totalPaid, // Para comparación
-          remainingBalance,
+          remainingBalance: totalBalance,
           bdRemainingBalance: loan.remaining_balance
         });
         
-        return remainingBalance;
+        return { baseBalance, pendingCharges: pendingChargesAmount, totalBalance };
       }
       
       if (installmentsError) {
@@ -249,7 +257,8 @@ export const LoansModule = () => {
           const totalInterest = loan.amount * (loan.interest_rate / 100) * loan.term_months;
           correctTotalAmount = loan.amount + totalInterest;
         }
-        return Math.max(0, correctTotalAmount - totalPaid);
+        const fallback = Math.max(0, correctTotalAmount - totalPaid);
+        return { baseBalance: fallback, pendingCharges: 0, totalBalance: fallback };
       }
       
       // CORRECCIÓN: Calcular balance igual que LoanDetailsView
@@ -297,53 +306,40 @@ export const LoansModule = () => {
       const unpaidChargesAmount = Math.round((totalChargesAmount - paidChargesAmount) * 100) / 100;
       
       // 2. Calcular capital pagado y abonos a capital
-      const totalPaidFromPayments = (payments || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
       const totalCapitalPayments = (capitalPayments || []).reduce((sum, cp) => sum + (cp.amount || 0), 0);
-      // CORRECCIÓN: Capital pagado es la suma de todos los pagos de capital (incluyendo cargos)
-      const capitalPaidFromLoan = totalPaidFromPayments;
-      
-      // 3. Calcular capital pendiente desde TODAS las CUOTAS REGULARES (excluyendo cargos)
-      // IMPORTANTE: Calcular desde TODAS las cuotas (no solo is_paid = false) para incluir pagos parciales
-      // CORRECCIÓN CRÍTICA: Considerar pagos parciales - restar lo que ya se pagó de cada cuota
-      // IMPORTANTE: Excluir cargos del capital pendiente - los cargos se calculan por separado como unpaidChargesAmount
-      // Redondear cada valor individual antes de sumar
-      const capitalPendingFromInstallments = (allInstallments || [])
-        .filter(inst => {
-          // Excluir cargos del capital pendiente
-          const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                          Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-          return !isCharge;
-        })
+      // CORRECCIÓN: Para el CAPITAL (principal) NO usar la suma de principal por cuotas,
+      // porque por redondeos puede generar discrepancias (ej. 10,000 → 10,002).
+      // El capital pendiente debe partir de loan.amount, restando SOLO pagos de cuotas regulares
+      // (excluyendo pagos a cargos) y abonos a capital.
+      const round2 = (n: number) => Math.round((Number(n || 0) * 100)) / 100;
+      const isChargeInst = (inst: any) =>
+        Math.abs(Number(inst?.interest_amount || 0)) < 0.01 &&
+        Math.abs((Number(inst?.principal_amount || 0)) - (Number(inst?.total_amount || 0))) < 0.01;
+
+      const paidAmountByDue = new Map<string, number>();
+      for (const p of payments || []) {
+        const due = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
+        if (!due) continue;
+        paidAmountByDue.set(due, round2((paidAmountByDue.get(due) || 0) + (Number((p as any).amount) || 0)));
+      }
+
+      // ✅ CORRECCIÓN: calcular capital pagado por cuota usando MONTO por due_date e interés primero.
+      const capitalPaidFromLoan = (allInstallments || [])
+        .filter(inst => !isChargeInst(inst))
         .reduce((sum, inst) => {
-          const originalPrincipal = inst.principal_amount || 0;
-          
-          // Es una cuota regular: buscar pagos asignados a esta cuota
-          // IMPORTANTE: Solo incluir pagos que tienen interés (para excluir pagos a cargos)
-          // Los pagos a cargos no deben restarse del capital pendiente de cuotas regulares
-          const installmentDueDate = inst.due_date?.split('T')[0];
-          let principalPaidForThisInstallment = 0;
-          if (installmentDueDate) {
-            const paymentsForThisInstallment = (payments || []).filter(p => {
-              const paymentDueDate = p.due_date?.split('T')[0];
-              const hasInterest = Math.abs(p.interest_amount || 0) >= 0.01; // Solo pagos con interés (cuotas regulares)
-              return paymentDueDate === installmentDueDate && hasInterest;
-            });
-            principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
-          }
-          
-          const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
-          // Solo incluir si hay algo pendiente (remainingPrincipal > 0.01)
-          if (remainingPrincipal > 0.01) {
-            return sum + remainingPrincipal;
-          }
-          return sum;
+          const due = inst.due_date ? String(inst.due_date).split('T')[0] : null;
+          if (!due) return sum;
+          const totalPaid = paidAmountByDue.get(due) || 0;
+          const expectedInterest = round2(Number(inst.interest_amount || 0));
+          const expectedPrincipal = round2(Number(inst.principal_amount || 0));
+          const principalPaid = Math.min(expectedPrincipal, Math.max(0, round2(totalPaid - expectedInterest)));
+          return sum + principalPaid;
         }, 0);
-      
-      // Si hay cuotas pendientes, usar ese cálculo; sino usar el cálculo tradicional
+
       // IMPORTANTE: Redondear a 2 decimales usando Math.round(value * 100) / 100 para valores monetarios
-      const capitalPending = capitalPendingFromInstallments > 0 
-        ? Math.round(capitalPendingFromInstallments * 100) / 100
-        : Math.round((loan.amount - capitalPaidFromLoan - totalCapitalPayments) * 100) / 100;
+      const capitalPending = Math.round(
+        Math.max(0, (loan.amount || 0) - capitalPaidFromLoan - (totalCapitalPayments || 0)) * 100
+      ) / 100;
       
       // 4. Calcular interés pendiente (solo de cuotas regulares, no cargos)
       // CORRECCIÓN CRÍTICA: Considerar pagos parciales - restar lo que ya se pagó de interés de cada cuota
@@ -356,19 +352,17 @@ export const LoansModule = () => {
           return !isCharge;
         })
         .reduce((sum, inst) => {
-          const originalInterest = inst.interest_amount || 0;
+          const originalInterest = round2(inst.interest_amount || 0);
           const installmentDueDate = inst.due_date?.split('T')[0];
-          let interestPaidForThisInstallment = 0;
-          
+          let totalPaidForDue = 0;
+
           if (installmentDueDate) {
-            const paymentsForThisInstallment = (payments || []).filter(p => {
-              const paymentDueDate = p.due_date?.split('T')[0];
-              return paymentDueDate === installmentDueDate;
-            });
-            interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
+            totalPaidForDue = paidAmountByDue.get(installmentDueDate) || 0;
           }
-          
-          const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
+
+          // Interés primero
+          const interestPaidForThisInstallment = Math.min(originalInterest, totalPaidForDue);
+          const remainingInterest = Math.max(0, round2(originalInterest - interestPaidForThisInstallment));
           // Solo incluir si hay algo pendiente (remainingInterest > 0.01)
           if (remainingInterest > 0.01) {
             return sum + remainingInterest;
@@ -379,26 +373,30 @@ export const LoansModule = () => {
       // IMPORTANTE: Redondear interés pendiente a 2 decimales usando Math.round(value * 100) / 100 para valores monetarios
       const interestPendingRounded = Math.round(interestPending * 100) / 100;
       
-      // 5. Balance = Capital Pendiente + Interés Pendiente + Cargos No Pagados
-      // IMPORTANTE: El capital pendiente incluye solo el capital de cuotas regulares pendientes
-      // IMPORTANTE: Los cargos parcialmente pagados se calculan por separado como unpaidChargesAmount
-      // IMPORTANTE: Redondear a 2 decimales usando Math.round(value * 100) / 100 para valores monetarios
-      const remainingBalance = Math.round((capitalPending + interestPendingRounded + unpaidChargesAmount) * 100) / 100;
+      // ✅ Separar balance (sin cargos) y total (con cargos)
+      const baseBalance = Math.round((capitalPending + interestPendingRounded) * 100) / 100;
+      const totalBalance = Math.round((baseBalance + unpaidChargesAmount) * 100) / 100;
       
       console.log('🔍 calculateRemainingBalance: Balance calculado dinámicamente (fixed-term, corregido)', {
         loanId: loan.id,
         capitalPending,
         interestPending: interestPendingRounded,
         unpaidChargesAmount,
-        remainingBalance,
+        remainingBalance: totalBalance,
         bdRemainingBalance: loan.remaining_balance
       });
       
-      return remainingBalance;
+      return { baseBalance, pendingCharges: unpaidChargesAmount, totalBalance };
     } catch (error) {
       console.error('Error calculando balance pendiente:', error);
-      return loan.remaining_balance || 0; // Fallback al valor de BD
+      const fallback = Number(loan.remaining_balance || 0) || 0;
+      return { baseBalance: fallback, pendingCharges: 0, totalBalance: fallback };
     }
+  };
+
+  const calculateRemainingBalance = async (loan: any): Promise<number> => {
+    const b = await calculateBalanceBreakdown(loan);
+    return b.totalBalance;
   };
 
   // Función helper para calcular la fecha ISO de la próxima cuota no pagada (para LateFeeInfo)
@@ -652,6 +650,46 @@ export const LoansModule = () => {
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
+
+  // Fallback (sin Realtime): cuando `LoanUpdateForm` termina un abono a capital / recalculo de cuotas,
+  // dispara `installmentsUpdated`. Escuchamos ese evento para refrescar y recalcular balances al instante.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const e = event as CustomEvent;
+      const affectedLoanId = e?.detail?.loanId as string | undefined;
+      if (!affectedLoanId) return;
+
+      // Refetch para traer valores actualizados (si triggers existen) y recalcular localmente (si no).
+      setTimeout(() => {
+        try {
+          refetch();
+        } catch (err) {
+          console.error('Error haciendo refetch tras installmentsUpdated:', err);
+        }
+
+        const loan = (loans || []).find((l: any) => l.id === affectedLoanId);
+        if (!loan) return;
+
+        calculateBalanceBreakdown(loan).then((b) => {
+          setCalculatedRemainingBalances((prev) => ({
+            ...prev,
+            [affectedLoanId]: Math.round(Number(b.totalBalance || 0) * 100) / 100
+          }));
+          setCalculatedBaseBalances((prev) => ({
+            ...prev,
+            [affectedLoanId]: Math.round(Number(b.baseBalance || 0) * 100) / 100
+          }));
+          setCalculatedPendingCharges((prev) => ({
+            ...prev,
+            [affectedLoanId]: Math.round(Number(b.pendingCharges || 0) * 100) / 100
+          }));
+        });
+      }, 300);
+    };
+
+    window.addEventListener('installmentsUpdated', handler as EventListener);
+    return () => window.removeEventListener('installmentsUpdated', handler as EventListener);
+  }, [loans, refetch]);
   
   // OPTIMIZADO: Usar next_payment_date de la BD directamente
   // La BD ahora actualiza automáticamente este valor con triggers cuando cambian pagos/installments
@@ -742,7 +780,8 @@ export const LoansModule = () => {
     
         // Calcular balances para todos los préstamos
         const calculations = loans.map(async (loan) => {
-          const calculatedBalance = await calculateRemainingBalance(loan);
+          const breakdown = await calculateBalanceBreakdown(loan);
+          const calculatedBalance = breakdown.totalBalance;
           const dbBalance = loan.remaining_balance || 0;
           const discrepancy = Math.abs(calculatedBalance - dbBalance);
           const amortizationTypeLower = ((loan as any).amortization_type || loan.amortization_type || '').toLowerCase();
@@ -769,6 +808,8 @@ export const LoansModule = () => {
           return { 
             loanId: loan.id, 
             remainingBalance: calculatedBalance,
+            baseBalance: breakdown.baseBalance,
+            pendingCharges: breakdown.pendingCharges,
             needsUpdate: discrepancy > 0.01 
           };
       });
@@ -776,7 +817,7 @@ export const LoansModule = () => {
       const results = await Promise.all(calculations);
       
         // Actualizar estado con balances calculados
-        results.forEach(({ loanId, remainingBalance, needsUpdate }) => {
+        results.forEach(({ loanId, remainingBalance, baseBalance, pendingCharges }) => {
         // Solo actualizar si no hay actualización optimista reciente
         const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
         const now = Date.now();
@@ -785,6 +826,8 @@ export const LoansModule = () => {
         if (timeSinceOptimistic > 2000) {
           // IMPORTANTE: Redondear el balance a 2 decimales antes de guardarlo para evitar diferencias de redondeo
           remainingBalances[loanId] = Math.round(remainingBalance * 100) / 100;
+          setCalculatedBaseBalances(prev => ({ ...prev, [loanId]: Math.round(Number(baseBalance || 0) * 100) / 100 }));
+          setCalculatedPendingCharges(prev => ({ ...prev, [loanId]: Math.round(Number(pendingCharges || 0) * 100) / 100 }));
         }
       });
       
@@ -827,13 +870,19 @@ export const LoansModule = () => {
         console.error('Error calculando y verificando balances:', error);
       }
     };
-    
-    // Ejecutar con un pequeño delay para evitar ejecutar en cada render
-    const timeoutId = setTimeout(() => {
-      recalculateAndVerifyBalances();
-    }, 300);
-    
-    return () => clearTimeout(timeoutId);
+
+    // Al cambiar la lista, no mostrar valores stale
+    let cancelled = false;
+    setBalancesHydrated(false);
+
+    (async () => {
+      await recalculateAndVerifyBalances();
+      if (!cancelled) setBalancesHydrated(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     loans?.map(l => `${l.id}-${l.amount}-${l.remaining_balance}-${l.total_amount}`).join(','),
     pendingInterestForIndefinite ? Object.keys(pendingInterestForIndefinite).join(',') : ''
@@ -2332,28 +2381,44 @@ export const LoansModule = () => {
                           
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
-                              ${formatCurrencyNumber(
-                                (() => {
-                                  const amortizationTypeLower = ((loan.amortization_type || '') as string).toLowerCase();
-                                  const isIndefinite = amortizationTypeLower === 'indefinite';
-                                  const calculated = calculatedRemainingBalances[loan.id];
-                                  const db = loan.remaining_balance;
+                              {(() => {
+                                const amortizationTypeLower = ((loan.amortization_type || '') as string).toLowerCase();
+                                const isIndefinite = amortizationTypeLower === 'indefinite';
+                                const calculatedBase = calculatedBaseBalances[loan.id];
+                                const calculatedTotal = calculatedRemainingBalances[loan.id];
+                                const db = loan.remaining_balance;
 
-                                  // En indefinidos: preferir balance calculado (la BD puede quedarse desactualizada tras abono+cargo)
+                                // En préstamos a plazo fijo: NO mostrar BD "stale" mientras hidrata
+                                if (!isIndefinite && !balancesHydrated && calculatedBase === undefined) {
+                                  return 'Cargando...';
+                                }
+
+                                const value = (() => {
                                   if (isIndefinite) {
-                                    if (calculated !== undefined) return calculated;
-                                    if (db !== null && db !== undefined) return db;
-                                    const baseAmount = loan.amount || 0;
-                                    const pendingInterest = pendingInterestForIndefinite[loan.id] || 0;
-                                    return baseAmount + pendingInterest;
+                                    if (calculatedBase !== undefined) return calculatedBase;
+                                    // Fallback: si solo tenemos total y cargos, intentar derivar base
+                                    if (calculatedTotal !== undefined) {
+                                      const charges = calculatedPendingCharges[loan.id] || 0;
+                                      return Math.round((Number(calculatedTotal) - Number(charges)) * 100) / 100;
+                                    }
+                                    return (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
                                   }
 
-                                  // En otros: priorizar BD, pero usar cálculo si ya está disponible
-                                  if (db !== null && db !== undefined) return db;
-                                  if (calculated !== undefined) return calculated;
+                                  if (calculatedBase !== undefined) {
+                                    return calculatedBase;
+                                  }
+                                  // Fallback: si solo tenemos total, derivar base restando cargos
+                                  if (calculatedTotal !== undefined) {
+                                    const charges = calculatedPendingCharges[loan.id] || 0;
+                                    return Math.round((Number(calculatedTotal) - Number(charges)) * 100) / 100;
+                                  }
+                                  // Último fallback
+                                  if (db !== null && db !== undefined) return Number(db);
                                   return loan.amount || 0;
-                                })()
-                              )}
+                                })();
+
+                                return `$${formatCurrencyNumber(value)}`;
+                              })()}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
                             {((loan.amortization_type || '').toLowerCase() === 'indefinite') && (pendingInterestForIndefinite[loan.id] || 0) > 0 && (
@@ -2365,30 +2430,45 @@ export const LoansModule = () => {
 
                           <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl border border-purple-100">
                             <div className="text-2xl font-bold text-purple-700 mb-1">
-                              ${formatCurrencyNumber(
-                                loan.status === 'paid' 
-                                  ? 0 
-                                  : Math.round(((
-                                      (() => {
-                                        const amortizationTypeLower = ((loan.amortization_type || '') as string).toLowerCase();
-                                        const isIndefinite = amortizationTypeLower === 'indefinite';
-                                        const calculated = calculatedRemainingBalances[loan.id];
-                                        const db = loan.remaining_balance;
+                              {(() => {
+                                if (loan.status === 'paid') return `$${formatCurrencyNumber(0)}`;
 
-                                        if (isIndefinite) {
-                                          if (calculated !== undefined) return calculated;
-                                          if (db !== null && db !== undefined) return db;
-                                          return (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
-                                        }
+                                const amortizationTypeLower = ((loan.amortization_type || '') as string).toLowerCase();
+                                const isIndefinite = amortizationTypeLower === 'indefinite';
+                                const calculatedBase = calculatedBaseBalances[loan.id];
+                                const calculatedTotal = calculatedRemainingBalances[loan.id];
+                                const db = loan.remaining_balance;
 
-                                        if (db !== null && db !== undefined) return db;
-                                        if (calculated !== undefined) return calculated;
-                                        return loan.amount || 0;
-                                      })()
-                                    ) + 
-                                    (dynamicLateFees[loan.id] || loan.current_late_fee || 0)
-                                  ) * 100) / 100
-                              )}
+                                // En préstamos a plazo fijo: NO mostrar BD "stale" mientras hidrata
+                                if (!isIndefinite && !balancesHydrated && calculatedBase === undefined) {
+                                  return 'Cargando...';
+                                }
+
+                                const base = (() => {
+                                  if (isIndefinite) {
+                                    if (calculatedBase !== undefined) return calculatedBase;
+                                    // Fallback: si solo tenemos total y cargos, derivar base restando cargos
+                                    if (calculatedTotal !== undefined) {
+                                      const charges = calculatedPendingCharges[loan.id] || 0;
+                                      return Math.round((Number(calculatedTotal) - Number(charges)) * 100) / 100;
+                                    }
+                                    return (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
+                                  }
+
+                                  if (calculatedBase !== undefined) {
+                                    return calculatedBase;
+                                  }
+                                  if (calculatedTotal !== undefined) {
+                                    const charges = calculatedPendingCharges[loan.id] || 0;
+                                    return Math.round((Number(calculatedTotal) - Number(charges)) * 100) / 100;
+                                  }
+                                  if (db !== null && db !== undefined) return Number(db);
+                                  return loan.amount || 0;
+                                })();
+
+                                const total = Math.round((Number(base) + (dynamicLateFees[loan.id] || loan.current_late_fee || 0)) * 100) / 100;
+                                return `$${formatCurrencyNumber(total)}`;
+                              })()}
                             </div>
                             <div className="text-sm text-purple-600 font-medium">Balance Total Pendiente</div>
                             {loan.status !== 'paid' && (

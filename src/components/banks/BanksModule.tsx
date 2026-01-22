@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -1756,9 +1757,8 @@ const BanksModule = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="amount">Monto *</Label>
-                    <Input
+                    <NumberInput
                       id="amount"
-                      type="number"
                       step="0.01"
                       min="0.01"
                       value={transactionForm.amount}
@@ -1930,9 +1930,8 @@ const BanksModule = () => {
 
             <div>
               <Label htmlFor="balance">Saldo Inicial</Label>
-              <Input
+              <NumberInput
                 id="balance"
-                type="number"
                 step="0.01"
                 value={accountForm.balance}
                 onChange={(e) => setAccountForm({...accountForm, balance: Number(e.target.value)})}
@@ -2043,9 +2042,8 @@ const BanksModule = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="dialog_amount">Monto *</Label>
-                <Input
+                <NumberInput
                   id="dialog_amount"
-                  type="number"
                   step="0.01"
                   min="0.01"
                   value={transactionForm.amount}
@@ -2220,9 +2218,8 @@ const BanksModule = () => {
                       <Label htmlFor="bank_balance" className="text-xs text-gray-600 mb-1 block">
                         Saldo en Estado de Cuenta del Banco *
                       </Label>
-                      <Input
+                      <NumberInput
                         id="bank_balance"
-                        type="number"
                         step="0.01"
                         value={reconciliationForm.bank_balance}
                         onChange={(e) => setReconciliationForm({...reconciliationForm, bank_balance: Number(e.target.value)})}

@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -750,8 +751,7 @@ const ClientForm = () => {
               </div>
               <div>
                 <Label>Ingresos (DOP)</Label>
-                <Input
-                  type="number"
+                <NumberInput
                   min="0"
                   value={formData.monthly_income}
                   onChange={(e) => handleChange('monthly_income', e.target.value)}
@@ -762,8 +762,7 @@ const ClientForm = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <Label>Vivienda (DOP)</Label>
-                <Input
-                  type="number"
+                <NumberInput
                   min="0"
                   value={formData.housing}
                   onChange={(e) => handleChange('housing', e.target.value)}
@@ -772,8 +771,7 @@ const ClientForm = () => {
               </div>
               <div>
                 <Label>Dependientes</Label>
-                <Input
-                  type="number"
+                <NumberInput
                   min="0"
                   value={formData.dependents}
                   onChange={(e) => handleChange('dependents', e.target.value)}
@@ -1122,8 +1120,7 @@ const ClientForm = () => {
               </div>
               <div>
                 <Label>Score crediticio</Label>
-                <Input
-                  type="number"
+                <NumberInput
                   min="0"
                   max="1000"
                   value={formData.credit_score}

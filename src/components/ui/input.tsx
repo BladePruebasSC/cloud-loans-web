@@ -1,9 +1,17 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { NumberInput } from "@/components/ui/number-input"
 
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
   ({ className, type, ...props }, ref) => {
+    // Si es numérico, usar `NumberInput` para:
+    // - flechas estilizadas acorde a la UI
+    // - evitar cambios por rueda del mouse
+    if (type === "number") {
+      return <NumberInput ref={ref} className={className} {...props} />
+    }
+
     return (
       <input
         type={type}

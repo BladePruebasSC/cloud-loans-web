@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -2001,8 +2002,7 @@ export const PointOfSaleModule = () => {
                             >
                               <Minus className="h-3 w-3 sm:h-4 sm:w-4" />
                             </Button>
-                            <Input 
-                              type="number" 
+                            <NumberInput 
                               value={item.quantity} 
                               onChange={(e) => updateCartItemQuantity(item.product.id, parseInt(e.target.value) || 0)}
                               className="text-center text-xs sm:text-sm h-8 sm:h-9"
@@ -2021,8 +2021,7 @@ export const PointOfSaleModule = () => {
                         
                         <div>
                           <Label className="text-xs">Precio</Label>
-                          <Input 
-                            type="number" 
+                          <NumberInput 
                             step="0.01"
                             value={parseFloat(item.unitPrice.toFixed(2))} 
                             onChange={(e) => updateCartItemPrice(item.product.id, parseFloat(e.target.value) || 0)}
@@ -2034,8 +2033,7 @@ export const PointOfSaleModule = () => {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <Label className="text-xs">Descuento (%)</Label>
-                          <Input 
-                            type="number" 
+                          <NumberInput 
                             step="0.01"
                             min="0"
                             max="100"
@@ -2085,8 +2083,7 @@ export const PointOfSaleModule = () => {
               {saleData.discountMode === 'total' && (
                 <div>
                   <Label className="text-xs">Descuento Total (%)</Label>
-                  <Input
-                    type="number"
+                  <NumberInput
                     step="0.01"
                     min="0"
                     max="100"
@@ -2296,8 +2293,7 @@ export const PointOfSaleModule = () => {
                           </div>
                           <div>
                             <Label className="text-sm">Monto</Label>
-              <Input
-                type="number"
+              <NumberInput
                 step="0.01"
                               value={split.amount === 0 ? '' : split.amount}
                 onChange={(e) => {
@@ -2498,8 +2494,7 @@ export const PointOfSaleModule = () => {
                             <div className="grid grid-cols-2 gap-2">
                               <div>
                                 <Label className="text-xs">Plazo (meses)</Label>
-                                <Input
-                                  type="number"
+                                <NumberInput
                                   min="1"
                                   max="60"
                                   value={split.details?.financingMonths || saleData.financingMonths || companySettings?.min_term_months || 12}
@@ -2522,8 +2517,7 @@ export const PointOfSaleModule = () => {
                               </div>
                               <div>
                                 <Label className="text-xs">Tasa de Interés (%)</Label>
-              <Input
-                type="number"
+              <NumberInput
                 step="0.01"
                                   min="0"
                                   max="100"
@@ -2635,8 +2629,7 @@ export const PointOfSaleModule = () => {
                                 <div className="grid grid-cols-2 gap-2">
                                   <div>
                                     <Label className="text-xs">Tasa de Mora (%)</Label>
-                                    <Input
-                                      type="number"
+                                    <NumberInput
                                       step="0.01"
                                       min="0"
                                       value={split.details?.lateFeeRate || saleData.paymentDetails?.lateFeeRate || companySettings?.default_late_fee_rate || 3}
@@ -2658,8 +2651,7 @@ export const PointOfSaleModule = () => {
                                   </div>
                                   <div>
                                     <Label className="text-xs">Días de Gracia</Label>
-                                    <Input
-                                      type="number"
+                                    <NumberInput
                                       min="0"
                                       value={split.details?.gracePeriodDays || saleData.paymentDetails?.gracePeriodDays || companySettings?.grace_period_days || 3}
                                       onChange={(e) => {
@@ -2861,8 +2853,7 @@ export const PointOfSaleModule = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-sm">Plazo (meses)</Label>
-                    <Input
-                      type="number"
+                    <NumberInput
                       min="1"
                       max="60"
                       value={saleData.paymentDetails?.financingMonths || saleData.financingMonths || companySettings?.min_term_months || 12}
@@ -2878,8 +2869,7 @@ export const PointOfSaleModule = () => {
                   </div>
                   <div>
                     <Label className="text-sm">Tasa de Interés (%)</Label>
-                    <Input
-                      type="number"
+                    <NumberInput
                       step="0.01"
                       min="0"
                       max="100"
@@ -2954,8 +2944,7 @@ export const PointOfSaleModule = () => {
                       <div className="grid grid-cols-2 gap-3 mt-2">
                         <div>
                           <Label className="text-sm">Tasa de Mora (%)</Label>
-                          <Input
-                            type="number"
+                          <NumberInput
                             step="0.01"
                             min="0"
                             value={saleData.paymentDetails?.lateFeeRate || companySettings?.default_late_fee_rate || 3}
@@ -2967,8 +2956,7 @@ export const PointOfSaleModule = () => {
                         </div>
                         <div>
                           <Label className="text-sm">Días de Gracia</Label>
-                          <Input
-                            type="number"
+                          <NumberInput
                             min="0"
                             value={saleData.paymentDetails?.gracePeriodDays || companySettings?.grace_period_days || 3}
                             onChange={(e) => setSaleData(prev => ({

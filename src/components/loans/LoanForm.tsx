@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -2690,8 +2691,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                         render={({ field }) => (
                           <FormItem>
                             <FormControl>
-                              <Input
-                                type="number"
+                              <NumberInput
                                 placeholder="0"
                                 value={field.value || ''}
                                 onChange={(e) => {
@@ -2752,8 +2752,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                               <FormItem>
                                 <FormControl>
                                   <div className="relative">
-                                    <Input
-                                      type="number"
+                                    <NumberInput
                                       placeholder="0"
                                       value={field.value || ''}
                                       onChange={(e) => {
@@ -2833,8 +2832,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                         render={({ field }) => (
                           <FormItem>
                             <FormControl>
-                              <Input
-                                type="number"
+                              <NumberInput
                                 placeholder="0"
                                 value={field.value || ''}
                                 onChange={(e) => {
@@ -2864,8 +2862,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                            render={({ field }) => (
                              <FormItem>
                                <FormControl>
-                                 <Input
-                                   type="number"
+                                 <NumberInput
                                    placeholder="0"
                                    value={field.value || ''}
                                    onChange={(e) => {
@@ -3038,8 +3035,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                         render={({ field }) => (
                           <FormItem>
                             <FormControl>
-                              <Input
-                                type="number"
+                              <NumberInput
                                 placeholder="0"
                                 min="0"
                                 step="0.01"
@@ -3215,8 +3211,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                           render={({ field }) => (
                             <FormItem className="flex-1">
                               <FormControl>
-                                <Input
-                                  type="number"
+                                <NumberInput
                                   placeholder="0"
                                   min="0"
                                   max="100"
@@ -3388,8 +3383,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input
-                                    type="number"
+                                  <NumberInput
                                     step="0.1"
                                     min="0"
                                     max="100"
@@ -3418,8 +3412,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input
-                                    type="number"
+                                  <NumberInput
                                     min="0"
                                     max="30"
                                     value={field.value || ''}
@@ -3482,8 +3475,7 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
                             render={({ field }) => (
                               <FormItem>
                                 <FormControl>
-                                  <Input
-                                    type="number"
+                                  <NumberInput
                                     min="0"
                                     value={field.value || ''}
                                     onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}

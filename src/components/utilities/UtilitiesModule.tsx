@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -2397,9 +2398,8 @@ Fecha: {fecha_actual}`
               <CardContent className="space-y-4">
                 <div>
                   <Label htmlFor="loan_amount">Monto del Préstamo</Label>
-                  <Input
+                  <NumberInput
                     id="loan_amount"
-                    type="number"
                     value={loanAmount}
                     onChange={(e) => setLoanAmount(Number(e.target.value))}
                   />
@@ -2407,9 +2407,8 @@ Fecha: {fecha_actual}`
                 
                 <div>
                   <Label htmlFor="interest_rate">Tasa de Interés Anual (%)</Label>
-                  <Input
+                  <NumberInput
                     id="interest_rate"
-                    type="number"
                     step="0.1"
                     value={interestRate}
                     onChange={(e) => setInterestRate(Number(e.target.value))}
@@ -2418,9 +2417,8 @@ Fecha: {fecha_actual}`
                 
                 <div>
                   <Label htmlFor="term_months">Plazo (meses)</Label>
-                  <Input
+                  <NumberInput
                     id="term_months"
-                    type="number"
                     value={termMonths}
                     onChange={(e) => setTermMonths(Number(e.target.value))}
                   />
@@ -2896,9 +2894,8 @@ Fecha: {fecha_actual}`
                   <CardContent className="space-y-4">
                     <div>
                       <Label htmlFor="default_interest">Tasa de Interés por Defecto (%)</Label>
-                      <Input 
+                      <NumberInput 
                         id="default_interest"
-                        type="number" 
                         step="0.1"
                         value={defaultInterestRate}
                         onChange={(e) => setDefaultInterestRate(Number(e.target.value))}
@@ -2907,9 +2904,8 @@ Fecha: {fecha_actual}`
                     </div>
                     <div>
                       <Label htmlFor="default_term">Plazo por Defecto (meses)</Label>
-                      <Input 
+                      <NumberInput 
                         id="default_term"
-                        type="number" 
                         value={defaultTermMonths}
                         onChange={(e) => setDefaultTermMonths(Number(e.target.value))}
                         placeholder="Plazo por defecto"
@@ -3027,9 +3023,8 @@ Fecha: {fecha_actual}`
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="amount">Monto *</Label>
-                <Input
+                <NumberInput
                   id="amount"
-                  type="number"
                   step="0.01"
                   value={expenseForm.amount}
                   onChange={(e) => setExpenseForm({...expenseForm, amount: Number(e.target.value)})}
@@ -3095,9 +3090,8 @@ Fecha: {fecha_actual}`
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="edit_amount">Monto *</Label>
-                <Input
+                <NumberInput
                   id="edit_amount"
-                  type="number"
                   step="0.01"
                   value={expenseForm.amount}
                   onChange={(e) => setExpenseForm({...expenseForm, amount: Number(e.target.value)})}
@@ -3220,9 +3214,8 @@ Fecha: {fecha_actual}`
           <div className="space-y-4">
             <div>
               <Label htmlFor="si_principal">Capital Principal ($)</Label>
-              <Input
+              <NumberInput
                 id="si_principal"
-                type="number"
                 value={simpleInterest.principal}
                 onChange={(e) => setSimpleInterest({...simpleInterest, principal: Number(e.target.value)})}
               />
@@ -3230,9 +3223,8 @@ Fecha: {fecha_actual}`
             
             <div>
               <Label htmlFor="si_rate">Tasa de Interés Anual (%)</Label>
-              <Input
+              <NumberInput
                 id="si_rate"
-                type="number"
                 step="0.1"
                 value={simpleInterest.rate}
                 onChange={(e) => setSimpleInterest({...simpleInterest, rate: Number(e.target.value)})}
@@ -3241,9 +3233,8 @@ Fecha: {fecha_actual}`
             
             <div>
               <Label htmlFor="si_time">Tiempo (meses)</Label>
-              <Input
+              <NumberInput
                 id="si_time"
-                type="number"
                 value={simpleInterest.time}
                 onChange={(e) => setSimpleInterest({...simpleInterest, time: Number(e.target.value)})}
               />
@@ -3291,9 +3282,8 @@ Fecha: {fecha_actual}`
           <div className="space-y-4">
             <div>
               <Label htmlFor="prof_initial">Inversión Inicial ($)</Label>
-              <Input
+              <NumberInput
                 id="prof_initial"
-                type="number"
                 value={profitability.initialInvestment}
                 onChange={(e) => setProfitability({...profitability, initialInvestment: Number(e.target.value)})}
               />
@@ -3301,9 +3291,8 @@ Fecha: {fecha_actual}`
             
             <div>
               <Label htmlFor="prof_final">Valor Final ($)</Label>
-              <Input
+              <NumberInput
                 id="prof_final"
-                type="number"
                 value={profitability.finalValue}
                 onChange={(e) => setProfitability({...profitability, finalValue: Number(e.target.value)})}
               />
@@ -3311,9 +3300,8 @@ Fecha: {fecha_actual}`
             
             <div>
               <Label htmlFor="prof_time">Tiempo (meses)</Label>
-              <Input
+              <NumberInput
                 id="prof_time"
-                type="number"
                 value={profitability.timeMonths}
                 onChange={(e) => setProfitability({...profitability, timeMonths: Number(e.target.value)})}
               />
@@ -3365,9 +3353,8 @@ Fecha: {fecha_actual}`
           <div className="space-y-4">
             <div>
               <Label htmlFor="curr_amount">Cantidad</Label>
-              <Input
+              <NumberInput
                 id="curr_amount"
-                type="number"
                 step="0.01"
                 value={currency.amount}
                 onChange={(e) => setCurrency({...currency, amount: Number(e.target.value)})}

@@ -860,35 +860,31 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             // Resetear la fecha del primer pago para esta cuota
             firstPaymentDateForInstallment = null;
 
-            // Acumular pagos hasta que se complete esta cuota (excluyendo pagos ya asignados a cargos)
-            while (paymentIndex < sortedPayments.length && 
-                   (accumulatedPrincipal < expectedPrincipal * 0.99 || accumulatedInterest < expectedInterest * 0.99)) {
-              const payment = sortedPayments[paymentIndex];
-              
-              // CORRECCIÓN: Saltar pagos que ya fueron asignados a cargos
-              if (paymentsAssignedToCharges.has(payment.id)) {
-                paymentIndex++;
-                continue;
-              }
-              
-              // Guardar la fecha del primer pago de esta cuota
-              if (firstPaymentDateForInstallment === null) {
-                firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;
-              }
-              
-              accumulatedPrincipal += (payment.principal_amount || 0);
-              accumulatedInterest += (payment.interest_amount || 0);
-              paymentIndex++;
+            // ✅ CORRECCIÓN: Determinar estado por `due_date` y MONTO pagado (no por splits guardados),
+            // porque tras un abono a capital los splits viejos (principal/interest) pueden no coincidir.
+            const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
+            const dueKey = regularInst.due_date?.split('T')[0] || regularInst.due_date;
+            const expectedTotal = round2(
+              Number(regularInst.total_amount ?? (regularInst.amount || (expectedPrincipal + expectedInterest))) || 0
+            );
+
+            let totalPaidForDue = 0;
+            let firstPaidDate: string | null = null;
+            if (dueKey) {
+              const paymentsForThisDue = sortedPayments.filter(p => {
+                if (paymentsAssignedToCharges.has(p.id)) return false;
+                const pDue = (p.due_date as any)?.split?.('T')?.[0] || (p.due_date as any) || null;
+                return pDue === dueKey;
+              });
+
+              totalPaidForDue = round2(paymentsForThisDue.reduce((s, p) => s + (Number(p.amount || 0) || 0), 0));
+              const first = paymentsForThisDue[0];
+              firstPaidDate = first ? (first.payment_date?.split('T')[0] || first.payment_date || null) : null;
             }
 
-            // Si se acumuló suficiente capital e interés, la cuota está completa
-            if (accumulatedPrincipal >= expectedPrincipal * 0.99 && accumulatedInterest >= expectedInterest * 0.99) {
+            if (totalPaidForDue + 0.05 >= expectedTotal && expectedTotal > 0) {
               regularInst.is_paid = true;
-              regularInst.paid_date = firstPaymentDateForInstallment;
-              
-              // Restar el capital e interés usados para esta cuota
-              accumulatedPrincipal = Math.max(0, accumulatedPrincipal - expectedPrincipal);
-              accumulatedInterest = Math.max(0, accumulatedInterest - expectedInterest);
+              regularInst.paid_date = firstPaidDate;
             } else {
               regularInst.is_paid = false;
               regularInst.paid_date = null;
@@ -1335,22 +1331,25 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           return !inst.is_paid && !isCharge;
         })
         .reduce((sum, inst) => {
-          const principal = (inst as any).principal_amount || 0;
-          // Calcular pagos parciales
+          const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
+          const principal = round2((inst as any).principal_amount || 0);
+          const interest = round2((inst as any).interest_amount || 0);
+
+          // Calcular pagos por due_date usando el MONTO (no el split guardado),
+          // y distribuir: interés primero, luego capital.
           const instDueDate = inst.due_date?.split('T')[0];
-          let principalPaid = 0;
+          let totalPaid = 0;
           if (instDueDate) {
             const paymentsForThisInst = (allPayments || []).filter(p => {
               const paymentDueDate = p.due_date?.split('T')[0];
               return paymentDueDate === instDueDate;
             });
-            principalPaid = paymentsForThisInst.reduce((s, p) => s + (p.principal_amount || 0), 0);
+            totalPaid = round2(paymentsForThisInst.reduce((s, p) => s + (Number(p.amount || 0) || 0), 0));
           }
-          const remainingPrincipal = Math.max(0, principal - principalPaid);
-          if (remainingPrincipal > 0.01) {
-            return sum + Math.round(remainingPrincipal);
-          }
-          return sum;
+
+          const principalPaid = Math.min(principal, Math.max(0, round2(totalPaid - interest)));
+          const remainingPrincipal = Math.max(0, round2(principal - principalPaid));
+          return sum + (remainingPrincipal > 0.01 ? remainingPrincipal : 0);
         }, 0);
       
       // Interés pendiente de cuotas regulares
@@ -1362,22 +1361,22 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           return !inst.is_paid && !isCharge;
         })
         .reduce((sum, inst) => {
-          const interest = (inst as any).interest_amount || 0;
-          // Calcular pagos parciales
+          const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
+          const interest = round2((inst as any).interest_amount || 0);
+
           const instDueDate = inst.due_date?.split('T')[0];
-          let interestPaid = 0;
+          let totalPaid = 0;
           if (instDueDate) {
             const paymentsForThisInst = (allPayments || []).filter(p => {
               const paymentDueDate = p.due_date?.split('T')[0];
               return paymentDueDate === instDueDate;
             });
-            interestPaid = paymentsForThisInst.reduce((s, p) => s + (p.interest_amount || 0), 0);
+            totalPaid = round2(paymentsForThisInst.reduce((s, p) => s + (Number(p.amount || 0) || 0), 0));
           }
-          const remainingInterest = Math.max(0, interest - interestPaid);
-          if (remainingInterest > 0.01) {
-            return sum + Math.round(remainingInterest);
-          }
-          return sum;
+
+          const interestPaid = Math.min(interest, totalPaid);
+          const remainingInterest = Math.max(0, round2(interest - interestPaid));
+          return sum + (remainingInterest > 0.01 ? remainingInterest : 0);
         }, 0);
       
       // Balance pendiente = Capital pendiente (incluye cargos) + Interés pendiente
@@ -1396,8 +1395,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       // Asegurar que totalAmount = totalPaid + balancePending para consistencia
       // Esto corrige cualquier diferencia por redondeo acumulativo
       // IMPORTANTE: Redondear a 2 decimales para evitar errores de redondeo
-      const recalculatedTotalAmount = Math.round((totalPaid + balancePending) * 100) / 100;
-      // Usar el recalculado para mantener consistencia: Total = Pagado + Pendiente
+      // Total = Pagado + Pendiente (preferir remaining_balance de BD si existe)
+      const pendingFromDb = (loanInfo.remaining_balance !== null && loanInfo.remaining_balance !== undefined)
+        ? Number(loanInfo.remaining_balance)
+        : balancePending;
+      const recalculatedTotalAmount = Math.round((totalPaid + pendingFromDb) * 100) / 100;
       totalAmount = recalculatedTotalAmount;
       
       console.log('🔍 InstallmentsTable - Cálculo detallado de balance:', {
@@ -1414,10 +1416,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   } else {
     // Fallback: usar valores de la BD si no hay loanInfo
     // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
-    totalPaid = totalPaidFromPayments > 0 ? Math.round(totalPaidFromPayments) : 
+    totalPaid = totalPaidFromPayments > 0 ? Math.round(totalPaidFromPayments * 100) / 100 : 
       installments.filter(inst => inst.is_paid).reduce((sum, inst) => {
         const amount = (inst as any).total_amount || inst.amount || 0;
-        return sum + Math.round(Number(amount));
+        return sum + (Math.round(Number(amount) * 100) / 100);
       }, 0);
     
     // Calcular balance pendiente considerando pagos parciales
@@ -1432,7 +1434,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       const chargeDueDate = inst.due_date?.split('T')[0];
       
       if (!chargeDueDate) {
-        return sum + (inst.is_paid ? 0 : Math.round(Number(chargeAmount)));
+        return sum + (inst.is_paid ? 0 : (Math.round(Number(chargeAmount) * 100) / 100));
       }
       
       const chargesWithSameDate = allCharges.filter(c => c.due_date?.split('T')[0] === chargeDueDate)
@@ -1460,13 +1462,13 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       }
       
       const remainingChargeAmount = Math.max(0, chargeAmount - principalPaidForThisCharge);
-      return sum + Math.round(remainingChargeAmount);
+      return sum + (Math.round(remainingChargeAmount * 100) / 100);
     }, 0);
     
-    const capitalPending = Math.round((loanInfo?.amount || 0) - totalPaidFromPayments);
+    const capitalPending = Math.round(((loanInfo?.amount || 0) - totalPaidFromPayments) * 100) / 100;
     const interestPending = installments
       .filter(inst => !inst.is_paid && !(Math.abs((inst as any).interest_amount || 0) < 0.01))
-      .reduce((sum, inst) => sum + Math.round((inst as any).interest_amount || 0), 0);
+      .reduce((sum, inst) => sum + (Math.round(((inst as any).interest_amount || 0) * 100) / 100), 0);
     
     balancePending = capitalPending + interestPending + unpaidChargesAmount;
     totalAmount = totalPaid + balancePending;
@@ -1474,15 +1476,17 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   
   // Si el préstamo está saldado, el total pendiente debe ser 0
   const isLoanSettled = loanInfo?.status === 'paid';
-  
-  // CORRECCIÓN: Priorizar valor de BD si está disponible (es más confiable que el cálculo dinámico)
-  // Esto evita problemas de redondeo al usar totalAmount - totalPaid
-  // Asegurar que totalPending nunca sea negativo y sea 0 si el préstamo está saldado
-  const totalPending = isLoanSettled ? 0 : Math.max(0, 
-    (loanInfo?.remaining_balance !== null && loanInfo?.remaining_balance !== undefined)
-      ? loanInfo.remaining_balance
-      : balancePending
-  );
+
+  // ✅ CORRECCIÓN: El "Total Pendiente" debe salir del plan de cuotas real (installments),
+  // no de `loan.total_amount` (puede quedar desactualizado tras un abono a capital).
+  // `balancePending` ya se calcula como: capital pendiente (regular) + interés pendiente + cargos pendientes.
+  const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
+  const totalPending = isLoanSettled ? 0 : Math.max(0, round2(balancePending));
+
+  // CORRECCIÓN: El "Total a Pagar" debe ser consistente:
+  // Total a pagar = Total pagado + Total pendiente
+  // (El total pagado incluye abonos a capital; el total pendiente se calcula desde total_amount/cargos/pagos)
+  totalAmount = Math.round((totalPaid + totalPending) * 100) / 100;
   
   console.log('🔍 InstallmentsTable - Cálculo de totales finales:', {
     loanId,

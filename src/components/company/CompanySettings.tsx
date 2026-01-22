@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -916,9 +917,8 @@ const CompanySettings = () => {
 
                 <div>
                   <Label htmlFor="interest_rate_default">Tasa de Interés por Defecto (%)</Label>
-                  <Input
+                  <NumberInput
                     id="interest_rate_default"
-                    type="number"
                     step="0.1"
                     value={formData.interest_rate_default ?? ''}
                     onChange={(e) => handleInputChange('interest_rate_default', sanitizeNumber(e.target.value, 0))}
@@ -928,9 +928,8 @@ const CompanySettings = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <Label htmlFor="default_late_fee_rate">Mora por Defecto (% mensual)</Label>
-                    <Input
+                    <NumberInput
                       id="default_late_fee_rate"
-                      type="number"
                       step="0.1"
                       value={formData.default_late_fee_rate ?? ''}
                       onChange={(e) => handleInputChange('default_late_fee_rate', sanitizeNumber(e.target.value, 0))}
@@ -938,18 +937,16 @@ const CompanySettings = () => {
                   </div>
                   <div>
                     <Label htmlFor="default_pawn_period_days">Días por Defecto (Compra‑Venta)</Label>
-                    <Input
+                    <NumberInput
                       id="default_pawn_period_days"
-                      type="number"
                       value={formData.default_pawn_period_days ?? ''}
                       onChange={(e) => handleInputChange('default_pawn_period_days', sanitizeNumber(e.target.value, 0))}
                     />
                   </div>
                   <div>
                     <Label htmlFor="default_capital_payment_penalty_percentage">Penalización Abono a Capital (% por defecto)</Label>
-                    <Input
+                    <NumberInput
                       id="default_capital_payment_penalty_percentage"
-                      type="number"
                       step="0.1"
                       value={formData.default_capital_payment_penalty_percentage ?? ''}
                       onChange={(e) => handleInputChange('default_capital_payment_penalty_percentage', sanitizeNumber(e.target.value, 0))}
@@ -959,9 +956,8 @@ const CompanySettings = () => {
 
                 <div>
                   <Label htmlFor="grace_period_days">Días de Gracia</Label>
-                  <Input
+                  <NumberInput
                     id="grace_period_days"
-                    type="number"
                     value={formData.grace_period_days ?? ''}
                     onChange={(e) => handleInputChange('grace_period_days', sanitizeNumber(e.target.value, 0))}
                   />
@@ -981,9 +977,8 @@ const CompanySettings = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="min_loan_amount">Monto Mínimo</Label>
-                    <Input
+                    <NumberInput
                       id="min_loan_amount"
-                      type="number"
                       value={formData.min_loan_amount ?? ''}
                       onChange={(e) => handleInputChange('min_loan_amount', sanitizeNumber(e.target.value, 0))}
                     />
@@ -991,9 +986,8 @@ const CompanySettings = () => {
 
                   <div>
                     <Label htmlFor="max_loan_amount">Monto Máximo</Label>
-                    <Input
+                    <NumberInput
                       id="max_loan_amount"
-                      type="number"
                       value={formData.max_loan_amount ?? ''}
                       onChange={(e) => handleInputChange('max_loan_amount', sanitizeNumber(e.target.value, 0))}
                     />
@@ -1003,9 +997,8 @@ const CompanySettings = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="min_term_months">Plazo Mínimo (meses)</Label>
-                    <Input
+                    <NumberInput
                       id="min_term_months"
-                      type="number"
                       value={formData.min_term_months ?? ''}
                       onChange={(e) => handleInputChange('min_term_months', sanitizeNumber(e.target.value, 0))}
                       placeholder="Plazo mínimo en meses"
@@ -1014,9 +1007,8 @@ const CompanySettings = () => {
                   
                   <div>
                     <Label htmlFor="max_term_months">Plazo Máximo (meses)</Label>
-                    <Input
+                    <NumberInput
                       id="max_term_months"
-                      type="number"
                       value={formData.max_term_months ?? ''}
                       onChange={(e) => handleInputChange('max_term_months', sanitizeNumber(e.target.value, 0))}
                       placeholder="Plazo máximo en meses"
@@ -1218,9 +1210,8 @@ const CompanySettings = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="max_file_size">Tamaño Máximo de Archivo (MB)</Label>
-                    <Input
+                    <NumberInput
                       id="max_file_size"
-                      type="number"
                       min="1"
                       max="100"
                       defaultValue="10"
@@ -1233,9 +1224,8 @@ const CompanySettings = () => {
                   
                   <div>
                     <Label htmlFor="document_retention_years">Años de Retención de Documentos</Label>
-                    <Input
+                    <NumberInput
                       id="document_retention_years"
-                      type="number"
                       min="1"
                       max="30"
                       defaultValue="7"
@@ -1327,9 +1317,8 @@ const CompanySettings = () => {
                   
                   <div>
                     <Label htmlFor="monthly_report_day">Día de Reporte Mensual</Label>
-                    <Input
+                    <NumberInput
                       id="monthly_report_day"
-                      type="number"
                       min="1"
                       max="28"
                       defaultValue="1"
@@ -1431,9 +1420,8 @@ const CompanySettings = () => {
                     <>
                       <div>
                         <Label htmlFor="auto_backup_interval_hours">Intervalo entre Backups (horas)</Label>
-                        <Input
+                        <NumberInput
                           id="auto_backup_interval_hours"
-                          type="number"
                           min="1"
                           max="720"
                           value={formData.auto_backup_interval_hours}
