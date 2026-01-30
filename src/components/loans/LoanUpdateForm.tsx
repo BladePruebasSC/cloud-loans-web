@@ -2396,7 +2396,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           
           const { data: allPaymentsForBalanceCalc } = await supabase
             .from('payments')
-            .select('principal_amount, interest_amount, due_date')
+            .select('amount, principal_amount, interest_amount, due_date')
             .eq('loan_id', loan.id);
 
           const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
@@ -2491,20 +2491,64 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }, 0);
           
           // Balance:
-          // - Plazo fijo: capital pendiente (incluye cargos) + interés pendiente
-          // - Indefinido: capital actual (loan.amount) + interés del período + cargos pendientes
-          const newBalance = isIndefinite
-            ? (() => {
-                const capitalNow = round2(loan.amount || 0);
-                const fallbackInterestPerPayment = round2((capitalNow * (loan.interest_rate || 0)) / 100);
-                const pendingInterest = round2(
-                  (interestPendingFromInstallments || 0) > 0.01
-                    ? (interestPendingFromInstallments || 0)
-                    : fallbackInterestPerPayment
-                );
-                return round2(capitalNow + pendingInterest + unpaidChargesAmountFromInstallments);
-              })()
-            : round2(capitalPendingFromInstallments + (interestPendingFromInstallments || 0));
+          // - Indefinido: capital actual + interés del período + cargos pendientes
+          // - Plazo fijo: (total_amount del préstamo - pagos regulares - abonos a capital) + cargos pendientes
+          let newBalance = 0;
+          if (isIndefinite) {
+            const capitalNow = round2(loan.amount || 0);
+            const fallbackInterestPerPayment = round2((capitalNow * (loan.interest_rate || 0)) / 100);
+            const pendingInterest = round2(
+              (interestPendingFromInstallments || 0) > 0.01
+                ? (interestPendingFromInstallments || 0)
+                : fallbackInterestPerPayment
+            );
+            newBalance = round2(capitalNow + pendingInterest + unpaidChargesAmountFromInstallments);
+          } else {
+            // total_amount base (sin cargos) como fuente de verdad para evitar desfaces por cuota redondeada
+            let baseLoanTotal = Number((loan as any).total_amount || 0) || 0;
+            if (!(baseLoanTotal > 0) || baseLoanTotal <= Number(loan.amount || 0)) {
+              const term = Number(loan.term_months || 0) || 0;
+              const totalInterest = Number(loan.amount || 0) * (Number(loan.interest_rate || 0) / 100) * term;
+              baseLoanTotal = Number(loan.amount || 0) + totalInterest;
+            }
+            baseLoanTotal = round2(baseLoanTotal);
+
+            // Abonos a capital
+            const { data: cps } = await supabase
+              .from('capital_payments')
+              .select('amount')
+              .eq('loan_id', loan.id);
+            const totalCapitalPayments = round2((cps || []).reduce((s: number, cp: any) => s + (Number(cp?.amount) || 0), 0));
+
+            // Pagos: separar lo pagado a cargos (por due_date + sin interés) para no restarlo del total base
+            const chargeDueDates = new Set<string>();
+            for (const inst of (updatedInstallments || [])) {
+              const isChargeInst =
+                Math.abs(Number(inst?.interest_amount || 0)) < 0.01 &&
+                Math.abs(Number(inst?.principal_amount || 0) - Number(inst?.total_amount || 0)) < 0.01;
+              if (!isChargeInst) continue;
+              const d = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
+              if (d) chargeDueDates.add(d);
+            }
+
+            const totalPaidAmount = round2(
+              (allPaymentsForBalanceCalc || []).reduce((s: number, p: any) => s + (Number(p?.amount) || 0), 0)
+            );
+            const totalPaidToCharges = round2(
+              (allPaymentsForBalanceCalc || [])
+                .filter((p: any) => {
+                  const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
+                  if (!due) return false;
+                  if (!chargeDueDates.has(due)) return false;
+                  return Math.abs(Number(p?.interest_amount || 0)) < 0.01;
+                })
+                .reduce((s: number, p: any) => s + (Number(p?.principal_amount || p?.amount || 0) || 0), 0)
+            );
+            const totalPaidRegular = round2(Math.max(0, totalPaidAmount - totalPaidToCharges));
+
+            const baseRemaining = round2(Math.max(0, baseLoanTotal - totalPaidRegular - totalCapitalPayments));
+            newBalance = round2(baseRemaining + unpaidChargesAmountFromInstallments);
+          }
 
           // Actualizar el balance del préstamo
           loanUpdates = {
@@ -3270,7 +3314,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               // Obtener TODAS las cuotas pendientes actualizadas (después del abono y recálculo de cuotas)
               const { data: updatedInstallments } = await supabase
                 .from('installments')
-                .select('principal_amount, interest_amount, is_paid, total_amount, due_date')
+                .select('id, installment_number, principal_amount, interest_amount, is_paid, total_amount, due_date, amount')
                 .eq('loan_id', loan.id);
               
               // Calcular cargos no pagados
@@ -3283,7 +3327,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               // Obtener pagos para calcular cargos parcialmente pagados
               const { data: paymentsForCharges } = await supabase
                 .from('payments')
-                .select('principal_amount, interest_amount, due_date')
+                .select('principal_amount, interest_amount, due_date, amount')
                 .eq('loan_id', loan.id);
               
               const unpaidChargesAmount = allCharges.reduce((sum, inst) => {
@@ -3576,7 +3620,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     // Obtener TODAS las cuotas pendientes actualizadas (después de actualizar/eliminar cuotas)
                     const { data: updatedInstallments, error: updInstErr } = await supabase
                       .from('installments')
-                      .select('principal_amount, interest_amount, is_paid, total_amount, due_date, amount')
+                      .select('id, installment_number, principal_amount, interest_amount, is_paid, total_amount, due_date, amount')
                       .eq('loan_id', loan.id);
                     if (updInstErr) throw updInstErr;
                   
@@ -3700,7 +3744,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     // Obtener TODAS las cuotas pendientes actualizadas (después de actualizar los montos)
                     const { data: updatedInstallments, error: updInstErr2 } = await supabase
                       .from('installments')
-                      .select('principal_amount, interest_amount, is_paid, total_amount, due_date, amount')
+                      .select('id, installment_number, principal_amount, interest_amount, is_paid, total_amount, due_date, amount')
                       .eq('loan_id', loan.id);
                     if (updInstErr2) throw updInstErr2;
                   
@@ -4009,8 +4053,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           newValueObj.current_late_fee = (currentLateFee || 0) - (data.late_fee_amount || 0);
           description = `Eliminar Mora: ${data.adjustment_reason}. Monto eliminado: RD$${(data.late_fee_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         } else if (updateType === 'add_charge') {
-          oldValueObj.balance = loan.remaining_balance;
-          newValueObj.balance = calculatedValues.newBalance;
+          oldValueObj.balance =
+            (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
+              ? freshRemainingBalance
+              : loan.remaining_balance;
+          newValueObj.balance =
+            (loanUpdates?.remaining_balance !== null && loanUpdates?.remaining_balance !== undefined)
+              ? loanUpdates.remaining_balance
+              : calculatedValues.newBalance;
           description = `Agregar Cargo: ${data.adjustment_reason}. Monto: RD$${(data.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           if (data.notes) {
             description += `. Notas: ${data.notes}`;

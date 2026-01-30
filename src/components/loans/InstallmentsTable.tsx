@@ -1674,7 +1674,35 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   // no de `loan.total_amount` (puede quedar desactualizado tras un abono a capital).
   // `balancePending` ya se calcula como: capital pendiente (regular) + interés pendiente + cargos pendientes.
   const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
-  const totalPending = isLoanSettled ? 0 : Math.max(0, round2(balancePending));
+  let totalPending = isLoanSettled ? 0 : Math.max(0, round2(balancePending));
+
+  // ✅ Plazo fijo: El TOTAL y el BALANCE deben incluir cargos y evitar desfaces por redondeo
+  // (ej. 20,333 * 12 = 243,996 vs total_amount = 244,000).
+  // Usar `loanInfo.total_amount` (o fórmula) como base y sumar cargos.
+  if (loanInfo && String(loanInfo?.amortization_type || '').toLowerCase() !== 'indefinite') {
+    const isCharge = (inst: any) =>
+      Math.abs(Number((inst as any).interest_amount || 0)) < 0.01 &&
+      Number((inst as any).principal_amount || 0) > 0 &&
+      Math.abs(Number((inst as any).principal_amount || 0) - Number((inst as any).total_amount ?? inst.amount ?? 0)) < 0.01;
+
+    const chargesTotal = round2(
+      (installments || []).filter(isCharge).reduce((s, inst: any) => s + (Number(inst.total_amount ?? inst.amount ?? 0) || 0), 0)
+    );
+
+    let baseLoanTotal = Number((loanInfo as any).total_amount || 0) || 0;
+    if (!(baseLoanTotal > 0)) {
+      const term = Number(loanInfo.term_months || 0) || 0;
+      const totalInterest = Number(loanInfo.amount || 0) * (Number(loanInfo.interest_rate || 0) / 100) * term;
+      baseLoanTotal = Number(loanInfo.amount || 0) + totalInterest;
+    }
+    baseLoanTotal = round2(baseLoanTotal);
+
+    // Total pagado ya incluye abonos a capital en esta pantalla
+    const paid = round2(totalPaid);
+    totalAmount = round2(baseLoanTotal + chargesTotal);
+    totalPending = isLoanSettled ? 0 : Math.max(0, round2(totalAmount - paid));
+    balancePending = totalPending;
+  }
 
   // CORRECCIÓN: El "Total a Pagar" debe ser consistente:
   // Total a pagar = Total pagado + Total pendiente

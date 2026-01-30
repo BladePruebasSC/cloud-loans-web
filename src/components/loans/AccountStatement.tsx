@@ -809,107 +809,43 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           return sum + principalPaidForThisCharge;
         }, 0);
         const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
-        
-        // 2. Calcular capital pagado y abonos a capital (para referencia, pero no usado en el cálculo final)
-        const totalPaidFromPayments = (paymentsData || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
-        const totalCapitalPayments = (capitalPaymentsData || []).reduce((sum, cp) => sum + (cp.amount || 0), 0);
-        // CORRECCIÓN: Capital pagado es la suma de todos los pagos de capital (incluyendo cargos)
-        const capitalPaidFromLoan = totalPaidFromPayments;
-        
-        // 3. Calcular capital pendiente desde TODAS las CUOTAS REGULARES (excluyendo cargos)
-        // IMPORTANTE: Calcular desde TODAS las cuotas (no solo is_paid = false) para incluir pagos parciales
-        // CORRECCIÓN CRÍTICA: Considerar pagos parciales - restar lo que ya se pagó de cada cuota
-        // IMPORTANTE: Excluir cargos del capital pendiente - los cargos se calculan por separado como unpaidChargesAmount
-        // Redondear cada valor individual antes de sumar
-        const capitalPendingFromInstallments = (installmentsData || [])
-          .filter(inst => {
-            // Excluir cargos del capital pendiente
-            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-            return !isCharge;
-          })
-          .reduce((sum, inst) => {
-            const originalPrincipal = inst.principal_amount || 0;
-            
-            // Es una cuota regular: buscar pagos asignados a esta cuota
-            const installmentDueDate = inst.due_date?.split('T')[0];
-            let principalPaidForThisInstallment = 0;
-            if (installmentDueDate) {
-              const paymentsForThisInstallment = (paymentsData || []).filter(p => {
-                const paymentDueDate = p.due_date?.split('T')[0];
-                return paymentDueDate === installmentDueDate;
-              });
-              principalPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
-            }
-            
-            // Capital pendiente de esta cuota = principal original - principal ya pagado
-            const remainingPrincipal = Math.max(0, originalPrincipal - principalPaidForThisInstallment);
-            // Solo incluir si hay algo pendiente (remainingPrincipal > 0.01)
-            if (remainingPrincipal > 0.01) {
-              return sum + Math.round(remainingPrincipal);
-            }
-            return sum;
-          }, 0);
-        
-        // Si hay cuotas pendientes, usar ese cálculo; sino usar el cálculo tradicional
-        const capitalPending = capitalPendingFromInstallments > 0 
-          ? capitalPendingFromInstallments 
-          : Math.round(loanData.amount - capitalPaidFromLoan - totalCapitalPayments);
-      
-        // 4. Calcular interés pendiente (solo de cuotas regulares, no cargos)
-        // CORRECCIÓN CRÍTICA: Considerar pagos parciales - restar lo que ya se pagó de interés de cada cuota
-        // IMPORTANTE: Incluir TODAS las cuotas regulares (no solo is_paid = false) para incluir pagos parciales
-        // IMPORTANTE: Redondear cada valor individual antes de sumar
-        const interestPending = (installmentsData || [])
-          .filter(inst => {
-            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-            return !isCharge;
-          })
-          .reduce((sum, inst) => {
-            const originalInterest = inst.interest_amount || 0;
-            const installmentDueDate = inst.due_date?.split('T')[0];
-            let interestPaidForThisInstallment = 0;
-            
-            if (installmentDueDate) {
-              const paymentsForThisInstallment = (paymentsData || []).filter(p => {
-                const paymentDueDate = p.due_date?.split('T')[0];
-                return paymentDueDate === installmentDueDate;
-              });
-              interestPaidForThisInstallment = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
-            }
-            
-            const remainingInterest = Math.max(0, originalInterest - interestPaidForThisInstallment);
-            // Solo incluir si hay algo pendiente (remainingInterest > 0.01)
-            if (remainingInterest > 0.01) {
-              return sum + Math.round(remainingInterest);
-            }
-            return sum;
-          }, 0);
-        
-        // 5. Balance = Capital Pendiente + Interés Pendiente + Cargos No Pagados
-        // IMPORTANTE: El capital pendiente incluye solo el capital de cuotas regulares pendientes
-        // IMPORTANTE: Los cargos parcialmente pagados se calculan por separado como unpaidChargesAmount
-        // IMPORTANTE: Redondear el resultado final a 2 decimales
-        finalRemainingBalance = Math.round((capitalPending + interestPending + unpaidChargesAmount) * 100) / 100;
-        
-        // CORRECCIÓN: Priorizar valor de BD si está disponible y la diferencia es pequeña (por redondeo)
-        if (loanData.remaining_balance !== null && loanData.remaining_balance !== undefined) {
-          const diff = Math.abs(finalRemainingBalance - loanData.remaining_balance);
-          // Si la diferencia es pequeña (menos de 5 pesos), usar el valor de la BD como fuente de verdad
-          if (diff < 5) {
-            finalRemainingBalance = Math.round(loanData.remaining_balance * 100) / 100;
-          }
+
+        // ✅ Plazo fijo: balance restante debe incluir cargos y evitar desfaces por redondeo de cuotas.
+        // Base = total_amount (o fórmula) - pagos regulares - abonos a capital; luego + cargos pendientes.
+        const round2 = (n: number) => Math.round((Number(n || 0) * 100)) / 100;
+        const totalCapitalPayments = round2((capitalPaymentsData || []).reduce((s, cp: any) => s + (Number(cp?.amount) || 0), 0));
+
+        // Pagado total (monto), sin incluir fallidos
+        const totalPaidAmount = round2((paymentsData || []).reduce((s, p: any) => s + (Number(p?.amount) || 0), 0));
+
+        // Pagos asignados a cargos (heurística: mismo due_date del cargo y sin interés)
+        const chargeDueDates = new Set<string>();
+        for (const c of allCharges) {
+          const d = c?.due_date ? String(c.due_date).split('T')[0] : null;
+          if (d) chargeDueDates.add(d);
         }
-        
-        console.log('🔍 AccountStatement - Cálculo de balance (fixed-term, corregido):', {
-          loanId: loanData.id,
-          capitalPending,
-          interestPending,
-          unpaidChargesAmount,
-          finalRemainingBalance,
-          dbRemainingBalance: loanData.remaining_balance
-        });
+        const totalPaidToCharges = round2(
+          (paymentsData || [])
+            .filter((p: any) => {
+              const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
+              if (!due) return false;
+              if (!chargeDueDates.has(due)) return false;
+              return Math.abs(Number(p?.interest_amount || 0)) < 0.01;
+            })
+            .reduce((s: number, p: any) => s + (Number(p?.principal_amount || p?.amount || 0) || 0), 0)
+        );
+        const totalPaidRegular = round2(Math.max(0, totalPaidAmount - totalPaidToCharges));
+
+        let baseLoanTotal = Number(loanData.total_amount || 0) || 0;
+        if (!(baseLoanTotal > 0) || baseLoanTotal <= Number(loanData.amount || 0)) {
+          const term = Number(loanData.term_months || 0) || 0;
+          const totalInterest = Number(loanData.amount || 0) * (Number(loanData.interest_rate || 0) / 100) * term;
+          baseLoanTotal = Number(loanData.amount || 0) + totalInterest;
+        }
+        baseLoanTotal = round2(baseLoanTotal);
+
+        const baseRemaining = round2(Math.max(0, baseLoanTotal - totalPaidRegular - totalCapitalPayments));
+        finalRemainingBalance = round2(baseRemaining + round2(unpaidChargesAmount));
       }
       
       // Actualizar el loan con el balance que incluye cargos

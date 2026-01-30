@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -63,6 +63,7 @@ interface Payment {
 interface Loan {
   id: string;
   amount: number;
+  total_amount?: number;
   interest_rate: number;
   term_months: number;
   status?: string;
@@ -97,6 +98,51 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   const [loan, setLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(true);
   const [companySettings, setCompanySettings] = useState<any>(null);
+
+  const round2 = (n: number) => Math.round((Number(n || 0) * 100)) / 100;
+
+  // ✅ Para "Agregar Cargo": recalcular balances mostrados usando el total base real
+  // (evita desfaces como 245,996 vs 246,000 por cuota redondeada).
+  const computedChargeBalancesById = useMemo(() => {
+    const map = new Map<string, { prev: number; next: number }>();
+    if (!loan) return map;
+
+    // IMPORTANTE:
+    // Para préstamos a plazo, el "total" real normalmente vive en `loans.total_amount`.
+    // La fórmula simple `amount * rate * term_months` NO aplica y produce balances absurdos.
+    const fallbackTotal = round2(
+      (Number(loan.amount || 0) || 0) +
+        ((Number(loan.amount || 0) || 0) * (Number(loan.interest_rate || 0) / 100) * (Number(loan.term_months || 0) || 0))
+    );
+    const baseLoanTotal = round2(
+      Number(loan.total_amount ?? fallbackTotal) || 0
+    );
+
+    const chargeEntries = (history || [])
+      .filter((e) => {
+        const t = String(e.change_type || '').toLowerCase();
+        return t === 'add_charge' || (t === 'balance_adjustment' && String(e.description || '').toLowerCase().includes('agregar cargo'));
+      })
+      .slice()
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    let cumulativeCharges = 0;
+    for (const entry of chargeEntries) {
+      const description = String(entry.description || '');
+      const amountMatch = description.match(/Monto:\s*RD?\$?([\d,]+\.?\d*)/i);
+      const amount =
+        (amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null) ??
+        (Number((entry as any).amount || 0) || 0);
+
+      const prev = round2(baseLoanTotal + cumulativeCharges);
+      const next = round2(baseLoanTotal + cumulativeCharges + (Number(amount) || 0));
+      map.set(entry.id, { prev, next });
+
+      cumulativeCharges = round2(cumulativeCharges + (Number(amount) || 0));
+    }
+
+    return map;
+  }, [history, loan]);
 
   // Función para formatear fecha y hora de pagos
   const formatPaymentDateTime = (payment: Payment) => {
@@ -171,6 +217,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
         .select(`
           id,
           amount,
+          total_amount,
           interest_rate,
           term_months,
           status,
@@ -1000,17 +1047,32 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                               </div>
                               )}
 
-                              {oldValues && oldValues.balance !== undefined && (
-                              <div className="text-sm text-gray-600 mb-2">
-                                  <span className="font-medium">Balance Anterior:</span> RD${oldValues.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </div>
-                              )}
-
-                              {newValues && newValues.balance !== undefined && (
-                                <div className="text-sm text-gray-600 mb-2">
-                                  <span className="font-medium">Nuevo Balance:</span> RD${newValues.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </div>
-                              )}
+                              {(() => {
+                                const computed = computedChargeBalancesById.get(entry.id);
+                                const prev =
+                                  computed?.prev ??
+                                  (oldValues && oldValues.balance !== undefined ? Number(oldValues.balance) : null);
+                                const next =
+                                  computed?.next ??
+                                  (newValues && newValues.balance !== undefined ? Number(newValues.balance) : null);
+                                if (prev === null && next === null) return null;
+                                return (
+                                  <>
+                                    {prev !== null && (
+                                      <div className="text-sm text-gray-600 mb-2">
+                                        <span className="font-medium">Balance Anterior:</span>{' '}
+                                        RD${Number(prev).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </div>
+                                    )}
+                                    {next !== null && (
+                                      <div className="text-sm text-gray-600 mb-2">
+                                        <span className="font-medium">Nuevo Balance:</span>{' '}
+                                        RD${Number(next).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
 
                               {(entry as any).reference_number && (
                                 <div className="text-sm text-gray-600 mb-2">
@@ -1269,6 +1331,22 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                         console.error('Error parseando valores del historial:', e);
                         oldValues = null;
                         newValues = null;
+                      }
+
+                      // ✅ Si es "Agregar Cargo" (aunque venga como balance_adjustment),
+                      // corregir los balances mostrados usando el cálculo acumulado (evita mostrar 244,000 otra vez).
+                      const isAddChargeLike = (() => {
+                        const t = String(entry.change_type || '').toLowerCase();
+                        if (t === 'add_charge') return true;
+                        const desc = String(entry.description || '').toLowerCase();
+                        return t === 'balance_adjustment' && desc.includes('agregar cargo');
+                      })();
+                      if (isAddChargeLike) {
+                        const computed = computedChargeBalancesById.get(entry.id);
+                        if (computed) {
+                          oldValues = { ...(oldValues || {}), balance: computed.prev };
+                          newValues = { ...(newValues || {}), balance: computed.next };
+                        }
                       }
                       
                       return (

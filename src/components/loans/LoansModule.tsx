@@ -2574,23 +2574,14 @@ export const LoansModule = () => {
 
                                 const value = (() => {
                                   if (isIndefinite) {
-                                    if (calculatedBase !== undefined) return calculatedBase;
-                                    // Fallback: si solo tenemos total y cargos, intentar derivar base
-                                    if (calculatedTotal !== undefined) {
-                                      const charges = calculatedPendingCharges[loan.id] || 0;
-                                      return Math.round((Number(calculatedTotal) - Number(charges)) * 100) / 100;
-                                    }
+                                    // ✅ Balance Pendiente debe incluir cargos (totalBalance)
+                                    if (calculatedTotal !== undefined) return calculatedTotal;
+                                    // Fallback: derivar con interés pendiente (sin cargos) si aún no está calculado
                                     return (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
                                   }
 
-                                  if (calculatedBase !== undefined) {
-                                    return calculatedBase;
-                                  }
-                                  // Fallback: si solo tenemos total, derivar base restando cargos
-                                  if (calculatedTotal !== undefined) {
-                                    const charges = calculatedPendingCharges[loan.id] || 0;
-                                    return Math.round((Number(calculatedTotal) - Number(charges)) * 100) / 100;
-                                  }
+                                  // ✅ Plazo fijo: incluir cargos en Balance Pendiente (totalBalance)
+                                  if (calculatedTotal !== undefined) return calculatedTotal;
                                   // Último fallback
                                   if (db !== null && db !== undefined) return Number(db);
                                   return loan.amount || 0;
@@ -2624,23 +2615,10 @@ export const LoansModule = () => {
                                 }
 
                                 const base = (() => {
-                                  if (isIndefinite) {
-                                    if (calculatedBase !== undefined) return calculatedBase;
-                                    // Fallback: si solo tenemos total y cargos, derivar base restando cargos
-                                    if (calculatedTotal !== undefined) {
-                                      const charges = calculatedPendingCharges[loan.id] || 0;
-                                      return Math.round((Number(calculatedTotal) - Number(charges)) * 100) / 100;
-                                    }
-                                    return (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
-                                  }
+                                  // ✅ Balance Total Pendiente = Balance Pendiente (incluye cargos) + Mora
+                                  // Usamos totalBalance como base para evitar perder cargos.
+                                  if (calculatedTotal !== undefined) return calculatedTotal;
 
-                                  if (calculatedBase !== undefined) {
-                                    return calculatedBase;
-                                  }
-                                  if (calculatedTotal !== undefined) {
-                                    const charges = calculatedPendingCharges[loan.id] || 0;
-                                    return Math.round((Number(calculatedTotal) - Number(charges)) * 100) / 100;
-                                  }
                                   if (db !== null && db !== undefined) return Number(db);
                                   return loan.amount || 0;
                                 })();

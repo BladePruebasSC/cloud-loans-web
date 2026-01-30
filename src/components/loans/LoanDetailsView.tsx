@@ -1046,15 +1046,15 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   }
   
   // Calcular balance restante
-  // ✅ CORRECCIÓN (UX): Separar BALANCE del PRÉSTAMO vs. CARGOS.
-  // - "Capital pend. hoy" = SOLO capital del préstamo (sin cargos)
-  // - "Balance restante" = Capital + Interés (sin cargos)
-  // - "Otros pendientes" = Cargos pendientes (se muestran aparte)
+  // ✅ CORRECCIÓN (UX): "Capital pend. hoy" NO incluye cargos,
+  // pero "Balance restante" SÍ debe incluirlos (cargos pendientes suman al balance).
   let remainingBalance: number;
+  const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
+  const unpaidChargesRounded = round2(unpaidChargesAmount);
   if (loan.amortization_type === 'indefinite') {
     const calculatedCapitalPending = Math.round((capitalPendingFromRegular) * 100) / 100;
     const calculatedBalance = Math.round((calculatedCapitalPending + pendingInterestForIndefinite) * 100) / 100;
-    remainingBalance = calculatedBalance; // balance SIN cargos
+    remainingBalance = round2(calculatedBalance + unpaidChargesRounded); // balance CON cargos
   } else {
     const calculatedCapitalPending = Math.round((capitalPendingFromRegular) * 100) / 100;
     const calculatedBalance = Math.round((calculatedCapitalPending + interestPending) * 100) / 100;
@@ -1062,9 +1062,9 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     // CORRECCIÓN: Preferir el cálculo cuando el valor de BD difiere de forma material (ej. RD$2.00 por redondeos).
     if (loan.remaining_balance !== null && loan.remaining_balance !== undefined) {
       // Nota: remaining_balance en BD puede incluir cargos, por eso aquí preferimos el cálculo.
-      remainingBalance = calculatedBalance;
+      remainingBalance = round2(calculatedBalance + unpaidChargesRounded);
     } else {
-      remainingBalance = calculatedBalance;
+      remainingBalance = round2(calculatedBalance + unpaidChargesRounded);
     }
   }
   
@@ -1141,14 +1141,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     effectiveLateFee = Math.round(calculatedLateFee * 100) / 100;
   }
   
-  const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
-
-  // Total pendiente = balance del préstamo + cargos + mora
-  const totalPending = round2(capitalPending + interestPending + unpaidChargesAmount + effectiveLateFee);
+  // Total pendiente = balance restante (incluye cargos) + mora
+  const totalPending = round2(remainingBalance + effectiveLateFee);
   // IMPORTANTE: Mantener centavos (no redondear a entero).
   const amountToPay = round2((loan.monthly_payment || 0) + (effectiveLateFee || 0));
-  // A saldar incluye cargos pendientes (si existen)
-  const toSettle = round2((remainingBalance || 0) + unpaidChargesAmount + (effectiveLateFee || 0));
+  // A saldar = total pendiente
+  const toSettle = totalPending;
 
   // Calcular porcentaje pagado basándose en el total correcto (capital + interés + cargos)
   // Para préstamos indefinidos: total = capital + interés pendiente + todos los cargos
@@ -1417,6 +1415,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       <div className="text-sm text-gray-600">Interés pend. hoy</div>
                       <div className="text-lg font-semibold">RD {interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
+                    {unpaidChargesAmount > 0.01 && (
+                      <div>
+                        <div className="text-sm text-gray-600">Cargos pendientes</div>
+                        <div className="text-lg font-semibold">RD {unpaidChargesAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      </div>
+                    )}
                     {effectiveLateFee > 0 && (
                       <div>
                         <div className="text-sm text-gray-600">Mora pendiente</div>

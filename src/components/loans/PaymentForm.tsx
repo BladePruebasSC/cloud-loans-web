@@ -3111,7 +3111,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                               <div className="text-lg font-bold text-green-600">
                                 {computedBalancePending === null
                                   ? 'Cargando...'
-                                  : `$${formatCurrencyNumber(computedBalancePending)}`}
+                                  : `$${formatCurrencyNumber(
+                                      Number(computedBalancePending) + (Number(computedPendingCharges || 0) || 0)
+                                    )}`}
                               </div>
                             </div>
                             <div>
@@ -3422,7 +3424,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     <span className="font-bold text-red-600">
                       ${formatCurrencyNumber(
                         computedBalancePending !== null
-                          ? computedBalancePending
+                          ? (Number(computedBalancePending) + (Number(computedPendingCharges || 0) || 0))
                           : (selectedLoan.amortization_type === 'indefinite'
                               ? selectedLoan.amount + pendingInterestForIndefinite
                               : selectedLoan.remaining_balance)
