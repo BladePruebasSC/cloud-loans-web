@@ -210,9 +210,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
       // Para préstamos indefinidos, generar cuotas dinámicamente basándose en el tiempo transcurrido
       if (isIndefinite && loanInfo) {
-        // CORRECCIÓN: Usar next_payment_date o first_payment_date directamente si está disponible
-        // Solo calcular desde start_date si no están disponibles
-        const firstPaymentDateStr = loanInfo.first_payment_date?.split('T')[0] || (loanInfo as any).next_payment_date?.split('T')[0];
+        // ✅ CORRECCIÓN: En INDEFINIDOS, calcular SIEMPRE desde start_date (no usar first_payment_date/next_payment_date),
+        // para evitar fechas “clamp” (ej. 30-ene → 28-feb). Usamos overflow (30-ene + 1 mes = 02-mar).
+        const firstPaymentDateStr = loanInfo.start_date?.split('T')[0];
         let firstPaymentDateBase: Date;
         const today = getCurrentDateInSantoDomingo();
         const frequency = loanInfo.payment_frequency || 'monthly';
@@ -257,7 +257,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           const startDate = new Date(startYear, startMonth - 1, startDay);
           firstPaymentDateBase = new Date(startDate);
           
-          // Calcular la primera fecha de pago (un mes después de start_date)
+          // Calcular la primera fecha de pago (un período después de start_date)
           switch (frequency) {
             case 'daily':
               firstPaymentDateBase.setDate(startDate.getDate() + 1);
@@ -270,7 +270,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               break;
             case 'monthly':
             default:
-              // Usar setFullYear para preservar el día exacto
+              // Overflow intencional (30-ene + 1 mes => 02-mar)
               firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
               break;
           }
@@ -286,6 +286,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
           if (paymentsError) throw paymentsError;
 
+          // Interés "actual" (para cuotas futuras sin pagos): usar monthly_payment si está alineado, sino calcularlo
+          const interestPerPayment = (loanInfo.monthly_payment && loanInfo.monthly_payment > 0)
+            ? Number(loanInfo.monthly_payment)
+            : (Number(loanInfo.amount || 0) * (Number(loanInfo.interest_rate || 0) / 100));
+
           // Para indefinidos: mapear pagos de interés por due_date para respetar el historial
           // (ej: un pago de RD$50 con due_date 2026-02-16 debe quedarse como 50, aunque hoy el interés sea 25)
           const interestPaidByDueDate = new Map<string, { sum: number; firstPaidDate: string | null }>();
@@ -293,12 +298,16 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           for (const p of allPayments || []) {
             const dueKey = (p as any).due_date ? String((p as any).due_date).split('T')[0] : null;
             if (!dueKey) continue;
-            const interest = Number((p as any).interest_amount) || 0;
-            if (interest <= 0) continue; // ignorar pagos de cargos (interés 0)
+            const interestField = Number((p as any).interest_amount) || 0;
+            const amt = Number((p as any).amount) || 0;
+            // ✅ En indefinidos, algunos pagos parciales pueden venir con interest_amount=0.
+            // Tomar amount como interés cuando sea razonable.
+            const paidInterest = interestField > 0.01 ? interestField : (amt > 0.01 && amt <= (interestPerPayment || 0) * 1.25 ? amt : 0);
+            if (paidInterest <= 0) continue; // ignorar pagos de cargos
             const paymentDateKey = (p as any).payment_date ? String((p as any).payment_date).split('T')[0] : null;
 
             const prev = interestPaidByDueDate.get(dueKey);
-            const nextSum = (prev?.sum || 0) + interest;
+            const nextSum = (prev?.sum || 0) + paidInterest;
             const nextPaidDate =
               !prev?.firstPaidDate || (paymentDateKey && paymentDateKey < prev.firstPaidDate)
                 ? paymentDateKey
@@ -309,11 +318,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               maxDueDateFromPayments = dueKey;
             }
           }
-
-          // Interés "actual" (para cuotas futuras sin pagos): usar monthly_payment si está alineado, sino calcularlo
-          const interestPerPayment = (loanInfo.monthly_payment && loanInfo.monthly_payment > 0)
-            ? Number(loanInfo.monthly_payment)
-            : (Number(loanInfo.amount || 0) * (Number(loanInfo.interest_rate || 0) / 100));
 
           // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
           let monthsElapsed = 0;
@@ -341,12 +345,40 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               break;
           }
           
-          // CORRECCIÓN: Para préstamos indefinidos, generar al menos hasta:
-          // - el mes actual + 1 futuro (monthsFromTime)
-          // - la mayor due_date que ya tenga pagos (para mostrar el historial sin re-asignar)
+          // INDEFINIDOS: solo debe existir 1 cuota pendiente a la vez.
+          // - Si NO hay pagos: generar solo la primera cuota (firstPaymentDateBase)
+          // - Si hay pagos: mostrar historial (hasta max due pagada) y generar SOLO la siguiente.
           const monthsFromTime = Math.max(1, monthsElapsed + 1);
           if (maxDueDateFromPayments) {
-            // Extender generación hasta cubrir maxDueDateFromPayments
+            // Extender generación hasta cubrir (maxDueDateFromPayments + 1 período) para que,
+            // tras pagar la cuota, se genere la siguiente (sin crear 2 pendientes).
+            const maxDueNext = (() => {
+              const [yy, mm, dd] = String(maxDueDateFromPayments).split('T')[0].split('-').map(Number);
+              if (!yy || !mm || !dd) return maxDueDateFromPayments;
+              const base = new Date(yy, mm - 1, dd);
+              const dt = new Date(base);
+              switch (String(frequency || 'monthly').toLowerCase()) {
+                case 'daily':
+                  dt.setDate(dt.getDate() + 1);
+                  break;
+                case 'weekly':
+                  dt.setDate(dt.getDate() + 7);
+                  break;
+                case 'biweekly':
+                  dt.setDate(dt.getDate() + 14);
+                  break;
+                case 'monthly':
+                default:
+                  // overflow intencional
+                  dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+                  break;
+              }
+              const y = dt.getFullYear();
+              const m = String(dt.getMonth() + 1).padStart(2, '0');
+              const d = String(dt.getDate()).padStart(2, '0');
+              return `${y}-${m}-${d}`;
+            })();
+
             let probeCount = 1;
             while (probeCount < 500) { // safety
               const probeDate = new Date(firstPaymentDateBase);
@@ -369,7 +401,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               const m = probeDate.getMonth() + 1;
               const d = probeDate.getDate();
               const probeKey = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-              if (probeKey >= maxDueDateFromPayments) {
+              if (probeKey >= maxDueNext) {
                 break;
               }
               probeCount++;
@@ -411,8 +443,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 break;
               case 'monthly':
               default:
-                // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
-                // La cuota 1 usa la fecha base (i - 1 = 0), la cuota 2 suma 1 mes, etc.
+                // Overflow intencional para mantener periodicidad real (30-ene => 02-mar, luego 02-abr, etc.)
                 installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), firstPaymentDate.getDate());
                 break;
             }
@@ -439,12 +470,12 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                                    existingInstallment.principal_amount > 0 &&
                                    Math.abs(existingInstallment.principal_amount - (existingInstallment.total_amount || existingInstallment.amount || 0)) < 0.01;
             
-            // Si hay pagos de interés para esta due_date, usar ese monto como "interés" histórico
             const paidInfo = interestPaidByDueDate.get(finalDueDate);
-            const interestForThisInstallment =
-              paidInfo?.sum !== undefined
-                ? paidInfo.sum
-                : (existingInstallment?.interest_amount || interestPerPayment);
+            const paidAmt = Number(paidInfo?.sum || 0) || 0;
+            const tol = 0.05;
+            const isFullyPaid = !!paidInfo && interestPerPayment > 0.01 && (paidAmt + tol >= interestPerPayment);
+            const isPartial = !!paidInfo && paidAmt > 0.01 && !isFullyPaid;
+            const scheduledInterest = interestPerPayment; // ✅ siempre fijo por período
 
             dynamicInstallments.push({
               id: existingInstallment?.id || `dynamic-${i}`,
@@ -453,20 +484,20 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               due_date: finalDueDate,
               amount: isChargeFromDB
                 ? (existingInstallment?.amount || (existingInstallment as any)?.total_amount || existingInstallment?.principal_amount || 0)
-                : interestForThisInstallment,
+                : scheduledInterest,
               // CORRECCIÓN: Para préstamos indefinidos, las cuotas normales (con interés) deben tener principal_amount = 0
               // Solo los cargos (sin interés) tienen principal_amount > 0
               principal_amount: isChargeFromDB ? (existingInstallment.principal_amount || 0) : 0,
-              interest_amount: isChargeFromDB ? (existingInstallment?.interest_amount || 0) : interestForThisInstallment,
+              interest_amount: isChargeFromDB ? (existingInstallment?.interest_amount || 0) : scheduledInterest,
               late_fee_paid: existingInstallment?.late_fee_paid || 0,
-              is_paid: isChargeFromDB ? (existingInstallment?.is_paid || false) : !!paidInfo,
+              is_paid: isChargeFromDB ? (existingInstallment?.is_paid || false) : isFullyPaid,
               is_settled: existingInstallment?.is_settled || false,
-              paid_date: isChargeFromDB ? (existingInstallment?.paid_date || null) : (paidInfo?.firstPaidDate || null),
+              paid_date: isChargeFromDB ? (existingInstallment?.paid_date || null) : ((isFullyPaid || isPartial) ? (paidInfo?.firstPaidDate || null) : null),
               created_at: existingInstallment?.created_at || new Date().toISOString(),
               updated_at: existingInstallment?.updated_at || new Date().toISOString(),
               total_amount: isChargeFromDB
                 ? (existingInstallment?.total_amount || existingInstallment?.amount || existingInstallment?.principal_amount || 0)
-                : interestForThisInstallment
+                : scheduledInterest
             });
           }
           
@@ -512,7 +543,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
         // CORRECCIÓN: Para préstamos indefinidos, las cuotas normales (con interés) NO deben tener capital
         // Solo los cargos (sin interés) tienen capital
-        if (!isCharge && loanInfo?.amortization_type === 'indefinite') {
+        if (!isCharge && String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite') {
           // Para préstamos indefinidos, las cuotas normales siempre tienen principal_amount = 0
           correctedPrincipal = 0;
         } else if (!isCharge && (!correctedPrincipal || correctedPrincipal === 0)) {
@@ -530,7 +561,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         // No usar totalAmountFromDB si es indefinido porque puede estar desactualizado
         // Para otros tipos de préstamos, usar totalAmountFromDB si está disponible
         let finalAmount: number;
-        if (loanInfo?.amortization_type === 'indefinite') {
+        if (String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite') {
           // Para indefinidos, calcular el amount como la suma de principal + interés
           finalAmount = correctedPrincipal + correctedInterest;
         } else {
@@ -578,7 +609,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         .order('payment_date', { ascending: true });
 
       if (!paymentsStatusError && allPaymentsForStatus && allPaymentsForStatus.length > 0) {
-        const isIndefinite = loanInfo?.amortization_type === 'indefinite';
+        const isIndefinite = String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite';
         const sortedPayments = [...allPaymentsForStatus].sort((a, b) => 
           new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime()
         );
@@ -673,33 +704,128 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           const unassignedPayments = sortedPayments.filter(p => !assignedPaymentIds.has(p.id));
 
           // Sumar pagos por due_date (cuotas regulares)
-          const paidByDueDate = new Map<string, { paid: number; firstPaidDate: string | null }>();
+          // ✅ Normalizar due_date inválido (< primera cuota real) hacia la cuota activa,
+          // para evitar “28-feb” fantasma cuando la BD tiene next_payment_date clamp.
+          const addPeriodIso = (iso: string, freq: string) => {
+            const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
+            if (!yy || !mm || !dd) return iso;
+            const base = new Date(yy, mm - 1, dd);
+            const dt = new Date(base);
+            switch (String(freq || 'monthly').toLowerCase()) {
+              case 'daily':
+                dt.setDate(dt.getDate() + 1);
+                break;
+              case 'weekly':
+                dt.setDate(dt.getDate() + 7);
+                break;
+              case 'biweekly':
+                dt.setDate(dt.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+                break;
+            }
+            const y = dt.getFullYear();
+            const m = String(dt.getMonth() + 1).padStart(2, '0');
+            const d = String(dt.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+          };
+
+          const freq = String(loanInfo?.payment_frequency || 'monthly');
+          const startIso = String(loanInfo?.start_date || '').split('T')[0] || '';
+          const firstDueFromStart = startIso ? addPeriodIso(startIso, freq) : null;
+          const tol = 0.05;
+
+          const paidByDueDateRaw = new Map<string, { paid: number; firstPaidDate: string | null }>();
           for (const p of unassignedPayments) {
             const due = (p.due_date as string)?.split('T')[0] || (p.due_date as string) || null;
             if (!due || chargeDueDates.has(due)) continue;
 
             const interest = Number((p as any).interest_amount || 0) || 0;
-            const principal = Number((p as any).principal_amount || 0) || 0;
             const amt = Number((p as any).amount || 0) || 0;
 
             // Preferir interest_amount; si viene 0 pero es un pago pequeño (típico de cuota), usar amount como fallback.
-            const paidValue = interest > 0.01 ? interest : (principal > 0.01 && amt <= (interestPerPayment || 0) * 1.25 ? amt : 0);
+            const paidValue =
+              interest > 0.01
+                ? interest
+                : (amt > 0.01 && amt <= (interestPerPayment || 0) * 1.25 ? amt : 0);
             if (paidValue <= 0.01) continue;
 
             const paidDate = (p as any).payment_date ? String((p as any).payment_date).split('T')[0] : null;
-            const prev = paidByDueDate.get(due);
+            // Guardar en mapa “raw” primero
+            const prev = paidByDueDateRaw.get(due);
             const nextPaid = round2((prev?.paid || 0) + paidValue);
             const nextFirstDate = !prev?.firstPaidDate || (paidDate && paidDate < prev.firstPaidDate) ? paidDate : prev.firstPaidDate;
-            paidByDueDate.set(due, { paid: nextPaid, firstPaidDate: nextFirstDate });
+            paidByDueDateRaw.set(due, { paid: nextPaid, firstPaidDate: nextFirstDate });
           }
 
-          const nextDue =
-            (loanInfo?.next_payment_date as any)?.split?.('T')?.[0] ||
-            (loanInfo?.next_payment_date as any) ||
-            null;
+          // Calcular cuota activa con pagos válidos (>= firstDueFromStart)
+          const validEntries: Array<[string, { paid: number; firstPaidDate: string | null }]> = [];
+          const invalidEntries: Array<[string, { paid: number; firstPaidDate: string | null }]> = [];
+          for (const e of paidByDueDateRaw.entries()) {
+            const due = e[0];
+            if (firstDueFromStart && due < firstDueFromStart) invalidEntries.push(e);
+            else validEntries.push(e);
+          }
 
-          const dueDates = new Set<string>(Array.from(paidByDueDate.keys()));
-          if (nextDue && !chargeDueDates.has(nextDue)) dueDates.add(nextDue);
+          const interestPerPaymentFixed = interestPerPayment;
+          const fullyPaid: string[] = [];
+          let partialDue: string | null = null;
+          for (const [due, info] of validEntries) {
+            const paid = round2(info?.paid || 0);
+            if (paid <= 0.01) continue;
+            if (paid + tol < interestPerPaymentFixed) {
+              partialDue = !partialDue || due < partialDue ? due : partialDue;
+            } else {
+              fullyPaid.push(due);
+            }
+          }
+          const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
+          const activeDue = partialDue || (maxFull ? addPeriodIso(maxFull, freq) : firstDueFromStart);
+
+          const paidByDueDate = new Map<string, { paid: number; firstPaidDate: string | null }>();
+          // Copiar válidos
+          for (const [due, info] of validEntries) paidByDueDate.set(due, info);
+          // Reasignar inválidos a la cuota activa (evita 28-feb fantasma)
+          if (activeDue) {
+            for (const [, info] of invalidEntries) {
+              const prev = paidByDueDate.get(activeDue);
+              paidByDueDate.set(activeDue, {
+                paid: round2((prev?.paid || 0) + (info?.paid || 0)),
+                firstPaidDate: prev?.firstPaidDate || info?.firstPaidDate || null
+              });
+            }
+          }
+
+          // ✅ Normalizar “overpay” en cuotas ya saldadas:
+          // si por bug un pago nuevo se guarda con due_date de una cuota anterior ya pagada,
+          // mover el excedente a la cuota activa (para que "Falta" se reduzca).
+          if (activeDue && interestPerPaymentFixed > 0.01) {
+            let rollover = 0;
+            for (const [due, info] of paidByDueDate.entries()) {
+              if (due >= activeDue) continue;
+              const paid = round2(info?.paid || 0);
+              const capped = round2(Math.min(paid, interestPerPaymentFixed));
+              const overflow = round2(Math.max(0, paid - interestPerPaymentFixed));
+              if (overflow > 0.01) {
+                rollover = round2(rollover + overflow);
+                paidByDueDate.set(due, { paid: capped, firstPaidDate: info?.firstPaidDate || null });
+              }
+            }
+            if (rollover > 0.01) {
+              const prev = paidByDueDate.get(activeDue);
+              paidByDueDate.set(activeDue, {
+                paid: round2((prev?.paid || 0) + rollover),
+                firstPaidDate: prev?.firstPaidDate || null
+              });
+            }
+          }
+
+          // ✅ INDEFINIDOS: Solo 1 cuota pendiente a la vez.
+          // Ya calculamos `fullyPaid` y `activeDue` arriba (y normalizamos invalid due_dates a activeDue).
+          const dueDates = new Set<string>(fullyPaid);
+          if (activeDue && !chargeDueDates.has(activeDue)) dueDates.add(activeDue);
           const dueDatesSorted = Array.from(dueDates).sort((a, b) => a.localeCompare(b));
 
           const regularInstallments: any[] = [];
@@ -707,7 +833,8 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             const due = dueDatesSorted[idx];
             const paidInfo = paidByDueDate.get(due);
             const paid = round2(paidInfo?.paid || 0);
-            const expected = round2(Math.max(interestPerPayment, paid));
+            // En indefinidos, la cuota “esperada” es fija por período (no se reduce por pago parcial)
+            const expected = round2(interestPerPayment);
             const remaining = round2(Math.max(0, expected - paid));
 
             const isPaid = remaining <= 0.01 && paid > 0.01;
@@ -733,6 +860,72 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               remaining_amount: remaining,
               is_partial: isPartial
             });
+          }
+
+          // ✅ Garantía de comportamiento indefinido:
+          // Siempre debe existir UNA cuota pendiente visible.
+          // Si por cualquier razón no quedó incluida la `activeDue` (o quedaron todas pagadas),
+          // agregar la siguiente cuota.
+          const hasAnyPendingRegular = regularInstallments.some((r) => !r.is_paid && (Number(r.remaining_amount || 0) > 0.01));
+
+          // 1) Asegurar que exista la cuota activa calculada
+          if (activeDue && !chargeDueDates.has(activeDue)) {
+            const existsActive = regularInstallments.some((r) => String(r.due_date).split('T')[0] === activeDue);
+            if (!existsActive) {
+              const paidInfo = paidByDueDate.get(activeDue);
+              const paid = round2(paidInfo?.paid || 0);
+              const expected = round2(interestPerPayment);
+              const remaining = round2(Math.max(0, expected - paid));
+              const isPaid = remaining <= 0.01 && paid > 0.01;
+              const isPartial = !isPaid && paid > 0.01 && remaining > 0.01;
+              regularInstallments.push({
+                id: `regular-${loanId}-${activeDue}`,
+                loan_id: loanId,
+                installment_number: regularInstallments.length + 1,
+                due_date: activeDue,
+                amount: expected,
+                principal_amount: 0,
+                interest_amount: expected,
+                late_fee_paid: 0,
+                is_paid: isPaid,
+                is_settled: false,
+                paid_date: paidInfo?.firstPaidDate || null,
+                created_at: nowIso,
+                updated_at: nowIso,
+                expected_amount: expected,
+                paid_amount: paid,
+                remaining_amount: remaining,
+                is_partial: isPartial
+              });
+            }
+          }
+
+          // 2) Si aun así no hay pendiente (todas pagadas), agregar la siguiente
+          if (!hasAnyPendingRegular) {
+            const baseForNext = activeDue || maxFull || firstDueFromStart;
+            const nextDue = baseForNext ? addPeriodIso(baseForNext, freq) : null;
+            if (nextDue && !chargeDueDates.has(nextDue)) {
+              const expected = round2(interestPerPayment);
+              regularInstallments.push({
+                id: `regular-${loanId}-${nextDue}`,
+                loan_id: loanId,
+                installment_number: regularInstallments.length + 1,
+                due_date: nextDue,
+                amount: expected,
+                principal_amount: 0,
+                interest_amount: expected,
+                late_fee_paid: 0,
+                is_paid: false,
+                is_settled: false,
+                paid_date: null,
+                created_at: nowIso,
+                updated_at: nowIso,
+                expected_amount: expected,
+                paid_amount: 0,
+                remaining_amount: expected,
+                is_partial: false
+              });
+            }
           }
 
           finalInstallmentsForUI = [
@@ -1080,7 +1273,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   const totalCapitalPayments = capitalPayments.reduce((sum, cp) => sum + (cp.amount || 0), 0);
   
   if (loanInfo) {
-    const isIndefinite = loanInfo.amortization_type === 'indefinite';
+    const isIndefinite = String(loanInfo.amortization_type || '').toLowerCase() === 'indefinite';
     
     if (isIndefinite) {
       // Para préstamos indefinidos: Total = Capital Original + Interés total + Todos los cargos
@@ -1590,7 +1783,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="text-center p-3 bg-blue-50 rounded-lg">
                     <div className="text-2xl font-bold text-blue-600">
-                      {loanInfo?.amortization_type === 'indefinite' ? '1/X' : installments.length}
+                      {String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite' ? '1/X' : installments.length}
                     </div>
                     <div className="text-sm text-gray-600">Total Cuotas</div>
                   </div>
@@ -1626,7 +1819,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-lg">
-                              {loanInfo?.amortization_type === 'indefinite' 
+                              {String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite' 
                                 ? `#${installment.installment_number}/X` 
                                 : `#${installment.installment_number}`}
                             </span>
@@ -1699,7 +1892,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                         {installments.map((installment) => (
                           <tr key={installment.id} className="border-b hover:bg-gray-50">
                             <td className="p-3 font-semibold">
-                              {loanInfo?.amortization_type === 'indefinite' 
+                              {String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite' 
                                 ? `#${installment.installment_number}/X` 
                                 : `#${installment.installment_number}`}
                             </td>

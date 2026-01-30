@@ -37,6 +37,7 @@ import { PaymentForm } from './PaymentForm';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 
 interface LoanDetailsViewProps {
   loanId: string;
@@ -139,7 +140,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     try {
       const { data, error } = await supabase
         .from('capital_payments')
-        .select('amount')
+        .select('amount, created_at')
         .eq('loan_id', loanId);
       if (error) throw error;
       setCapitalPayments(data || []);
@@ -230,63 +231,11 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     }
 
     try {
-      if (!loan.start_date) {
-        console.warn('🔍 calculatePendingInterestForIndefinite: Falta start_date, no se puede calcular');
-        setPendingInterestForIndefinite(0);
-        return;
-      }
-
-      // CORRECCIÓN (INDEFINIDOS): El interés pendiente debe considerar pagos parciales por due_date.
-      // Ej: cuota 500, pagado 250 => pendiente 250 (no 500 completo).
-      const interestByDate = new Map<string, number>();
-      const interestPaidByDate = new Map<string, number>();
-
-      const isCharge = (inst: any) => {
-        return Math.abs(inst?.interest_amount || 0) < 0.01 &&
-          Math.abs((inst?.principal_amount || 0) - (inst?.total_amount || 0)) < 0.01;
-      };
-
-      // 1) Esperado por fecha desde installments (solo cuotas regulares)
-      for (const inst of (installments || [])) {
-        if (!inst?.due_date || isCharge(inst)) continue;
-        const due = String(inst.due_date).split('T')[0];
-        const expected = Number(inst.interest_amount || (inst.total_amount || 0)) || 0;
-        if (!due || expected <= 0) continue;
-        interestByDate.set(due, (interestByDate.get(due) || 0) + expected);
-      }
-
-      // 2) Pagado por fecha desde payments
-      for (const p of (payments || [])) {
-        const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
-        if (!due) continue;
-        const paidInterest = Number(p.interest_amount || 0) || 0;
-        if (paidInterest <= 0) continue;
-        interestPaidByDate.set(due, (interestPaidByDate.get(due) || 0) + paidInterest);
-      }
-
-      // 3) Asegurar que exista al menos la cuota actual (next_payment_date) aunque no haya installments aún
-      const nextDue = loan.next_payment_date ? String(loan.next_payment_date).split('T')[0] : null;
-      if (nextDue && !interestByDate.has(nextDue)) {
-        const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
-        if (interestPerPayment > 0) {
-          interestByDate.set(nextDue, interestPerPayment);
-        }
-      }
-
-      // 4) Pendiente total = sum(max(0, expected - paid)) por fecha
-      let pending = 0;
-      for (const [due, expected] of interestByDate.entries()) {
-        const paid = interestPaidByDate.get(due) || 0;
-        pending += Math.max(0, expected - paid);
-      }
-
-      console.log('🔍 LoanDetailsView - calculatePendingInterestForIndefinite: Resumen final (by due_date)', {
-        loanId: loan.id,
-        dates: interestByDate.size,
-        pending
-      });
-
-      setPendingInterestForIndefinite(Math.round(pending * 100) / 100);
+      // ✅ Usar cálculo centralizado (incluye: due_date inválido, pagos parciales y overpay rollover)
+      const round2 = (n: number) => Math.round((Number(n || 0) * 100)) / 100;
+      const breakdown = await getLoanBalanceBreakdown(supabase as any, loan as any);
+      const pending = round2(Math.max(0, round2(Number(breakdown.baseBalance || 0) - Number(loan.amount || 0))));
+      setPendingInterestForIndefinite(pending);
     } catch (error) {
       console.error('❌ Error calculando interés pendiente para préstamo indefinido en LoanDetailsView:', error);
       setPendingInterestForIndefinite(0);
@@ -335,10 +284,20 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         .from('payments')
         .select('*')
         .eq('loan_id', loanId)
-        .order('payment_date', { ascending: false });
+        // Orden estable: último pago real primero (si hay varios el mismo día)
+        .order('payment_date', { ascending: false })
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setPayments(data || []);
+      // Asegurar orden correcto en el cliente por si payment_date viene igual o nulo
+      const sorted = [...(data || [])].sort((a: any, b: any) => {
+        const aKey = a?.payment_time_local || a?.payment_date || a?.created_at || '';
+        const bKey = b?.payment_time_local || b?.payment_date || b?.created_at || '';
+        const at = aKey ? new Date(aKey).getTime() : 0;
+        const bt = bKey ? new Date(bKey).getTime() : 0;
+        return bt - at;
+      });
+      setPayments(sorted);
     } catch (error) {
       console.error('Error fetching payments:', error);
     }
@@ -354,6 +313,77 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
 
       if (error) throw error;
       setInstallments(data || []);
+
+      // ✅ INDEFINIDOS: calcular próxima cuota desde pagos + start_date (no desde next_payment_date)
+      if (String(loan?.amortization_type || '').toLowerCase() === 'indefinite' && loan?.start_date) {
+        const addPeriodIso = (iso: string, freq: string) => {
+          const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
+          if (!yy || !mm || !dd) return iso;
+          const base = new Date(yy, mm - 1, dd);
+          const dt = new Date(base);
+          switch (String(freq || 'monthly').toLowerCase()) {
+            case 'daily':
+              dt.setDate(dt.getDate() + 1);
+              break;
+            case 'weekly':
+              dt.setDate(dt.getDate() + 7);
+              break;
+            case 'biweekly':
+              dt.setDate(dt.getDate() + 14);
+              break;
+            case 'monthly':
+            default:
+              // Overflow intencional (30-ene + 1 mes => 02-mar)
+              dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+              break;
+          }
+          const y = dt.getFullYear();
+          const m = String(dt.getMonth() + 1).padStart(2, '0');
+          const d = String(dt.getDate()).padStart(2, '0');
+          return `${y}-${m}-${d}`;
+        };
+
+        const { data: payRows } = await supabase
+          .from('payments')
+          .select('amount, interest_amount, due_date')
+          .eq('loan_id', loanId);
+
+        const interestPerPayment =
+          (Number(loan.monthly_payment || 0) > 0.01)
+            ? Number(loan.monthly_payment)
+            : (Number(loan.amount || 0) * (Number(loan.interest_rate || 0) / 100));
+        const tol = 0.05;
+
+        const paidByDue = new Map<string, number>();
+        for (const p of (payRows || []) as any[]) {
+          const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
+          if (!due) continue;
+          const interest = Number(p?.interest_amount || 0) || 0;
+          const amt = Number(p?.amount || 0) || 0;
+          const paidValue = interest > 0.01 ? interest : (amt > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
+          if (paidValue <= 0.01) continue;
+          paidByDue.set(due, (paidByDue.get(due) || 0) + paidValue);
+        }
+
+        const fullyPaid: string[] = [];
+        let partialDue: string | null = null;
+        for (const [due, paid] of paidByDue.entries()) {
+          if (paid <= 0.01) continue;
+          if (paid + tol < interestPerPayment) {
+            partialDue = !partialDue || due < partialDue ? due : partialDue;
+          } else {
+            fullyPaid.push(due);
+          }
+        }
+        const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
+
+        const freq = String(loan.payment_frequency || 'monthly');
+        const startIso = String(loan.start_date).split('T')[0];
+        const firstDueFromStart = addPeriodIso(startIso, freq);
+        const next = partialDue || (maxFull ? addPeriodIso(maxFull, freq) : firstDueFromStart);
+        setNextPaymentDate(next);
+        return;
+      }
       
       // Buscar la primera cuota/cargo pendiente ordenada por fecha de vencimiento
       const { data: firstUnpaid, error: unpaidError } = await supabase
@@ -827,6 +857,32 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     return null;
   }
 
+  // ✅ Último pago real: tomar el movimiento más reciente (Pago de cuota o Abono a capital)
+  const lastMovement = (() => {
+    const lastPayment = (payments && payments.length > 0) ? payments[0] : null; // ya viene ordenado desc
+    const lastCapitalPayment = (() => {
+      if (!capitalPayments || capitalPayments.length === 0) return null;
+      // ordenar por created_at desc
+      const sorted = [...capitalPayments].sort((a: any, b: any) => {
+        const at = a?.created_at ? new Date(a.created_at).getTime() : 0;
+        const bt = b?.created_at ? new Date(b.created_at).getTime() : 0;
+        return bt - at;
+      });
+      return sorted[0];
+    })();
+
+    const paymentTs = lastPayment
+      ? new Date(lastPayment.payment_time_local || lastPayment.payment_date || lastPayment.created_at || 0).getTime()
+      : 0;
+    const capitalTs = lastCapitalPayment?.created_at ? new Date(lastCapitalPayment.created_at).getTime() : 0;
+
+    if (!lastPayment && !lastCapitalPayment) return null;
+    if (capitalTs > paymentTs) {
+      return { type: 'capital_payment' as const, amount: Number(lastCapitalPayment?.amount || 0) || 0 };
+    }
+    return { type: 'payment' as const, amount: Number(lastPayment?.amount || 0) || 0 };
+  })();
+
   // Calcular estadísticas
   // Separar pagos de capital del préstamo original de pagos de cargos
   // Los cargos son adicionales al capital original, así que no se restan del capital original
@@ -1249,8 +1305,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       <div>
                         <span className="text-gray-600">Último pago:</span>
                         <div className="font-semibold">
-                          {payments.length > 0 
-                            ? `RD ${payments[0].amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          {lastMovement
+                            ? `RD ${Number(lastMovement.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                             : 'RD 0.00'}
                         </div>
                       </div>

@@ -27,6 +27,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { formatCurrencyNumber } from '@/lib/utils';
+import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { 
   CreditCard, 
   Plus, 
@@ -122,6 +123,12 @@ export const LoansModule = () => {
   // Esto asegura que el preview muestre el mismo valor que Detalles incluso cuando la BD no se actualiza
   const calculateBalanceBreakdown = async (loan: any): Promise<{ baseBalance: number; pendingCharges: number; totalBalance: number }> => {
     try {
+      // ✅ INDEFINIDOS: usar la misma lógica centralizada que Detalles/Estado de cuenta
+      // (normaliza pagos con due_date inválidos como 28-feb y soporta pagos parciales).
+      if (String(loan?.amortization_type || loan?.amortization_type || '').toLowerCase() === 'indefinite') {
+        return await getLoanBalanceBreakdown(supabase as any, loan);
+      }
+
       // Obtener todos los pagos del préstamo (necesitamos principal_amount, interest_amount, due_date)
       const { data: payments, error: paymentsError } = await supabase
         .from('payments')
@@ -179,19 +186,27 @@ export const LoansModule = () => {
           }
         }
 
+        const interestPerPayment = (baseAmount || 0) * ((loan.interest_rate || 0) / 100);
+
         if (payments && payments.length > 0) {
           for (const p of payments) {
             const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
             if (!due) continue;
-            const paid = Number(p.interest_amount || 0) || 0;
-            if (paid <= 0) continue;
-            paidInterestByDate.set(due, (paidInterestByDate.get(due) || 0) + paid);
+            const interestField = Number((p as any).interest_amount || 0) || 0;
+            const amt = Number((p as any).amount || 0) || 0;
+            const paidValue =
+              interestField > 0.01
+                ? interestField
+                : (amt > 0.01 && interestPerPayment > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
+            if (paidValue <= 0.01) continue;
+            paidInterestByDate.set(due, (paidInterestByDate.get(due) || 0) + paidValue);
           }
         }
 
-        // Asegurar que exista al menos la cuota actual (next_payment_date) aunque no haya installment en BD
+        // Asegurar que exista al menos la cuota actual SOLO si aún no hay cuotas regulares en BD.
+        // (Evita duplicar interés cuando `next_payment_date` está desfasado vs installments)
         const nextDue = loan.next_payment_date ? String(loan.next_payment_date).split('T')[0] : null;
-        if (nextDue && !expectedInterestByDate.has(nextDue)) {
+        if (expectedInterestByDate.size === 0 && nextDue && !expectedInterestByDate.has(nextDue)) {
           const interestPerPayment = (baseAmount || 0) * ((loan.interest_rate || 0) / 100);
           if (interestPerPayment > 0) expectedInterestByDate.set(nextDue, interestPerPayment);
         }
@@ -199,6 +214,12 @@ export const LoansModule = () => {
         for (const [due, expected] of expectedInterestByDate.entries()) {
           const paid = paidInterestByDate.get(due) || 0;
           pendingInterest += Math.max(0, expected - paid);
+        }
+
+        // ✅ Si ya se pagó la cuota completa (pendingInterest ~ 0), el próximo interés sigue igual:
+        // incluir 1 período futuro como pendiente.
+        if (pendingInterest <= 0.01 && interestPerPayment > 0.01) {
+          pendingInterest = interestPerPayment;
         }
         
         // Calcular el total de TODOS los cargos (pagados y no pagados)
@@ -401,6 +422,84 @@ export const LoansModule = () => {
 
   // Función helper para calcular la fecha ISO de la próxima cuota no pagada (para LateFeeInfo)
   const calculateNextPaymentDateISO = async (loan: any): Promise<string | null> => {
+    // ✅ INDEFINIDOS: calcular desde pagos + start_date (no confiar en installments/is_paid ni next_payment_date)
+    if (String(loan?.amortization_type || '').toLowerCase() === 'indefinite' && loan?.start_date) {
+      try {
+        const addPeriodIso = (iso: string, freq: string) => {
+          const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
+          if (!yy || !mm || !dd) return iso;
+          const base = new Date(yy, mm - 1, dd);
+          const dt = new Date(base);
+          switch (String(freq || 'monthly').toLowerCase()) {
+            case 'daily':
+              dt.setDate(dt.getDate() + 1);
+              break;
+            case 'weekly':
+              dt.setDate(dt.getDate() + 7);
+              break;
+            case 'biweekly':
+              dt.setDate(dt.getDate() + 14);
+              break;
+            case 'monthly':
+            default:
+              dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+              break;
+          }
+          const y = dt.getFullYear();
+          const m = String(dt.getMonth() + 1).padStart(2, '0');
+          const d = String(dt.getDate()).padStart(2, '0');
+          return `${y}-${m}-${d}`;
+        };
+
+        const { data: payRows } = await supabase
+          .from('payments')
+          .select('amount, interest_amount, due_date')
+          .eq('loan_id', loan.id);
+
+        const interestPerPayment =
+          (Number(loan.monthly_payment || 0) > 0.01)
+            ? Number(loan.monthly_payment)
+            : (Number(loan.amount || 0) * (Number(loan.interest_rate || 0) / 100));
+        const tol = 0.05;
+
+        const freq = String(loan.payment_frequency || 'monthly');
+        const startIso = String(loan.start_date).split('T')[0];
+        const firstDueFromStart = addPeriodIso(startIso, freq);
+
+        const paidByDue = new Map<string, number>(); // solo dues válidos (>= firstDueFromStart)
+        for (const p of (payRows || []) as any[]) {
+          const rawDue = p?.due_date ? String(p.due_date).split('T')[0] : null;
+          if (!rawDue) continue;
+          const interest = Number(p?.interest_amount || 0) || 0;
+          const amt = Number(p?.amount || 0) || 0;
+          const paidValue = interest > 0.01 ? interest : (amt > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
+          if (paidValue <= 0.01) continue;
+          if (rawDue < firstDueFromStart) {
+            // Ignorar dues inválidos (ej. 28-feb) para determinar la fecha activa.
+          } else {
+            paidByDue.set(rawDue, (paidByDue.get(rawDue) || 0) + paidValue);
+          }
+        }
+
+        const fullyPaid: string[] = [];
+        let partialDue: string | null = null;
+        for (const [due, paid] of paidByDue.entries()) {
+          if (paid <= 0.01) continue;
+          if (paid + tol < interestPerPayment) {
+            partialDue = !partialDue || due < partialDue ? due : partialDue;
+          } else {
+            fullyPaid.push(due);
+          }
+        }
+        const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
+
+        const next = partialDue || (maxFull ? addPeriodIso(maxFull, freq) : firstDueFromStart);
+        return next || null;
+      } catch (e) {
+        // si falla, caer a la lógica previa
+      }
+    }
+
     // SIEMPRE buscar la primera cuota/cargo pendiente ordenada por fecha de vencimiento
     try {
       const { data: installments, error } = await supabase
@@ -409,11 +508,57 @@ export const LoansModule = () => {
         .eq('loan_id', loan.id)
         .eq('is_paid', false)
         .order('due_date', { ascending: true })
-        .limit(1);
+        .limit(25);
       
       if (!error && installments && installments.length > 0) {
-        const firstUnpaid = installments[0];
-        if (firstUnpaid.due_date) {
+        const amort = String(loan?.amortization_type || '').toLowerCase();
+        const isIndefinite = amort === 'indefinite';
+        const isCharge = (inst: any) =>
+          Math.abs(Number(inst?.interest_amount || 0)) < 0.01 &&
+          Math.abs(Number(inst?.principal_amount || 0) - Number(inst?.total_amount ?? 0)) < 0.01;
+
+        // ✅ INDEFINIDOS: ignorar cuotas “clamp” anteriores a la primera fecha real (ej. 28-feb cuando debe ser 02-mar)
+        let firstDueFromStart: string | null = null;
+        if (isIndefinite && loan?.start_date) {
+          const startDateStr = String(loan.start_date).split('T')[0];
+          const [y, m, d] = startDateStr.split('-').map(Number);
+          if (y && m && d) {
+            const start = new Date(y, m - 1, d);
+            const first = new Date(start);
+            const frequency = String(loan.payment_frequency || 'monthly').toLowerCase();
+            switch (frequency) {
+              case 'daily':
+                first.setDate(start.getDate() + 1);
+                break;
+              case 'weekly':
+                first.setDate(start.getDate() + 7);
+                break;
+              case 'biweekly':
+                first.setDate(start.getDate() + 14);
+                break;
+              case 'monthly':
+              default:
+                // Overflow intencional (30-ene + 1 mes => 02-mar)
+                first.setFullYear(start.getFullYear(), start.getMonth() + 1, start.getDate());
+                break;
+            }
+            const fy = first.getFullYear();
+            const fm = String(first.getMonth() + 1).padStart(2, '0');
+            const fd = String(first.getDate()).padStart(2, '0');
+            firstDueFromStart = `${fy}-${fm}-${fd}`;
+          }
+        }
+
+        const firstUnpaid = (installments || []).find((inst: any) => {
+          if (!inst?.due_date) return false;
+          const dueKey = String(inst.due_date).split('T')[0];
+          if (!dueKey) return false;
+          if (!isIndefinite) return true;
+          if (isCharge(inst)) return true;
+          return !firstDueFromStart || dueKey >= firstDueFromStart;
+        });
+
+        if (firstUnpaid?.due_date) {
           console.log('🔍 calculateNextPaymentDateISO: Primera cuota pendiente encontrada:', {
             loanId: loan.id,
             dueDate: firstUnpaid.due_date,
@@ -452,14 +597,8 @@ export const LoansModule = () => {
             break;
           case 'monthly':
           default:
-            // Para indefinidos mensuales, preservar el día del mes de start_date
-            const startDay = startDate.getDate();
-            const nextMonth = startDate.getMonth() + 1;
-            const nextYear = startDate.getFullYear();
-            // Verificar si el día existe en el mes siguiente
-            const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-            const dayToUse = Math.min(startDay, lastDayOfNextMonth);
-            firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
+            // Overflow intencional (30-ene + 1 mes => 02-mar)
+            firstPaymentDate.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
             break;
         }
         
@@ -537,14 +676,8 @@ export const LoansModule = () => {
             break;
           case 'monthly':
           default:
-            // Preservar el día del mes de firstPaymentDate
-            const paymentDay = firstPaymentDate.getDate();
-            const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
-            const targetYear = firstPaymentDate.getFullYear();
-            // Verificar si el día existe en el mes objetivo
-            const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-            const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
-            nextDate.setFullYear(targetYear, targetMonth, dayToUse);
+            // Overflow intencional
+            nextDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + periodsToAdd, firstPaymentDate.getDate());
             break;
         }
         
@@ -591,10 +724,12 @@ export const LoansModule = () => {
 
   // Función helper para formatear la visualización de next_payment_date
   const formatNextPaymentDate = (loan: any) => {
-    // CORRECCIÓN: SIEMPRE usar next_payment_date de la BD directamente
-    // La BD ahora actualiza automáticamente este valor con triggers (incluye cargos)
-    // NO usar nextPaymentDates calculado porque puede estar desactualizado
-    const isoDate = loan.next_payment_date?.split('T')[0] || null;
+    const amortizationTypeLower = String(loan?.amortization_type || '').toLowerCase();
+    const isIndefinite = amortizationTypeLower === 'indefinite';
+
+    // ✅ INDEFINIDOS: usar la primera cuota/cargo pendiente (desde installments) cuando esté disponible,
+    // porque `next_payment_date` puede quedar desfasado (ej. 28-Feb vs 02-Mar).
+    const isoDate = (isIndefinite ? (nextPaymentDates[loan.id] || null) : null) || loan.next_payment_date?.split('T')[0] || null;
     if (!isoDate) return 'N/A';
     return formatDateStringForSantoDomingo(isoDate);
   };
@@ -684,6 +819,17 @@ export const LoansModule = () => {
             [affectedLoanId]: Math.round(Number(b.pendingCharges || 0) * 100) / 100
           }));
         });
+
+        // ✅ También refrescar el "Próximo Pago" calculado en indefinidos (evita quedarse en 28-feb).
+        if (String((loan as any)?.amortization_type || loan?.amortization_type || '').toLowerCase() === 'indefinite') {
+          calculateNextPaymentDateISO(loan)
+            .then((iso) => {
+              setNextPaymentDates((prev) => ({ ...prev, [affectedLoanId]: iso }));
+            })
+            .catch(() => {
+              // no-op
+            });
+        }
       }, 300);
     };
 
@@ -691,7 +837,8 @@ export const LoansModule = () => {
     return () => window.removeEventListener('installmentsUpdated', handler as EventListener);
   }, [loans, refetch]);
   
-  // OPTIMIZADO: Usar next_payment_date de la BD directamente
+  // OPTIMIZADO: Usar next_payment_date de la BD para NO-indefinidos.
+  // Para INDEFINIDOS, derivar desde installments (primera pendiente) para evitar fechas “clamp” de fin de mes.
   // La BD ahora actualiza automáticamente este valor con triggers cuando cambian pagos/installments
   // No necesitamos calcular dinámicamente
   const nextPaymentDatesMemo = useMemo(() => {
@@ -701,6 +848,9 @@ export const LoansModule = () => {
     
     // Usar next_payment_date de la BD directamente (ya incluye cargos gracias a los triggers)
     loans.forEach(loan => {
+      const amortizationTypeLower = String((loan as any).amortization_type || loan.amortization_type || '').toLowerCase();
+      const isIndefinite = amortizationTypeLower === 'indefinite';
+      if (isIndefinite) return; // se calcula aparte
       if (loan.next_payment_date) {
         dates[loan.id] = loan.next_payment_date.split('T')[0];
       } else {
@@ -713,8 +863,41 @@ export const LoansModule = () => {
 
   // Actualizar estado solo cuando el memo cambie
   useEffect(() => {
-    setNextPaymentDates(nextPaymentDatesMemo);
+    // No sobreescribir indefinidos calculados; solo mergear NO-indefinidos
+    setNextPaymentDates(prev => ({ ...prev, ...nextPaymentDatesMemo }));
   }, [nextPaymentDatesMemo]);
+
+  // ✅ Calcular nextPaymentDate para INDEFINIDOS desde installments (primera cuota/cargo pendiente)
+  useEffect(() => {
+    if (!loans || loans.length === 0) return;
+    let cancelled = false;
+
+    const indefiniteLoans = loans.filter((l: any) => String((l as any).amortization_type || l.amortization_type || '').toLowerCase() === 'indefinite');
+    if (indefiniteLoans.length === 0) return;
+
+    (async () => {
+      const entries = await Promise.all(
+        indefiniteLoans.map(async (loan: any) => {
+          try {
+            const iso = await calculateNextPaymentDateISO(loan);
+            return [loan.id, iso] as const;
+          } catch {
+            return [loan.id, loan.next_payment_date?.split('T')[0] || null] as const;
+          }
+        })
+      );
+      if (cancelled) return;
+      setNextPaymentDates(prev => {
+        const next = { ...prev } as any;
+        for (const [id, iso] of entries) next[id] = iso;
+        return next;
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loans?.map(l => `${l.id}-${(l as any).amortization_type || l.amortization_type}-${l.next_payment_date}`).join(',')]);
 
   // OPTIMIZADO: Ya no necesitamos recalcular fechas dinámicamente
   // La BD ahora actualiza next_payment_date automáticamente con triggers cuando cambian pagos/installments
@@ -1149,96 +1332,92 @@ export const LoansModule = () => {
         next_payment_date: loan.next_payment_date
       });
 
-      // Obtener las cuotas del préstamo
-      const { data: installments, error } = await supabase
-        .from('installments')
-        .select('*')
-        .eq('loan_id', loan.id)
-        .order('installment_number', { ascending: true });
-
-      // Calcular interés por cuota para préstamos indefinidos
-      const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
-      
       if (!loan.start_date) {
         console.warn('🔍 calculatePendingInterestForIndefinite: Falta start_date, no se puede calcular');
         return { pendingInterest: 0, paidCount: 0 };
       }
-      
-      // SIEMPRE calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
-      const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
-      const startDate = new Date(startYear, startMonth - 1, startDay);
-      const currentDate = getCurrentDateInSantoDomingo();
-      
-      // Calcular meses transcurridos desde el inicio
-      const monthsElapsed = Math.max(0, 
-        (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
-        (currentDate.getMonth() - startDate.getMonth())
-      );
-      
-      // Total de cuotas que deberían existir desde el inicio hasta hoy
-      const totalExpectedInstallments = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes actual
-      
-      console.log('🔍 calculatePendingInterestForIndefinite: Cálculo dinámico de cuotas esperadas', {
-        startDate: loan.start_date,
-        currentDate: currentDate.toISOString().split('T')[0],
-        monthsElapsed,
-        totalExpectedInstallments
-      });
-      
-      // Calcular cuántas cuotas se han pagado
-      let paidCount = 0;
-      
-      // Primero, intentar contar desde las cuotas en la BD
-      if (installments && installments.length > 0) {
-        paidCount = installments.filter((inst: any) => inst.is_paid).length;
-        console.log('🔍 calculatePendingInterestForIndefinite: Cuotas pagadas desde BD', {
-          totalInBD: installments.length,
-          paidInBD: paidCount
-        });
-      }
-      
-      // También verificar pagos para calcular cuántas cuotas de interés se han pagado
+
+      // ✅ Nuevo cálculo (INDEFINIDOS): siempre 1 cuota activa (puede estar parcial),
+      // y normalizar pagos con due_date inválido (< primera cuota real) hacia la cuota activa real.
+      const addPeriodIso = (iso: string, freq: string) => {
+        const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
+        if (!yy || !mm || !dd) return iso;
+        const base = new Date(yy, mm - 1, dd);
+        const dt = new Date(base);
+        switch (String(freq || 'monthly').toLowerCase()) {
+          case 'daily':
+            dt.setDate(dt.getDate() + 1);
+            break;
+          case 'weekly':
+            dt.setDate(dt.getDate() + 7);
+            break;
+          case 'biweekly':
+            dt.setDate(dt.getDate() + 14);
+            break;
+          case 'monthly':
+          default:
+            dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+            break;
+        }
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth() + 1).padStart(2, '0');
+        const d = String(dt.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      };
+
+      const freq = String(loan.payment_frequency || 'monthly');
+      const startIso = String(loan.start_date).split('T')[0];
+      const firstDueFromStart = addPeriodIso(startIso, freq);
+      const tol = 0.05;
+
+      const interestPerPayment =
+        (Number(loan.monthly_payment || 0) > 0.01)
+          ? Number(loan.monthly_payment)
+          : (Number(loan.amount || 0) * (Number(loan.interest_rate || 0) / 100));
+
       const { data: payments } = await supabase
         .from('payments')
-        .select('interest_amount')
+        .select('amount, interest_amount, due_date')
         .eq('loan_id', loan.id);
-      
-      if (payments && payments.length > 0) {
-        // Calcular cuántas cuotas de interés se han pagado
-        const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
-        const paidFromPayments = Math.floor(totalInterestPaid / interestPerPayment);
-        
-        // Usar el mayor entre las cuotas pagadas en BD y las calculadas desde pagos
-        paidCount = Math.max(paidCount, paidFromPayments);
-        
-        console.log('🔍 calculatePendingInterestForIndefinite: Cuotas pagadas desde pagos', {
-          totalInterestPaid,
-          paidFromPayments,
-          finalPaidCount: paidCount
-        });
+
+      const paidByDueValid = new Map<string, number>();
+      let invalidPaidTotal = 0;
+      for (const p of (payments || []) as any[]) {
+        const rawDue = p?.due_date ? String(p.due_date).split('T')[0] : null;
+        if (!rawDue) continue;
+        const interestField = Number(p?.interest_amount || 0) || 0;
+        const amt = Number(p?.amount || 0) || 0;
+        const paidValue =
+          interestField > 0.01
+            ? interestField
+            : (amt > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
+        if (paidValue <= 0.01) continue;
+
+        if (rawDue < firstDueFromStart) invalidPaidTotal += paidValue;
+        else paidByDueValid.set(rawDue, (paidByDueValid.get(rawDue) || 0) + paidValue);
       }
-      
-      // Cuotas pendientes = total esperadas - pagadas
-      const unpaidCount = Math.max(0, totalExpectedInstallments - paidCount);
-      
-      console.log('🔍 calculatePendingInterestForIndefinite: Resumen final', {
-        totalExpectedInstallments,
-        paidCount,
-        unpaidCount
-      });
-      
-      // Calcular interés pendiente total
-      const totalPendingInterest = unpaidCount * interestPerPayment;
-      
-      console.log('🔍 calculatePendingInterestForIndefinite: Resultado final', {
-        loanId: loan.id,
-        interestPerPayment,
-        unpaidCount,
-        totalPendingInterest,
-        paidCount
-      });
-      
-      return { pendingInterest: totalPendingInterest, paidCount };
+
+      const fullyPaid: string[] = [];
+      let partialDue: string | null = null;
+      for (const [due, paid] of paidByDueValid.entries()) {
+        if (paid <= 0.01) continue;
+        if (paid + tol < interestPerPayment) {
+          partialDue = !partialDue || due < partialDue ? due : partialDue;
+        } else {
+          fullyPaid.push(due);
+        }
+      }
+      const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
+      const activeDue = partialDue || (maxFull ? addPeriodIso(maxFull, freq) : firstDueFromStart);
+
+      let paidActive = activeDue ? (paidByDueValid.get(activeDue) || 0) : 0;
+      if (activeDue) paidActive += invalidPaidTotal;
+
+      let pendingInterest = Math.max(0, interestPerPayment - paidActive);
+      if (pendingInterest <= 0.01 && interestPerPayment > 0.01) pendingInterest = interestPerPayment;
+
+      const paidCount = fullyPaid.length;
+      return { pendingInterest: Math.round(pendingInterest * 100) / 100, paidCount };
     } catch (error) {
       console.error('❌ Error calculando interés pendiente para préstamo indefinido:', error);
       return { pendingInterest: 0, paidCount: 0 };

@@ -406,8 +406,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Para préstamos indefinidos, generar cuotas dinámicamente basándose en el tiempo transcurrido
       let installmentsData = installmentsDataRaw || [];
       if (isIndefinite && loanData) {
-        // CORRECCIÓN: Para préstamos indefinidos, siempre calcular desde start_date
-        // La primera cuota debe ser un mes después de start_date (día 1 del mes siguiente)
+        // ✅ CORRECCIÓN: Para préstamos indefinidos, siempre calcular desde start_date
+        // y usar overflow (30-ene + 1 mes = 02-mar), NO “clamp” a fin de mes (28-feb).
         const startDateStr = loanData.start_date?.split('T')[0];
         let firstPaymentDateBase: Date;
         const today = getCurrentDateInSantoDomingo();
@@ -434,14 +434,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
               break;
             case 'monthly':
             default:
-              // Preservar el día del mes de start_date para todos los préstamos
-              const startDay = startDate.getDate();
-              const nextMonth = startDate.getMonth() + 1;
-              const nextYear = startDate.getFullYear();
-              // Verificar si el día existe en el mes siguiente
-              const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-              const dayToUse = Math.min(startDay, lastDayOfNextMonth);
-              firstPaymentDateBase.setFullYear(nextYear, nextMonth, dayToUse);
+              // Overflow intencional
+              firstPaymentDateBase.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
               break;
           }
         }
@@ -463,7 +457,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             // CORRECCIÓN: Acumular interés pagado para contar correctamente cuando hay múltiples pagos
             let totalInterestPaid = 0;
             for (const payment of allPayments) {
-              totalInterestPaid += payment.interest_amount || 0;
+              const interestField = Number((payment as any).interest_amount || 0) || 0;
+              const amt = Number((payment as any).amount || 0) || 0;
+              const paidValue = interestField > 0.01 ? interestField : (amt > 0.01 && amt <= interestPerPayment * 1.25 ? amt : 0);
+              totalInterestPaid += paidValue;
             }
             // Calcular cuántas cuotas completas se han pagado
             paidInstallmentsCount = Math.floor(totalInterestPaid / interestPerPayment);
@@ -499,8 +496,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           // 1. Cuotas pagadas (basadas en pagos reales)
           // 2. Meses transcurridos + 1 mes futuro
           // Esto asegura que se muestren todas las cuotas pagadas y al menos 1 mes futuro
-          const monthsFromTime = Math.max(1, monthsElapsed + 1); // +1 para incluir el mes siguiente
-          const monthsFromPayments = Math.max(1, paidInstallmentsCount + 1); // +1 para incluir la próxima cuota
+          // ✅ Siempre generar al menos 2 filas: cuota actual + próxima
+          const monthsFromTime = Math.max(2, monthsElapsed + 2); // +2 para incluir mes siguiente
+          const monthsFromPayments = Math.max(2, paidInstallmentsCount + 2); // +2 para incluir la próxima cuota
           monthsElapsed = Math.max(monthsFromTime, monthsFromPayments);
           
           // Generar cuotas dinámicamente
@@ -526,14 +524,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 break;
             case 'monthly':
             default:
-                // Preservar el día del mes de firstPaymentDate para todos los préstamos
-                const paymentDay = firstPaymentDate.getDate();
-                const targetMonth = firstPaymentDate.getMonth() + (i - 1);
-                const targetYear = firstPaymentDate.getFullYear();
-                // Verificar si el día existe en el mes objetivo
-                const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-                const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
-                installmentDate.setFullYear(targetYear, targetMonth, dayToUse);
+                // Overflow intencional
+                installmentDate.setFullYear(firstPaymentDate.getFullYear(), firstPaymentDate.getMonth() + (i - 1), firstPaymentDate.getDate());
                 break;
             }
             
@@ -739,11 +731,16 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           );
           
           // Calcular cuántas cuotas se han pagado
-          let paidCount = 0;
-          if (paymentsData && interestPerPayment > 0) {
-            const totalInterestPaid = paymentsData.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
-            paidCount = Math.floor(totalInterestPaid / interestPerPayment);
-          }
+        let paidCount = 0;
+        if (paymentsData && interestPerPayment > 0) {
+          const totalInterestPaid = (paymentsData || []).reduce((sum, p: any) => {
+            const interestField = Number(p?.interest_amount || 0) || 0;
+            const amt = Number(p?.amount || 0) || 0;
+            const paidValue = interestField > 0.01 ? interestField : (amt > 0.01 && amt <= interestPerPayment * 1.25 ? amt : 0);
+            return sum + paidValue;
+          }, 0);
+          paidCount = Math.floor(totalInterestPaid / interestPerPayment);
+        }
           
           // CORRECCIÓN: El total esperado debe ser al menos (paidCount + 1) para asegurar que siempre hay 1 cuota pendiente
           // También debe ser al menos (monthsElapsed + 1) para reflejar el tiempo transcurrido
@@ -1342,39 +1339,141 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       }
 
       const paymentsByDue = new Map<string, { paid: number; lastPaidDate: string | null }>();
-      for (const p of paymentsForCalc) {
-        const due = dueKeyOf(p?.due_date);
-        if (!due || chargeDueDates.has(due)) continue;
-
-        const interest = Number(p?.interest_amount || 0) || 0;
-        const principalAmt = Number(p?.principal_amount || 0) || 0;
-        const amt = Number(p?.amount || 0) || 0;
-
-        // Preferir interest_amount; si viene 0 pero parece pago de cuota (monto <= cuota*1.25), usar amount.
-        const paidValue = interest > 0.01 ? interest : (principalAmt > 0.01 && amt > 0.01 && amt <= (loanData.monthly_payment || interestRate * principal / 100 || 0) * 1.25 ? amt : 0);
-        if (paidValue <= 0.01) continue;
-
-        const prev = paymentsByDue.get(due);
-        const nextPaid = round2((prev?.paid || 0) + paidValue);
-        const pDate = p?.payment_date ? String(p.payment_date).split('T')[0] : null;
-        const nextDate = pDate || prev?.lastPaidDate || null;
-        paymentsByDue.set(due, { paid: nextPaid, lastPaidDate: nextDate });
-      }
-
       const interestPerPayment =
         round2(Number(loanData.monthly_payment || 0)) > 0
           ? round2(Number(loanData.monthly_payment))
           : round2(principal * (interestRate / 100));
 
-      const nextDue = dueKeyOf(loanData?.next_payment_date);
-      const dueDates = new Set<string>(Array.from(paymentsByDue.keys()));
-      if (nextDue && !chargeDueDates.has(nextDue)) dueDates.add(nextDue);
+      // ✅ INDEFINIDOS: NO confiar en loan.next_payment_date (puede venir “clamp” 28-feb).
+      // Generar siempre desde start_date con overflow y añadir 1 cuota futura.
+      const addPeriodIso = (iso: string, freq: string) => {
+        const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
+        if (!yy || !mm || !dd) return iso;
+        const base = new Date(yy, mm - 1, dd);
+        const dt = new Date(base);
+        switch (String(freq || 'monthly').toLowerCase()) {
+          case 'daily':
+            dt.setDate(dt.getDate() + 1);
+            break;
+          case 'weekly':
+            dt.setDate(dt.getDate() + 7);
+            break;
+          case 'biweekly':
+            dt.setDate(dt.getDate() + 14);
+            break;
+          case 'monthly':
+          default:
+            // Overflow intencional (30-ene + 1 mes => 02-mar)
+            dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+            break;
+        }
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth() + 1).padStart(2, '0');
+        const d = String(dt.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      };
+
+      const frequency = String((loanData as any)?.payment_frequency || 'monthly');
+      const startIso = String((loanData as any)?.start_date || '').split('T')[0] || '';
+      const firstDueFromStart = startIso ? addPeriodIso(startIso, frequency) : null;
+
+      // ✅ INDEFINIDOS: Solo 1 cuota pendiente a la vez.
+      // - Historial: solo due_dates FULLY PAID
+      // - Si hay una cuota PARCIAL, NO generar la siguiente hasta completar.
+      const tol = 0.05;
+      let invalidPaidTotal = 0;
+      let invalidLastPaidDate: string | null = null;
+
+      for (const p of paymentsForCalc) {
+        const rawDue = dueKeyOf(p?.due_date);
+        if (!rawDue || chargeDueDates.has(rawDue)) continue;
+
+        const interest = Number(p?.interest_amount || 0) || 0;
+        const amt = Number(p?.amount || 0) || 0;
+        const paidValue =
+          interest > 0.01
+            ? interest
+            : (amt > 0.01 && amt <= (loanData.monthly_payment || (interestRate * principal / 100) || 0) * 1.25 ? amt : 0);
+        if (paidValue <= 0.01) continue;
+
+        const pDate = p?.payment_date ? String(p.payment_date).split('T')[0] : null;
+
+        if (firstDueFromStart && rawDue < firstDueFromStart) {
+          invalidPaidTotal = round2(invalidPaidTotal + paidValue);
+          invalidLastPaidDate = pDate || invalidLastPaidDate;
+          continue;
+        }
+
+        const prev = paymentsByDue.get(rawDue);
+        paymentsByDue.set(rawDue, {
+          paid: round2((prev?.paid || 0) + paidValue),
+          lastPaidDate: pDate || prev?.lastPaidDate || null
+        });
+      }
+
+      const fullyPaidDueDates: string[] = [];
+      let partialDue: string | null = null;
+
+      for (const [due, info] of paymentsByDue.entries()) {
+        const paidAmt = round2(info?.paid || 0);
+        if (paidAmt <= 0.01) continue;
+        if (paidAmt + tol < interestPerPayment) {
+          // Tomar la más temprana parcial (la que debe seguirse pagando)
+          partialDue = !partialDue || due < partialDue ? due : partialDue;
+        } else {
+          fullyPaidDueDates.push(due);
+        }
+      }
+
+      const maxFullyPaidDue = fullyPaidDueDates.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
+      const activeDue =
+        partialDue ||
+        (maxFullyPaidDue ? addPeriodIso(maxFullyPaidDue, frequency) : firstDueFromStart);
+
+      // Reasignar pagos inválidos (ej. 28-feb clamp) a la cuota activa real
+      if (activeDue && invalidPaidTotal > 0.01) {
+        const prev = paymentsByDue.get(activeDue);
+        paymentsByDue.set(activeDue, {
+          paid: round2((prev?.paid || 0) + invalidPaidTotal),
+          lastPaidDate: prev?.lastPaidDate || invalidLastPaidDate || null
+        });
+      }
+
+      // ✅ Normalizar “overpay” en cuotas ya saldadas:
+      // si por bug un pago nuevo se guarda con due_date de una cuota anterior ya pagada,
+      // mover el excedente a la cuota activa (para que "Falta" se reduzca correctamente).
+      if (activeDue && interestPerPayment > 0.01) {
+        let rollover = 0;
+        for (const [due, info] of paymentsByDue.entries()) {
+          if (due >= activeDue) continue;
+          const paidAmt = round2(info?.paid || 0);
+          const capped = round2(Math.min(paidAmt, interestPerPayment));
+          const overflow = round2(Math.max(0, paidAmt - interestPerPayment));
+          if (overflow > 0.01) {
+            rollover = round2(rollover + overflow);
+            paymentsByDue.set(due, { paid: capped, lastPaidDate: info?.lastPaidDate || null });
+          }
+        }
+        if (rollover > 0.01) {
+          const prev = paymentsByDue.get(activeDue);
+          paymentsByDue.set(activeDue, {
+            paid: round2((prev?.paid || 0) + rollover),
+            lastPaidDate: prev?.lastPaidDate || null
+          });
+        }
+      }
+
+      const dueDates = new Set<string>(fullyPaidDueDates);
+      if (activeDue && !chargeDueDates.has(activeDue)) {
+        dueDates.add(activeDue);
+      }
       const dueDatesSorted = Array.from(dueDates).sort((a, b) => a.localeCompare(b));
 
-      const regularRows = dueDatesSorted.map((due, idx) => {
+      let regularRows = dueDatesSorted.map((due, idx) => {
         const paidInfo = paymentsByDue.get(due);
         const paidAmt = round2(paidInfo?.paid || 0);
-        const expected = round2(Math.max(interestPerPayment, paidAmt));
+        // En indefinidos, la cuota “esperada” es fija por período (no se reduce por pago parcial)
+        const expected = round2(interestPerPayment);
         const remaining = round2(Math.max(0, expected - paidAmt));
         const isPaid = remaining <= 0.01 && paidAmt > 0.01;
         const isPartial = !isPaid && paidAmt > 0.01 && remaining > 0.01;
@@ -1401,6 +1500,41 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           actualPaymentAmount: isPaid ? expected : isPartial ? paidAmt : 0
         };
       });
+
+      // ✅ Garantía: en indefinidos siempre debe existir UNA cuota pendiente.
+      // Si quedaron todas como 'paid', agregar la siguiente cuota para que aparezca como pendiente.
+      const hasPending = regularRows.some((r: any) => r.paymentStatus !== 'paid');
+      if (!hasPending) {
+        const baseForNext = activeDue || maxFullyPaidDue || firstDueFromStart;
+        const nextDue = baseForNext ? addPeriodIso(baseForNext, frequency) : null;
+        if (nextDue && !chargeDueDates.has(nextDue)) {
+          const expected = round2(interestPerPayment);
+          regularRows = [
+            ...regularRows,
+            {
+              installment: `${regularRows.length + 1}/X`,
+              rowKey: `regular-${loanData.id}-${nextDue}`,
+              dueDate: nextDue,
+              monthlyPayment: expected,
+              principalPayment: 0,
+              interestPayment: expected,
+              principalPaid: 0,
+              interestPaid: 0,
+              remainingPrincipal: 0,
+              remainingInterest: expected,
+              remainingPayment: expected,
+              remainingBalance: remainingBalanceNow,
+              isPaid: false,
+              isPartial: false,
+              isSettled: false,
+              paidDate: null,
+              hasRealData: true,
+              paymentStatus: 'pending',
+              actualPaymentAmount: 0
+            }
+          ];
+        }
+      }
 
       const combined = [...chargeRows, ...regularRows].sort((a, b) => {
         if (a.dueDate && b.dueDate) {
@@ -2399,7 +2533,16 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 <tr><td>Cuota Mensual:</td><td>${formatCurrency(loan.monthly_payment)}</td></tr>
                 <tr><td>Tasa de Interés:</td><td>${loan.interest_rate}%</td></tr>
                 <tr><td>Fecha de Inicio:</td><td>${formatDate(loan.start_date)}</td></tr>
-                <tr><td>Próximo Pago:</td><td>${(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) ? 'N/A' : formatDate(loan.next_payment_date)}</td></tr>
+                <tr><td>Próximo Pago:</td><td>${
+                  (loan.status === 'paid' || loan.remaining_balance === 0)
+                    ? 'N/A'
+                    : (String(loan?.amortization_type || '').toLowerCase() === 'indefinite'
+                        ? (() => {
+                            const next = (amortizationSchedule || []).find((r: any) => r?.paymentStatus !== 'paid' && !!r?.dueDate);
+                            return next?.dueDate ? formatDate(next.dueDate) : 'N/A';
+                          })()
+                        : (loan.next_payment_date ? formatDate(loan.next_payment_date) : 'N/A'))
+                }</td></tr>
                 <tr><td>Estado:</td><td>${loan.status}</td></tr>
               </table>
             </div>
@@ -2592,7 +2735,16 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Cuota Mensual:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.monthly_payment)}</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Tasa de Interés:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.interest_rate}%</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Fecha de Inicio:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatDate(loan.start_date)}</td></tr>
-            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Próximo Pago:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) ? 'N/A' : formatDate(loan.next_payment_date)}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Próximo Pago:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${
+              (loan.status === 'paid' || loan.remaining_balance === 0)
+                ? 'N/A'
+                : (String(loan?.amortization_type || '').toLowerCase() === 'indefinite'
+                    ? (() => {
+                        const next = (amortizationSchedule || []).find((r: any) => r?.paymentStatus !== 'paid' && !!r?.dueDate);
+                        return next?.dueDate ? formatDate(next.dueDate) : 'N/A';
+                      })()
+                    : (loan.next_payment_date ? formatDate(loan.next_payment_date) : 'N/A'))
+            }</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Estado:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.status}</td></tr>
           </table>
         </div>
@@ -2785,9 +2937,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                   <div>
                     <span className="text-gray-600">Próximo Pago:</span>
                     <div className="font-semibold">
-                      {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
-                        ? 'N/A' 
-                        : formatDate(loan.next_payment_date)}
+                      {(() => {
+                        if (loan.status === 'paid' || loan.remaining_balance === 0) return 'N/A';
+                        const amort = String(loan?.amortization_type || '').toLowerCase();
+                        if (amort === 'indefinite') {
+                          const next = (amortizationSchedule || []).find((r: any) => r?.paymentStatus !== 'paid' && !!r?.dueDate);
+                          return next?.dueDate ? formatDate(next.dueDate) : 'N/A';
+                        }
+                        return loan.next_payment_date ? formatDate(loan.next_payment_date) : 'N/A';
+                      })()}
                     </div>
                   </div>
                 </div>

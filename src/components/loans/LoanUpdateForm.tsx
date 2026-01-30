@@ -19,6 +19,7 @@ import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeC
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
+import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { 
   Edit, 
   DollarSign, 
@@ -247,68 +248,21 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         setFreshRemainingBalance(null);
         const { data, error } = await supabase
           .from('loans')
-          .select('monthly_payment, amortization_type')
+          .select('monthly_payment, amortization_type, interest_rate, term_months, next_payment_date, amount')
           .eq('id', loan.id)
           .single();
-
         if (error) throw error;
         if (cancelled) return;
 
-        const amortType = String((data as any)?.amortization_type ?? loan.amortization_type ?? '').toLowerCase();
-        const isIndefinite = amortType === 'indefinite';
-        let rb = round2(
-          (isIndefinite
-            ? (loan.remaining_balance ?? loan.amount ?? 0)
-            : (loan.remaining_balance ?? 0)) as any
-        );
+        const mergedLoan = {
+          ...loan,
+          ...(data || {})
+        } as any;
 
-        if (!isIndefinite) {
-          const [{ data: paymentsForBalance }, { data: installmentsForBalance }] = await Promise.all([
-            supabase.from('payments').select('amount, due_date').eq('loan_id', loan.id),
-            supabase
-              .from('installments')
-              .select('due_date, installment_number, principal_amount, interest_amount, total_amount, amount')
-              .eq('loan_id', loan.id)
-          ]);
-
-          const round2n = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
-          const isChargeInst = (inst: any) =>
-            Math.abs(Number(inst?.interest_amount || 0)) < 0.01 &&
-            Math.abs(Number(inst?.principal_amount || 0) - Number(inst?.total_amount || inst?.amount || 0)) < 0.01;
-
-          const paidByDue = new Map<string, number>();
-          for (const p of paymentsForBalance || []) {
-            const due = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
-            if (!due) continue;
-            paidByDue.set(due, round2n((paidByDue.get(due) || 0) + (Number((p as any).amount) || 0)));
-          }
-
-          const pendingRegular = round2n((installmentsForBalance || [])
-            .filter(inst => !isChargeInst(inst))
-            .reduce((sum: number, inst: any) => {
-              const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
-              const totalPaid = due ? (paidByDue.get(due) || 0) : 0;
-              const expectedInterest = round2n(Number(inst.interest_amount || 0));
-              const expectedPrincipal = round2n(Number(inst.principal_amount || 0));
-              const paidInterest = Math.min(expectedInterest, totalPaid);
-              const paidPrincipal = Math.min(expectedPrincipal, Math.max(0, round2n(totalPaid - expectedInterest)));
-              const remInterest = Math.max(0, round2n(expectedInterest - paidInterest));
-              const remPrincipal = Math.max(0, round2n(expectedPrincipal - paidPrincipal));
-              return sum + remInterest + remPrincipal;
-            }, 0));
-
-          const pendingCharges = round2n((installmentsForBalance || [])
-            .filter(inst => isChargeInst(inst))
-            .reduce((sum: number, inst: any) => {
-              const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
-              const chargeTotal = round2n(Number(inst.total_amount || inst.amount || 0));
-              const totalPaid = due ? (paidByDue.get(due) || 0) : 0;
-              return sum + Math.max(0, round2n(chargeTotal - totalPaid));
-            }, 0));
-
-          rb = round2n(pendingRegular + pendingCharges);
-        }
-
+        // ✅ Balance pendiente igual a Detalles: capital + interés (SIN cargos), redondeado a 2 decimales
+        const breakdown = await getLoanBalanceBreakdown(supabase as any, mergedLoan);
+        if (cancelled) return;
+        const rb = round2(breakdown.baseBalance);
         setFreshRemainingBalance(rb);
 
         const updateTypeNow = form.getValues('update_type');
