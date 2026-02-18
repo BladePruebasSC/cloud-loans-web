@@ -819,10 +819,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     const remainingInstallmentsCount = unpaidRegularInstallments.length;
 
     if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
-      // Para préstamos indefinidos: solo interés
+      // Para préstamos indefinidos: solo interés. Si no hay cuotas regulares en BD, generar futuras con nuevo monto.
       const newInterestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
-      const previewInsts = unpaidRegularInstallments.map((inst) => {
-        return {
+      let previewInsts: any[] = [];
+
+      if (unpaidRegularInstallments.length > 0) {
+        previewInsts = unpaidRegularInstallments.map((inst) => ({
           installment_number: inst.installment_number,
           due_date: inst.due_date,
           interest_amount: newInterestPerPayment,
@@ -830,13 +832,40 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           total_amount: newInterestPerPayment,
           is_paid: false,
           description: `Cuota ${inst.installment_number} - Interés recalculado`
-        };
-      });
-      
+        }));
+      } else {
+        // Indefinidos a menudo no tienen cuotas futuras en BD; generar las próximas 12 con el nuevo interés
+        const freq = (loan.payment_frequency || 'monthly').toLowerCase();
+        const nextStr = loan.next_payment_date?.split?.('T')?.[0];
+        const startStr = loan.start_date?.split?.('T')?.[0];
+        const baseStr = nextStr || startStr;
+        if (baseStr) {
+          const [by, bm, bd] = baseStr.split('-').map(Number);
+          const baseDate = new Date(by, bm - 1, bd);
+          for (let i = 0; i < 12; i++) {
+            const due = new Date(baseDate);
+            if (freq === 'monthly') due.setMonth(baseDate.getMonth() + i);
+            else if (freq === 'weekly') due.setDate(baseDate.getDate() + i * 7);
+            else if (freq === 'biweekly') due.setDate(baseDate.getDate() + i * 14);
+            else due.setMonth(baseDate.getMonth() + i);
+            const dueStr = due.getFullYear() + '-' + String(due.getMonth() + 1).padStart(2, '0') + '-' + String(due.getDate()).padStart(2, '0');
+            previewInsts.push({
+              installment_number: i + 1,
+              due_date: dueStr,
+              interest_amount: newInterestPerPayment,
+              principal_amount: 0,
+              total_amount: newInterestPerPayment,
+              is_paid: false,
+              description: `Cuota ${i + 1} - Interés después del abono`
+            });
+          }
+        }
+      }
+
       // IMPORTANTE: Agregar cargos no pagados como cuotas extra separadas
       unpaidCharges.forEach((charge) => {
         previewInsts.push({
-          installment_number: charge.installment_number,
+          installment_number: previewInsts.length + 1,
           due_date: charge.due_date,
           interest_amount: 0,
           principal_amount: charge.total_amount,
@@ -845,7 +874,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           description: `Cargo extra - No afectado por abono`
         });
       });
-      
+
       return previewInsts;
     } else {
       // Para préstamos con plazo fijo
@@ -2495,7 +2524,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // - Plazo fijo: (total_amount del préstamo - pagos regulares - abonos a capital) + cargos pendientes
           let newBalance = 0;
           if (isIndefinite) {
-            const capitalNow = round2(loan.amount || 0);
+            // CORRECCIÓN: Usar capital actual desde la BD (puede haber cambiado por abono a capital)
+            // para que el balance refleje correctamente el cargo recién agregado
+            let capitalNow = round2(loan.amount || 0);
+            const { data: freshLoan } = await supabase
+              .from('loans')
+              .select('amount')
+              .eq('id', loan.id)
+              .single();
+            if (freshLoan?.amount != null) {
+              capitalNow = round2(Number(freshLoan.amount));
+            }
             const fallbackInterestPerPayment = round2((capitalNow * (loan.interest_rate || 0)) / 100);
             const pendingInterest = round2(
               (interestPendingFromInstallments || 0) > 0.01
@@ -6144,7 +6183,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         key={index} 
                         className={`border-b ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}
                       >
-                        <td className="px-4 py-2">{inst.installment_number}</td>
+                        <td className="px-4 py-2">
+                          {(loan?.amortization_type || '').toLowerCase() === 'indefinite'
+                            ? `${inst.installment_number}/X`
+                            : inst.installment_number}
+                        </td>
                         <td className="px-4 py-2">
                           {inst.due_date ? formatDateStringForSantoDomingo(inst.due_date) : '-'}
                         </td>

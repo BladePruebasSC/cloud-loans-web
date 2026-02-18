@@ -2820,16 +2820,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         }
       }
 
-      // 🔥 CORRECCIÓN (INDEFINIDOS): el remaining_balance debe bajar también con pagos de interés (parciales o completos).
-      // Los triggers en algunos casos solo reducen con pagos a capital, así que lo fijamos desde el cliente.
+      // Para indefinidos: confiar en el balance que devuelven los triggers (incluye cargos).
+      // NO restar manualmente (remainingBalance - pago): remainingBalance en cliente no incluye cargos
+      // y provocaba doble resta (ej. pagar 2,000 de cargo bajaba 4,000).
       if (selectedLoan.amortization_type === 'indefinite') {
-        const paidToInstallment = roundToTwoDecimals(data.amount || 0); // NO incluir mora aquí
-        if (paidToInstallment > 0) {
-          finalBalance = roundToTwoDecimals(Math.max(0, (remainingBalance || 0) - paidToInstallment));
-        } else {
-          finalBalance = roundToTwoDecimals(Math.max(0, remainingBalance || 0));
-        }
-
         // Si es pago parcial de cuota regular, NO avanzar next_payment_date: debe seguir en la misma cuota.
         if (!isFullPayment && !(nextPaymentInfo?.isCharge)) {
           finalNextPaymentDate = paymentDueDate;

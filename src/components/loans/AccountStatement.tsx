@@ -1163,6 +1163,40 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         return st !== 'failed';
       });
 
+      // Para indefinidos: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
+      // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
+      const addPeriodForCap = (iso: string, f: string) => {
+        const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
+        if (!yy || !mm || !dd) return iso;
+        const base = new Date(yy, mm - 1, dd);
+        const dt = new Date(base);
+        switch (String(f || 'monthly').toLowerCase()) {
+          case 'daily': dt.setDate(dt.getDate() + 1); break;
+          case 'weekly': dt.setDate(dt.getDate() + 7); break;
+          case 'biweekly': dt.setDate(dt.getDate() + 14); break;
+          default: dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate()); break;
+        }
+        return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+      };
+      const { data: capitalPaymentsForSchedule } = await supabase
+        .from('capital_payments')
+        .select('capital_before, capital_after, created_at')
+        .eq('loan_id', loanData.id)
+        .order('created_at', { ascending: true });
+      const frequencyForCap = String((loanData as any)?.payment_frequency || 'monthly');
+      const getExpectedForDueDate = (dueDate: string): number => {
+        if (!dueDate) return round2(principal * (interestRate / 100));
+        if (!capitalPaymentsForSchedule || capitalPaymentsForSchedule.length === 0) return round2(principal * (interestRate / 100));
+        for (const cp of capitalPaymentsForSchedule) {
+          const createdDate = (cp as any).created_at ? String((cp as any).created_at).split('T')[0] : null;
+          if (!createdDate) continue;
+          const cutoff = addPeriodForCap(createdDate, frequencyForCap);
+          if (dueDate <= cutoff) return round2(Number((cp as any).capital_before) * (interestRate / 100));
+        }
+        const last = capitalPaymentsForSchedule[capitalPaymentsForSchedule.length - 1];
+        return round2(Number((last as any).capital_after) * (interestRate / 100));
+      };
+
       const dueKeyOf = (d: any) => (String(d || '').split('T')[0] || '').trim() || null;
       const chargeKey = (inst: any, idx: number) => {
         const dueKey = dueKeyOf(inst?.due_date);
@@ -1353,7 +1387,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       for (const [due, info] of paymentsByDue.entries()) {
         const paidAmt = round2(info?.paid || 0);
         if (paidAmt <= 0.01) continue;
-        if (paidAmt + tol < interestPerPayment) {
+        const expectedForDue = getExpectedForDueDate(due);
+        if (paidAmt + tol < expectedForDue) {
           // Tomar la más temprana parcial (la que debe seguirse pagando)
           partialDue = !partialDue || due < partialDue ? due : partialDue;
         } else {
@@ -1378,13 +1413,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // ✅ Normalizar “overpay” en cuotas ya saldadas:
       // si por bug un pago nuevo se guarda con due_date de una cuota anterior ya pagada,
       // mover el excedente a la cuota activa (para que "Falta" se reduzca correctamente).
-      if (activeDue && interestPerPayment > 0.01) {
+      if (activeDue) {
         let rollover = 0;
         for (const [due, info] of paymentsByDue.entries()) {
           if (due >= activeDue) continue;
+          const expectedForDue = getExpectedForDueDate(due);
+          if (expectedForDue <= 0.01) continue;
           const paidAmt = round2(info?.paid || 0);
-          const capped = round2(Math.min(paidAmt, interestPerPayment));
-          const overflow = round2(Math.max(0, paidAmt - interestPerPayment));
+          const capped = round2(Math.min(paidAmt, expectedForDue));
+          const overflow = round2(Math.max(0, paidAmt - expectedForDue));
           if (overflow > 0.01) {
             rollover = round2(rollover + overflow);
             paymentsByDue.set(due, { paid: capped, lastPaidDate: info?.lastPaidDate || null });
@@ -1409,7 +1446,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         const paidInfo = paymentsByDue.get(due);
         const paidAmt = round2(paidInfo?.paid || 0);
         // En indefinidos, la cuota “esperada” es fija por período (no se reduce por pago parcial)
-        const expected = round2(interestPerPayment);
+        const expected = getExpectedForDueDate(due);
         const remaining = round2(Math.max(0, expected - paidAmt));
         const isPaid = remaining <= 0.01 && paidAmt > 0.01;
         const isPartial = !isPaid && paidAmt > 0.01 && remaining > 0.01;
@@ -1418,9 +1455,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           installment: `${idx + 1}/X`,
           rowKey: `regular-${loanData.id}-${due}`,
           dueDate: due,
-          monthlyPayment: expected,
+          monthlyPayment: round2(expected),
           principalPayment: 0,
-          interestPayment: expected,
+          interestPayment: round2(expected),
           principalPaid: 0,
           interestPaid: paidAmt,
           remainingPrincipal: 0,
@@ -1444,7 +1481,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         const baseForNext = activeDue || maxFullyPaidDue || firstDueFromStart;
         const nextDue = baseForNext ? addPeriodIso(baseForNext, frequency) : null;
         if (nextDue && !chargeDueDates.has(nextDue)) {
-          const expected = round2(interestPerPayment);
+          const expected = round2(getExpectedForDueDate(nextDue));
           regularRows = [
             ...regularRows,
             {

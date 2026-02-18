@@ -501,9 +501,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             });
           }
           
-          // CORRECCIÓN: Mezclar cuotas dinámicas con cargos de la BD
-          // Los cargos deben incluirse porque están en la BD y no se generan dinámicamente
-          data = [...dynamicInstallments, ...chargesFromDB];
+          // CORRECCIÓN: Para indefinidos, los cargos ya están incluidos en dynamicInstallments
+          // (cuando existingInstallment con ese installment_number es un cargo). No agregar chargesFromDB
+          // de nuevo para evitar cargos duplicados (ej. "3er y 4to cargo" que no existen).
+          data = dynamicInstallments;
         }
       }
 
@@ -693,6 +694,35 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           const interestPerPayment = round2(((loanInfo?.amount || 0) * (loanInfo?.interest_rate || 0)) / 100);
           const nowIso = new Date().toISOString();
 
+          // Monto de cuota vigente: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
+          // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
+          const addPeriodIsoForCap = (iso: string, f: string) => {
+            const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
+            if (!yy || !mm || !dd) return iso;
+            const base = new Date(yy, mm - 1, dd);
+            const dt = new Date(base);
+            switch (String(f || 'monthly').toLowerCase()) {
+              case 'daily': dt.setDate(dt.getDate() + 1); break;
+              case 'weekly': dt.setDate(dt.getDate() + 7); break;
+              case 'biweekly': dt.setDate(dt.getDate() + 14); break;
+              default: dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate()); break;
+            }
+            return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+          };
+          const getExpectedForDueDate = (dueDate: string): number => {
+            if (!dueDate) return interestPerPayment;
+            if (!capitalPaymentsDataRaw || capitalPaymentsDataRaw.length === 0) return interestPerPayment;
+            const freq = String(loanInfo?.payment_frequency || 'monthly');
+            for (const cp of capitalPaymentsDataRaw) {
+              const createdDate = (cp as any).created_at ? String((cp as any).created_at).split('T')[0] : null;
+              if (!createdDate) continue;
+              const cutoff = addPeriodIsoForCap(createdDate, freq);
+              if (dueDate <= cutoff) return round2(Number((cp as any).capital_before) * (Number(loanInfo?.interest_rate || 0) / 100));
+            }
+            const last = capitalPaymentsDataRaw[capitalPaymentsDataRaw.length - 1];
+            return round2(Number((last as any).capital_after) * (Number(loanInfo?.interest_rate || 0) / 100));
+          };
+
           // Conjunto de due_dates de cargos (evita mezclar pagos de cargos con cuotas regulares)
           const chargeDueDates = new Set<string>();
           for (const c of chargeInstallments) {
@@ -702,6 +732,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
           // Pagos no asignados a cargos
           const unassignedPayments = sortedPayments.filter(p => !assignedPaymentIds.has(p.id));
+
+          // Sumar pagos por due_date (cuotas regulares). Máximo aceptable = esperado vigente para esa fecha (ej. 5000 para cuota antigua)
+          const getMaxAcceptableForDue = (due: string) => getExpectedForDueDate(due) * 1.25;
 
           // Sumar pagos por due_date (cuotas regulares)
           // ✅ Normalizar due_date inválido (< primera cuota real) hacia la cuota activa,
@@ -745,11 +778,12 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             const interest = Number((p as any).interest_amount || 0) || 0;
             const amt = Number((p as any).amount || 0) || 0;
 
-            // Preferir interest_amount; si viene 0 pero es un pago pequeño (típico de cuota), usar amount como fallback.
+            // Preferir interest_amount; si viene 0, usar amount si es razonable para ESA cuota (monto vigente en esa fecha).
+            const maxAcceptable = getMaxAcceptableForDue(due);
             const paidValue =
               interest > 0.01
                 ? interest
-                : (amt > 0.01 && amt <= (interestPerPayment || 0) * 1.25 ? amt : 0);
+                : (amt > 0.01 && amt <= maxAcceptable ? amt : 0);
             if (paidValue <= 0.01) continue;
 
             const paidDate = (p as any).payment_date ? String((p as any).payment_date).split('T')[0] : null;
@@ -769,13 +803,13 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             else validEntries.push(e);
           }
 
-          const interestPerPaymentFixed = interestPerPayment;
           const fullyPaid: string[] = [];
           let partialDue: string | null = null;
           for (const [due, info] of validEntries) {
             const paid = round2(info?.paid || 0);
             if (paid <= 0.01) continue;
-            if (paid + tol < interestPerPaymentFixed) {
+            const expectedForDue = getExpectedForDueDate(due);
+            if (paid + tol < expectedForDue) {
               partialDue = !partialDue || due < partialDue ? due : partialDue;
             } else {
               fullyPaid.push(due);
@@ -801,13 +835,15 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           // ✅ Normalizar “overpay” en cuotas ya saldadas:
           // si por bug un pago nuevo se guarda con due_date de una cuota anterior ya pagada,
           // mover el excedente a la cuota activa (para que "Falta" se reduzca).
-          if (activeDue && interestPerPaymentFixed > 0.01) {
+          if (activeDue) {
             let rollover = 0;
             for (const [due, info] of paidByDueDate.entries()) {
               if (due >= activeDue) continue;
+              const expectedForDue = getExpectedForDueDate(due);
+              if (expectedForDue <= 0.01) continue;
               const paid = round2(info?.paid || 0);
-              const capped = round2(Math.min(paid, interestPerPaymentFixed));
-              const overflow = round2(Math.max(0, paid - interestPerPaymentFixed));
+              const capped = round2(Math.min(paid, expectedForDue));
+              const overflow = round2(Math.max(0, paid - expectedForDue));
               if (overflow > 0.01) {
                 rollover = round2(rollover + overflow);
                 paidByDueDate.set(due, { paid: capped, firstPaidDate: info?.firstPaidDate || null });
@@ -834,7 +870,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             const paidInfo = paidByDueDate.get(due);
             const paid = round2(paidInfo?.paid || 0);
             // En indefinidos, la cuota “esperada” es fija por período (no se reduce por pago parcial)
-            const expected = round2(interestPerPayment);
+            const expected = getExpectedForDueDate(due);
             const remaining = round2(Math.max(0, expected - paid));
 
             const isPaid = remaining <= 0.01 && paid > 0.01;
@@ -874,7 +910,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             if (!existsActive) {
               const paidInfo = paidByDueDate.get(activeDue);
               const paid = round2(paidInfo?.paid || 0);
-              const expected = round2(interestPerPayment);
+              const expected = getExpectedForDueDate(activeDue);
               const remaining = round2(Math.max(0, expected - paid));
               const isPaid = remaining <= 0.01 && paid > 0.01;
               const isPartial = !isPaid && paid > 0.01 && remaining > 0.01;
@@ -905,7 +941,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             const baseForNext = activeDue || maxFull || firstDueFromStart;
             const nextDue = baseForNext ? addPeriodIso(baseForNext, freq) : null;
             if (nextDue && !chargeDueDates.has(nextDue)) {
-              const expected = round2(interestPerPayment);
+              const expected = getExpectedForDueDate(nextDue);
               regularInstallments.push({
                 id: `regular-${loanId}-${nextDue}`,
                 loan_id: loanId,
