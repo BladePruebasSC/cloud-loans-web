@@ -259,10 +259,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           ...(data || {})
         } as any;
 
-        // ✅ Balance pendiente igual a Detalles: capital + interés (SIN cargos), redondeado a 2 decimales
+        // ✅ Balance pendiente igual a Detalles: capital + interés + cargos (totalBalance)
         const breakdown = await getLoanBalanceBreakdown(supabase as any, mergedLoan);
         if (cancelled) return;
-        const rb = round2(breakdown.baseBalance);
+        const rb = round2(breakdown.totalBalance ?? breakdown.baseBalance);
         setFreshRemainingBalance(rb);
 
         const updateTypeNow = form.getValues('update_type');

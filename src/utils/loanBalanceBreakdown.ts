@@ -8,9 +8,14 @@ export type LoanBalanceBreakdown = {
 
 const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
 
-const isChargeInst = (inst: any) =>
-  Math.abs(Number(inst?.interest_amount || 0)) < 0.01 &&
-  Math.abs(Number(inst?.principal_amount || 0) - Number(inst?.total_amount ?? inst?.amount ?? 0)) < 0.01;
+// Cargo: sin interés y monto principal = total (o solo total/amount si principal no viene)
+const isChargeInst = (inst: any) => {
+  const interest = Number(inst?.interest_amount ?? 0);
+  const principal = Number(inst?.principal_amount ?? 0);
+  const total = Number(inst?.total_amount ?? inst?.amount ?? 0);
+  if (Math.abs(interest) >= 0.01 || total < 0.01) return false;
+  return Math.abs(principal - total) < 0.01 || (principal < 0.01 && total > 0.01);
+};
 
 const parseIsoToLocalDate = (iso: string): Date | null => {
   if (!iso) return null;
@@ -93,30 +98,55 @@ export async function getLoanBalanceBreakdown(
     .eq('loan_id', loan.id);
   const totalCapitalPayments = round2((capitalPayments || []).reduce((s: number, cp: any) => s + (Number(cp?.amount) || 0), 0));
 
-  // Paid by due_date (sum of payment.amount)
+  // Paid by due_date (sum of payment.amount) - para cuotas regulares
   const paidByDue = new Map<string, number>();
+  // Pagos aplicados a cargos: solo pagos con interest_amount ~ 0 (igual que LoanDetailsView)
+  const paidToChargesByDue = new Map<string, number>();
   for (const p of payments || []) {
     const due = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
     if (!due) continue;
-    paidByDue.set(due, round2((paidByDue.get(due) || 0) + (Number((p as any).amount) || 0)));
+    const amt = round2(Number((p as any).amount) || 0);
+    paidByDue.set(due, round2((paidByDue.get(due) || 0) + amt));
+    if (Math.abs(Number((p as any).interest_amount || 0)) < 0.01 && amt > 0.01) {
+      paidToChargesByDue.set(due, round2((paidToChargesByDue.get(due) || 0) + amt));
+    }
   }
 
-  // Pending charges (by due_date)
-  const pendingCharges = round2(
-    (installments || [])
-      .filter((inst: any) => isChargeInst(inst))
-      .reduce((sum: number, inst: any) => {
-        const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
-        const total = round2(Number(inst?.total_amount ?? inst?.amount ?? 0));
-        const paid = due ? (paidByDue.get(due) || 0) : 0;
-        return sum + Math.max(0, round2(total - paid));
-      }, 0)
-  );
+  // Pending charges: sumar todos los cargos menos lo pagado (distribuir pagos por due_date entre cargos con misma fecha)
+  const chargeInstallments = (installments || [])
+    .filter((inst: any) => isChargeInst(inst))
+    .map((inst: any) => ({
+      due: inst?.due_date ? String(inst.due_date).split('T')[0] : null,
+      total: round2(Number(inst?.total_amount ?? inst?.amount ?? 0)),
+      installment_number: Number(inst?.installment_number ?? 0)
+    }))
+    .sort((a, b) => (a.due || '').localeCompare(b.due || '') || a.installment_number - b.installment_number);
+  const remainingPaidByDue = new Map<string, number>();
+  for (const [k, v] of paidToChargesByDue) remainingPaidByDue.set(k, v);
+  let pendingCharges = 0;
+  for (const ch of chargeInstallments) {
+    const paid = ch.due ? (remainingPaidByDue.get(ch.due) || 0) : 0;
+    const applied = round2(Math.min(paid, ch.total));
+    pendingCharges = round2(pendingCharges + Math.max(0, round2(ch.total - applied)));
+    if (ch.due && applied > 0.01) {
+      remainingPaidByDue.set(ch.due, round2(paid - applied));
+    }
+  }
+  pendingCharges = round2(pendingCharges);
 
   // Indefinite: base = capital actual + interés pendiente (por due_date)
   if (amort === 'indefinite') {
-    // ✅ INDEFINIDOS: Siempre existe 1 cuota “activa” (puede estar parcial).
-    // Normalizar pagos con due_date inválido (ej. 28-feb “clamp”) hacia la cuota activa real.
+    // Due dates de cargos: no contar esos pagos como interés (evita balance/interest pendiente incorrectos)
+    const chargeDueDates = new Set<string>();
+    for (const inst of installments || []) {
+      if (isChargeInst(inst)) {
+        const d = (inst as any)?.due_date ? String((inst as any).due_date).split('T')[0] : null;
+        if (d) chargeDueDates.add(d);
+      }
+    }
+
+    // ✅ INDEFINIDOS: Siempre existe 1 cuota "activa" (puede estar parcial).
+    // Normalizar pagos con due_date inválido (ej. 28-feb "clamp") hacia la cuota activa real.
     const freq = String(loan.payment_frequency || 'monthly');
     const startIso = loan.start_date ? String(loan.start_date).split('T')[0] : '';
     const firstDueFromStart = startIso ? addPeriod(startIso, freq) : null;
@@ -133,6 +163,8 @@ export async function getLoanBalanceBreakdown(
     for (const p of payments || []) {
       const rawDue = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
       if (!rawDue) continue;
+      // No contar pagos a cargos (solo principal) como interés: evita que balance pendiente baje de más
+      if (chargeDueDates.has(rawDue) && (Number((p as any).interest_amount || 0) || 0) < 0.01) continue;
 
       const interestField = Number((p as any).interest_amount || 0) || 0;
       const amt = Number((p as any).amount || 0) || 0;

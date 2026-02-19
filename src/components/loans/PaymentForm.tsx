@@ -1225,10 +1225,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               }
             : null;
 
-        // 4) Elegir qué se paga primero (cargos con fecha más temprana tienen prioridad)
+        // 4) Elegir qué se paga primero: SIEMPRE priorizar cargo pendiente sobre cuota regular
+        // (evita que un pago destinado al cargo se aplique a la cuota de interés por igual)
         const choose = (() => {
           if (pendingChargeCandidate && regularCandidate) {
-            return pendingChargeCandidate.dueDate <= regularCandidate.dueDate ? { ...pendingChargeCandidate, isCharge: true } : { ...regularCandidate, isCharge: false };
+            return { ...pendingChargeCandidate, isCharge: true };
           }
           if (pendingChargeCandidate) return { ...pendingChargeCandidate, isCharge: true };
           if (regularCandidate) return { ...regularCandidate, isCharge: false };
@@ -1326,6 +1327,47 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           remainingAmount = instRemainingAmount;
           isCharge = chargeCheck;
           break;
+        }
+      }
+
+      // ✅ INDEFINIDOS: si encontramos una cuota regular pero hay un cargo pendiente, priorizar el cargo
+      // (evita que el "próximo pago" sea la cuota de interés y el pago se aplique ahí en vez del cargo)
+      if (isIndefiniteLoan && firstUnpaid && !isCharge && (allInstallments || []).length > 0) {
+        let firstPendingCharge: typeof firstUnpaid = null;
+        let firstPendingChargeRemaining = 0;
+        for (const inst of (allInstallments || [])) {
+          const instDueDate = inst.due_date?.split('T')[0];
+          const cCharge = Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+          if (!cCharge || !instDueDate) continue;
+          const chargesWithSameDate = (allInstallments || []).filter((c: any) => {
+            const cIsCharge = Math.abs(c.interest_amount || 0) < 0.01 && Math.abs((c.principal_amount || 0) - (c.total_amount || 0)) < 0.01;
+            return cIsCharge && c.due_date?.split('T')[0] === instDueDate;
+          }).sort((a: any, b: any) => (a.installment_number || 0) - (b.installment_number || 0));
+          const paymentsForCharges = (allPaymentsForLoan || []).filter((p: any) => {
+            const pDue = p.due_date?.split('T')[0];
+            return pDue === instDueDate && (p.interest_amount || 0) < 0.01;
+          });
+          const totalPaidForDate = paymentsForCharges.reduce((s: number, p: any) => s + (p.principal_amount || p.amount || 0), 0);
+          const chargeIndex = chargesWithSameDate.findIndex((c: any) => c.id === inst.id);
+          let totalPaidForCharge = 0;
+          if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
+            let rem = totalPaidForDate;
+            for (let i = 0; i < chargeIndex; i++) rem -= Math.min(rem, chargesWithSameDate[i].total_amount || 0);
+            totalPaidForCharge = Math.min(rem, inst.total_amount || 0);
+          } else {
+            totalPaidForCharge = Math.min(totalPaidForDate, inst.total_amount || 0);
+          }
+          const remCharge = Math.max(0, (inst.total_amount || 0) - totalPaidForCharge);
+          if (remCharge > 0.01) {
+            firstPendingCharge = inst;
+            firstPendingChargeRemaining = remCharge;
+            break;
+          }
+        }
+        if (firstPendingCharge && firstPendingChargeRemaining > 0.01) {
+          firstUnpaid = firstPendingCharge;
+          remainingAmount = firstPendingChargeRemaining;
+          isCharge = true;
         }
       }
 
@@ -2850,12 +2892,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 
       // Para indefinidos: forzar remaining_balance (y next_payment_date en pagos parciales) para no “saltar” de cuota.
       if (selectedLoan.amortization_type === 'indefinite') {
-        loanUpdateData.remaining_balance = finalBalance;
         if (!isFullPayment && !(nextPaymentInfo?.isCharge)) {
           loanUpdateData.next_payment_date = paymentDueDate;
         }
       }
-      
+
       // Solo incluir next_payment_date si los triggers no lo actualizaron
       if (fetchError || !updatedLoanData?.next_payment_date) {
         loanUpdateData.next_payment_date = finalNextPaymentDate;

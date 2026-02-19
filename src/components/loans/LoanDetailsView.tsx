@@ -942,10 +942,11 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   // Calcular total de abonos a capital
   const totalCapitalPayments = capitalPayments.reduce((sum, cp) => sum + (cp.amount || 0), 0);
   
-  // CORRECCIÓN: Capital pagado = capital de TODOS los pagos + abonos a capital
-  // Los abonos a capital son pagos al capital y deben reflejarse en "Capital pagado"
-  // El abono a capital reduce el capital pendiente y debe mostrarse como capital pagado
-  const capitalPaidFromLoan = totalPaidFromPayments + totalCapitalPayments;
+  // CORRECCIÓN: Capital pagado = abonos a capital + principal de pagos que NO son a cargos.
+  // En indefinidos, los pagos a cargos (principal_amount > 0, interest_amount ~ 0) no reducen el capital del préstamo.
+  const capitalPaidFromLoan = loan.amortization_type === 'indefinite'
+    ? totalCapitalPayments + Math.round((totalPaidFromPayments - paidChargesAmount) * 100) / 100
+    : totalPaidFromPayments + totalCapitalPayments;
   
   // Total pagado = capital + interés de los pagos (NO incluye abonos a capital)
   const totalPaidFromAllPayments = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);

@@ -999,28 +999,22 @@ export const LoansModule = () => {
       
       const results = await Promise.all(calculations);
       
-        // Actualizar estado con balances calculados
+        // Siempre actualizar el estado calculado (breakdown incluye cargos) para que el preview = Detalles
         results.forEach(({ loanId, remainingBalance, baseBalance, pendingCharges }) => {
-        // Solo actualizar si no hay actualización optimista reciente
-        const lastOptimisticUpdate = optimisticUpdateTimestampsRef.current[loanId];
-        const now = Date.now();
-        const timeSinceOptimistic = lastOptimisticUpdate ? now - lastOptimisticUpdate : Infinity;
-        
-        if (timeSinceOptimistic > 2000) {
-          // IMPORTANTE: Redondear el balance a 2 decimales antes de guardarlo para evitar diferencias de redondeo
-          remainingBalances[loanId] = Math.round(remainingBalance * 100) / 100;
-          setCalculatedBaseBalances(prev => ({ ...prev, [loanId]: Math.round(Number(baseBalance || 0) * 100) / 100 }));
-          setCalculatedPendingCharges(prev => ({ ...prev, [loanId]: Math.round(Number(pendingCharges || 0) * 100) / 100 }));
-        }
-      });
+          const rounded = Math.round(remainingBalance * 100) / 100;
+          const baseRounded = Math.round(Number(baseBalance || 0) * 100) / 100;
+          const chargesRounded = Math.round(Number(pendingCharges || 0) * 100) / 100;
+          remainingBalances[loanId] = rounded;
+          setCalculatedBaseBalances(prev => ({ ...prev, [loanId]: baseRounded }));
+          setCalculatedPendingCharges(prev => ({ ...prev, [loanId]: chargesRounded }));
+        });
       
-        // Actualizar estado con balances calculados
-      if (Object.keys(remainingBalances).length > 0) {
-        setCalculatedRemainingBalances(prev => ({
-          ...prev,
-          ...remainingBalances
-        }));
-      }
+        if (Object.keys(remainingBalances).length > 0) {
+          setCalculatedRemainingBalances(prev => ({
+            ...prev,
+            ...remainingBalances
+          }));
+        }
         
         // Autocorrección: solo para indefinidos y con rate-limit por préstamo
         if (balanceFixes.length > 0) {
@@ -1070,7 +1064,35 @@ export const LoansModule = () => {
     loans?.map(l => `${l.id}-${l.amount}-${l.remaining_balance}-${l.total_amount}`).join(','),
     pendingInterestForIndefinite ? Object.keys(pendingInterestForIndefinite).join(',') : ''
   ]);
-  
+
+  // Hidratar bajo demanda: préstamos indefinidos primero (para que Balance Pendiente incluya cargos = Detalles)
+  const inFlightBreakdownRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!loans?.length) return;
+    const indefinite = loans.filter((l: any) => String((l.amortization_type || '').toLowerCase()) === 'indefinite');
+    const missing = indefinite.filter((l: any) => {
+      const has = calculatedRemainingBalances[l.id] !== undefined;
+      const inFlight = inFlightBreakdownRef.current.has(l.id);
+      return !has && !inFlight;
+    });
+    // Procesar todos los indefinidos sin límite para que el balance con cargos aparezca de inmediato
+    missing.forEach((loan: any) => {
+      inFlightBreakdownRef.current.add(loan.id);
+      calculateBalanceBreakdown(loan)
+        .then((b) => {
+          const total = Math.round((b.totalBalance ?? 0) * 100) / 100;
+          const base = Math.round((b.baseBalance ?? 0) * 100) / 100;
+          const charges = Math.round((b.pendingCharges ?? 0) * 100) / 100;
+          setCalculatedRemainingBalances((prev) => ({ ...prev, [loan.id]: total }));
+          setCalculatedBaseBalances((prev) => ({ ...prev, [loan.id]: base }));
+          setCalculatedPendingCharges((prev) => ({ ...prev, [loan.id]: charges }));
+        })
+        .finally(() => {
+          inFlightBreakdownRef.current.delete(loan.id);
+        });
+    });
+  }, [loans?.length, loans?.map((l: any) => l.id).join(','), calculatedRemainingBalances]);
+
   // OPTIMIZADO: Escuchar cambios en installments, loans y payments
   // Usar refs para mantener canales y evitar recreaciones innecesarias
   const channelsRef = useRef<{
@@ -1217,11 +1239,19 @@ export const LoansModule = () => {
             if (payload.new) {
               updateOptimisticallyForInstallments(affectedLoanId, payload);
             }
-            
-            // OPTIMIZADO: La BD ya actualiza next_payment_date automáticamente con triggers
-            // No necesitamos recalcular, el refetch traerá el valor correcto
-            // El valor se actualizará automáticamente cuando se haga el refetch
-            
+            // Recalcular balance para que el preview coincida con Detalles (incluye cargos)
+            try {
+              const { data: loan } = await supabase.from('loans').select('*').eq('id', affectedLoanId).single();
+              if (loan) {
+                const b = await calculateBalanceBreakdown(loan);
+                const total = Math.round((b.totalBalance ?? 0) * 100) / 100;
+                const base = Math.round((b.baseBalance ?? 0) * 100) / 100;
+                const charges = Math.round((b.pendingCharges ?? 0) * 100) / 100;
+                setCalculatedRemainingBalances(prev => ({ ...prev, [affectedLoanId]: total }));
+                setCalculatedBaseBalances(prev => ({ ...prev, [affectedLoanId]: base }));
+                setCalculatedPendingCharges(prev => ({ ...prev, [affectedLoanId]: charges }));
+              }
+            } catch (_) { /* ignorar errores de recálculo */ }
             // Refetch en background (no bloquea la UI)
             refetchImmediately();
           }
@@ -2574,10 +2604,16 @@ export const LoansModule = () => {
 
                                 const value = (() => {
                                   if (isIndefinite) {
-                                    // ✅ Balance Pendiente debe incluir cargos (totalBalance)
+                                    // ✅ Balance Pendiente = capital + interés pendiente + cargos (igual que Detalles)
                                     if (calculatedTotal !== undefined) return calculatedTotal;
-                                    // Fallback: derivar con interés pendiente (sin cargos) si aún no está calculado
-                                    return (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
+                                    // Si ya tenemos breakdown (cargos calculados), usar fórmula
+                                    const pendingCharges = calculatedPendingCharges[loan.id];
+                                    if (pendingCharges !== undefined) {
+                                      const basePlusInterest = (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
+                                      return Math.round((basePlusInterest + pendingCharges) * 100) / 100;
+                                    }
+                                    // Sin breakdown aún: no mostrar 105000 sin cargos
+                                    return null;
                                   }
 
                                   // ✅ Plazo fijo: incluir cargos en Balance Pendiente (totalBalance)
@@ -2587,13 +2623,16 @@ export const LoansModule = () => {
                                   return loan.amount || 0;
                                 })();
 
+                                if (value === null || value === undefined) return 'Cargando...';
                                 return `$${formatCurrencyNumber(value)}`;
                               })()}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
-                            {((loan.amortization_type || '').toLowerCase() === 'indefinite') && (pendingInterestForIndefinite[loan.id] || 0) > 0 && (
+                            {((loan.amortization_type || '').toLowerCase() === 'indefinite') && (
                               <div className="text-xs text-red-500 mt-1">
-                                Balance + Interés Pendiente
+                                {(calculatedPendingCharges[loan.id] || 0) > 0
+                                  ? 'Balance + Interés + Cargos'
+                                  : 'Balance + Interés Pendiente'}
                               </div>
                             )}
                           </div>
@@ -2613,12 +2652,19 @@ export const LoansModule = () => {
                                 if (!isIndefinite && !balancesHydrated && calculatedBase === undefined) {
                                   return 'Cargando...';
                                 }
+                                // Indefinidos: esperar total con cargos para no mostrar 105000
+                                if (isIndefinite && calculatedTotal === undefined && calculatedPendingCharges[loan.id] === undefined) {
+                                  return 'Cargando...';
+                                }
 
                                 const base = (() => {
                                   // ✅ Balance Total Pendiente = Balance Pendiente (incluye cargos) + Mora
-                                  // Usamos totalBalance como base para evitar perder cargos.
                                   if (calculatedTotal !== undefined) return calculatedTotal;
-
+                                  if (isIndefinite) {
+                                    const basePlusInterest = (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
+                                    const charges = calculatedPendingCharges[loan.id] ?? 0;
+                                    return Math.round((basePlusInterest + charges) * 100) / 100;
+                                  }
                                   if (db !== null && db !== undefined) return Number(db);
                                   return loan.amount || 0;
                                 })();
