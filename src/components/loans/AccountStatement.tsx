@@ -1866,6 +1866,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             continue;
           }
           
+          // No aplicar a cuotas regulares pagos sin interés (pagos a cargos); igual que InstallmentsTable/Ver cuotas
+          if ((payment.interest_amount || 0) < 0.01) {
+            paymentIndex++;
+            continue;
+          }
+          
           // Guardar la fecha del primer pago de esta cuota
           if (firstPaymentDateForInstallment === null) {
             firstPaymentDateForInstallment = payment.payment_date?.split('T')[0] || payment.payment_date || null;

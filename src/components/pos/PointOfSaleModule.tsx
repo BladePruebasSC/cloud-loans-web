@@ -360,6 +360,15 @@ export const PointOfSaleModule = () => {
       }, 0);
       const grossBeforeDiscount = subtotalBase + totalTaxBeforeDiscount;
       discountAmount = (grossBeforeDiscount * (saleData.discountPercentTotal || 0)) / 100;
+    } else if (saleData.discountMode === 'item') {
+      // Descuento por ítem: suma de (subtotal sin descuento - subtotal con descuento) por artículo
+      discountAmount = cart.reduce((sum, item) => {
+        const itbisRate = item.product.itbis_rate ?? 18;
+        const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
+        const baseAmount = priceWithoutTax * item.quantity;
+        const discountedSubtotal = item.subtotal; // ya tiene el % por ítem aplicado
+        return sum + Math.max(0, baseAmount - discountedSubtotal);
+      }, 0);
     }
 
     // Calcular ITBIS por artículo usando el ITBIS rate específico de cada producto
@@ -616,6 +625,42 @@ export const PointOfSaleModule = () => {
   const removeFromCart = (productId: string) => {
     setCart(cart.filter(item => item.product.id !== productId));
     toast.success('Producto eliminado del carrito');
+  };
+
+  // Limpiar POS por completo (tras venta: cerrar recibo o después de imprimir/cancelar impresión)
+  const clearPOSAndCloseReceipt = () => {
+    setReceiptData(null);
+    setShowPaymentModal(false);
+    try {
+      localStorage.removeItem('pos_cart');
+      localStorage.removeItem('pos_selected_customer');
+    } catch (e) {
+      console.error('Error clearing localStorage:', e);
+    }
+    setCart([]);
+    setSelectedCustomer(null);
+    setSaleData({
+      customer: null,
+      items: [],
+      subtotal: 0,
+      discount: 0,
+      tax: 0,
+      total: 0,
+      paymentMethod: null,
+      paymentAmount: 0,
+      change: 0,
+      paymentSplits: [],
+      ncfType: '01',
+      ncfNumber: '',
+      notes: '',
+      saleType: 'cash',
+      financingMonths: 0,
+      financingRate: 0,
+      discountMode: 'item',
+      discountPercentTotal: 0,
+      paymentDetails: {}
+    });
+    setShowReceiptModal(false);
   };
 
   const clearCart = (showToast = true) => {
@@ -912,9 +957,16 @@ export const PointOfSaleModule = () => {
           if (hasFinancing && saleData.customer) {
             try {
               const financingSplit = saleData.paymentSplits.find(split => split.method.type === 'financing');
-              // El monto del préstamo es exactamente el monto indicado en el campo de financiamiento
+              // El monto del préstamo es el indicado en el campo de financiamiento; si es 0, financiar el restante (total - otros pagos)
+              const totalPaidNotFinancing = saleData.paymentSplits
+                .filter(s => s.method.type !== 'financing')
+                .reduce((sum, s) => sum + (s.amount || 0), 0);
               loanAmount = financingSplit?.amount || 0;
-              
+              if (loanAmount < 0.01) {
+                loanAmount = Math.max(0, Math.round((saleData.total - totalPaidNotFinancing) * 100) / 100);
+              }
+              // Solo crear préstamo si hay monto a financiar
+              if (loanAmount >= 0.01) {
               const interestRate = financingSplit?.details?.financingRate || saleData.paymentDetails?.financingRate || saleData.financingRate || companySettings?.interest_rate_default || 20;
               termMonths = financingSplit?.details?.financingMonths || saleData.paymentDetails?.financingMonths || saleData.financingMonths || companySettings?.min_term_months || 12;
               const amortizationType = financingSplit?.details?.amortizationType || saleData.paymentDetails?.amortizationType || 'simple';
@@ -1022,6 +1074,7 @@ export const PointOfSaleModule = () => {
                   console.error('Error creando cuotas:', installmentsError);
                 }
               }
+              }
             } catch (loanErr: any) {
               console.error('Error en proceso de financiamiento:', loanErr);
               loanErrorMsg = loanErr.message || 'Error desconocido';
@@ -1069,7 +1122,7 @@ export const PointOfSaleModule = () => {
     void persistSale();
   };
 
-  const generateReceipt = (format: 'A4' | 'POS80' | 'POS58' = receiptFormat) => {
+  const generateReceipt = (format: 'A4' | 'POS80' | 'POS58' = receiptFormat, onAfterPrint?: () => void) => {
     // Usar receiptData si está disponible (datos guardados antes de limpiar), sino usar saleData
     const dataToUse = receiptData || saleData;
     const invoiceNumber = `${dataToUse.ncfType || '01'}-${dataToUse.ncfNumber || '0000000000'}`;
@@ -1407,6 +1460,11 @@ export const PointOfSaleModule = () => {
       printWindow.document.write(receiptHTML);
       printWindow.document.close();
       printWindow.print();
+      // Al cerrar el diálogo de impresión (imprimir o cancelar), ejecutar callback y cerrar ventana
+      printWindow.onafterprint = () => {
+        onAfterPrint?.();
+        printWindow.close();
+      };
     }
   };
 
@@ -3084,43 +3142,8 @@ export const PointOfSaleModule = () => {
 
       {/* Receipt Modal */}
       <Dialog open={showReceiptModal} onOpenChange={(open) => {
-        if (!open) {
-          // Reiniciar completamente el POS cuando se cierra el modal
-          setReceiptData(null);
-          setShowPaymentModal(false); // Cerrar modal de pago si está abierto
-          // Limpiar localStorage primero de forma síncrona
-          try {
-            localStorage.removeItem('pos_cart');
-            localStorage.removeItem('pos_selected_customer');
-          } catch (error) {
-            console.error('Error clearing localStorage:', error);
-          }
-          // Luego limpiar el estado inmediatamente
-          setCart([]);
-          setSelectedCustomer(null);
-          setSaleData({
-            customer: null,
-            items: [],
-            subtotal: 0,
-            discount: 0,
-            tax: 0,
-            total: 0,
-            paymentMethod: null,
-            paymentAmount: 0,
-            change: 0,
-            paymentSplits: [],
-            ncfType: '01',
-            ncfNumber: '',
-            notes: '',
-            saleType: 'cash',
-            financingMonths: 0, // Se inicializará con companySettings
-            financingRate: 0, // Se inicializará con companySettings
-            discountMode: 'item',
-            discountPercentTotal: 0,
-            paymentDetails: {}
-          });
-        }
-        setShowReceiptModal(open);
+        if (!open) clearPOSAndCloseReceipt();
+        else setShowReceiptModal(true);
       }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -3139,7 +3162,7 @@ export const PointOfSaleModule = () => {
             </div>
             
             <div className="grid grid-cols-3 gap-4">
-              <Button onClick={() => generateReceipt()} variant="outline">
+              <Button onClick={() => generateReceipt(receiptFormat, clearPOSAndCloseReceipt)} variant="outline">
                 <Printer className="h-4 w-4 mr-2" />
                 Imprimir Recibo
               </Button>
@@ -3220,80 +3243,10 @@ export const PointOfSaleModule = () => {
           </div>
 
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => {
-              // Limpiar localStorage primero
-              try {
-                localStorage.removeItem('pos_cart');
-                localStorage.removeItem('pos_selected_customer');
-              } catch (error) {
-                console.error('Error clearing localStorage:', error);
-              }
-              // Limpiar el estado
-              setCart([]);
-              setSelectedCustomer(null);
-              setSaleData({
-                customer: null,
-                items: [],
-                subtotal: 0,
-                discount: 0,
-                tax: 0,
-                total: 0,
-                paymentMethod: null,
-                paymentAmount: 0,
-                change: 0,
-                paymentSplits: [],
-                ncfType: '01',
-                ncfNumber: '',
-                notes: '',
-                saleType: 'cash',
-                financingMonths: 12,
-                financingRate: 20,
-                discountMode: 'item',
-                discountPercentTotal: 0,
-                paymentDetails: {}
-              });
-              setReceiptData(null);
-              setShowPaymentModal(false);
-              setShowReceiptModal(false);
-            }}>
+            <Button variant="outline" onClick={clearPOSAndCloseReceipt}>
               Nueva Venta
             </Button>
-            <Button onClick={() => {
-              // Limpiar localStorage primero
-              try {
-                localStorage.removeItem('pos_cart');
-                localStorage.removeItem('pos_selected_customer');
-              } catch (error) {
-                console.error('Error clearing localStorage:', error);
-              }
-              // Limpiar el estado
-              setCart([]);
-              setSelectedCustomer(null);
-              setSaleData({
-                customer: null,
-                items: [],
-                subtotal: 0,
-                discount: 0,
-                tax: 0,
-                total: 0,
-                paymentMethod: null,
-                paymentAmount: 0,
-                change: 0,
-                paymentSplits: [],
-                ncfType: '01',
-                ncfNumber: '',
-                notes: '',
-                saleType: 'cash',
-                financingMonths: 12,
-                financingRate: 20,
-                discountMode: 'item',
-                discountPercentTotal: 0,
-                paymentDetails: {}
-              });
-              setReceiptData(null);
-              setShowPaymentModal(false);
-              setShowReceiptModal(false);
-            }}>
+            <Button onClick={clearPOSAndCloseReceipt}>
               Cerrar
             </Button>
           </div>
@@ -3426,8 +3379,11 @@ export const PointOfSaleModule = () => {
         </DialogContent>
       </Dialog>
       
-      {/* Diálogo de confirmación de WhatsApp */}
-      <Dialog open={showWhatsAppDialog} onOpenChange={setShowWhatsAppDialog}>
+      {/* Diálogo de confirmación de WhatsApp - cerrar (click afuera/Escape) = cancelar = limpiar POS */}
+      <Dialog open={showWhatsAppDialog} onOpenChange={(open) => {
+        if (!open) clearPOSAndCloseReceipt();
+        setShowWhatsAppDialog(open);
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>¿Enviar recibo por WhatsApp?</DialogTitle>
