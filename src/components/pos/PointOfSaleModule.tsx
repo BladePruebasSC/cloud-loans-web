@@ -340,53 +340,50 @@ export const PointOfSaleModule = () => {
   // Actualizar totales cuando cambia el carrito
   useEffect(() => {
     const round2 = (n: number) => Math.round((n || 0) * 100) / 100;
-    
-    // Subtotal total: suma de todos los subtotales sin ITBIS (ya con descuentos por ítem aplicados)
-    const subtotalBase = cart.reduce((sum, item) => sum + item.subtotal, 0);
-    
-    // Calcular descuento total
+    const useTotalDiscountMode = saleData.discountMode === 'total';
+
+    // Cuando modo es "Al total (%)", ignorar descuento por ítem: usar base sin descuento por ítem
+    const getItemBaseSubtotal = (item: CartItem) => {
+      const itbisRate = item.product.itbis_rate ?? 18;
+      const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
+      return priceWithoutTax * item.quantity;
+    };
+    const getItemEffectiveSubtotal = (item: CartItem) => {
+      if (useTotalDiscountMode) return getItemBaseSubtotal(item);
+      return item.subtotal;
+    };
+
+    const subtotalBase = cart.reduce((sum, item) => sum + getItemEffectiveSubtotal(item), 0);
+
     let discountAmount = 0;
     if (saleData.discountMode === 'total') {
-      // Si hay descuento total, calcular sobre el subtotal base + ITBIS calculado
-      // Primero calcular ITBIS sin descuento total para tener el total bruto
       const totalTaxBeforeDiscount = cart.reduce((sum, item) => {
-        // Calcular precio sin ITBIS a partir del precio con ITBIS
         const itbisRate = item.product.itbis_rate ?? 18;
-        const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
-        const baseAmount = priceWithoutTax * item.quantity;
-        const discountedBase = baseAmount * (1 - (item.discountPercent || 0) / 100);
-        const itemTax = discountedBase * (itbisRate / 100);
+        const effectiveBase = getItemEffectiveSubtotal(item);
+        const itemTax = effectiveBase * (itbisRate / 100);
         return sum + itemTax;
       }, 0);
       const grossBeforeDiscount = subtotalBase + totalTaxBeforeDiscount;
       discountAmount = (grossBeforeDiscount * (saleData.discountPercentTotal || 0)) / 100;
     } else if (saleData.discountMode === 'item') {
-      // Descuento por ítem: suma de (subtotal sin descuento - subtotal con descuento) por artículo
       discountAmount = cart.reduce((sum, item) => {
-        const itbisRate = item.product.itbis_rate ?? 18;
-        const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
-        const baseAmount = priceWithoutTax * item.quantity;
-        const discountedSubtotal = item.subtotal; // ya tiene el % por ítem aplicado
+        const baseAmount = getItemBaseSubtotal(item);
+        const discountedSubtotal = item.subtotal;
         return sum + Math.max(0, baseAmount - discountedSubtotal);
       }, 0);
     }
 
-    // Calcular ITBIS por artículo usando el ITBIS rate específico de cada producto
-    // ITBIS = (subtotal sin ITBIS del item * % ITBIS del producto)
     const totalTax = cart.reduce((sum, item) => {
-      const itbisRate = item.product.itbis_rate ?? 18; // Porcentaje de ITBIS del producto
-      // El subtotal del item ya tiene el descuento aplicado, calcular ITBIS sobre ese subtotal
-      const itemTax = item.subtotal * (itbisRate / 100);
-      return sum + itemTax;
+      const itbisRate = item.product.itbis_rate ?? 18;
+      const effectiveBase = getItemEffectiveSubtotal(item);
+      return sum + effectiveBase * (itbisRate / 100);
     }, 0);
 
-    // Si hay descuento total, aplicarlo proporcionalmente al ITBIS
     let finalTax = totalTax;
     let finalSubtotal = subtotalBase;
     if (saleData.discountMode === 'total' && saleData.discountPercentTotal) {
-      // Aplicar descuento proporcional: subtotal y ITBIS se reducen proporcionalmente
       const totalBeforeDiscount = subtotalBase + totalTax;
-      const discountRatio = discountAmount / totalBeforeDiscount;
+      const discountRatio = totalBeforeDiscount > 0 ? discountAmount / totalBeforeDiscount : 0;
       finalSubtotal = subtotalBase * (1 - discountRatio);
       finalTax = totalTax * (1 - discountRatio);
     }
@@ -2098,13 +2095,18 @@ export const PointOfSaleModule = () => {
                             value={item.discountPercent} 
                             onChange={(e) => updateCartItemDiscount(item.product.id, parseFloat(e.target.value) || 0)}
                             className="text-xs sm:text-sm h-8 sm:h-9"
+                            disabled={saleData.discountMode === 'total'}
+                            title={saleData.discountMode === 'total' ? 'Con descuento "Al total (%)" no se usa el descuento por ítem' : undefined}
                           />
                         </div>
                         
                         <div className="text-right">
                           <Label className="text-xs">Subtotal</Label>
                           <div className="font-semibold text-green-600 text-xs sm:text-sm">
-                            ${item.subtotal.toFixed(2)}
+                            ${(saleData.discountMode === 'total'
+                              ? (item.unitPrice / (1 + (item.product.itbis_rate ?? 18) / 100) * item.quantity)
+                              : item.subtotal
+                            ).toFixed(2)}
                           </div>
                         </div>
                       </div>

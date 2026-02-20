@@ -1866,8 +1866,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             continue;
           }
           
-          // No aplicar a cuotas regulares pagos sin interés (pagos a cargos); igual que InstallmentsTable/Ver cuotas
-          if ((payment.interest_amount || 0) < 0.01) {
+          // Pagos sin interés: solo aplicarlos a esta cuota si due_date coincide con la cuota (así no se aplican pagos de cargos a cuotas regulares)
+          const instDueDate = (regularInst.due_date || '').split('T')[0];
+          const paymentDueDate = (payment.due_date as string)?.split('T')[0] || '';
+          if ((payment.interest_amount || 0) < 0.01 && paymentDueDate !== instDueDate) {
             paymentIndex++;
             continue;
           }

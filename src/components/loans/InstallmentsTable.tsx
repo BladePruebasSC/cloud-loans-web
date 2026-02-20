@@ -995,7 +995,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           let accumulatedPrincipal = 0;
           let accumulatedInterest = 0;
 
-          // PRIMERO: Procesar TODOS los cargos
+          // PRIMERO: Procesar TODOS los cargos (cada pago solo puede asignarse a un cargo)
           const chargeInstallments: typeof sortedInstallments = [];
           for (const inst of sortedInstallments) {
             const isCharge = inst.interest_amount === 0 && 
@@ -1006,24 +1006,20 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             }
           }
 
-          // Procesar cada cargo
+          const assignedPaymentIdsForCharges = new Set<string>();
+
+          // Procesar cada cargo (orden: por número de cuota, así el primer cargo con mismo due_date recibe el pago primero)
           for (const chargeInst of chargeInstallments) {
             const chargeTotal = chargeInst.total_amount || chargeInst.amount || chargeInst.principal_amount;
             const chargeDueDate = chargeInst.due_date?.split('T')[0];
-            const chargeInstallmentNumber = chargeInst.installment_number;
             accumulatedPrincipal = 0;
 
-            // CORRECCIÓN: Buscar TODOS los pagos que correspondan a este cargo específico
-            // No usar paymentIndex porque necesitamos buscar en todos los pagos, no solo desde un índice
-            // Verificar por due_date Y que no tenga interés (característica de cargos)
+            // Buscar pagos que correspondan a este cargo y no estén ya asignados a otro cargo
             for (let pIdx = 0; pIdx < sortedPayments.length && accumulatedPrincipal < chargeTotal * 0.99; pIdx++) {
               const payment = sortedPayments[pIdx];
+              if (assignedPaymentIdsForCharges.has(payment.id)) continue;
+
               const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
-              
-              // CORRECCIÓN: Verificar si el pago corresponde a este cargo por:
-              // 1. Mismo due_date, Y
-              // 2. No tiene interés (interest_amount = 0 o muy pequeño), Y
-              // 3. El monto es razonable para este cargo
               const hasNoInterest = (payment.interest_amount || 0) < 0.01;
               const reasonableAmount = (payment.principal_amount || payment.amount || 0) <= chargeTotal * 1.1;
               const paymentMatchesCharge = paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
@@ -1033,6 +1029,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 const remainingCharge = chargeTotal - accumulatedPrincipal;
 
                 if (paymentAmount > 0 && paymentAmount <= remainingCharge * 1.1) {
+                  assignedPaymentIdsForCharges.add(payment.id);
                   accumulatedPrincipal += paymentAmount;
 
                   if (accumulatedPrincipal >= chargeTotal * 0.99) {
@@ -1060,34 +1057,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           }
 
           // SEGUNDO: Procesar todas las cuotas regulares (excluyendo cargos)
-          // CORRECCIÓN: Crear un Set de IDs de pagos ya asignados a cargos para no reutilizarlos
-          const paymentsAssignedToCharges = new Set<string>();
-          
-          // Recopilar IDs de pagos asignados a cargos
-          for (const chargeInst of chargeInstallments) {
-            const chargeTotal = chargeInst.total_amount || chargeInst.amount || chargeInst.principal_amount;
-            const chargeDueDate = chargeInst.due_date?.split('T')[0];
-            let chargeAccumulated = 0;
-            
-            for (const payment of sortedPayments) {
-              if (paymentsAssignedToCharges.has(payment.id)) continue; // Ya asignado a otro cargo
-              
-              const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
-              const hasNoInterest = (payment.interest_amount || 0) < 0.01;
-              const reasonableAmount = (payment.principal_amount || payment.amount || 0) <= chargeTotal * 1.1;
-              const paymentMatchesCharge = paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount;
-              
-              if (paymentMatchesCharge && chargeAccumulated < chargeTotal * 0.99) {
-                const paymentAmount = payment.principal_amount || payment.amount || 0;
-                if (paymentAmount > 0 && paymentAmount <= (chargeTotal - chargeAccumulated) * 1.1) {
-                  paymentsAssignedToCharges.add(payment.id);
-                  chargeAccumulated += paymentAmount;
-                  if (chargeAccumulated >= chargeTotal * 0.99) break;
-                }
-              }
-            }
-          }
-          
+          // Usar el mismo set de pagos ya asignados a cargos para no contarlos en cuotas regulares
+          const paymentsAssignedToCharges = assignedPaymentIdsForCharges;
+
           accumulatedPrincipal = 0;
           accumulatedInterest = 0;
           let firstPaymentDateForInstallment: string | null = null;

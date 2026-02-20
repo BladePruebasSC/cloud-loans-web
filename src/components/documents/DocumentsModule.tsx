@@ -86,6 +86,8 @@ export const DocumentsModule = () => {
   const [availableDocuments, setAvailableDocuments] = useState<string[]>([]);
   const [selectedDocumentsToGenerate, setSelectedDocumentsToGenerate] = useState<string[]>([]);
   const [generatingDocuments, setGeneratingDocuments] = useState(false);
+  const [showPasswordVerification, setShowPasswordVerification] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<{ id: string; fileUrl: string | null } | null>(null);
 
   useEffect(() => {
     if (companyId) {
