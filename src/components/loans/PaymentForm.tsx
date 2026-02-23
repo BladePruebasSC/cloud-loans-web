@@ -1433,74 +1433,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // Verificar que el loan sigue siendo el mismo
       if (selectedLoan?.id !== loanId) return;
 
-      // CORRECCIÓN: Si es un cargo y va antes que next_payment_date, usarlo (prioridad cronológica)
-      // No ignorar cargos que van antes, solo ignorar si va después
-      if (firstUnpaid && isCharge) {
-        const firstUnpaidDateStr = firstUnpaid.due_date.split('T')[0];
-        const nextPaymentDateStr = selectedLoan.next_payment_date?.split('T')[0];
-        
-        if (nextPaymentDateStr && firstUnpaidDateStr > nextPaymentDateStr) {
-          // Es un cargo pero su fecha es DESPUÉS de next_payment_date, buscar la siguiente cuota pendiente
-          const nextUnpaid = (allInstallments || []).find(inst => {
-            const instDueDate = inst.due_date?.split('T')[0];
-            return instDueDate && instDueDate <= nextPaymentDateStr;
-          });
-          
-          if (nextUnpaid) {
-            firstUnpaid = nextUnpaid;
-            // Recalcular remainingAmount para esta cuota
-            const instDueDate = firstUnpaid.due_date?.split('T')[0];
-            const chargeCheck = Math.abs(firstUnpaid.interest_amount || 0) < 0.01 && 
-                               Math.abs((firstUnpaid.principal_amount || 0) - (firstUnpaid.total_amount || 0)) < 0.01;
-            
-            if (chargeCheck && instDueDate) {
-              const chargesWithSameDate = (allInstallments || []).filter(c => {
-                const cIsCharge = Math.abs(c.interest_amount || 0) < 0.01 && 
-                                 Math.abs((c.principal_amount || 0) - (c.total_amount || 0)) < 0.01;
-                return cIsCharge && c.due_date?.split('T')[0] === instDueDate;
-              }).sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
-              
-              const paymentsForCharges = (allPaymentsForLoan || []).filter(p => {
-                const paymentDueDate = p.due_date?.split('T')[0];
-                const hasNoInterest = (p.interest_amount || 0) < 0.01;
-                return paymentDueDate === instDueDate && hasNoInterest;
-              });
-              
-              const totalPaidForDate = paymentsForCharges.reduce((s, p) => s + (p.principal_amount || p.amount || 0), 0);
-              const chargeIndex = chargesWithSameDate.findIndex(c => c.id === firstUnpaid.id);
-              
-              let totalPaidForCharge = 0;
-              if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
-                let remainingPayments = totalPaidForDate;
-                for (let i = 0; i < chargeIndex; i++) {
-                  const prevCharge = chargesWithSameDate[i];
-                  remainingPayments -= Math.min(remainingPayments, prevCharge.total_amount || 0);
-                }
-                totalPaidForCharge = Math.min(remainingPayments, firstUnpaid.total_amount || 0);
-              } else {
-                totalPaidForCharge = Math.min(totalPaidForDate, firstUnpaid.total_amount || 0);
-              }
-              
-              remainingAmount = Math.max(0, firstUnpaid.total_amount - totalPaidForCharge);
-              isCharge = true;
-            } else if (instDueDate) {
-              const paymentsForThisInstallment = (allPaymentsForLoan || []).filter(p => {
-                const paymentDueDate = p.due_date?.split('T')[0];
-                return paymentDueDate === instDueDate;
-              });
-              
-              const totalPaid = paymentsForThisInstallment.reduce((s, p) => s + (p.amount || 0), 0);
-              remainingAmount = Math.max(0, (firstUnpaid.total_amount || 0) - totalPaid);
-              isCharge = false;
-            }
-          } else {
-            // No hay más cuotas pendientes antes de next_payment_date
-            firstUnpaid = null;
-            isCharge = false;
-          }
-        }
-      }
-        
+      // No reemplazar firstUnpaid por next_payment_date: el primer ítem pendiente por due_date
+      // es la fuente de verdad. Si un cargo fue creado después de una cuota (ej. cargo 24 mar tras cuota 20 mar),
+      // debe mostrarse para pago; next_payment_date puede estar desactualizado o referir solo a cuotas regulares.
+
       if (firstUnpaid) {
         // remainingAmount ya está calculado arriba en el loop
         console.log('🔍 PaymentForm: Cuota pendiente/parcial encontrada:', {

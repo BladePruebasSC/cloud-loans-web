@@ -20,6 +20,7 @@ import { PasswordVerificationDialog } from '@/components/common/PasswordVerifica
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { getFirstUnpaidDueDate } from '@/utils/nextPaymentDateFromInstallments';
 import { 
   Edit, 
   DollarSign, 
@@ -169,6 +170,8 @@ interface LoanUpdateFormProps {
   onClose: () => void;
   onUpdate: () => void;
   editOnly?: boolean; // Si es true, solo muestra la opción de editar préstamo
+  /** Fecha de próximo pago calculada (primera cuota/cargo pendiente). Si no se pasa, se usa loan.next_payment_date. */
+  displayNextPaymentDate?: string | null;
 }
 
 export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({ 
@@ -176,7 +179,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   isOpen, 
   onClose, 
   onUpdate,
-  editOnly = false
+  editOnly = false,
+  displayNextPaymentDate
 }) => {
   const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
   const isIndefiniteLoan = (loan?.amortization_type || '').toLowerCase() === 'indefinite';
@@ -225,6 +229,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [originalPendingCapital, setOriginalPendingCapital] = useState<number>(0); // Capital pendiente original antes del abono
   const [showPreviewTable, setShowPreviewTable] = useState(false);
   const [previewInstallments, setPreviewInstallments] = useState<any[]>([]);
+  /** Próximo pago calculado desde installments + payments al abrir (misma lógica que Detalles). */
+  const [localNextPaymentDate, setLocalNextPaymentDate] = useState<string | null>(null);
   const { user, companyId, companySettings: authCompanySettings } = useAuth();
 
   const form = useForm<UpdateFormData>({
@@ -309,6 +315,25 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       fetchInstallments();
     }
   }, [isOpen, loan.id]);
+
+  // Calcular próxima fecha de pago desde installments + payments (misma lógica que Detalles) al abrir el modal
+  useEffect(() => {
+    if (!isOpen || !loan?.id || isIndefiniteLoan) {
+      setLocalNextPaymentDate(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const [instRes, payRes] = await Promise.all([
+        supabase.from('installments').select('id, loan_id, due_date, installment_number, principal_amount, interest_amount, total_amount, amount, is_paid').eq('loan_id', loan.id),
+        supabase.from('payments').select('id, loan_id, due_date, amount, principal_amount, interest_amount, payment_date, payment_time_local, created_at').eq('loan_id', loan.id)
+      ]);
+      if (cancelled || instRes.error || payRes.error) return;
+      const due = getFirstUnpaidDueDate(instRes.data || [], payRes.data || []);
+      if (!cancelled) setLocalNextPaymentDate(due);
+    })();
+    return () => { cancelled = true; };
+  }, [isOpen, loan?.id, isIndefiniteLoan]);
 
   // Observar el tipo de actualización
   const updateType = useWatch({
@@ -5629,7 +5654,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               <div className="mt-4">
                 <LateFeeInfo
                   loanId={loan.id}
-                  nextPaymentDate={loan.next_payment_date}
+                  nextPaymentDate={(localNextPaymentDate ?? displayNextPaymentDate ?? loan.next_payment_date?.split?.('T')?.[0] ?? loan.next_payment_date) || ''}
                   currentLateFee={currentLateFee}
                   lateFeeEnabled={(loan as any).late_fee_enabled || false}
                   lateFeeRate={(loan as any).late_fee_rate || 0}
@@ -5674,9 +5699,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 <div className="flex justify-between">
                   <span className="text-gray-600">Próximo Pago:</span>
                   <span className="font-semibold">
-                    {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) 
+                    {(loan.status === 'paid' || loan.remaining_balance === 0) 
                       ? 'N/A' 
-                      : loan.next_payment_date}
+                      : (() => {
+                          const nextDue = localNextPaymentDate ?? displayNextPaymentDate ?? loan.next_payment_date?.split?.('T')?.[0] ?? loan.next_payment_date;
+                          return nextDue ? formatDateStringForSantoDomingo(nextDue) : 'N/A';
+                        })()}
                   </span>
                 </div>
                 <div className="flex justify-between">

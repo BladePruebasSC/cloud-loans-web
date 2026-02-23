@@ -103,6 +103,9 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [previewDocument, setPreviewDocument] = useState<any | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [nextPaymentDate, setNextPaymentDate] = useState<string | null>(null);
+  /** Próxima cuota y cuotas pagadas derivados de installments + payments (misma lógica que InstallmentsTable) para no depender del is_paid de BD cuando hay cargos. */
+  const [computedNextPaymentDate, setComputedNextPaymentDate] = useState<string | null>(null);
+  const [computedPaidCount, setComputedPaidCount] = useState<number | null>(null);
   const [capitalPayments, setCapitalPayments] = useState<any[]>([]);
   const [showUploadDocument, setShowUploadDocument] = useState(false);
   const [documentForm, setDocumentForm] = useState({
@@ -222,6 +225,86 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       setPendingInterestForIndefinite(0);
     }
   }, [loan, installments, payments]);
+
+  // Derivar próxima cuota y cuotas pagadas desde installments + payments (misma lógica que InstallmentsTable)
+  // para que con cargos la fecha y el conteo sean correctos y no dependan solo del is_paid de la BD.
+  useEffect(() => {
+    if (!loan || installments.length === 0) {
+      setComputedNextPaymentDate(null);
+      setComputedPaidCount(null);
+      return;
+    }
+    const isIndefinite = String(loan?.amortization_type || '').toLowerCase() === 'indefinite';
+    if (isIndefinite) {
+      setComputedNextPaymentDate(null);
+      setComputedPaidCount(null);
+      return;
+    }
+    const sortedInstallments = [...installments].sort((a: any, b: any) => {
+      const aDue = (a.due_date || '').split('T')[0] || '';
+      const bDue = (b.due_date || '').split('T')[0] || '';
+      if (aDue !== bDue) return aDue.localeCompare(bDue);
+      return (a.installment_number || 0) - (b.installment_number || 0);
+    });
+    const sortedPayments = [...payments].sort((a: any, b: any) => {
+      const at = (a.payment_date || a.payment_time_local || a.created_at || '').toString();
+      const bt = (b.payment_date || b.payment_time_local || b.created_at || '').toString();
+      return new Date(at).getTime() - new Date(bt).getTime();
+    });
+
+    const isCharge = (inst: any) => {
+      const total = inst.total_amount ?? inst.amount ?? (Number(inst.principal_amount || 0) + Number(inst.interest_amount || 0));
+      return Math.abs(Number(inst.interest_amount || 0)) < 0.01
+        && Math.abs((inst.principal_amount || 0) - total) < 0.01;
+    };
+
+    const computedIsPaid = new Map<string, boolean>();
+    const assignedPaymentIdsForCharges = new Set<string>();
+    for (const chargeInst of sortedInstallments.filter(isCharge)) {
+      const chargeTotal = chargeInst.total_amount || chargeInst.amount || chargeInst.principal_amount;
+      const chargeDueDate = chargeInst.due_date?.split('T')[0];
+      let accumulatedPrincipal = 0;
+      for (const payment of sortedPayments) {
+        if (assignedPaymentIdsForCharges.has(payment.id)) continue;
+        const paymentDueDate = (payment.due_date as string)?.split('T')[0] || (payment.due_date as string);
+        const hasNoInterest = (payment.interest_amount || 0) < 0.01;
+        const reasonableAmount = (payment.principal_amount || payment.amount || 0) <= chargeTotal * 1.1;
+        if (paymentDueDate === chargeDueDate && hasNoInterest && reasonableAmount) {
+          const amt = payment.principal_amount || payment.amount || 0;
+          if (amt > 0 && accumulatedPrincipal + amt <= chargeTotal * 1.01) {
+            assignedPaymentIdsForCharges.add(payment.id);
+            accumulatedPrincipal += amt;
+            if (accumulatedPrincipal >= chargeTotal * 0.99) break;
+          }
+        }
+      }
+      computedIsPaid.set(chargeInst.id, accumulatedPrincipal >= chargeTotal * 0.99);
+    }
+
+    const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
+    for (const regularInst of sortedInstallments) {
+      if (isCharge(regularInst)) continue;
+      const expectedTotal = round2(regularInst.total_amount ?? regularInst.amount ?? (Number(regularInst.principal_amount || 0) + Number(regularInst.interest_amount || 0)));
+      const dueKey = regularInst.due_date?.split('T')[0] || regularInst.due_date;
+      let totalPaidForDue = 0;
+      if (dueKey) {
+        const paymentsForThisDue = sortedPayments.filter((p: any) => {
+          if (assignedPaymentIdsForCharges.has(p.id)) return false;
+          const pDue = (p.due_date as any)?.split?.('T')?.[0] || (p.due_date as any) || null;
+          return pDue === dueKey;
+        });
+        totalPaidForDue = round2(paymentsForThisDue.reduce((s: number, p: any) => s + (Number(p.amount || 0) || 0), 0));
+      }
+      computedIsPaid.set(regularInst.id, totalPaidForDue + 0.05 >= expectedTotal && expectedTotal > 0);
+    }
+
+    const getPaid = (inst: any) => computedIsPaid.get(inst.id) ?? inst.is_paid;
+    const firstUnpaid = sortedInstallments.find((inst: any) => !getPaid(inst));
+    const nextDue = firstUnpaid?.due_date ? firstUnpaid.due_date.split('T')[0] : null;
+    const paidCount = sortedInstallments.filter((inst: any) => getPaid(inst)).length;
+    setComputedNextPaymentDate(nextDue);
+    setComputedPaidCount(paidCount);
+  }, [loan?.id, loan?.amortization_type, installments, payments]);
 
   // Función para calcular el interés pendiente total para préstamos indefinidos
   const calculatePendingInterestForIndefinite = async () => {
@@ -1323,11 +1406,10 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         <div className="font-semibold">
                           {(loan.status === 'paid' || remainingBalance === 0) 
                             ? 'N/A' 
-                            : nextPaymentDate 
-                              ? formatDateStringForSantoDomingo(nextPaymentDate)
-                              : loan.next_payment_date 
-                                ? formatDateStringForSantoDomingo(loan.next_payment_date.split('T')[0])
-                                : 'N/A'}
+                            : (() => {
+                                const nextDue = computedNextPaymentDate ?? nextPaymentDate ?? loan.next_payment_date?.split('T')[0];
+                                return nextDue ? formatDateStringForSantoDomingo(nextDue) : 'N/A';
+                              })()}
                         </div>
                       </div>
                       {loan.amortization_type !== 'indefinite' && (
@@ -1339,45 +1421,9 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         <div>
                           <span className="text-gray-600">Cuotas pagadas:</span>
                           <div className="font-semibold">
-                            {(() => {
-                              // Contar solo cuotas regulares completamente pagadas (excluyendo cargos parcialmente pagados)
-                              const regularInstallments = installments.filter((inst: any) => {
-                                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                return !isCharge;
-                              });
-                              
-                              // Para cada cuota regular, verificar si está completamente pagada
-                              const fullyPaidRegular = regularInstallments.filter((inst: any) => {
-                                if (!inst.is_paid) return false;
-                                
-                                // Verificar si realmente está completamente pagada verificando los pagos
-                                const installmentDueDate = inst.due_date?.split('T')[0];
-                                if (!installmentDueDate) return inst.is_paid;
-                                
-                                // Obtener pagos asignados a esta cuota (solo con interés para excluir pagos a cargos)
-                                const paymentsForThisInstallment = payments.filter(p => {
-                                  const paymentDueDate = p.due_date?.split('T')[0];
-                                  const hasInterest = Math.abs(p.interest_amount || 0) >= 0.01;
-                                  return paymentDueDate === installmentDueDate && hasInterest;
-                                });
-                                
-                                const principalPaid = paymentsForThisInstallment.reduce((s, p) => s + (p.principal_amount || 0), 0);
-                                const interestPaid = paymentsForThisInstallment.reduce((s, p) => s + (p.interest_amount || 0), 0);
-                                
-                                // Está completamente pagada si se pagó todo el principal y el interés
-                                const principalComplete = Math.abs(principalPaid - (inst.principal_amount || 0)) < 0.01;
-                                const interestComplete = Math.abs(interestPaid - (inst.interest_amount || 0)) < 0.01;
-                                
-                                return principalComplete && interestComplete;
-                              }).length;
-                              
-                              return `${fullyPaidRegular} / ${loan.term_months || installments.filter((inst: any) => {
-                                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                return !isCharge;
-                              }).length}`;
-                            })()}
+                            {computedPaidCount !== null
+                              ? `${computedPaidCount} / ${installments.length}`
+                              : `${installments.filter((inst: any) => inst.is_paid).length} / ${installments.length}`}
                           </div>
                         </div>
                       </>

@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { formatCurrencyNumber } from '@/lib/utils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { getFirstUnpaidDueDate } from '@/utils/nextPaymentDateFromInstallments';
 import { 
   CreditCard, 
   Plus, 
@@ -724,12 +725,8 @@ export const LoansModule = () => {
 
   // Función helper para formatear la visualización de next_payment_date
   const formatNextPaymentDate = (loan: any) => {
-    const amortizationTypeLower = String(loan?.amortization_type || '').toLowerCase();
-    const isIndefinite = amortizationTypeLower === 'indefinite';
-
-    // ✅ INDEFINIDOS: usar la primera cuota/cargo pendiente (desde installments) cuando esté disponible,
-    // porque `next_payment_date` puede quedar desfasado (ej. 28-Feb vs 02-Mar).
-    const isoDate = (isIndefinite ? (nextPaymentDates[loan.id] || null) : null) || loan.next_payment_date?.split('T')[0] || null;
+    // Usar fecha calculada desde installments (primera pendiente) cuando exista, para que cargos no desfasen la fecha
+    const isoDate = nextPaymentDates[loan.id] ?? loan.next_payment_date?.split('T')[0] ?? null;
     if (!isoDate) return 'N/A';
     return formatDateStringForSantoDomingo(isoDate);
   };
@@ -861,11 +858,9 @@ export const LoansModule = () => {
     return dates;
   }, [loans?.map(l => `${l.id}-${l.next_payment_date}`).join(',')]);
 
-  // Actualizar estado solo cuando el memo cambie
-  useEffect(() => {
-    // No sobreescribir indefinidos calculados; solo mergear NO-indefinidos
-    setNextPaymentDates(prev => ({ ...prev, ...nextPaymentDatesMemo }));
-  }, [nextPaymentDatesMemo]);
+  // No volver a escribir en estado las fechas de la BD para NO-indefinidos: el efecto de "primera pendiente"
+  // es quien debe fijarlas (para que cargos no desfasen la fecha). formatNextPaymentDate usa
+  // nextPaymentDates[loan.id] ?? loan.next_payment_date como fallback.
 
   // ✅ Calcular nextPaymentDate para INDEFINIDOS desde installments (primera cuota/cargo pendiente)
   useEffect(() => {
@@ -899,9 +894,46 @@ export const LoansModule = () => {
     };
   }, [loans?.map(l => `${l.id}-${(l as any).amortization_type || l.amortization_type}-${l.next_payment_date}`).join(',')]);
 
-  // OPTIMIZADO: Ya no necesitamos recalcular fechas dinámicamente
-  // La BD ahora actualiza next_payment_date automáticamente con triggers cuando cambian pagos/installments
-  // Solo usamos next_payment_date de la BD directamente
+  // ✅ NO-INDEFINIDOS: Calcular próxima fecha desde installments + payments (misma lógica que Detalles)
+  // para que cargos y asignación de pagos den la fecha correcta (no depender de is_paid de la BD).
+  useEffect(() => {
+    if (!loans || loans.length === 0) return;
+    const nonIndefinite = loans.filter((l: any) => String((l as any).amortization_type || l.amortization_type || '').toLowerCase() !== 'indefinite');
+    if (nonIndefinite.length === 0) return;
+    const loanIds = nonIndefinite.map((l: any) => l.id);
+    let cancelled = false;
+    (async () => {
+      const [instRes, payRes] = await Promise.all([
+        supabase.from('installments').select('id, loan_id, due_date, installment_number, principal_amount, interest_amount, total_amount, amount, is_paid').in('loan_id', loanIds),
+        supabase.from('payments').select('id, loan_id, due_date, amount, principal_amount, interest_amount, payment_date, payment_time_local, created_at').in('loan_id', loanIds)
+      ]);
+      if (cancelled || instRes.error || payRes.error) return;
+      const installmentsByLoan = new Map<string, any[]>();
+      for (const row of (instRes.data || [])) {
+        const lid = (row as any).loan_id;
+        if (!lid) continue;
+        if (!installmentsByLoan.has(lid)) installmentsByLoan.set(lid, []);
+        installmentsByLoan.get(lid)!.push(row);
+      }
+      const paymentsByLoan = new Map<string, any[]>();
+      for (const row of (payRes.data || [])) {
+        const lid = (row as any).loan_id;
+        if (!lid) continue;
+        if (!paymentsByLoan.has(lid)) paymentsByLoan.set(lid, []);
+        paymentsByLoan.get(lid)!.push(row);
+      }
+      const firstUnpaidByLoan: { [loanId: string]: string } = {};
+      for (const lid of loanIds) {
+        const inst = installmentsByLoan.get(lid) || [];
+        const pay = paymentsByLoan.get(lid) || [];
+        const due = getFirstUnpaidDueDate(inst, pay);
+        if (due) firstUnpaidByLoan[lid] = due;
+      }
+      if (cancelled) return;
+      setNextPaymentDates(prev => ({ ...prev, ...firstUnpaidByLoan }));
+    })();
+    return () => { cancelled = true; };
+  }, [loans?.map(l => l.id).join(','), loans?.length]);
 
   // OPTIMIZADO: Calcular balances dinámicamente igual que LoanDetailsView
   // Memoizar montos y balances usando los datos que ya vienen de la BD
@@ -2241,6 +2273,7 @@ export const LoansModule = () => {
           refetch();
         }}
         editOnly={isEditMode}
+        displayNextPaymentDate={nextPaymentDates[selectedLoan.id] ?? selectedLoan.next_payment_date?.split('T')[0] ?? null}
       />
     );
   }
