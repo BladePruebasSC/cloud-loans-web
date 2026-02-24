@@ -1554,6 +1554,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     // Mapa para rastrear qué pago está asignado a qué cuota
     const paymentToInstallmentMap = new Map<string, number>();
 
+    const isChargeInstallment = (inst: any) => {
+      const interest = Math.abs(Number(inst?.interest_amount || 0));
+      const principalAmt = Number(inst?.principal_amount || 0);
+      const total = Number(inst?.amount || (inst as any)?.total_amount || 0);
+      return interest < 0.01 && principalAmt > 0 && Math.abs(principalAmt - total) < 0.01;
+    };
+    const chargeAmountOf = (inst: any) =>
+      Number((inst as any)?.total_amount || inst?.amount || inst?.principal_amount || 0) || 0;
+    // ✅ Un cargo debe reflejarse en el capital pendiente de TODAS las cuotas (aunque venza más adelante).
+    const totalChargesAll = (installmentsData || []).reduce((sum: number, inst: any) => {
+      return sum + (isChargeInstallment(inst) ? chargeAmountOf(inst) : 0);
+    }, 0);
+
     // Calcular el capital total pagado para determinar el balance general
     const totalPrincipalPaid = payments?.reduce((sum, payment) => sum + (payment.principal_amount || 0), 0) || 0;
     
@@ -2173,22 +2186,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
       
       // Calcular el balance pendiente del préstamo después de esta cuota
-      // Incluir tanto el capital del préstamo original como los cargos
-      let totalCapitalPaidUpToThisInstallment = 0;
+      // Incluir tanto el capital del préstamo original como TODOS los cargos (aunque sean de cuotas futuras)
       let totalChargesUpToThisInstallment = 0;
+      let totalCapitalPaidUpToThisInstallment = 0;
       
       for (let j = 1; j <= i; j++) {
         const prevInstallment = installmentsMap.get(j);
-        const isPrevCharge = prevInstallment && 
-                             prevInstallment.interest_amount === 0 && 
-                             prevInstallment.principal_amount > 0 && 
-                             Math.abs(prevInstallment.principal_amount - (prevInstallment.amount || (prevInstallment as any).total_amount || 0)) < 0.01;
-        
-        if (isPrevCharge) {
           // Para cargos, sumar el monto del cargo
           const chargeAmount = (prevInstallment as any).total_amount || prevInstallment.amount || prevInstallment.principal_amount || 0;
           totalChargesUpToThisInstallment += chargeAmount;
           
+        const isPrevCharge = isChargeInstallment(prevInstallment);
+        
+        if (isPrevCharge) {
           // Buscar pagos asignados a este cargo específico
           const chargePayments: any[] = [];
           for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
@@ -2222,8 +2232,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
       }
       
-      // Calcular el balance pendiente: (Capital original + Cargos hasta esta cuota) - Pagos hasta esta cuota
-      const remainingBalanceAfterThisInstallment = Math.max(0, (principal + totalChargesUpToThisInstallment) - totalCapitalPaidUpToThisInstallment);
+      // Capital pendiente: (Capital original + TODOS los cargos) - Pagos de capital/cargos acumulados hasta esta cuota
+      const remainingBalanceAfterThisInstallment = Math.max(
+        0,
+        (principal + totalChargesAll) - totalCapitalPaidUpToThisInstallment
+      );
 
       console.log(`🔍 RESUMEN FINAL - Cuota ${i}:`, {
         exists: !!realInstallment,
@@ -2241,7 +2254,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         remainingPayment,
         paymentStatus,
         totalCapitalPaidUpToThisInstallment,
-        totalChargesUpToThisInstallment,
+        totalChargesAll,
         remainingBalanceAfterThisInstallment,
         ESTADO_FINAL: paymentStatus === 'paid' ? '✅ PAGADO' : paymentStatus === 'partial' ? '⚠️ PARCIAL' : '❌ PENDIENTE'
       });
@@ -2570,7 +2583,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                     <th>Cuota Mensual</th>
                     <th>Capital</th>
                     <th>Interés</th>
-                    <th>Balance Pendiente</th>
+                    <th>Capital Pendiente</th>
                     <th>Estado</th>
                   </tr>
                 </thead>
@@ -3006,7 +3019,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                         <th className="text-left p-3 font-semibold">Cuota Mensual</th>
                         <th className="text-left p-3 font-semibold">Capital</th>
                         <th className="text-left p-3 font-semibold">Interés</th>
-                        <th className="text-left p-3 font-semibold">Balance Pendiente</th>
+                        <th className="text-left p-3 font-semibold">Capital Pendiente</th>
                         <th className="text-left p-3 font-semibold">Estado</th>
                       </tr>
                     </thead>

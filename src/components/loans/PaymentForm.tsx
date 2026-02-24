@@ -2838,22 +2838,21 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         loanUpdateData.next_payment_date = finalNextPaymentDate;
       }
 
-      // Si se pagó mora, actualizar el campo total_late_fee_paid
+      // Si se pagó mora, mantener `total_late_fee_paid` determinístico:
+      // recalcular desde `payments.late_fee` (evita desincronización al eliminar/editar pagos)
       if (data.late_fee_amount && data.late_fee_amount > 0) {
-        const { data: currentLoan, error: loanError } = await supabase
-          .from('loans')
-          .select('total_late_fee_paid')
-          .eq('id', data.loan_id)
-          .single();
+        const { data: lateFeeRows, error: lateFeeSumError } = await supabase
+          .from('payments')
+          .select('late_fee')
+          .eq('loan_id', data.loan_id)
+          .not('late_fee', 'is', null);
 
-        if (!loanError && currentLoan) {
-          const currentTotalPaid = currentLoan.total_late_fee_paid || 0;
-          loanUpdateData.total_late_fee_paid = currentTotalPaid + data.late_fee_amount;
-          console.log('🔍 PaymentForm: Actualizando total_late_fee_paid:', {
-            anterior: currentTotalPaid,
-            pago: data.late_fee_amount,
-            nuevo: loanUpdateData.total_late_fee_paid
-          });
+        if (lateFeeSumError) {
+          console.error('🔍 PaymentForm: Error recalculando total_late_fee_paid:', lateFeeSumError);
+        } else {
+          const totalLateFeePaid = (lateFeeRows || []).reduce((sum, p: any) => sum + (Number(p.late_fee) || 0), 0);
+          loanUpdateData.total_late_fee_paid = totalLateFeePaid;
+          console.log('🔍 PaymentForm: total_late_fee_paid recalculado desde payments:', totalLateFeePaid);
         }
       }
 
@@ -3391,7 +3390,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     <span className="font-semibold">{selectedLoan.client?.dni}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Balance Pendiente:</span>
+                    <span className="text-sm text-gray-600">Capital Pendiente:</span>
                     <span className="font-bold text-red-600">
                       ${formatCurrencyNumber(
                         computedBalancePending !== null

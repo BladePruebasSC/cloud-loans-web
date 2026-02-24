@@ -1097,7 +1097,7 @@ export const LoansModule = () => {
     pendingInterestForIndefinite ? Object.keys(pendingInterestForIndefinite).join(',') : ''
   ]);
 
-  // Hidratar bajo demanda: préstamos indefinidos primero (para que Balance Pendiente incluya cargos = Detalles)
+  // Hidratar bajo demanda: préstamos indefinidos primero (para que Capital Pendiente incluya cargos = Detalles)
   const inFlightBreakdownRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!loans?.length) return;
@@ -2637,7 +2637,7 @@ export const LoansModule = () => {
 
                                 const value = (() => {
                                   if (isIndefinite) {
-                                    // ✅ Balance Pendiente = capital + interés pendiente + cargos (igual que Detalles)
+                                    // ✅ Capital Pendiente = capital + interés pendiente + cargos (igual que Detalles)
                                     if (calculatedTotal !== undefined) return calculatedTotal;
                                     // Si ya tenemos breakdown (cargos calculados), usar fórmula
                                     const pendingCharges = calculatedPendingCharges[loan.id];
@@ -2649,7 +2649,7 @@ export const LoansModule = () => {
                                     return null;
                                   }
 
-                                  // ✅ Plazo fijo: incluir cargos en Balance Pendiente (totalBalance)
+                                  // ✅ Plazo fijo: incluir cargos en Capital Pendiente (totalBalance)
                                   if (calculatedTotal !== undefined) return calculatedTotal;
                                   // Último fallback
                                   if (db !== null && db !== undefined) return Number(db);
@@ -2660,12 +2660,12 @@ export const LoansModule = () => {
                                 return `$${formatCurrencyNumber(value)}`;
                               })()}
                             </div>
-                            <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
+                            <div className="text-sm text-red-600 font-medium">Capital Pendiente</div>
                             {((loan.amortization_type || '').toLowerCase() === 'indefinite') && (
                               <div className="text-xs text-red-500 mt-1">
                                 {(calculatedPendingCharges[loan.id] || 0) > 0
-                                  ? 'Balance + Interés + Cargos'
-                                  : 'Balance + Interés Pendiente'}
+                                  ? 'Capital + Interés + Cargos'
+                                  : 'Capital + Interés Pendiente'}
                               </div>
                             )}
                           </div>
@@ -2691,7 +2691,7 @@ export const LoansModule = () => {
                                 }
 
                                 const base = (() => {
-                                  // ✅ Balance Total Pendiente = Balance Pendiente (incluye cargos) + Mora
+                                  // ✅ Balance Total Pendiente = Capital Pendiente (incluye cargos) + Mora
                                   if (calculatedTotal !== undefined) return calculatedTotal;
                                   if (isIndefinite) {
                                     const basePlusInterest = (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);

@@ -490,7 +490,7 @@ export const CarterasModule = () => {
 
       autoTable(doc, {
         startY: yPos,
-        head: [['Cartera', 'Préstamos', 'Valor Total', 'Balance Pendiente', 'Rendimiento', 'Objetivo']],
+        head: [['Cartera', 'Préstamos', 'Valor Total', 'Capital Pendiente', 'Rendimiento', 'Objetivo']],
         body: tableData,
         theme: 'striped',
         headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' },
@@ -1440,7 +1440,7 @@ export const CarterasModule = () => {
                   </p>
                 </div>
                 <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
-                  <p className="text-sm text-orange-600 font-medium mb-1">Balance Pendiente</p>
+                  <p className="text-sm text-orange-600 font-medium mb-1">Capital Pendiente</p>
                   <p className="text-2xl font-bold text-orange-900">
                     ${filteredPortfolios.reduce((sum, p) => sum + p.remainingBalance, 0).toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                   </p>
@@ -1666,7 +1666,7 @@ export const CarterasModule = () => {
                   </p>
                 </div>
                 <div className="p-3 border rounded-lg">
-                  <p className="text-xs text-gray-500 mb-1">Balance Pendiente</p>
+                  <p className="text-xs text-gray-500 mb-1">Capital Pendiente</p>
                   <p className="text-xl font-bold">
                     ${selectedPortfolio.remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                   </p>

@@ -578,7 +578,7 @@ export const StatisticsModule = () => {
                     <span className="font-semibold">{formatCurrency(loanStats?.totalInterest || 0)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-600">Balance Pendiente:</span>
+                    <span className="text-gray-600">Capital Pendiente:</span>
                     <span className="font-semibold text-red-600">{formatCurrency(loanStats?.totalBalance || 0)}</span>
                   </div>
                 </div>

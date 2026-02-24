@@ -295,6 +295,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       }
 
       console.log('🗑️ Pagos restantes:', remainingPayments?.length || 0);
+      const remainingTotalLateFeePaid = (remainingPayments || []).reduce(
+        (sum, p) => sum + (Number(p.late_fee) || 0),
+        0
+      );
+      console.log('🗑️ Total de mora pagada restante (desde payments):', remainingTotalLateFeePaid);
 
       // CORRECCIÓN: NO recalcular balance manualmente aquí
       // El trigger de la BD ya actualizó remaining_balance correctamente (incluyendo cargos)
@@ -585,10 +590,72 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         });
       }
 
+      // PASO 6.8: Recalcular mora pagada por cuota (late_fee_paid) basándonos en pagos reales
+      // BUGFIX: al eliminar un pago con mora, `installments.late_fee_paid` quedaba “pegado” y la Mora Actual bajaba
+      // aunque el pago ya no existiera. Para que sea determinístico, se resetea y se redistribuye desde `payments.late_fee`.
+      console.log('🗑️ Recalculando distribución de late_fee_paid en installments...');
+      const { error: resetLateFeePaidError } = await supabase
+        .from('installments')
+        .update({ late_fee_paid: 0 })
+        .eq('loan_id', payment.loan_id);
+      if (resetLateFeePaidError) {
+        console.error('🗑️ Error reseteando late_fee_paid:', resetLateFeePaidError);
+      }
+
+      const nextPaymentDateFromBD =
+        finalUpdatedLoanData?.next_payment_date ||
+        updatedLoanData?.next_payment_date ||
+        loanData.next_payment_date;
+
+      if (remainingTotalLateFeePaid > 0.009) {
+        const loanDataForLateFeeBase = {
+          id: payment.loan_id,
+          remaining_balance: newBalance,
+          next_payment_date: nextPaymentDateFromBD,
+          late_fee_rate: loanData.late_fee_rate || 0,
+          grace_period_days: loanData.grace_period_days || 0,
+          max_late_fee: loanData.max_late_fee || 0,
+          late_fee_calculation_type: loanData.late_fee_calculation_type || 'daily',
+          late_fee_enabled: loanData.late_fee_enabled || false,
+          amount: loanData.amount,
+          term: loanData.term_months || 4,
+          payment_frequency: loanData.payment_frequency || 'monthly',
+          interest_rate: loanData.interest_rate,
+          monthly_payment: loanData.monthly_payment,
+          start_date: loanData.start_date,
+          amortization_type: loanData.amortization_type
+        };
+
+        const baseBreakdown = await getLateFeeBreakdownFromInstallments(payment.loan_id, loanDataForLateFeeBase);
+        let remainingToApply = remainingTotalLateFeePaid;
+
+        for (const item of baseBreakdown.breakdown) {
+          if (remainingToApply <= 0) break;
+          if (item.isPaid) continue;
+          if ((Number(item.lateFee) || 0) <= 0) continue;
+
+          const toApply = Math.min(remainingToApply, Number(item.lateFee) || 0);
+          const { error: applyErr } = await supabase
+            .from('installments')
+            .update({ late_fee_paid: Math.round(toApply * 100) / 100 })
+            .eq('loan_id', payment.loan_id)
+            .eq('installment_number', item.installment);
+
+          if (applyErr) {
+            console.error(`🗑️ Error aplicando late_fee_paid a cuota ${item.installment}:`, applyErr);
+          } else {
+            remainingToApply = Math.round((remainingToApply - toApply) * 100) / 100;
+          }
+        }
+
+        if (remainingToApply > 0.009) {
+          console.log('🗑️ Advertencia: quedó mora pagada sin aplicar (posible pago > mora actual):', remainingToApply);
+        }
+      }
+
       // PASO 7: Recalcular la mora
       // CORRECCIÓN: Usar next_payment_date de la BD (ya calculado por el trigger con cargos incluidos)
       console.log('🗑️ RECALCULANDO MORA...');
-      const nextPaymentDateFromBD = finalUpdatedLoanData?.next_payment_date || updatedLoanData?.next_payment_date || loanData.next_payment_date;
       const loanDataForLateFee = {
         id: payment.loan_id,
         remaining_balance: newBalance,
@@ -622,6 +689,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         // next_payment_date: NO incluir - ya fue actualizado correctamente por el trigger de la BD (incluye cargos)
         paid_installments: updatedPaidInstallments,
         current_late_fee: newCurrentLateFee,
+        total_late_fee_paid: remainingTotalLateFeePaid,
         last_late_fee_calculation: new Date().toISOString().split('T')[0],
         status: newBalance <= 0 ? 'paid' : 'active'
       };
