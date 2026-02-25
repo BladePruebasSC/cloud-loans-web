@@ -2190,50 +2190,74 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // - Al agregar un cargo: afecta todas las cuotas desde ese momento
       // - Al pagar una cuota: muestra el capital que había ANTES de pagarla (se congela)
       // - La siguiente cuota muestra el nuevo capital (después de restar el pago anterior)
+      // - Los CARGOS se suman/restan GLOBALMENTE (afectan todas las cuotas, sin importar el número)
       
-      let totalChargesPaidBeforeThisInstallment = 0;
+      let totalChargesPaidGlobally = 0;
       let totalCapitalPaidBeforeThisInstallment = 0;
       
-      // Recorrer solo hasta la cuota ANTERIOR (i-1) para calcular pagos acumulados
-      // Esto muestra el capital pendiente ANTES de pagar esta cuota
+      // PASO 1: Calcular TODOS los pagos de cargos (sin importar el número de cuota)
+      // Los cargos afectan el capital pendiente de TODAS las cuotas
+      for (let j = 1; j <= numberOfPayments; j++) {
+        const prevInstallment = installmentsMap.get(j);
+        if (!prevInstallment) continue;
+        
+        const isPrevCharge = isChargeInstallment(prevInstallment);
+        
+        if (isPrevCharge) {
+          // Buscar pagos asignados a este cargo
+          const chargePayments: any[] = [];
+          for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
+            if (installmentNum === j) {
+              const payment = payments?.find(p => p.id === paymentId);
+              if (payment) {
+                chargePayments.push(payment);
+              }
+            }
+          }
+          
+          // Sumar TODOS los pagos de este cargo (incluyendo parciales)
+          const chargePaid = chargePayments.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
+          totalChargesPaidGlobally += chargePaid;
+          
+          console.log(`🔍 Cargo ${j} - Pagos encontrados:`, {
+            installmentPayments: chargePayments.length,
+            chargePaid,
+            totalChargesPaidSoFar: totalChargesPaidGlobally
+          });
+        }
+      }
+      
+      // PASO 2: Calcular pagos de cuotas regulares ANTES de la cuota actual
+      // Las cuotas regulares solo afectan el capital progresivamente
       for (let j = 1; j < i; j++) {
         const prevInstallment = installmentsMap.get(j);
         if (!prevInstallment) continue;
         
         const isPrevCharge = isChargeInstallment(prevInstallment);
         
-        // Buscar pagos asignados a esta cuota (cargo o regular)
-        const installmentPayments: any[] = [];
-        for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
-          if (installmentNum === j) {
-            const payment = payments?.find(p => p.id === paymentId);
-            if (payment) {
-              installmentPayments.push(payment);
+        if (!isPrevCharge) {
+          // Buscar pagos asignados a esta cuota regular
+          const installmentPayments: any[] = [];
+          for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
+            if (installmentNum === j) {
+              const payment = payments?.find(p => p.id === paymentId);
+              if (payment) {
+                installmentPayments.push(payment);
+              }
             }
           }
-        }
-        
-        if (isPrevCharge) {
-          // Para cargos: sumar TODOS los pagos de este cargo (incluyendo pagos parciales)
-          const chargePaid = installmentPayments.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
-          totalChargesPaidBeforeThisInstallment += chargePaid;
           
-          console.log(`🔍 Cargo ${j} - Pagos encontrados:`, {
-            installmentPayments: installmentPayments.length,
-            chargePaid,
-            totalChargesPaidSoFar: totalChargesPaidBeforeThisInstallment
-          });
-        } else {
-          // Para cuotas regulares: sumar el capital pagado
+          // Sumar el capital pagado de esta cuota
           const installmentPrincipalPaid = installmentPayments.reduce((sum, p) => sum + (p.principal_amount || 0), 0);
           totalCapitalPaidBeforeThisInstallment += installmentPrincipalPaid;
         }
       }
       
-      // Capital pendiente ANTES de pagar esta cuota: (Capital original + TODOS los cargos) - Pagos acumulados ANTES de esta cuota
+      // Capital pendiente ANTES de pagar esta cuota: 
+      // (Capital original + TODOS los cargos) - (Pagos de capital antes de esta cuota + TODOS los pagos de cargos)
       const remainingBalanceAfterThisInstallment = Math.max(
         0,
-        (principal + totalChargesAll) - (totalCapitalPaidBeforeThisInstallment + totalChargesPaidBeforeThisInstallment)
+        (principal + totalChargesAll) - (totalCapitalPaidBeforeThisInstallment + totalChargesPaidGlobally)
       );
 
       console.log(`🔍 RESUMEN FINAL - Cuota ${i}:`, {
@@ -2252,7 +2276,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         remainingPayment,
         paymentStatus,
         totalCapitalPaidBeforeThisInstallment,
-        totalChargesPaidBeforeThisInstallment,
+        totalChargesPaidGlobally,
         totalChargesAll,
         remainingBalanceAfterThisInstallment,
         ESTADO_FINAL: paymentStatus === 'paid' ? '✅ PAGADO' : paymentStatus === 'partial' ? '⚠️ PARCIAL' : '❌ PENDIENTE'
