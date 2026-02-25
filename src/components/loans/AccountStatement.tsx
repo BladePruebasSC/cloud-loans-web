@@ -2214,9 +2214,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
         
         if (isPrevCharge) {
-          // Para cargos: sumar los pagos de este cargo
+          // Para cargos: sumar TODOS los pagos de este cargo (incluyendo pagos parciales)
           const chargePaid = installmentPayments.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
           totalChargesPaidBeforeThisInstallment += chargePaid;
+          
+          console.log(`🔍 Cargo ${j} - Pagos encontrados:`, {
+            installmentPayments: installmentPayments.length,
+            chargePaid,
+            totalChargesPaidSoFar: totalChargesPaidBeforeThisInstallment
+          });
         } else {
           // Para cuotas regulares: sumar el capital pagado
           const installmentPrincipalPaid = installmentPayments.reduce((sum, p) => sum + (p.principal_amount || 0), 0);
