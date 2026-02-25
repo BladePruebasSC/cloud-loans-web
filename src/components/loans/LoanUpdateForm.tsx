@@ -1316,21 +1316,38 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           break;
         }
         if (additionalMonths) {
-          // Calcular meses restantes actuales
-          const totalPayments = loan.term_months;
-          const paidPayments = Math.floor((loan.amount - currentBalance) / loan.monthly_payment);
-          const currentRemainingMonths = Math.max(1, totalPayments - paidPayments);
+          // Contar solo cuotas regulares PENDIENTES (excluyendo cargos y cuotas pagadas)
+          const regularPendingInstallments = installments.filter(inst => {
+            // Verificar si es un cargo (interés = 0 o casi 0, y principal ≈ total)
+            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+            // Solo contar cuotas regulares que no estén pagadas
+            return !isCharge && !inst.is_paid;
+          });
+          
+          const currentRemainingMonths = regularPendingInstallments.length;
           const newTotalMonths = currentRemainingMonths + additionalMonths;
-          const newTotalPayments = totalPayments + additionalMonths;
+          const newTotalPayments = loan.term_months + additionalMonths;
           
           // Fórmula correcta: (Monto Original × Tasa × Plazo + Monto Original) ÷ Plazo
           const totalInterest = (loan.amount * loan.interest_rate * newTotalPayments) / 100;
           const totalAmount = totalInterest + loan.amount;
           newPayment = totalAmount / newTotalPayments;
           
-          // Calcular nuevo balance: el balance actual + las cuotas adicionales
+          // Calcular nuevo balance basado en cuotas pendientes (sin incluir cargos en el cálculo)
+          // Balance = Capital pendiente de cuotas regulares + cargos no pagados
+          const totalPrincipalPending = regularPendingInstallments.reduce((sum, inst) => 
+            sum + (inst.principal_amount || 0), 0);
+          const unpaidCharges = installments.filter(inst => {
+            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+            return isCharge && !inst.is_paid;
+          });
+          const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+          
+          // El nuevo balance considera el capital pendiente + las cuotas adicionales (sin incluir cargos en la extensión)
           const additionalBalance = newPayment * additionalMonths;
-          newBalance = currentBalance + additionalBalance;
+          newBalance = totalPrincipalPending + additionalBalance + unpaidChargesAmount;
           
           // Calcular nueva fecha de fin
           const currentEndDate = new Date(loan.next_payment_date);
