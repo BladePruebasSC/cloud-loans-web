@@ -3072,7 +3072,13 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                               )}
                             </td>
                             <td className="p-3">
-                              <div className={installment.isPaid ? 'text-green-600 line-through' : ''}>
+                              <div className={
+                                installment.isPaid 
+                                  ? 'text-green-600 line-through' 
+                                  : installment.isPartial 
+                                    ? 'text-orange-600' 
+                                    : ''
+                              }>
                                 {formatCurrency(installment.remainingBalance)}
                               </div>
                             </td>
