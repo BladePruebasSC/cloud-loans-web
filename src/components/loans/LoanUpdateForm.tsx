@@ -5569,8 +5569,18 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     {form.watch('update_type') === 'term_extension' && (
                       <>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Plazo Actual:</span>
-                          <span className="font-semibold">{loan.term_months} cuotas</span>
+                          <span className="text-gray-600">Cuotas Restantes:</span>
+                          <span className="font-semibold">
+                            {(() => {
+                              // Contar solo cuotas regulares pendientes (sin cargos)
+                              const regularPending = installments.filter(inst => {
+                                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                                return !isCharge && !inst.is_paid;
+                              });
+                              return regularPending.length;
+                            })()} cuotas
+                          </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-600">Cuotas Adicionales:</span>
@@ -5578,7 +5588,16 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-600">Nuevo Total:</span>
-                          <span className="font-bold text-purple-600">{(loan.term_months || 0) + (form.watch('additional_months') || 0)} cuotas</span>
+                          <span className="font-bold text-purple-600">
+                            {(() => {
+                              const regularPending = installments.filter(inst => {
+                                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                                return !isCharge && !inst.is_paid;
+                              });
+                              return regularPending.length + (form.watch('additional_months') || 0);
+                            })()} cuotas
+                          </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-600">Nueva Cuota Mensual:</span>
