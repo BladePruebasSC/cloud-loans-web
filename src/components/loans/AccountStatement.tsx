@@ -2187,19 +2187,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       
       // Calcular el balance pendiente del préstamo de manera PROGRESIVA
       // LÓGICA: El capital pendiente muestra el saldo ANTES de pagar esta cuota
-      // - Al agregar un cargo: afecta todas las cuotas desde ese momento
+      // - Al agregar un cargo: afecta todas las cuotas DESDE ESA FECHA en adelante (cronológicamente)
       // - Al pagar una cuota: muestra el capital que había ANTES de pagarla (se congela)
       // - La siguiente cuota muestra el nuevo capital (después de restar el pago anterior)
-      // - Los PAGOS de CARGOS afectan TODAS las cuotas (antes y después), excepto la fila del cargo mismo
+      // - Los PAGOS de CARGOS solo afectan cuotas que vienen DESPUÉS del cargo (por fecha)
       
-      let totalChargesPaidExcludingCurrent = 0;
+      let totalChargesPaidBeforeThisDate = 0;
       let totalCapitalPaidBeforeThisInstallment = 0;
       
       const isCurrentCharge = isChargeInstallment(realInstallment);
+      const currentDueDate = new Date(dueDate);
       
-      // PASO 1: Calcular TODOS los pagos de cargos
-      // Si la cuota actual ES un cargo, excluir solo su propio pago (para que se muestre sin restar y se tache)
-      // Si la cuota actual NO es un cargo, incluir TODOS los pagos de cargos
+      // PASO 1: Calcular pagos de cargos que vienen ANTES de esta cuota (por fecha de vencimiento)
+      // Solo afectan el capital pendiente si el cargo vence ANTES o AL MISMO TIEMPO que esta cuota
       for (let j = 1; j <= numberOfPayments; j++) {
         const prevInstallment = installmentsMap.get(j);
         if (!prevInstallment) continue;
@@ -2207,35 +2207,39 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         const isPrevCharge = isChargeInstallment(prevInstallment);
         
         if (isPrevCharge) {
-          // Buscar pagos asignados a este cargo
-          const chargePayments: any[] = [];
-          for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
-            if (installmentNum === j) {
-              const payment = payments?.find(p => p.id === paymentId);
-              if (payment) {
-                chargePayments.push(payment);
+          const chargeDueDate = new Date(prevInstallment.due_date);
+          
+          // Solo incluir cargos que vencen ANTES de la fecha de esta cuota
+          // Excluir el cargo si es la cuota actual (para mostrar el saldo antes de su propio pago)
+          const isBeforeCurrentDate = chargeDueDate < currentDueDate;
+          const isCurrentInstallment = j === i;
+          
+          if (isBeforeCurrentDate && !isCurrentInstallment) {
+            // Buscar pagos asignados a este cargo
+            const chargePayments: any[] = [];
+            for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
+              if (installmentNum === j) {
+                const payment = payments?.find(p => p.id === paymentId);
+                if (payment) {
+                  chargePayments.push(payment);
+                }
               }
             }
-          }
-          
-          // Sumar pagos de este cargo, EXCEPTO si es la cuota actual y es un cargo
-          // (para que la fila del cargo muestre el saldo antes de su pago)
-          if (!(j === i && isCurrentCharge)) {
-            const chargePaid = chargePayments.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
-            totalChargesPaidExcludingCurrent += chargePaid;
             
-            console.log(`🔍 Cargo ${j} - Sumando pagos al total global:`, {
-              installmentPayments: chargePayments.length,
+            const chargePaid = chargePayments.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
+            totalChargesPaidBeforeThisDate += chargePaid;
+            
+            console.log(`🔍 Cargo ${j} - Sumando al total (fecha anterior):`, {
+              chargeDueDate: chargeDueDate.toISOString().split('T')[0],
+              currentDueDate: currentDueDate.toISOString().split('T')[0],
               chargePaid,
-              totalChargesPaidSoFar: totalChargesPaidExcludingCurrent,
-              isCurrentInstallment: j === i,
-              excluded: j === i && isCurrentCharge
+              totalChargesPaidSoFar: totalChargesPaidBeforeThisDate
             });
           }
         }
       }
       
-      // PASO 2: Calcular pagos de cuotas regulares ANTES de la cuota actual
+      // PASO 2: Calcular pagos de cuotas regulares ANTES de la cuota actual (por número de cuota)
       // Las cuotas regulares solo afectan el capital progresivamente
       for (let j = 1; j < i; j++) {
         const prevInstallment = installmentsMap.get(j);
@@ -2262,10 +2266,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       }
       
       // Capital pendiente ANTES de pagar esta cuota: 
-      // (Capital original + TODOS los cargos) - (Pagos de capital antes de esta cuota + Pagos de cargos excluyendo actual si es cargo)
+      // (Capital original + TODOS los cargos) - (Pagos de capital antes + Pagos de cargos con fecha anterior)
       const remainingBalanceAfterThisInstallment = Math.max(
         0,
-        (principal + totalChargesAll) - (totalCapitalPaidBeforeThisInstallment + totalChargesPaidExcludingCurrent)
+        (principal + totalChargesAll) - (totalCapitalPaidBeforeThisInstallment + totalChargesPaidBeforeThisDate)
       );
 
       console.log(`🔍 RESUMEN FINAL - Cuota ${i}:`, {
@@ -2285,7 +2289,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         paymentStatus,
         isCurrentCharge,
         totalCapitalPaidBeforeThisInstallment,
-        totalChargesPaidExcludingCurrent,
+        totalChargesPaidBeforeThisDate,
         totalChargesAll,
         remainingBalanceAfterThisInstallment,
         ESTADO_FINAL: paymentStatus === 'paid' ? '✅ PAGADO' : paymentStatus === 'partial' ? '⚠️ PARCIAL' : '❌ PENDIENTE'
