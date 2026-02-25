@@ -2186,8 +2186,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
       
       // Calcular el balance pendiente del préstamo después de esta cuota
-      // Incluir el capital del préstamo original + cargos acumulados hasta esta cuota - pagos realizados
-      let totalChargesUpToThisInstallment = 0;
+      // IMPORTANTE: Los cargos se reflejan en el capital pendiente de TODAS las cuotas (independientemente de cuándo venzan)
+      // Capital pendiente = Capital original + TODOS los cargos - Pagos realizados hasta esta cuota
+      let totalChargesPaidUpToThisInstallment = 0;
       let totalCapitalPaidUpToThisInstallment = 0;
       
       for (let j = 1; j <= i; j++) {
@@ -2195,10 +2196,6 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         const isPrevCharge = isChargeInstallment(prevInstallment);
         
         if (isPrevCharge) {
-          // Para cargos, sumar el monto del cargo SOLO si es hasta esta cuota
-          const chargeAmount = (prevInstallment as any).total_amount || prevInstallment.amount || prevInstallment.principal_amount || 0;
-          totalChargesUpToThisInstallment += chargeAmount;
-          
           // Buscar pagos asignados a este cargo específico
           const chargePayments: any[] = [];
           for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
@@ -2212,7 +2209,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           
           // Sumar los pagos asignados a este cargo
           const chargePaid = chargePayments.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
-          totalCapitalPaidUpToThisInstallment += chargePaid;
+          totalChargesPaidUpToThisInstallment += chargePaid;
         } else if (prevInstallment) {
           // Para cuotas regulares, usar el capital pagado
           // Buscar pagos asignados a esta cuota
@@ -2232,10 +2229,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
       }
       
-      // Capital pendiente: (Capital original + Cargos acumulados hasta esta cuota) - Pagos de capital/cargos acumulados
+      // Capital pendiente: (Capital original + TODOS los cargos) - (Pagos de capital + Pagos de cargos) hasta esta cuota
       const remainingBalanceAfterThisInstallment = Math.max(
         0,
-        (principal + totalChargesUpToThisInstallment) - totalCapitalPaidUpToThisInstallment
+        (principal + totalChargesAll) - (totalCapitalPaidUpToThisInstallment + totalChargesPaidUpToThisInstallment)
       );
 
       console.log(`🔍 RESUMEN FINAL - Cuota ${i}:`, {

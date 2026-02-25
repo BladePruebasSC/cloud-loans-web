@@ -2660,7 +2660,7 @@ export const LoansModule = () => {
                                 return `$${formatCurrencyNumber(value)}`;
                               })()}
                             </div>
-                            <div className="text-sm text-red-600 font-medium">Capital Pendiente</div>
+                            <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
                             {((loan.amortization_type || '').toLowerCase() === 'indefinite') && (
                               <div className="text-xs text-red-500 mt-1">
                                 {(calculatedPendingCharges[loan.id] || 0) > 0
