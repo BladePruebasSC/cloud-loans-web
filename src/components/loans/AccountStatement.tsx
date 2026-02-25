@@ -951,7 +951,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   };
 
   const calculateAmortizationSchedule = async (loanData: any, installmentsData: any[]) => {
-    if (!loanData || !installmentsData) return [];
+    if (!loanData || installmentsData === null || installmentsData === undefined) return [];
 
     console.log('🔍 AccountStatement: Calculando tabla de amortización interactiva...');
     console.log('🔍 AccountStatement: Datos de cuotas:', installmentsData);
