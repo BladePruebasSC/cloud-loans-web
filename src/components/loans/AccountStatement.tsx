@@ -2245,7 +2245,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         remainingInterest,
         remainingPayment,
         paymentStatus,
-        totalCapitalPaidUpToThisInstallment,
+        totalCapitalPaidBeforeThisInstallment,
+        totalChargesPaidBeforeThisInstallment,
         totalChargesAll,
         remainingBalanceAfterThisInstallment,
         ESTADO_FINAL: paymentStatus === 'paid' ? '✅ PAGADO' : paymentStatus === 'partial' ? '⚠️ PARCIAL' : '❌ PENDIENTE'
