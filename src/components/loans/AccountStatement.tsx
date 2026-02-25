@@ -2185,17 +2185,16 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         paymentStatus
       });
       
-      // Calcular el balance pendiente del préstamo después de esta cuota
-      // IMPORTANTE: Los cargos se reflejan en el capital pendiente de TODAS las cuotas (independientemente de cuándo venzan)
-      // Y los PAGOS de cargos también deben reflejarse en TODAS las cuotas (sin importar cuándo se realicen)
-      // Capital pendiente = Capital original + TODOS los cargos - TODOS los pagos de capital/cargos hasta esta fecha
+      // Calcular el balance pendiente del préstamo de manera PROGRESIVA
+      // LÓGICA: El capital pendiente se calcula acumulando desde la primera cuota hasta la actual
+      // - Al agregar un cargo: afecta todas las cuotas desde ese momento
+      // - Al pagar una cuota/cargo: solo afecta esa cuota y las siguientes (no las anteriores)
       
-      // Calcular TODOS los pagos de cargos realizados hasta esta cuota (independientemente del número de cuota del cargo)
       let totalChargesPaidUpToThisInstallment = 0;
       let totalCapitalPaidUpToThisInstallment = 0;
       
-      // Recorrer TODAS las cuotas (no solo hasta i) para buscar pagos de cargos
-      for (let j = 1; j <= numberOfPayments; j++) {
+      // Recorrer solo hasta la cuota actual (i) para calcular pagos acumulados
+      for (let j = 1; j <= i; j++) {
         const prevInstallment = installmentsMap.get(j);
         if (!prevInstallment) continue;
         
@@ -2213,17 +2212,17 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
         
         if (isPrevCharge) {
-          // Para cargos: sumar TODOS los pagos de cargos (sin importar cuándo se pagaron)
+          // Para cargos: sumar los pagos de este cargo
           const chargePaid = installmentPayments.reduce((sum, p) => sum + (p.principal_amount || p.amount || 0), 0);
           totalChargesPaidUpToThisInstallment += chargePaid;
-        } else if (j <= i) {
-          // Para cuotas regulares: solo contar pagos hasta la cuota actual (i)
+        } else {
+          // Para cuotas regulares: sumar el capital pagado
           const installmentPrincipalPaid = installmentPayments.reduce((sum, p) => sum + (p.principal_amount || 0), 0);
           totalCapitalPaidUpToThisInstallment += installmentPrincipalPaid;
         }
       }
       
-      // Capital pendiente: (Capital original + TODOS los cargos) - (Pagos de capital hasta esta cuota + TODOS los pagos de cargos)
+      // Capital pendiente PROGRESIVO: (Capital original + TODOS los cargos) - Pagos acumulados hasta esta cuota
       const remainingBalanceAfterThisInstallment = Math.max(
         0,
         (principal + totalChargesAll) - (totalCapitalPaidUpToThisInstallment + totalChargesPaidUpToThisInstallment)
