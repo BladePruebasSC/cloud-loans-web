@@ -5004,6 +5004,125 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
 
 
+                    {form.watch('update_type') === 'pay_charges' && (
+                      <div className="space-y-4">
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <div className="text-sm text-blue-800">
+                            <strong>💳 Pagar Cargos</strong>
+                            <p className="mt-1">Selecciona el cargo que deseas pagar de la tabla a continuación.</p>
+                          </div>
+                        </div>
+
+                        {/* Tabla de Cargos Pendientes */}
+                        <div className="border rounded-lg overflow-hidden">
+                          <div className="bg-gray-50 px-4 py-2 border-b">
+                            <h4 className="font-semibold text-gray-900">Cargos Pendientes</h4>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full">
+                              <thead>
+                                <tr className="border-b bg-gray-50 text-xs">
+                                  <th className="text-left p-2 font-semibold">Seleccionar</th>
+                                  <th className="text-left p-2 font-semibold">Cuota #</th>
+                                  <th className="text-left p-2 font-semibold">Fecha Vencimiento</th>
+                                  <th className="text-left p-2 font-semibold">Descripción</th>
+                                  <th className="text-right p-2 font-semibold">Monto Total</th>
+                                  <th className="text-right p-2 font-semibold">Pagado</th>
+                                  <th className="text-right p-2 font-semibold">Pendiente</th>
+                                  <th className="text-center p-2 font-semibold">Estado</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(() => {
+                                  // Filtrar solo cargos (installments con interés = 0 o casi 0)
+                                  const charges = installments.filter(inst => {
+                                    const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                                    return isCharge && !inst.is_paid; // Solo cargos no pagados completamente
+                                  });
+
+                                  if (charges.length === 0) {
+                                    return (
+                                      <tr>
+                                        <td colSpan={8} className="text-center py-8 text-gray-500">
+                                          <div className="flex flex-col items-center gap-2">
+                                            <CheckCircle className="h-12 w-12 text-gray-300" />
+                                            <p>No hay cargos pendientes</p>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  }
+
+                                  return charges.map((charge) => {
+                                    const totalAmount = charge.total_amount || charge.amount || 0;
+                                    const paidAmount = charge.paid_amount || 0;
+                                    const pendingAmount = totalAmount - paidAmount;
+                                    const isPartial = paidAmount > 0 && paidAmount < totalAmount;
+
+                                    return (
+                                      <tr 
+                                        key={charge.id} 
+                                        className={`border-b hover:bg-gray-50 cursor-pointer ${isPartial ? 'bg-orange-50' : ''}`}
+                                        onClick={() => {
+                                          // TODO: Implementar selección de cargo
+                                          console.log('Cargo seleccionado:', charge);
+                                        }}
+                                      >
+                                        <td className="p-2">
+                                          <input 
+                                            type="radio" 
+                                            name="selected_charge" 
+                                            className="cursor-pointer"
+                                            onChange={() => {
+                                              // TODO: Actualizar formulario con datos del cargo
+                                            }}
+                                          />
+                                        </td>
+                                        <td className="p-2 font-medium">{charge.installment_number}</td>
+                                        <td className="p-2">{new Date(charge.due_date).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                                        <td className="p-2 text-sm">
+                                          {charge.notes || charge.reason || 'Cargo adicional'}
+                                        </td>
+                                        <td className="p-2 text-right font-semibold">
+                                          RD${totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="p-2 text-right text-green-600">
+                                          RD${paidAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="p-2 text-right font-bold text-red-600">
+                                          RD${pendingAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="p-2 text-center">
+                                          {isPartial ? (
+                                            <Badge variant="outline" className="border-orange-200 text-orange-800 bg-orange-50">
+                                              Parcial
+                                            </Badge>
+                                          ) : (
+                                            <Badge variant="outline" className="border-red-200 text-red-800">
+                                              Pendiente
+                                            </Badge>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  });
+                                })()}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                          <div className="text-sm text-yellow-800">
+                            <strong>ℹ️ Nota:</strong> Selecciona un cargo de la tabla para procesar el pago. Esta funcionalidad está en desarrollo y pronto podrás realizar el pago completo con opciones de WhatsApp e impresión.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+
+
                     {form.watch('update_type') === 'term_extension' && (
                       <FormField
                         control={form.control}
