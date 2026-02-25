@@ -45,7 +45,7 @@ import { PaymentForm } from './PaymentForm';
 import { Handshake } from 'lucide-react';
 
 const updateSchema = z.object({
-  update_type: z.enum(['add_charge', 'term_extension', 'settle_loan', 'delete_loan', 'remove_late_fee', 'payment_agreement', 'edit_loan', 'capital_payment']),
+  update_type: z.enum(['add_charge', 'pay_charges', 'term_extension', 'settle_loan', 'delete_loan', 'remove_late_fee', 'payment_agreement', 'edit_loan', 'capital_payment']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   late_fee_amount: z.number().min(0.01, 'El monto de mora debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
@@ -4295,6 +4295,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const getUpdateTypeIcon = (type: string) => {
     switch (type) {
       case 'add_charge': return <PlusCircle className="h-4 w-4" />;
+      case 'pay_charges': return <Receipt className="h-4 w-4" />;
       case 'term_extension': return <Calendar className="h-4 w-4" />;
       case 'settle_loan': return <DollarSign className="h-4 w-4" />;
       case 'delete_loan': return <Trash2 className="h-4 w-4" />;
@@ -4309,6 +4310,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const getUpdateTypeLabel = (type: string) => {
     const labels = {
       add_charge: 'Agregar Cargo',
+      pay_charges: 'Pagar Cargos',
       term_extension: 'Extensión de Plazo',
       settle_loan: 'Saldar Préstamo',
       delete_loan: 'Eliminar Préstamo',
@@ -4489,6 +4491,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     <div className="flex items-center gap-2">
                                       <PlusCircle className="h-4 w-4" />
                                       Agregar Cargo
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="pay_charges">
+                                    <div className="flex items-center gap-2">
+                                      <Receipt className="h-4 w-4" />
+                                      Pagar Cargos
                                     </div>
                                   </SelectItem>
                                 {!isIndefiniteLoan && (
