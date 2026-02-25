@@ -2186,19 +2186,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
       
       // Calcular el balance pendiente del préstamo después de esta cuota
-      // Incluir tanto el capital del préstamo original como TODOS los cargos (aunque sean de cuotas futuras)
+      // Incluir el capital del préstamo original + cargos acumulados hasta esta cuota - pagos realizados
       let totalChargesUpToThisInstallment = 0;
       let totalCapitalPaidUpToThisInstallment = 0;
       
       for (let j = 1; j <= i; j++) {
         const prevInstallment = installmentsMap.get(j);
-          // Para cargos, sumar el monto del cargo
-          const chargeAmount = (prevInstallment as any).total_amount || prevInstallment.amount || prevInstallment.principal_amount || 0;
-          totalChargesUpToThisInstallment += chargeAmount;
-          
         const isPrevCharge = isChargeInstallment(prevInstallment);
         
         if (isPrevCharge) {
+          // Para cargos, sumar el monto del cargo SOLO si es hasta esta cuota
+          const chargeAmount = (prevInstallment as any).total_amount || prevInstallment.amount || prevInstallment.principal_amount || 0;
+          totalChargesUpToThisInstallment += chargeAmount;
+          
           // Buscar pagos asignados a este cargo específico
           const chargePayments: any[] = [];
           for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
@@ -2232,10 +2232,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
       }
       
-      // Capital pendiente: (Capital original + TODOS los cargos) - Pagos de capital/cargos acumulados hasta esta cuota
+      // Capital pendiente: (Capital original + Cargos acumulados hasta esta cuota) - Pagos de capital/cargos acumulados
       const remainingBalanceAfterThisInstallment = Math.max(
         0,
-        (principal + totalChargesAll) - totalCapitalPaidUpToThisInstallment
+        (principal + totalChargesUpToThisInstallment) - totalCapitalPaidUpToThisInstallment
       );
 
       console.log(`🔍 RESUMEN FINAL - Cuota ${i}:`, {
