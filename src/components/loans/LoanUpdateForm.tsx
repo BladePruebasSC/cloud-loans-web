@@ -4637,6 +4637,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     }
   };
 
+  // Calcular si hay cargos pendientes
+  const hasPendingCharges = useMemo(() => {
+    return installments.some(inst => {
+      const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                      Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+      return isCharge && !inst.is_paid;
+    });
+  }, [installments]);
+
   return (
     <>
     <Dialog open={isOpen && !showPaymentForm} onOpenChange={onClose}>
@@ -4689,10 +4698,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     </div>
                                   </SelectItem>
                                 {!isIndefiniteLoan && (
-                                  <SelectItem value="term_extension">
+                                  <SelectItem value="term_extension" disabled={hasPendingCharges}>
                                     <div className="flex items-center gap-2">
                                       <Calendar className="h-4 w-4" />
-                                      Extensión de Plazo
+                                      <span>Extensión de Plazo</span>
+                                      {hasPendingCharges && (
+                                        <span className="text-xs text-orange-600">(Pagar cargos primero)</span>
+                                      )}
                                     </div>
                                   </SelectItem>
                                 )}
