@@ -2733,6 +2733,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }
 
             // Insertar los pagos
+            console.log('Payment method antes de insertar:', chargePaymentMethod);
+            console.log('Payments to insert:', JSON.stringify(paymentsToInsert, null, 2));
+            
             const { error: paymentsError } = await supabase
               .from('payments')
               .insert(paymentsToInsert);
