@@ -2713,7 +2713,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 payment_date: getCurrentDateInSantoDomingo(),
                 due_date: charge.due_date,
                 payment_method: chargePaymentMethod || 'cash',
-                reference: chargePaymentReference || null,
+                reference_number: chargePaymentReference || null,
                 notes: `Pago de cargo - Cuota #${charge.installment_number}${data.adjustment_reason ? ` - ${data.adjustment_reason}` : ''}`,
                 created_by: user.id,
                 company_id: companyId
