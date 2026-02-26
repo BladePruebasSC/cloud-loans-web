@@ -2709,7 +2709,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 amount: amountForThisCharge,
                 principal_amount: amountForThisCharge,
                 interest_amount: 0,
-                late_fee_amount: 0,
+                late_fee: 0,
                 payment_date: getCurrentDateInSantoDomingo(),
                 due_date: charge.due_date,
                 payment_method: chargePaymentMethod || 'cash',
