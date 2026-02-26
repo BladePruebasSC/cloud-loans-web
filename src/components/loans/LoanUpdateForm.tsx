@@ -231,6 +231,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [previewInstallments, setPreviewInstallments] = useState<any[]>([]);
   /** Próximo pago calculado desde installments + payments al abrir (misma lógica que Detalles). */
   const [localNextPaymentDate, setLocalNextPaymentDate] = useState<string | null>(null);
+  
+  // Estados para Pagar Cargos
+  const [selectedCharges, setSelectedCharges] = useState<string[]>([]); // IDs de cargos seleccionados
+  const [chargePaymentAmount, setChargePaymentAmount] = useState<number>(0);
+  const [chargePaymentMethod, setChargePaymentMethod] = useState<string>('cash');
+  const [chargePaymentReference, setChargePaymentReference] = useState<string>('');
+  const [sendChargeWhatsApp, setSendChargeWhatsApp] = useState<boolean>(false);
+  const [printChargeReceipt, setPrintChargeReceipt] = useState<boolean>(false);
+  
   const { user, companyId, companySettings: authCompanySettings } = useAuth();
 
   const form = useForm<UpdateFormData>({
@@ -2641,6 +2650,182 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           console.log(`🔍 Balance actualizado - currentBalance: ${calculatedValues.currentBalance}, newBalance: ${calculatedValues.newBalance}, cargo: ${data.amount}`);
           break;
           
+        case 'pay_charges':
+          {
+            // Validar que haya cargos seleccionados
+            if (selectedCharges.length === 0) {
+              toast.error('Debes seleccionar al menos un cargo para pagar');
+              setLoading(false);
+              return;
+            }
+
+            // Validar que haya un monto a pagar
+            if (chargePaymentAmount <= 0) {
+              toast.error('El monto a pagar debe ser mayor a 0');
+              setLoading(false);
+              return;
+            }
+
+            // Obtener los datos completos de los cargos seleccionados
+            const { data: selectedChargesData, error: chargesError } = await supabase
+              .from('installments')
+              .select('*')
+              .in('id', selectedCharges)
+              .order('due_date', { ascending: true });
+
+            if (chargesError || !selectedChargesData) {
+              console.error('Error obteniendo cargos:', chargesError);
+              toast.error('Error al obtener información de los cargos');
+              setLoading(false);
+              return;
+            }
+
+            // Calcular el total pendiente de los cargos seleccionados
+            const totalPendingCharges = selectedChargesData.reduce((sum, charge) => {
+              const total = charge.total_amount || 0;
+              const paid = charge.paid_amount || 0;
+              return sum + (total - paid);
+            }, 0);
+
+            // Validar que el monto no exceda el total pendiente
+            if (chargePaymentAmount > totalPendingCharges) {
+              toast.error(`El monto a pagar no puede exceder el total pendiente (RD$${totalPendingCharges.toLocaleString('es-DO', { minimumFractionDigits: 2 })})`);
+              setLoading(false);
+              return;
+            }
+
+            // Distribuir el pago entre los cargos seleccionados
+            let remainingAmount = chargePaymentAmount;
+            const paymentsToInsert: any[] = [];
+            const installmentsToUpdate: { id: string, paid_amount: number, is_paid: boolean }[] = [];
+
+            for (const charge of selectedChargesData) {
+              if (remainingAmount <= 0) break;
+
+              const chargePending = (charge.total_amount || 0) - (charge.paid_amount || 0);
+              const amountForThisCharge = Math.min(remainingAmount, chargePending);
+
+              // Crear el pago
+              paymentsToInsert.push({
+                loan_id: loan.id,
+                amount: amountForThisCharge,
+                principal_amount: amountForThisCharge,
+                interest_amount: 0,
+                late_fee_amount: 0,
+                payment_date: getCurrentDateInSantoDomingo(),
+                due_date: charge.due_date,
+                payment_method: chargePaymentMethod || 'cash',
+                reference: chargePaymentReference || null,
+                notes: `Pago de cargo - Cuota #${charge.installment_number}`,
+                created_by: user.id,
+                company_id: companyId
+              });
+
+              // Actualizar el estado del cargo
+              const newPaidAmount = (charge.paid_amount || 0) + amountForThisCharge;
+              const isFullyPaid = newPaidAmount >= (charge.total_amount || 0);
+
+              installmentsToUpdate.push({
+                id: charge.id,
+                paid_amount: newPaidAmount,
+                is_paid: isFullyPaid
+              });
+
+              remainingAmount -= amountForThisCharge;
+            }
+
+            // Insertar los pagos
+            const { error: paymentsError } = await supabase
+              .from('payments')
+              .insert(paymentsToInsert);
+
+            if (paymentsError) {
+              console.error('Error insertando pagos:', paymentsError);
+              toast.error('Error al registrar el pago');
+              setLoading(false);
+              return;
+            }
+
+            // Actualizar los cargos
+            for (const installmentUpdate of installmentsToUpdate) {
+              const { error: updateError } = await supabase
+                .from('installments')
+                .update({
+                  paid_amount: installmentUpdate.paid_amount,
+                  is_paid: installmentUpdate.is_paid
+                })
+                .eq('id', installmentUpdate.id);
+
+              if (updateError) {
+                console.error('Error actualizando cargo:', updateError);
+              }
+            }
+
+            // Recalcular el balance del préstamo
+            const { data: updatedInstallments } = await supabase
+              .from('installments')
+              .select('principal_amount, is_paid')
+              .eq('loan_id', loan.id);
+
+            const newRemainingBalance = (updatedInstallments || [])
+              .filter(inst => !inst.is_paid)
+              .reduce((sum, inst) => sum + (inst.principal_amount || 0), 0);
+
+            loanUpdates = {
+              remaining_balance: Math.max(0, newRemainingBalance)
+            };
+
+            // Obtener el cliente para el recibo
+            const { data: clientInfo } = await supabase
+              .from('clients')
+              .select('id, full_name, dni, phone, email')
+              .eq('id', (loan as any).client_id)
+              .single();
+
+            // Preparar datos para recibo/WhatsApp
+            if (clientInfo && (sendChargeWhatsApp || printChargeReceipt)) {
+              const receiptData = {
+                payment: {
+                  amount: chargePaymentAmount,
+                  payment_method: chargePaymentMethod,
+                  reference: chargePaymentReference,
+                  payment_date: getCurrentDateInSantoDomingo(),
+                  notes: `Pago de ${selectedCharges.length} cargo(s)`
+                },
+                loan: loan,
+                client: clientInfo,
+                company: companySettings || authCompanySettings
+              };
+
+              // WhatsApp
+              if (sendChargeWhatsApp && clientInfo.phone) {
+                const phoneNumber = formatPhoneForWhatsApp(clientInfo.phone);
+                const receiptMessage = generateLoanPaymentReceipt(
+                  receiptData.payment,
+                  receiptData.loan,
+                  receiptData.client,
+                  receiptData.company
+                );
+                openWhatsApp(phoneNumber, receiptMessage);
+              }
+
+              // Imprimir (mostrar modal de formato)
+              if (printChargeReceipt) {
+                setLastSettlePaymentData(receiptData);
+                setShowPrintFormatModal(true);
+              }
+            }
+
+            toast.success(`Pago de RD$${chargePaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })} registrado exitosamente`);
+            
+            // Limpiar estados
+            setSelectedCharges([]);
+            setChargePaymentAmount(0);
+            setChargePaymentReference('');
+            setSendChargeWhatsApp(false);
+            setPrintChargeReceipt(false);
+          }
+          break;
 
           
         case 'term_extension':
@@ -5009,7 +5194,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                           <div className="text-sm text-blue-800">
                             <strong>💳 Pagar Cargos</strong>
-                            <p className="mt-1">Selecciona el cargo que deseas pagar de la tabla a continuación.</p>
+                            <p className="mt-1">Selecciona uno o más cargos que deseas pagar.</p>
                           </div>
                         </div>
 
@@ -5022,11 +5207,43 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             <table className="w-full">
                               <thead>
                                 <tr className="border-b bg-gray-50 text-xs">
-                                  <th className="text-left p-2 font-semibold">Seleccionar</th>
+                                  <th className="text-left p-2 font-semibold">
+                                    <input 
+                                      type="checkbox"
+                                      checked={(() => {
+                                        const charges = installments.filter(inst => {
+                                          const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                                          Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                                          return isCharge && !inst.is_paid;
+                                        });
+                                        return charges.length > 0 && selectedCharges.length === charges.length;
+                                      })()}
+                                      onChange={(e) => {
+                                        const charges = installments.filter(inst => {
+                                          const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                                          Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                                          return isCharge && !inst.is_paid;
+                                        });
+                                        if (e.target.checked) {
+                                          setSelectedCharges(charges.map(c => c.id));
+                                          const totalPending = charges.reduce((sum, c) => {
+                                            const total = c.total_amount || 0;
+                                            const paid = c.paid_amount || 0;
+                                            return sum + (total - paid);
+                                          }, 0);
+                                          setChargePaymentAmount(totalPending);
+                                        } else {
+                                          setSelectedCharges([]);
+                                          setChargePaymentAmount(0);
+                                        }
+                                      }}
+                                      className="cursor-pointer"
+                                    />
+                                  </th>
                                   <th className="text-left p-2 font-semibold">Cuota #</th>
-                                  <th className="text-left p-2 font-semibold">Fecha Vencimiento</th>
+                                  <th className="text-left p-2 font-semibold">Fecha Venc.</th>
                                   <th className="text-left p-2 font-semibold">Descripción</th>
-                                  <th className="text-right p-2 font-semibold">Monto Total</th>
+                                  <th className="text-right p-2 font-semibold">Total</th>
                                   <th className="text-right p-2 font-semibold">Pagado</th>
                                   <th className="text-right p-2 font-semibold">Pendiente</th>
                                   <th className="text-center p-2 font-semibold">Estado</th>
@@ -5034,11 +5251,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               </thead>
                               <tbody>
                                 {(() => {
-                                  // Filtrar solo cargos (installments con interés = 0 o casi 0)
                                   const charges = installments.filter(inst => {
                                     const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
                                                     Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                    return isCharge && !inst.is_paid; // Solo cargos no pagados completamente
+                                    return isCharge && !inst.is_paid;
                                   });
 
                                   if (charges.length === 0) {
@@ -5059,32 +5275,56 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     const paidAmount = charge.paid_amount || 0;
                                     const pendingAmount = totalAmount - paidAmount;
                                     const isPartial = paidAmount > 0 && paidAmount < totalAmount;
+                                    const isSelected = selectedCharges.includes(charge.id);
 
                                     return (
                                       <tr 
                                         key={charge.id} 
-                                        className={`border-b hover:bg-gray-50 cursor-pointer ${isPartial ? 'bg-orange-50' : ''}`}
+                                        className={`border-b hover:bg-gray-50 cursor-pointer ${isPartial ? 'bg-orange-50' : ''} ${isSelected ? 'bg-blue-50' : ''}`}
                                         onClick={() => {
-                                          // TODO: Implementar selección de cargo
-                                          console.log('Cargo seleccionado:', charge);
+                                          const newSelected = isSelected
+                                            ? selectedCharges.filter(id => id !== charge.id)
+                                            : [...selectedCharges, charge.id];
+                                          setSelectedCharges(newSelected);
+                                          
+                                          const totalPending = charges
+                                            .filter(c => newSelected.includes(c.id))
+                                            .reduce((sum, c) => {
+                                              const total = c.total_amount || 0;
+                                              const paid = c.paid_amount || 0;
+                                              return sum + (total - paid);
+                                            }, 0);
+                                          setChargePaymentAmount(totalPending);
                                         }}
                                       >
-                                        <td className="p-2">
+                                        <td className="p-2" onClick={(e) => e.stopPropagation()}>
                                           <input 
-                                            type="radio" 
-                                            name="selected_charge" 
-                                            className="cursor-pointer"
-                                            onChange={() => {
-                                              // TODO: Actualizar formulario con datos del cargo
+                                            type="checkbox"
+                                            checked={isSelected}
+                                            onChange={(e) => {
+                                              const newSelected = e.target.checked
+                                                ? [...selectedCharges, charge.id]
+                                                : selectedCharges.filter(id => id !== charge.id);
+                                              setSelectedCharges(newSelected);
+                                              
+                                              const totalPending = charges
+                                                .filter(c => newSelected.includes(c.id))
+                                                .reduce((sum, c) => {
+                                                  const total = c.total_amount || 0;
+                                                  const paid = c.paid_amount || 0;
+                                                  return sum + (total - paid);
+                                                }, 0);
+                                              setChargePaymentAmount(totalPending);
                                             }}
+                                            className="cursor-pointer"
                                           />
                                         </td>
                                         <td className="p-2 font-medium">{charge.installment_number}</td>
-                                        <td className="p-2">{new Date(charge.due_date).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                                        <td className="p-2 text-sm">{new Date(charge.due_date).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                                         <td className="p-2 text-sm">
                                           {charge.notes || charge.reason || 'Cargo adicional'}
                                         </td>
-                                        <td className="p-2 text-right font-semibold">
+                                        <td className="p-2 text-right">
                                           RD${totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
                                         </td>
                                         <td className="p-2 text-right text-green-600">
@@ -5113,11 +5353,90 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           </div>
                         </div>
 
-                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                          <div className="text-sm text-yellow-800">
-                            <strong>ℹ️ Nota:</strong> Selecciona un cargo de la tabla para procesar el pago. Esta funcionalidad está en desarrollo y pronto podrás realizar el pago completo con opciones de WhatsApp e impresión.
+                        {/* Formulario de Pago */}
+                        {selectedCharges.length > 0 && (
+                          <div className="space-y-4 border-t pt-4">
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                              <div className="text-sm text-green-800">
+                                <strong>✓ {selectedCharges.length} cargo(s) seleccionado(s)</strong>
+                                <p className="mt-1">Total pendiente: RD${chargePaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}</p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-4">
+                              <div>
+                                <Label>Monto a Pagar</Label>
+                                <NumberInput
+                                  value={chargePaymentAmount}
+                                  onChange={(e) => {
+                                    const value = parseFloat(e.target.value) || 0;
+                                    setChargePaymentAmount(value);
+                                  }}
+                                  step="0.01"
+                                  min="0.01"
+                                  placeholder="0.00"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">
+                                  Puedes pagar parcialmente modificando el monto
+                                </p>
+                              </div>
+
+                              <div>
+                                <Label>Método de Pago</Label>
+                                <Select value={chargePaymentMethod} onValueChange={setChargePaymentMethod}>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="cash">Efectivo</SelectItem>
+                                    <SelectItem value="transfer">Transferencia</SelectItem>
+                                    <SelectItem value="check">Cheque</SelectItem>
+                                    <SelectItem value="card">Tarjeta</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div>
+                                <Label>Referencia (Opcional)</Label>
+                                <Input
+                                  value={chargePaymentReference}
+                                  onChange={(e) => setChargePaymentReference(e.target.value)}
+                                  placeholder="Número de referencia, cheque, etc."
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    id="send-charge-whatsapp"
+                                    checked={sendChargeWhatsApp}
+                                    onChange={(e) => setSendChargeWhatsApp(e.target.checked)}
+                                    className="cursor-pointer"
+                                  />
+                                  <label htmlFor="send-charge-whatsapp" className="text-sm cursor-pointer flex items-center gap-2">
+                                    <MessageCircle className="h-4 w-4" />
+                                    Enviar recibo por WhatsApp
+                                  </label>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    id="print-charge-receipt"
+                                    checked={printChargeReceipt}
+                                    onChange={(e) => setPrintChargeReceipt(e.target.checked)}
+                                    className="cursor-pointer"
+                                  />
+                                  <label htmlFor="print-charge-receipt" className="text-sm cursor-pointer flex items-center gap-2">
+                                    <Printer className="h-4 w-4" />
+                                    Imprimir recibo
+                                  </label>
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     )}
 
@@ -5504,7 +5823,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     </Button>
                     <Button 
                       type="submit" 
-                      disabled={loading || (form.watch('update_type') === 'capital_payment' && overdueInstallmentsCount > 0)}
+                      disabled={
+                        loading || 
+                        (form.watch('update_type') === 'capital_payment' && overdueInstallmentsCount > 0) ||
+                        (form.watch('update_type') === 'pay_charges' && (selectedCharges.length === 0 || chargePaymentAmount <= 0))
+                      }
                     >
                       {loading ? 'Procesando...' : 'Guardar Cambios'}
                     </Button>
