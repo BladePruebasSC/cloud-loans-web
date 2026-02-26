@@ -4552,6 +4552,25 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           { value: 'collection_fee', label: 'Gastos de Cobranza' },
           { value: 'other_charge', label: 'Otro Cargo' }
         ];
+      case 'pay_charges':
+        return [
+          { value: 'payment_agreement', label: 'Acuerdo de pago' },
+          { value: 'goodwill', label: 'Buena voluntad del cliente' },
+          { value: 'payment_plan', label: 'Plan de pagos' },
+          { value: 'financial_hardship', label: 'Dificultad financiera' },
+          { value: 'dispute_resolution', label: 'Resolución de disputa' },
+          { value: 'promotional', label: 'Promoción especial' },
+          { value: 'partial_payment', label: 'Pago parcial acordado' },
+          { value: 'client_request', label: 'Solicitud del cliente' },
+          { value: 'early_payment', label: 'Pago anticipado' },
+          { value: 'refinancing', label: 'Refinanciamiento' },
+          { value: 'debt_consolidation', label: 'Consolidación de deuda' },
+          { value: 'family_support', label: 'Apoyo familiar' },
+          { value: 'income_received', label: 'Ingreso recibido' },
+          { value: 'bonus_payment', label: 'Pago con bono/aguinaldo' },
+          { value: 'tax_refund', label: 'Devolución de impuestos' },
+          { value: 'other', label: 'Otra razón' }
+        ];
       case 'term_extension':
         return [
           { value: 'financial_difficulty', label: 'Dificultades Financieras' },
