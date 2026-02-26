@@ -5,11 +5,11 @@
 ALTER TABLE payments 
 ADD COLUMN IF NOT EXISTS company_id UUID;
 
--- Add foreign key constraint to companies table
+-- Add foreign key constraint to company_settings table
 ALTER TABLE payments
 ADD CONSTRAINT fk_payments_company
 FOREIGN KEY (company_id) 
-REFERENCES companies(id) 
+REFERENCES company_settings(id) 
 ON DELETE CASCADE;
 
 -- Add comment to explain the column
