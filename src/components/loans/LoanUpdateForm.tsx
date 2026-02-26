@@ -5394,7 +5394,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="cash">Efectivo</SelectItem>
-                                    <SelectItem value="transfer">Transferencia</SelectItem>
+                                    <SelectItem value="bank_transfer">Transferencia</SelectItem>
                                     <SelectItem value="check">Cheque</SelectItem>
                                     <SelectItem value="card">Tarjeta</SelectItem>
                                   </SelectContent>
