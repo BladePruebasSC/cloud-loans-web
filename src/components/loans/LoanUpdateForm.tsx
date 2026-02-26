@@ -49,7 +49,7 @@ const updateSchema = z.object({
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   late_fee_amount: z.number().min(0.01, 'El monto de mora debe ser mayor a 0').optional(),
   additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
-  adjustment_reason: z.string().min(1, 'Debe especificar la razón del ajuste'),
+  adjustment_reason: z.string().optional(),
   payment_method: z.string().optional(),
   reference_number: z.string().optional(),
   notes: z.string().optional(),
@@ -237,8 +237,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [chargePaymentAmount, setChargePaymentAmount] = useState<number>(0);
   const [chargePaymentMethod, setChargePaymentMethod] = useState<string>('cash');
   const [chargePaymentReference, setChargePaymentReference] = useState<string>('');
-  const [sendChargeWhatsApp, setSendChargeWhatsApp] = useState<boolean>(false);
-  const [printChargeReceipt, setPrintChargeReceipt] = useState<boolean>(false);
   
   const { user, companyId, companySettings: authCompanySettings } = useAuth();
 
@@ -2716,7 +2714,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 due_date: charge.due_date,
                 payment_method: chargePaymentMethod || 'cash',
                 reference: chargePaymentReference || null,
-                notes: `Pago de cargo - Cuota #${charge.installment_number}`,
+                notes: `Pago de cargo - Cuota #${charge.installment_number}${data.adjustment_reason ? ` - ${data.adjustment_reason}` : ''}`,
                 created_by: user.id,
                 company_id: companyId
               });
@@ -2782,38 +2780,24 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               .eq('id', (loan as any).client_id)
               .single();
 
-            // Preparar datos para recibo/WhatsApp
-            if (clientInfo && (sendChargeWhatsApp || printChargeReceipt)) {
+            // Preparar datos para el modal flotante (igual que en otros pagos)
+            if (clientInfo) {
               const receiptData = {
                 payment: {
                   amount: chargePaymentAmount,
                   payment_method: chargePaymentMethod,
                   reference: chargePaymentReference,
                   payment_date: getCurrentDateInSantoDomingo(),
-                  notes: `Pago de ${selectedCharges.length} cargo(s)`
+                  notes: `Pago de ${selectedCharges.length} cargo(s)${data.adjustment_reason ? ` - ${data.adjustment_reason}` : ''}`
                 },
                 loan: loan,
                 client: clientInfo,
                 company: companySettings || authCompanySettings
               };
 
-              // WhatsApp
-              if (sendChargeWhatsApp && clientInfo.phone) {
-                const phoneNumber = formatPhoneForWhatsApp(clientInfo.phone);
-                const receiptMessage = generateLoanPaymentReceipt(
-                  receiptData.payment,
-                  receiptData.loan,
-                  receiptData.client,
-                  receiptData.company
-                );
-                openWhatsApp(phoneNumber, receiptMessage);
-              }
-
-              // Imprimir (mostrar modal de formato)
-              if (printChargeReceipt) {
-                setLastSettlePaymentData(receiptData);
-                setShowPrintFormatModal(true);
-              }
+              // Guardar datos para el modal flotante
+              setLastSettlePaymentData(receiptData);
+              setShowPrintFormatModal(true);
             }
 
             toast.success(`Pago de RD$${chargePaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })} registrado exitosamente`);
@@ -2822,8 +2806,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             setSelectedCharges([]);
             setChargePaymentAmount(0);
             setChargePaymentReference('');
-            setSendChargeWhatsApp(false);
-            setPrintChargeReceipt(false);
           }
           break;
 
@@ -5359,7 +5341,26 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                               <div className="text-sm text-green-800">
                                 <strong>✓ {selectedCharges.length} cargo(s) seleccionado(s)</strong>
-                                <p className="mt-1">Total pendiente: RD${chargePaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}</p>
+                                <p className="mt-1">
+                                  Monto a pagar: RD${chargePaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                                  {(() => {
+                                    const charges = installments.filter(inst => {
+                                      const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                                      Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+                                      return isCharge && !inst.is_paid && selectedCharges.includes(inst.id);
+                                    });
+                                    const totalSelected = charges.reduce((sum, c) => {
+                                      const total = c.total_amount || 0;
+                                      const paid = c.paid_amount || 0;
+                                      return sum + (total - paid);
+                                    }, 0);
+                                    const remaining = totalSelected - chargePaymentAmount;
+                                    if (remaining > 0) {
+                                      return ` • Quedará pendiente: RD$${remaining.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`;
+                                    }
+                                    return '';
+                                  })()}
+                                </p>
                               </div>
                             </div>
 
@@ -5405,34 +5406,25 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                 />
                               </div>
 
-                              <div className="space-y-2">
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    id="send-charge-whatsapp"
-                                    checked={sendChargeWhatsApp}
-                                    onChange={(e) => setSendChargeWhatsApp(e.target.checked)}
-                                    className="cursor-pointer"
-                                  />
-                                  <label htmlFor="send-charge-whatsapp" className="text-sm cursor-pointer flex items-center gap-2">
-                                    <MessageCircle className="h-4 w-4" />
-                                    Enviar recibo por WhatsApp
-                                  </label>
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    id="print-charge-receipt"
-                                    checked={printChargeReceipt}
-                                    onChange={(e) => setPrintChargeReceipt(e.target.checked)}
-                                    className="cursor-pointer"
-                                  />
-                                  <label htmlFor="print-charge-receipt" className="text-sm cursor-pointer flex items-center gap-2">
-                                    <Printer className="h-4 w-4" />
-                                    Imprimir recibo
-                                  </label>
-                                </div>
+                              <div>
+                                <Label>Razón del Ajuste</Label>
+                                <Select 
+                                  value={form.watch('adjustment_reason') || ''} 
+                                  onValueChange={(value) => form.setValue('adjustment_reason', value)}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Seleccionar razón" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="payment_agreement">Acuerdo de pago</SelectItem>
+                                    <SelectItem value="goodwill">Buena voluntad del cliente</SelectItem>
+                                    <SelectItem value="payment_plan">Plan de pagos</SelectItem>
+                                    <SelectItem value="financial_hardship">Dificultad financiera</SelectItem>
+                                    <SelectItem value="dispute_resolution">Resolución de disputa</SelectItem>
+                                    <SelectItem value="promotional">Promoción especial</SelectItem>
+                                    <SelectItem value="other">Otra razón</SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </div>
                             </div>
                           </div>
