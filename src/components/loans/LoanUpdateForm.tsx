@@ -5370,7 +5370,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               <div>
                                 <Label>Monto a Pagar</Label>
                                 <NumberInput
-                                  value={chargePaymentAmount}
+                                  value={chargePaymentAmount > 0 ? chargePaymentAmount : ''}
                                   onChange={(e) => {
                                     const value = parseFloat(e.target.value) || 0;
                                     setChargePaymentAmount(value);
