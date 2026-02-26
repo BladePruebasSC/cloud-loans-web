@@ -2703,6 +2703,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               const chargePending = (charge.total_amount || 0) - (charge.paid_amount || 0);
               const amountForThisCharge = Math.min(remainingAmount, chargePending);
 
+              // Obtener la etiqueta en español de la razón
+              const reasonLabel = data.adjustment_reason ? getReasonLabel('pay_charges', data.adjustment_reason) : '';
+
               // Crear el pago
               paymentsToInsert.push({
                 loan_id: loan.id,
@@ -2714,7 +2717,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 due_date: charge.due_date,
                 payment_method: chargePaymentMethod || 'cash',
                 reference_number: chargePaymentReference || null,
-                notes: `Pago de cargo - Cuota #${charge.installment_number}${data.adjustment_reason ? ` - ${data.adjustment_reason}` : ''}`,
+                notes: `Pago de cargo - Cuota #${charge.installment_number}${reasonLabel ? ` - ${reasonLabel}` : ''}`,
                 created_by: user.id,
                 company_id: companyId
               });
@@ -2784,6 +2787,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
             // Preparar datos para el modal flotante (igual que en otros pagos)
             if (clientInfo) {
+              // Obtener la etiqueta en español de la razón
+              const reasonLabel = data.adjustment_reason ? getReasonLabel('pay_charges', data.adjustment_reason) : '';
+              
               const receiptData = {
                 payment: {
                   amount: chargePaymentAmount,
@@ -2792,7 +2798,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   payment_method: chargePaymentMethod,
                   reference: chargePaymentReference,
                   payment_date: getCurrentDateInSantoDomingo(),
-                  notes: `Pago de ${selectedCharges.length} cargo(s)${data.adjustment_reason ? ` - ${data.adjustment_reason}` : ''}`
+                  notes: `Pago de ${selectedCharges.length} cargo(s)${reasonLabel ? ` - ${reasonLabel}` : ''}`
                 },
                 loan: loan,
                 client: clientInfo,
@@ -4635,6 +4641,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           { value: 'other', label: 'Otra Razón' }
         ];
     }
+  };
+
+  // Función para obtener la etiqueta en español de una razón
+  const getReasonLabel = (updateType: string, reasonValue: string) => {
+    const reasons = getReasonsForUpdateType(updateType);
+    const reason = reasons.find(r => r.value === reasonValue);
+    return reason ? reason.label : reasonValue;
   };
 
   // Calcular si hay cargos pendientes
