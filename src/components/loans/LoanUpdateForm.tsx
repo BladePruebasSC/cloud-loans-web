@@ -5357,6 +5357,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     const remaining = totalSelected - chargePaymentAmount;
                                     if (remaining > 0) {
                                       return ` • Quedará pendiente: RD$${remaining.toLocaleString('es-DO', { minimumFractionDigits: 2 })}`;
+                                    } else if (remaining === 0) {
+                                      return ` • Quedará pagado completamente`;
                                     }
                                     return '';
                                   })()}
