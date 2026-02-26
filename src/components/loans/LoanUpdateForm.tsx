@@ -2787,6 +2787,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               const receiptData = {
                 payment: {
                   amount: chargePaymentAmount,
+                  principal_amount: chargePaymentAmount, // Todo el pago es capital en cargos
+                  interest_amount: 0, // Los cargos no tienen interés
                   payment_method: chargePaymentMethod,
                   reference: chargePaymentReference,
                   payment_date: getCurrentDateInSantoDomingo(),
