@@ -5407,27 +5407,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   placeholder="Número de referencia, cheque, etc."
                                 />
                               </div>
-
-                              <div>
-                                <Label>Razón del Ajuste</Label>
-                                <Select 
-                                  value={form.watch('adjustment_reason') || ''} 
-                                  onValueChange={(value) => form.setValue('adjustment_reason', value)}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Seleccionar razón" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="payment_agreement">Acuerdo de pago</SelectItem>
-                                    <SelectItem value="goodwill">Buena voluntad del cliente</SelectItem>
-                                    <SelectItem value="payment_plan">Plan de pagos</SelectItem>
-                                    <SelectItem value="financial_hardship">Dificultad financiera</SelectItem>
-                                    <SelectItem value="dispute_resolution">Resolución de disputa</SelectItem>
-                                    <SelectItem value="promotional">Promoción especial</SelectItem>
-                                    <SelectItem value="other">Otra razón</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
                             </div>
                           </div>
                         )}
