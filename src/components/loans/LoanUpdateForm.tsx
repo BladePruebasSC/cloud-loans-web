@@ -2739,7 +2739,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
             if (paymentsError) {
               console.error('Error insertando pagos:', paymentsError);
-              toast.error('Error al registrar el pago');
+              console.error('Detalles del error:', JSON.stringify(paymentsError, null, 2));
+              console.error('Datos a insertar:', paymentsToInsert);
+              toast.error(`Error al registrar el pago: ${paymentsError.message || 'Error desconocido'}`);
               setLoading(false);
               return;
             }
