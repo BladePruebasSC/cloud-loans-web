@@ -2801,8 +2801,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               setLastSettlePaymentData(receiptData);
               setShowPrintFormatModal(true);
             }
-
-            toast.success(`Pago de RD$${chargePaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })} registrado exitosamente`);
             
             // Limpiar estados
             setSelectedCharges([]);
@@ -4419,6 +4417,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
       const actionMessages = {
         add_charge: 'Cargo agregado exitosamente como nueva cuota',
+        pay_charges: 'Pago de cargo(s) registrado exitosamente',
         term_extension: 'Plazo extendido exitosamente',
         settle_loan: 'Préstamo saldado exitosamente',
         delete_loan: 'Préstamo eliminado exitosamente (recuperable por 2 meses)',
@@ -4426,8 +4425,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         edit_loan: 'Préstamo editado exitosamente. Las cuotas han sido recalculadas.'
       };
 
-      // Si es settle_loan, mostrar modal de impresión en lugar de cerrar
-      if (updateType === 'settle_loan') {
+      // Si es settle_loan o pay_charges, mostrar modal de impresión en lugar de cerrar
+      if (updateType === 'settle_loan' || updateType === 'pay_charges') {
         // Mostrar primero el modal de impresión
         setShowPrintFormatModal(true);
         setLoading(false);
