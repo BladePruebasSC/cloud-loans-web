@@ -2718,7 +2718,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               // Obtener la etiqueta en español de la razón
               const reasonLabel = data.adjustment_reason ? getReasonLabel('pay_charges', data.adjustment_reason) : '';
 
-              // Crear el pago
+              // Crear el pago (status: 'completed' solo si el cargo queda totalmente pagado)
+              const chargeFullyPaid = ((charge.paid_amount || 0) + amountForThisCharge) >= (charge.total_amount || 0);
               paymentsToInsert.push({
                 loan_id: loan.id,
                 amount: amountForThisCharge,
@@ -2730,6 +2731,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 payment_method: chargePaymentMethod || 'cash',
                 reference_number: chargePaymentReference || null,
                 notes: `Pago de cargo - Cuota #${charge.installment_number}${reasonLabel ? ` - ${reasonLabel}` : ''}`,
+                status: chargeFullyPaid ? 'completed' : 'pending',
                 created_by: user.id,
                 company_id: companyId
               });

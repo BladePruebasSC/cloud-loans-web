@@ -438,7 +438,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       console.log('🗑️ REVIRTIENDO ESTADO DE CUOTAS Y CARGOS...');
       const { data: allInstallments, error: installmentsError } = await supabase
         .from('installments')
-        .select('installment_number, is_paid, due_date, total_amount, principal_amount, interest_amount')
+        .select('id, installment_number, is_paid, paid_amount, due_date, total_amount, principal_amount, interest_amount')
         .eq('loan_id', payment.loan_id)
         .order('due_date', { ascending: true })
         .order('installment_number', { ascending: true });
@@ -480,6 +480,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                           Math.abs((installment.principal_amount || 0) - (installment.total_amount || 0)) < 0.01;
           
           let shouldBePaid: boolean;
+          let totalPaidForThisCharge = 0; // En scope para toda la iteración
           
           if (isCharge) {
             // Para cargos: calcular si está pagado basándose en pagos aplicados a ese cargo específico
@@ -487,10 +488,10 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             const chargesWithSameDate = chargesByDate.get(chargeDate) || [];
             const chargeIndex = chargesWithSameDate.findIndex(c => c.installment_number === installment.installment_number);
             
-            // Filtrar pagos que corresponden a cargos de esta fecha
+            // Filtrar pagos que corresponden a cargos de esta fecha (usar due_date, no payment_date)
             const paymentsForThisDate = paymentsForCharges.filter(p => {
-              const paymentDate = (p.payment_date as string)?.split('T')[0];
-              return paymentDate === chargeDate;
+              const pDue = (p.due_date as string)?.split('T')[0];
+              return pDue === chargeDate;
             });
             
             // Calcular total pagado a cargos de esta fecha
@@ -500,7 +501,6 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             
             // Asignar pagos secuencialmente a los cargos
             let remainingPaymentsForCharges = totalPaidForDate;
-            let totalPaidForThisCharge = 0;
             
             for (let i = 0; i < chargeIndex; i++) {
               const prevCharge = chargesWithSameDate[i];
@@ -523,12 +523,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           
           if (installment.is_paid && !shouldBePaid) {
             console.log(`🗑️ Revirtiendo ${isCharge ? 'cargo' : 'cuota'} ${installment.installment_number} a pendiente`);
+            const updateData: Record<string, unknown> = { is_paid: false, paid_date: null };
+            if (isCharge) updateData.paid_amount = Math.round(totalPaidForThisCharge * 100) / 100;
             await supabase
               .from('installments')
-              .update({
-                is_paid: false,
-                paid_date: null
-              })
+              .update(updateData)
               .eq('loan_id', payment.loan_id)
               .eq('installment_number', installment.installment_number);
             // El trigger actualizará remaining_balance y next_payment_date automáticamente
@@ -537,15 +536,22 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             const lastPaymentDate = remainingPayments && remainingPayments.length > 0 
               ? remainingPayments[remainingPayments.length - 1].payment_date?.split('T')[0] 
               : null;
+            const markPaidData: Record<string, unknown> = { is_paid: true, paid_date: lastPaymentDate };
+            if (isCharge) markPaidData.paid_amount = installment.total_amount || 0;
             await supabase
               .from('installments')
-              .update({
-                is_paid: true,
-                paid_date: lastPaymentDate
-              })
+              .update(markPaidData)
               .eq('loan_id', payment.loan_id)
               .eq('installment_number', installment.installment_number);
             // El trigger actualizará remaining_balance y next_payment_date automáticamente
+          } else if (isCharge && Math.abs((installment.paid_amount || 0) - totalPaidForThisCharge) > 0.01) {
+            // Cargo parcial: actualizar paid_amount para que "Pagar Cargos" muestre el monto correcto
+            console.log(`🗑️ Actualizando paid_amount del cargo ${installment.installment_number}: ${totalPaidForThisCharge}`);
+            await supabase
+              .from('installments')
+              .update({ paid_amount: Math.round(totalPaidForThisCharge * 100) / 100 })
+              .eq('loan_id', payment.loan_id)
+              .eq('installment_number', installment.installment_number);
           }
         }
       }
@@ -727,6 +733,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       // Notificar éxito y refrescar
       toast.success('Pago eliminado exitosamente. Todos los datos han sido revertidos.');
       setShowDeleteModal(false);
+      
+      // Notificar a LoanUpdateForm y otros para que refetchen installments (cargos)
+      try {
+        window.dispatchEvent(new CustomEvent('installmentsUpdated', { detail: { loanId: payment.loan_id, source: 'PaymentActions' } }));
+      } catch { /* no-op */ }
       
       // Refrescar inmediatamente para que se vean los valores correctos
       if (onPaymentUpdated) {

@@ -2187,6 +2187,43 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       
       console.log('🔍 PaymentForm: Pago insertado exitosamente:', insertedPayment);
 
+      // ✅ SIEMPRE actualizar paid_amount de cargos cuando el pago es tipo cargo (sin interés)
+      // Recalcular TODOS los cargos por due_date (no depender de paymentDueDate que puede ser incorrecto)
+      if (principalPayment > 0 && (interestPayment || 0) < 0.01) {
+        const { data: allCharges } = await supabase
+          .from('installments')
+          .select('id, installment_number, due_date, total_amount, paid_amount')
+          .eq('loan_id', data.loan_id)
+          .eq('interest_amount', 0)
+          .order('installment_number', { ascending: true });
+        const { data: allPayments } = await supabase
+          .from('payments')
+          .select('principal_amount, amount, interest_amount, due_date')
+          .eq('loan_id', data.loan_id);
+        const chargePayments = (allPayments || []).filter((p: any) => (Number(p.principal_amount ?? p.amount) || 0) > 0 && (Number(p.interest_amount ?? 0) || 0) < 0.01);
+        const dueDates = [...new Set((allCharges || []).map((c: any) => c.due_date ? String(c.due_date).split('T')[0] : '').filter(Boolean))];
+        for (const dueNorm of dueDates) {
+          const chargesForDate = (allCharges || []).filter((c: any) => (c.due_date ? String(c.due_date).split('T')[0] : '') === dueNorm).sort((a: any, b: any) => (a.installment_number || 0) - (b.installment_number || 0));
+          const paymentsForDate = chargePayments.filter((p: any) => (p.due_date ? String(p.due_date).split('T')[0] : '') === dueNorm);
+          const totalPaid = paymentsForDate.reduce((s: number, p: any) => s + (Number(p.principal_amount ?? p.amount) || 0), 0);
+          let remaining = totalPaid;
+          for (const ch of chargesForDate) {
+            const totalCh = ch.total_amount || 0;
+            const assign = Math.min(Math.max(remaining, 0), totalCh);
+            const pendingAfter = totalCh - assign;
+            const isFullyPaid = pendingAfter < 1 && assign >= totalCh - 0.01;
+            const { error: upErr } = await supabase.from('installments').update({
+              paid_amount: Math.round(assign * 100) / 100,
+              is_paid: isFullyPaid,
+              ...(isFullyPaid ? { paid_date: new Date().toISOString().split('T')[0], late_fee_paid: 0 } : {})
+            }).eq('id', ch.id);
+            if (upErr) console.error('Error actualizando cargo:', upErr);
+            else console.log(`✅ Cargo #${ch.installment_number} actualizado: paid=${assign}, pendiente=${pendingAfter}, is_paid=${isFullyPaid}`);
+            remaining -= assign;
+          }
+        }
+      }
+
       // Si se pagó mora, actualizar el campo late_fee_paid en las cuotas afectadas
       if (data.late_fee_amount && data.late_fee_amount > 0 && lateFeeBreakdown) {
         console.log('🔍 PaymentForm: Distribuyendo pago de mora entre cuotas...');
@@ -2676,7 +2713,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             if (chargeId) {
               const existingPaid = firstUnpaidInstallment.paid_amount ?? 0;
               const newPaidAmount = Math.round((existingPaid + principalPayment) * 100) / 100;
-              const isFullyPaid = newPaidAmount >= (installmentAmount - 0.01);
+              const pendingAfter = (installmentAmount || 0) - newPaidAmount;
+              // Solo marcar como completado si falta menos de 1 peso (evita marcar completo con RD$250+ pendientes)
+              const isFullyPaid = pendingAfter < 1 && newPaidAmount >= (installmentAmount || 0) - 0.01;
 
               const { error: chargeUpdateError } = await supabase
                 .from('installments')
