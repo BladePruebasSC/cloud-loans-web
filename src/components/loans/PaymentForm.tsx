@@ -2168,6 +2168,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         notes: data.notes,
         status: paymentStatusValue,
         created_by: user?.id || companyId, // Usar el user_id del usuario actual, o companyId como respaldo
+        company_id: companyId, // Requerido por la tabla payments
       };
       
       console.log('🔍 PaymentForm: Datos del pago que se enviarán:', paymentData);

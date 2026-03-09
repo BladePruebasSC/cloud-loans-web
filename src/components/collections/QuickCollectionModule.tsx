@@ -423,6 +423,7 @@ export const QuickCollectionModule = () => {
         notes: `Cobro rápido - ${getPaymentMethodLabel(data.payment_method)}`,
         status: paymentStatusValue,
         created_by: companyId,
+        company_id: companyId,
       };
 
       const { data: insertedPayment, error: paymentError } = await supabase

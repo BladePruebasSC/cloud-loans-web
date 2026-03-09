@@ -3042,6 +3042,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 notes: data.notes || `Saldado - Capital: RD$${principalPayment.toLocaleString()}, Interés: RD$${actualInterestPayment.toLocaleString()}, Mora: RD$${actualLateFeePayment.toLocaleString()} - ${getAdjustmentReasonLabel(data.adjustment_reason)}`,
                 status: 'completed',
                 created_by: createdBy,
+                company_id: companyId,
               };
 
               const { data: insertedPayment, error: paymentError } = await supabase
