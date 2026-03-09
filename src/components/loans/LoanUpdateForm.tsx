@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -303,25 +303,37 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   }, [isOpen, loan?.id]);
 
   // Obtener cuotas del préstamo
+  const fetchInstallments = useCallback(async () => {
+    if (!loan?.id) return;
+    try {
+      const { data, error } = await supabase
+        .from('installments')
+        .select('*')
+        .eq('loan_id', loan.id)
+        .order('installment_number', { ascending: true });
+
+      if (error) throw error;
+      setInstallments(data || []);
+    } catch (error) {
+      console.error('Error obteniendo cuotas:', error);
+    }
+  }, [loan?.id]);
+
   useEffect(() => {
     if (isOpen && loan.id) {
-      const fetchInstallments = async () => {
-        try {
-          const { data, error } = await supabase
-            .from('installments')
-            .select('*')
-            .eq('loan_id', loan.id)
-            .order('installment_number', { ascending: true });
-
-          if (error) throw error;
-          setInstallments(data || []);
-        } catch (error) {
-          console.error('Error obteniendo cuotas:', error);
-        }
-      };
       fetchInstallments();
     }
-  }, [isOpen, loan.id]);
+  }, [isOpen, loan.id, fetchInstallments]);
+
+  // Refetch cuando PaymentForm u otro componente actualiza cuotas (ej. pago parcial de cargo)
+  useEffect(() => {
+    if (!isOpen || !loan?.id) return;
+    const handler = (e: CustomEvent<{ loanId?: string }>) => {
+      if (e.detail?.loanId === loan.id) fetchInstallments();
+    };
+    window.addEventListener('installmentsUpdated', handler as EventListener);
+    return () => window.removeEventListener('installmentsUpdated', handler as EventListener);
+  }, [isOpen, loan?.id, fetchInstallments]);
 
   // Calcular próxima fecha de pago desde installments + payments (misma lógica que Detalles) al abrir el modal
   useEffect(() => {
@@ -4656,7 +4668,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     return installments.some(inst => {
       const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
                       Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-      return isCharge && !inst.is_paid;
+      const pending = (inst.total_amount || 0) - (inst.paid_amount || 0);
+      return isCharge && pending > 0.01;
     });
   }, [installments]);
 
@@ -5250,9 +5263,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                       })()}
                                       onChange={(e) => {
                                         const charges = installments.filter(inst => {
-                                          const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
+                                          const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 &&
                                                           Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                          return isCharge && !inst.is_paid;
+                                          const pending = (inst.total_amount || 0) - (inst.paid_amount || 0);
+                                          return isCharge && pending > 0.01;
                                         });
                                         if (e.target.checked) {
                                           setSelectedCharges(charges.map(c => c.id));
@@ -5284,7 +5298,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   const charges = installments.filter(inst => {
                                     const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
                                                     Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                    return isCharge && !inst.is_paid;
+                                    const pending = (inst.total_amount || 0) - (inst.paid_amount || 0);
+                                    return isCharge && pending > 0.01; // Solo cargos con monto pendiente
                                   });
 
                                   if (charges.length === 0) {
@@ -5395,7 +5410,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     const charges = installments.filter(inst => {
                                       const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
                                                       Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                      return isCharge && !inst.is_paid && selectedCharges.includes(inst.id);
+                                      const pending = (inst.total_amount || 0) - (inst.paid_amount || 0);
+                                      return isCharge && pending > 0.01 && selectedCharges.includes(inst.id);
                                     });
                                     const totalSelected = charges.reduce((sum, c) => {
                                       const total = c.total_amount || 0;

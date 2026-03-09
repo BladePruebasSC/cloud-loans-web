@@ -2556,17 +2556,19 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           const chargeDueDate = nextPaymentInfo.dueDate.split('T')[0];
           const { data: chargeInstallments, error: chargeError } = await supabase
             .from('installments')
-            .select('installment_number, due_date, is_paid, principal_amount, interest_amount, total_amount')
+            .select('id, installment_number, due_date, is_paid, paid_amount, principal_amount, interest_amount, total_amount')
             .eq('loan_id', data.loan_id)
             .eq('due_date', chargeDueDate)
             .eq('is_paid', false)
             .eq('interest_amount', 0) // Solo cargos
-            .order('installment_number', { ascending: true })
-            .limit(1);
+            .order('installment_number', { ascending: true });
           
           if (!chargeError && chargeInstallments && chargeInstallments.length > 0) {
-            firstUnpaidInstallment = chargeInstallments[0];
-            firstUnpaidInstallmentNumber = firstUnpaidInstallment.installment_number;
+            const firstWithPending = chargeInstallments.find((c: any) => ((c.total_amount || 0) - (c.paid_amount || 0)) > 0.01);
+            if (firstWithPending) {
+              firstUnpaidInstallment = firstWithPending;
+              firstUnpaidInstallmentNumber = firstUnpaidInstallment.installment_number;
+            }
             console.log('🔍 PaymentForm: Cargo encontrado para el pago:', {
               installmentNumber: firstUnpaidInstallmentNumber,
               dueDate: chargeDueDate
@@ -2578,7 +2580,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         if (!firstUnpaidInstallment) {
           const { data: unpaidInstallments, error: unpaidError } = await supabase
             .from('installments')
-            .select('installment_number, due_date, is_paid, principal_amount, interest_amount, total_amount')
+            .select('id, installment_number, due_date, is_paid, paid_amount, principal_amount, interest_amount, total_amount')
             .eq('loan_id', data.loan_id)
             .eq('is_paid', false)
             .order('due_date', { ascending: true })
@@ -2668,6 +2670,30 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             // Usar >= sin tolerancia para asegurar que solo se marca como pagado cuando está completamente cubierto
             paymentCoversInstallment = totalPaidAfter >= installmentAmount;
             
+            // Siempre actualizar paid_amount en installments para que "Pagar Cargos" muestre el monto correcto
+            // Usar enfoque aditivo: paid_amount existente + pago actual (más confiable que recalcular desde pagos)
+            const chargeId = chargesWithSameDate?.[chargeIndex]?.id;
+            if (chargeId) {
+              const existingPaid = firstUnpaidInstallment.paid_amount ?? 0;
+              const newPaidAmount = Math.round((existingPaid + principalPayment) * 100) / 100;
+              const isFullyPaid = newPaidAmount >= (installmentAmount - 0.01);
+
+              const { error: chargeUpdateError } = await supabase
+                .from('installments')
+                .update({
+                  paid_amount: newPaidAmount,
+                  is_paid: isFullyPaid,
+                  ...(isFullyPaid ? { paid_date: new Date().toISOString().split('T')[0], late_fee_paid: 0 } : {})
+                })
+                .eq('id', chargeId);
+
+              if (chargeUpdateError) {
+                console.error('Error actualizando paid_amount del cargo:', chargeUpdateError);
+              } else {
+                console.log(`✅ Cargo ${firstUnpaidInstallmentNumber} actualizado: paid_amount=${newPaidAmount}, is_paid=${isFullyPaid}`);
+              }
+            }
+            
             console.log('🔍 PaymentForm: Verificando cargo (con acumulación corregida):', {
               installmentNumber: firstUnpaidInstallmentNumber,
               paymentAmount: data.amount,
@@ -2719,28 +2745,29 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               updatedPaidInstallments
           });
 
-          // CORRECCIÓN: Marcar la cuota como pagada en la tabla installments
-          // Esto es especialmente importante para cargos, ya que los triggers también actualizarán remaining_balance
-          const { error: installmentError } = await supabase
-            .from('installments')
-            .update({
-              is_paid: true,
-              paid_date: new Date().toISOString().split('T')[0],
-              late_fee_paid: 0 // Resetear mora pagada cuando se marca como pagada
-            })
-            .eq('loan_id', data.loan_id)
+          // Para cuotas REGULARES (no cargos): marcar como pagada
+          // Los cargos ya se actualizaron arriba con paid_amount
+          if (!isCharge) {
+            const { error: installmentError } = await supabase
+              .from('installments')
+              .update({
+                is_paid: true,
+                paid_date: new Date().toISOString().split('T')[0],
+                late_fee_paid: 0
+              })
+              .eq('loan_id', data.loan_id)
               .eq('installment_number', firstUnpaidInstallmentNumber);
 
-          if (installmentError) {
-            console.error('Error marcando cuota como pagada en installments:', installmentError);
-          } else {
-              console.log(`✅ Cuota ${firstUnpaidInstallmentNumber} (${isCharge ? 'CARGO' : 'REGULAR'}) marcada como pagada en la tabla installments`);
-              // Los triggers actualizarán remaining_balance y next_payment_date automáticamente
+            if (installmentError) {
+              console.error('Error marcando cuota como pagada en installments:', installmentError);
+            } else {
+              console.log(`✅ Cuota ${firstUnpaidInstallmentNumber} (REGULAR) marcada como pagada en la tabla installments`);
             }
+          }
           } else {
             console.log('⚠️ El pago no cubre completamente la primera cuota pendiente');
             if (isCharge) {
-              console.log('⚠️ Cargo parcialmente pagado - no se marca como pagado aún');
+              console.log('⚠️ Cargo parcialmente pagado - paid_amount actualizado para "Pagar Cargos"');
             }
           }
         } else {
