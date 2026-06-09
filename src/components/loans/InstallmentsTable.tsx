@@ -45,6 +45,29 @@ interface InstallmentsTableProps {
   onClose: () => void;
 }
 
+const isChargeInstallment = (inst: {
+  interest_amount?: number;
+  principal_amount?: number;
+  total_amount?: number;
+  amount?: number;
+}) => {
+  const interest = Math.abs(Number(inst?.interest_amount || 0));
+  const principalAmt = Number(inst?.principal_amount || 0);
+  const total = Number(inst?.total_amount ?? inst?.amount ?? principalAmt);
+  return interest < 0.01 && principalAmt > 0 && Math.abs(principalAmt - total) < 0.01;
+};
+
+const formatInstallmentLabel = (
+  installment: Installment & { charge_sequence?: number },
+  isIndefinite: boolean
+) => {
+  if (isChargeInstallment(installment)) {
+    return `Cargo #${installment.charge_sequence || 1}`;
+  }
+  if (isIndefinite) return `#${installment.installment_number}/X`;
+  return `#${installment.installment_number}`;
+};
+
 export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({ 
   loanId, 
   isOpen, 
@@ -456,19 +479,13 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             // Formatear directamente como YYYY-MM-DD sin conversión de zona horaria
             const formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             
-            // Buscar si existe una cuota real en la BD para este número
-            const existingInstallment = data.find(inst => inst.installment_number === i);
+            // Buscar cuota regular en BD (ignorar cargos: tienen fila propia y due_date distinto)
+            const rawExisting = data.find(inst => inst.installment_number === i);
+            const existingInstallment = rawExisting && isChargeInstallment(rawExisting) ? null : rawExisting;
             
             // CORRECCIÓN: Para préstamos indefinidos, siempre usar la fecha calculada
             // para evitar usar fechas incorrectas guardadas en la BD
             const finalDueDate = formattedDate; // Siempre usar la fecha calculada correctamente
-            
-            // Para préstamos indefinidos, las cuotas normales (con interés) NO deben tener capital
-            // Solo los cargos (sin interés) tienen capital
-            const isChargeFromDB = existingInstallment && 
-                                   Math.abs((existingInstallment.interest_amount || 0)) < 0.01 &&
-                                   existingInstallment.principal_amount > 0 &&
-                                   Math.abs(existingInstallment.principal_amount - (existingInstallment.total_amount || existingInstallment.amount || 0)) < 0.01;
             
             const paidInfo = interestPaidByDueDate.get(finalDueDate);
             const paidAmt = Number(paidInfo?.sum || 0) || 0;
@@ -482,28 +499,42 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               loan_id: loanId,
               installment_number: i,
               due_date: finalDueDate,
-              amount: isChargeFromDB
-                ? (existingInstallment?.amount || (existingInstallment as any)?.total_amount || existingInstallment?.principal_amount || 0)
-                : scheduledInterest,
+              amount: scheduledInterest,
               // CORRECCIÓN: Para préstamos indefinidos, las cuotas normales (con interés) deben tener principal_amount = 0
-              // Solo los cargos (sin interés) tienen principal_amount > 0
-              principal_amount: isChargeFromDB ? (existingInstallment.principal_amount || 0) : 0,
-              interest_amount: isChargeFromDB ? (existingInstallment?.interest_amount || 0) : scheduledInterest,
+              principal_amount: 0,
+              interest_amount: scheduledInterest,
               late_fee_paid: existingInstallment?.late_fee_paid || 0,
-              is_paid: isChargeFromDB ? (existingInstallment?.is_paid || false) : isFullyPaid,
+              is_paid: isFullyPaid,
               is_settled: existingInstallment?.is_settled || false,
-              paid_date: isChargeFromDB ? (existingInstallment?.paid_date || null) : ((isFullyPaid || isPartial) ? (paidInfo?.firstPaidDate || null) : null),
+              paid_date: (isFullyPaid || isPartial) ? (paidInfo?.firstPaidDate || null) : null,
               created_at: existingInstallment?.created_at || new Date().toISOString(),
               updated_at: existingInstallment?.updated_at || new Date().toISOString(),
-              total_amount: isChargeFromDB
-                ? (existingInstallment?.total_amount || existingInstallment?.amount || existingInstallment?.principal_amount || 0)
-                : scheduledInterest
+              total_amount: scheduledInterest
             });
           }
           
-          // CORRECCIÓN: Para indefinidos, los cargos ya están incluidos en dynamicInstallments
-          // (cuando existingInstallment con ese installment_number es un cargo). No agregar chargesFromDB
-          // de nuevo para evitar cargos duplicados (ej. "3er y 4to cargo" que no existen).
+          // Agregar cargos de la BD como filas separadas (no comparten numeración con cuotas regulares)
+          for (const charge of chargesFromDB) {
+            const dueDate = charge.due_date?.split('T')[0] || charge.due_date;
+            const chargeTotal = (charge as any).total_amount || charge.amount || charge.principal_amount || 0;
+            dynamicInstallments.push({
+              id: charge.id,
+              loan_id: loanId,
+              installment_number: charge.installment_number,
+              due_date: dueDate,
+              amount: chargeTotal,
+              principal_amount: charge.principal_amount || chargeTotal,
+              interest_amount: 0,
+              late_fee_paid: charge.late_fee_paid || 0,
+              is_paid: charge.is_paid || false,
+              is_settled: charge.is_settled || false,
+              paid_date: charge.paid_date || null,
+              created_at: charge.created_at || new Date().toISOString(),
+              updated_at: charge.updated_at || new Date().toISOString(),
+              total_amount: chargeTotal
+            });
+          }
+
           data = dynamicInstallments;
         }
       }
@@ -597,6 +628,16 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         // Si las fechas son iguales o no hay fecha, ordenar por número de cuota
         return a.installment_number - b.installment_number;
       });
+
+      if (isIndefinite) {
+        let chargeSeq = 0;
+        for (const inst of sortedInstallments) {
+          if (isChargeInstallment(inst)) {
+            chargeSeq += 1;
+            (inst as Installment & { charge_sequence?: number }).charge_sequence = chargeSeq;
+          }
+        }
+      }
       
       // Lista final que se mostrará en UI (puede diferir de lo que viene de BD, especialmente en indefinidos)
       let finalInstallmentsForUI = sortedInstallments;
@@ -629,13 +670,20 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           // PRIMERO: Procesar TODOS los cargos
           const chargeInstallments: typeof sortedInstallments = [];
           for (const inst of sortedInstallments) {
-            const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 &&
-                            (inst as any).principal_amount > 0 &&
-                            Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01;
-            if (isCharge) {
+            if (isChargeInstallment(inst)) {
               chargeInstallments.push(inst);
             }
           }
+
+          chargeInstallments.sort((a, b) => {
+            const da = (a.due_date || '').split('T')[0] || '';
+            const db = (b.due_date || '').split('T')[0] || '';
+            if (da !== db) return da.localeCompare(db);
+            return (a.installment_number || 0) - (b.installment_number || 0);
+          });
+          chargeInstallments.forEach((ch, idx) => {
+            (ch as Installment & { charge_sequence?: number }).charge_sequence = idx + 1;
+          });
 
           // Procesar cada cargo
           for (const chargeInst of chargeInstallments) {
@@ -988,7 +1036,15 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           finalInstallmentsForUI = [
             ...chargeInstallments,
             ...regularInstallments
-          ];
+          ].sort((a, b) => {
+            const da = (a.due_date || '').split('T')[0] || '';
+            const db = (b.due_date || '').split('T')[0] || '';
+            if (da !== db) return da.localeCompare(db);
+            const aIsCharge = isChargeInstallment(a);
+            const bIsCharge = isChargeInstallment(b);
+            if (aIsCharge !== bIsCharge) return aIsCharge ? -1 : 1;
+            return (a.installment_number || 0) - (b.installment_number || 0);
+          });
         } else {
           // Para préstamos no indefinidos, procesar primero cargos y luego cuotas regulares
           let paymentIndex = 0;
@@ -1876,9 +1932,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-lg">
-                              {String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite' 
-                                ? `#${installment.installment_number}/X` 
-                                : `#${installment.installment_number}`}
+                              {formatInstallmentLabel(
+                                installment,
+                                String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite'
+                              )}
                             </span>
                             {getStatusBadge(installment)}
                           </div>
@@ -1949,9 +2006,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                         {installments.map((installment) => (
                           <tr key={installment.id} className="border-b hover:bg-gray-50">
                             <td className="p-3 font-semibold">
-                              {String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite' 
-                                ? `#${installment.installment_number}/X` 
-                                : `#${installment.installment_number}`}
+                              {formatInstallmentLabel(
+                                installment,
+                                String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite'
+                              )}
                             </td>
                             <td className="p-3">{formatDate(installment.due_date)}</td>
                             <td className="p-3 font-semibold text-green-600">

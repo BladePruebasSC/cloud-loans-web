@@ -1207,8 +1207,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const chargePaidByKey = new Map<string, number>();
       const chargePaidDateByKey = new Map<string, string | null>();
 
-      // Agrupar cargos por fecha de vencimiento
-      const charges = (installmentsData || []).filter((inst: any) => isCharge(inst));
+      // Agrupar cargos por fecha de vencimiento (orden estable para Cargo #1, #2, ...)
+      const charges = (installmentsData || [])
+        .filter((inst: any) => isCharge(inst))
+        .sort((a: any, b: any) => {
+          const da = dueKeyOf(a?.due_date) || '';
+          const db = dueKeyOf(b?.due_date) || '';
+          if (da !== db) return da.localeCompare(db);
+          return (Number(a.installment_number) || 0) - (Number(b.installment_number) || 0);
+        });
       const chargesByDue = new Map<string, Array<{ inst: any; idx: number }>>();
       charges.forEach((inst: any, idx: number) => {
         const key = dueKeyOf(inst?.due_date) || 'no-due';
@@ -1279,7 +1286,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         const paidDate = (paid || isPartial) ? (chargePaidDateByKey.get(key) || paidDateFromDb) : null;
 
         return {
-          installment: `${Number(inst?.installment_number) || (idx + 1)}/X`,
+          installment: `Cargo #${idx + 1}`,
           rowKey: String(inst?.id || `charge-${loanData.id}-${dueDate || 'no-due'}-${idx}`),
           dueDate: dueDate || (loanData?.start_date?.split?.('T')?.[0] || null),
           monthlyPayment: total,
@@ -1515,6 +1522,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           const db = new Date(b.dueDate).getTime();
           if (da !== db) return da - db;
         }
+        const aIsCharge = String(a.installment || '').startsWith('Cargo');
+        const bIsCharge = String(b.installment || '').startsWith('Cargo');
+        if (aIsCharge !== bIsCharge) return aIsCharge ? -1 : 1;
         return String(a.rowKey).localeCompare(String(b.rowKey));
       });
 
