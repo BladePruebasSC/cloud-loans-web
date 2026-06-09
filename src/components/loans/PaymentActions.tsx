@@ -281,6 +281,47 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       console.log('🗑️ ✅ Pago eliminado exitosamente');
 
+      // PASO 2.5: Si era un pago de cargo, eliminar la entrada correspondiente en loan_history
+      if (payment.notes?.startsWith('Pago de cargo')) {
+        try {
+          const { data: historyEntries } = await supabase
+            .from('loan_history')
+            .select('id, notes, description, created_at')
+            .eq('loan_id', payment.loan_id);
+
+          let historyIdToDelete: string | null = null;
+
+          // Método 1: buscar por payment_id guardado en notes (entradas nuevas)
+          const byPaymentId = (historyEntries || []).find(entry => {
+            try {
+              const parsed = JSON.parse(entry.notes || '{}');
+              return Array.isArray(parsed.payment_ids) && parsed.payment_ids.includes(payment.id);
+            } catch { return false; }
+          });
+
+          if (byPaymentId) {
+            historyIdToDelete = byPaymentId.id;
+          } else {
+            // Método 2 (fallback para entradas antiguas): coincidir por descripción + proximidad de timestamp
+            const paymentTime = new Date(payment.created_at).getTime();
+            const windowMs = 5 * 60 * 1000; // 5 minutos
+            const byTimestamp = (historyEntries || []).find(entry => {
+              if (!(entry.description as string)?.startsWith('pay_charges:')) return false;
+              const entryTime = new Date(entry.created_at).getTime();
+              return Math.abs(entryTime - paymentTime) <= windowMs;
+            });
+            if (byTimestamp) historyIdToDelete = byTimestamp.id;
+          }
+
+          if (historyIdToDelete) {
+            await supabase.from('loan_history').delete().eq('id', historyIdToDelete);
+            console.log('🗑️ ✅ Entrada de historial del cargo eliminada:', historyIdToDelete);
+          }
+        } catch (historyError) {
+          console.error('🗑️ Error al eliminar entrada del historial:', historyError);
+        }
+      }
+
       // PASO 3: Obtener todos los pagos restantes
       console.log('🗑️ OBTENIENDO PAGOS RESTANTES...');
       const { data: remainingPayments, error: paymentsError } = await supabase

@@ -2378,6 +2378,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       
       // Actualizar el préstamo según el tipo de actualización
       let loanUpdates: any = {};
+      let chargePaymentIds: string[] = [];
 
       switch (updateType) {
         case 'add_charge':
@@ -2750,9 +2751,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }
 
             // Insertar los pagos
-            const { error: paymentsError } = await supabase
+            const { data: insertedChargePayments, error: paymentsError } = await supabase
               .from('payments')
-              .insert(paymentsToInsert);
+              .insert(paymentsToInsert)
+              .select('id');
 
             if (paymentsError) {
               console.error('Error insertando pagos:', paymentsError);
@@ -2762,6 +2764,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               setLoading(false);
               return;
             }
+
+            // Guardar IDs para vincularlos al historial
+            chargePaymentIds = (insertedChargePayments || []).map((p: any) => p.id);
 
             // Actualizar los cargos
             for (const installmentUpdate of installmentsToUpdate) {
@@ -4402,7 +4407,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           old_value: JSON.stringify(oldValueObj),
           new_value: JSON.stringify(newValueObj),
           description: description,
-          created_by: companyId
+          created_by: companyId,
+          ...(updateType === 'pay_charges' && chargePaymentIds.length > 0
+            ? { notes: JSON.stringify({ payment_ids: chargePaymentIds, update_type: 'pay_charges' }) }
+            : {})
         };
         
         console.log('📝 INSERTANDO EN HISTORIAL:', {
