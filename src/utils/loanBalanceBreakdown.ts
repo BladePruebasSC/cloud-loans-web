@@ -220,13 +220,33 @@ export async function getLoanBalanceBreakdown(
       }
     }
 
-    let pendingInterest = round2(Math.max(0, round2(interestPerPayment - paidActive)));
-    // Si ya se pagó completo, el próximo período vuelve a ser el mismo interés
-    if (pendingInterest <= 0.01 && interestPerPayment > 0.01) {
-      pendingInterest = interestPerPayment;
+    // Sync activeDue's full paid amount (includes invalid + rollover) into the map
+    if (activeDue) {
+      paidByDueValid.set(activeDue, paidActive);
     }
 
-    const baseBalance = round2((Number(loan.amount || 0)) + pendingInterest);
+    // Sum ALL pending interest: iterate every period from firstDue to the first upcoming future period
+    const todayDate = new Date();
+    const todayIso = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
+
+    let totalPendingInterest = 0;
+    if (firstDueFromStart && interestPerPayment > 0.01) {
+      let currentDue = firstDueFromStart;
+      while (true) {
+        const paid = round2(paidByDueValid.get(currentDue) || 0);
+        const unpaid = round2(Math.max(0, round2(interestPerPayment - paid)));
+        totalPendingInterest = round2(totalPendingInterest + unpaid);
+        // Stop after processing the first period that's in the future
+        if (currentDue > todayIso) break;
+        currentDue = addPeriod(currentDue, freq);
+      }
+    }
+    // If all periods are fully paid, the next upcoming period's interest is still pending
+    if (totalPendingInterest <= 0.01 && interestPerPayment > 0.01) {
+      totalPendingInterest = interestPerPayment;
+    }
+
+    const baseBalance = round2((Number(loan.amount || 0)) + totalPendingInterest);
     const totalBalance = round2(baseBalance + pendingCharges);
     return { baseBalance, pendingCharges, totalBalance };
   }

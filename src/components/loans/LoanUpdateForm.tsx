@@ -3353,7 +3353,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
                   
                   if (effectiveDaysOverdue > 0) {
-                    const principalPerPayment = installment.principal_amount;
+                    // Para préstamos indefinidos, usar interest_amount/total_amount/amount
+                    // porque principal_amount = 0 (cuotas de interés puro)
+                    const principalPerPayment = isIndefiniteLoan && (!installment.principal_amount || installment.principal_amount === 0)
+                      ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
+                      : installment.principal_amount;
                     const lateFeeRate = (loan as any).late_fee_rate || 2;
                     
                     let lateFee = 0;
@@ -3392,18 +3396,27 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 for (const installmentFee of installmentLateFees) {
                   const proportion = installmentFee.lateFee / totalCalculatedLateFee;
                   const lateFeeToRemoveFromThisInstallment = lateFeeToRemove * proportion;
-                  
+
                   // Actualizar late_fee_paid en esta cuota
                   const currentLateFeePaid = installments.find((i: any) => i.id === installmentFee.id)?.late_fee_paid || 0;
                   const newLateFeePaid = currentLateFeePaid + lateFeeToRemoveFromThisInstallment;
-                  
+
                   await supabase
                     .from('installments')
                     .update({ late_fee_paid: Math.round(newLateFeePaid * 100) / 100 })
                     .eq('id', installmentFee.id);
-                  
+
                   console.log(`✅ Cuota ${installments.find((i: any) => i.id === installmentFee.id)?.installment_number}: eliminando ${lateFeeToRemoveFromThisInstallment.toFixed(2)} de mora`);
                 }
+              } else if (installments.length > 0) {
+                // Fallback: si no se pudo calcular mora dinámica (ej. aún sin días de gracia vencidos),
+                // registrar el monto eliminado en la primera cuota para que el recálculo devuelva 0
+                const firstInstallment = installments[0];
+                const currentLateFeePaid = firstInstallment?.late_fee_paid || 0;
+                await supabase
+                  .from('installments')
+                  .update({ late_fee_paid: Math.round((currentLateFeePaid + lateFeeToRemove) * 100) / 100 })
+                  .eq('id', firstInstallment.id);
               }
               
               // Actualizar el campo current_late_fee en el préstamo

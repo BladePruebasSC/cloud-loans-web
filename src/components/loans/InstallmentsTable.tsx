@@ -653,7 +653,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         .eq('loan_id', loanId)
         .order('payment_date', { ascending: true });
 
-      if (!paymentsStatusError && allPaymentsForStatus && allPaymentsForStatus.length > 0) {
+      if (!paymentsStatusError && allPaymentsForStatus && (allPaymentsForStatus.length > 0 || isIndefinite)) {
         const isIndefinite = String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite';
         const sortedPayments = [...allPaymentsForStatus].sort((a, b) => 
           new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime()
@@ -941,13 +941,38 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           if (activeDue && !chargeDueDates.has(activeDue)) dueDates.add(activeDue);
           const dueDatesSorted = Array.from(dueDates).sort((a, b) => a.localeCompare(b));
 
+          // Calculate accumulated scheduled + paid for the single active (unpaid) row.
+          // Sums all periods from firstDue to the first future period, skipping fully-paid ones
+          // (those get their own individual rows in the history).
+          const todayForAccumDate = new Date();
+          const todayForAccumIso = `${todayForAccumDate.getFullYear()}-${String(todayForAccumDate.getMonth() + 1).padStart(2, '0')}-${String(todayForAccumDate.getDate()).padStart(2, '0')}`;
+          const fullyPaidSet = new Set(fullyPaid);
+          let accumulatedScheduled = 0;
+          let accumulatedPaidOnUnpaid = 0;
+          if (firstDueFromStart && interestPerPayment > 0.01) {
+            let cur = firstDueFromStart;
+            while (true) {
+              if (!fullyPaidSet.has(cur)) {
+                accumulatedScheduled = round2(accumulatedScheduled + getExpectedForDueDate(cur));
+                accumulatedPaidOnUnpaid = round2(accumulatedPaidOnUnpaid + round2(paidByDueDate.get(cur)?.paid || 0));
+              }
+              if (cur > todayForAccumIso) break;
+              cur = addPeriodIso(cur, freq);
+            }
+          }
+          // Ensure at least one period's interest if no periods were counted
+          if (accumulatedScheduled < 0.01 && interestPerPayment > 0.01) {
+            accumulatedScheduled = interestPerPayment;
+          }
+
           const regularInstallments: any[] = [];
           for (let idx = 0; idx < dueDatesSorted.length; idx++) {
             const due = dueDatesSorted[idx];
+            const isActive = due === activeDue && !fullyPaidSet.has(due);
             const paidInfo = paidByDueDate.get(due);
-            const paid = round2(paidInfo?.paid || 0);
-            // En indefinidos, la cuota “esperada” es fija por período (no se reduce por pago parcial)
-            const expected = getExpectedForDueDate(due);
+            const paid = isActive ? accumulatedPaidOnUnpaid : round2(paidInfo?.paid || 0);
+            // For the active row use accumulated total; for paid history rows use individual expected
+            const expected = isActive ? accumulatedScheduled : getExpectedForDueDate(due);
             const remaining = round2(Math.max(0, expected - paid));
 
             const isPaid = remaining <= 0.01 && paid > 0.01;
@@ -986,8 +1011,8 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             const existsActive = regularInstallments.some((r) => String(r.due_date).split('T')[0] === activeDue);
             if (!existsActive) {
               const paidInfo = paidByDueDate.get(activeDue);
-              const paid = round2(paidInfo?.paid || 0);
-              const expected = getExpectedForDueDate(activeDue);
+              const paid = accumulatedPaidOnUnpaid;
+              const expected = accumulatedScheduled;
               const remaining = round2(Math.max(0, expected - paid));
               const isPaid = remaining <= 0.01 && paid > 0.01;
               const isPartial = !isPaid && paid > 0.01 && remaining > 0.01;
