@@ -59,6 +59,9 @@ export const getLateFeeBreakdownFromInstallments = async (
     }
     
     let totalLateFee = 0;
+    // For indefinite loans: tracks late_fee_paid that wasn't consumed reducing DB installment mora.
+    // Applied as a pool against dynamic installments so "Eliminar Mora" zeroes the Mora Actual widget.
+    let lateFeePaidSurplusPool = 0;
     const breakdown: Array<{
       installment: number;
       dueDate: string;
@@ -168,6 +171,10 @@ export const getLateFeeBreakdownFromInstallments = async (
       console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} - Estado final:`, {
         is_paid_in_db: installment.is_paid,
         isActuallyPaid,
+        late_fee_paid: installment.late_fee_paid,
+        due_date: installment.due_date,
+        interest_amount: installment.interest_amount,
+        total_amount: installment.total_amount,
         hasAssignedPayment: Array.from(paymentToInstallmentMap.values()).includes(installment.installment_number)
       });
       
@@ -175,6 +182,10 @@ export const getLateFeeBreakdownFromInstallments = async (
         // Si está pagada, mostrar 0 días y 0 mora
         daysOverdue = 0;
         lateFee = 0;
+        // For indefinite: late_fee_paid was never used (mora already 0), so add to surplus pool
+        if (isIndefinite) {
+          lateFeePaidSurplusPool += installment.late_fee_paid || 0;
+        }
       } else {
         // Calcular días de atraso desde la fecha de vencimiento hasta hoy
         // Parsear la fecha como fecha local para evitar problemas de zona horaria
@@ -220,9 +231,13 @@ export const getLateFeeBreakdownFromInstallments = async (
           }
           
           lateFee = Math.round(lateFee * 100) / 100;
-          
+
           // Restar la mora ya pagada de esta cuota
           const lateFeePaid = installment.late_fee_paid || 0;
+          // For indefinite: any late_fee_paid exceeding this installment's mora becomes surplus
+          if (isIndefinite && lateFeePaid > lateFee) {
+            lateFeePaidSurplusPool += Math.round((lateFeePaid - lateFee) * 100) / 100;
+          }
           lateFee = Math.max(0, lateFee - lateFeePaid);
         }
       }
@@ -314,6 +329,8 @@ export const getLateFeeBreakdownFromInstallments = async (
         });
       }
       
+      console.log(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - baseAmount=${baseAmount}, maxInst=${maxInstallmentNumber}, totalExpected=${totalExpected}, paidCount=${paidInstallmentsCount}`);
+
       // Generar todas las cuotas desde (maxInstallmentNumber + 1) hasta totalExpected
       for (let installmentNum = maxInstallmentNumber + 1; installmentNum <= totalExpected; installmentNum++) {
         // Calcular la fecha de vencimiento de esta cuota
@@ -379,8 +396,15 @@ export const getLateFeeBreakdownFromInstallments = async (
             }
             
             lateFeeForInstallment = Math.round(lateFeeForInstallment * 100) / 100;
+
+            // Apply surplus pool from DB installments (e.g. late_fee_paid set by "Eliminar Mora")
+            if (lateFeePaidSurplusPool > 0) {
+              const applied = Math.min(lateFeePaidSurplusPool, lateFeeForInstallment);
+              lateFeeForInstallment = Math.max(0, lateFeeForInstallment - applied);
+              lateFeePaidSurplusPool = Math.max(0, lateFeePaidSurplusPool - applied);
+            }
           }
-          
+
           // Agregar la cuota generada dinámicamente al breakdown
           breakdown.push({
             installment: installmentNum,

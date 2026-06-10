@@ -3316,13 +3316,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               return;
             }
             
-            // Obtener las cuotas pendientes para distribuir la mora eliminada
-            const { data: installments, error: installmentsError } = await supabase
+            // Obtener las cuotas para distribuir la mora eliminada.
+            // Para préstamos indefinidos no filtramos is_paid porque la cuota DB
+            // puede estar marcada is_paid=true aunque el préstamo siga activo.
+            const installmentsBaseQuery = supabase
               .from('installments')
               .select('*')
               .eq('loan_id', loan.id)
-              .eq('is_paid', false)
               .order('installment_number', { ascending: true });
+            const { data: installments, error: installmentsError } = isIndefiniteLoan
+              ? await installmentsBaseQuery
+              : await installmentsBaseQuery.eq('is_paid', false);
             
             if (installmentsError) {
               console.error('Error obteniendo cuotas:', installmentsError);
@@ -5322,12 +5326,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               </thead>
                               <tbody>
                                 {(() => {
-                                  const _dbg = installments.map(i => ({
-                                    n: i.installment_number, int: i.interest_amount,
-                                    prin: i.principal_amount, tot: i.total_amount,
-                                    paid: i.paid_amount, done: i.is_paid
-                                  }));
-                                  console.log('🔍 Pagar Cargos installments JSON:', JSON.stringify(_dbg));
                                   const charges = installments.filter(inst => {
                                     const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 &&
                                                     Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01 &&
