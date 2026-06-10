@@ -13,12 +13,13 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
-import { 
-  FileText, 
-  Plus, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
+import { AmortizationTable } from '@/components/loans/AmortizationTable';
+import {
+  FileText,
+  Plus,
+  Clock,
+  CheckCircle,
+  XCircle,
   AlertCircle,
   User,
   DollarSign,
@@ -32,7 +33,11 @@ import {
   X,
   Upload,
   Download,
-  File
+  File,
+  Calculator,
+  TrendingUp,
+  Calendar,
+  CreditCard
 } from 'lucide-react';
 
 interface LoanRequest {
@@ -111,6 +116,7 @@ const RequestsModule = () => {
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [selectedDocumentType, setSelectedDocumentType] = useState<string>('');
   const [pendingDocuments, setPendingDocuments] = useState<Array<{file: File, type: string, title: string}>>([]);
+  const [showAmortizationPreview, setShowAmortizationPreview] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const newRequestFileInputRef = useRef<HTMLInputElement>(null);
   const [configData, setConfigData] = useState({
@@ -2218,131 +2224,162 @@ const RequestsModule = () => {
       )}
 
       {/* New Request Form Dialog */}
-      <Dialog open={showRequestForm} onOpenChange={setShowRequestForm}>
+      <Dialog
+        open={showRequestForm}
+        modal={!showAmortizationPreview}
+        onOpenChange={(open) => {
+          if (!open && showAmortizationPreview) return;
+          setShowRequestForm(open);
+        }}
+      >
         <DialogContent className="w-[95vw] max-w-4xl h-[95vh] max-h-[95vh] overflow-hidden flex flex-col sm:w-[90vw] lg:w-[80vw]">
-          <DialogHeader className="flex-shrink-0">
-            <DialogTitle>Nueva Solicitud de Préstamo</DialogTitle>
+          <DialogHeader className="flex-shrink-0 border-b pb-4">
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                <FileText className="h-4 w-4 text-blue-600" />
+              </div>
+              Nueva Solicitud de Préstamo
+            </DialogTitle>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto pr-1 sm:pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-            <form id="request-form" onSubmit={handleSubmit} className="space-y-3 sm:space-y-4 pb-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              <div>
-                <Label htmlFor="client_id">Cliente *</Label>
-                <div className="relative">
-                  <Input
-                    placeholder="Buscar cliente por nombre..."
-                    value={clientSearch}
-                    onChange={(e) => handleClientSearch(e.target.value)}
-                    className="w-full"
-                  />
-                  
-                  {showClientDropdown && (
-                    <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
-                      {filteredClients.map((client) => (
-                        <div
-                          key={client.id}
-                          className="p-3 hover:bg-gray-100 cursor-pointer border-b"
-                          onClick={() => selectClient(client)}
-                        >
-                          <div className="font-medium">{client.full_name}</div>
-                          <div className="text-sm text-gray-600">
-                            DNI: {client.dni} | Tel: {client.phone}
+            <form id="request-form" onSubmit={handleSubmit} className="space-y-5 pb-4">
+
+            {/* Sección: Cliente y Monto */}
+            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-blue-700 flex items-center gap-2">
+                <User className="h-4 w-4" />
+                Información del Cliente
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="client_id" className="text-xs font-medium text-gray-600">Cliente *</Label>
+                  <div className="relative mt-1">
+                    <Input
+                      placeholder="Buscar cliente por nombre..."
+                      value={clientSearch}
+                      onChange={(e) => handleClientSearch(e.target.value)}
+                      className="w-full bg-white"
+                    />
+                    {showClientDropdown && (
+                      <div className="absolute top-full left-0 right-0 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-60 overflow-y-auto">
+                        {filteredClients.map((client) => (
+                          <div
+                            key={client.id}
+                            className="p-3 hover:bg-gray-100 cursor-pointer border-b"
+                            onClick={() => selectClient(client)}
+                          >
+                            <div className="font-medium">{client.full_name}</div>
+                            <div className="text-sm text-gray-600">
+                              DNI: {client.dni} | Tel: {client.phone}
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="requested_amount" className="text-xs font-medium text-gray-600">Monto Solicitado *</Label>
+                  <Input
+                    id="requested_amount"
+                    type="number"
+                    value={formData.requested_amount === 0 ? '' : formData.requested_amount}
+                    onChange={(e) => setFormData({...formData, requested_amount: e.target.value === '' ? 0 : Number(e.target.value)})}
+                    placeholder="0"
+                    required
+                    className="mt-1 bg-white"
+                  />
                 </div>
               </div>
-              
               <div>
-                <Label htmlFor="requested_amount">Monto Solicitado *</Label>
+                <Label htmlFor="purpose" className="text-xs font-medium text-gray-600">Propósito del Préstamo</Label>
                 <Input
-                  id="requested_amount"
-                  type="number"
-                  value={formData.requested_amount}
-                  onChange={(e) => setFormData({...formData, requested_amount: Number(e.target.value)})}
-                  required
+                  id="purpose"
+                  value={formData.purpose}
+                  onChange={(e) => setFormData({...formData, purpose: e.target.value})}
+                  placeholder="Ej: Inversión en negocio, gastos médicos, etc."
+                  className="mt-1 bg-white"
                 />
               </div>
             </div>
 
-            <div>
-              <Label htmlFor="purpose">Propósito del Préstamo</Label>
-              <Input
-                id="purpose"
-                value={formData.purpose}
-                onChange={(e) => setFormData({...formData, purpose: e.target.value})}
-                placeholder="Ej: Inversión en negocio, gastos médicos, etc."
-              />
-            </div>
+            {/* Sección: Perfil Financiero */}
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <TrendingUp className="h-4 w-4" />
+                Perfil Financiero
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="monthly_income" className="text-xs font-medium text-gray-600">Ingresos Mensuales</Label>
+                  <Input
+                    id="monthly_income"
+                    type="number"
+                    value={formData.monthly_income === 0 ? '' : formData.monthly_income}
+                    onChange={(e) => setFormData({...formData, monthly_income: e.target.value === '' ? 0 : Number(e.target.value)})}
+                    placeholder="0"
+                    className="mt-1 bg-white"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="existing_debts" className="text-xs font-medium text-gray-600">Deudas Existentes</Label>
+                  <Input
+                    id="existing_debts"
+                    type="number"
+                    value={formData.existing_debts === 0 ? '' : formData.existing_debts}
+                    onChange={(e) => setFormData({...formData, existing_debts: e.target.value === '' ? 0 : Number(e.target.value)})}
+                    placeholder="0"
+                    className="mt-1 bg-white"
+                  />
+                </div>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="employment_status" className="text-xs font-medium text-gray-600">Estado de Empleo</Label>
+                  <Select value={formData.employment_status} onValueChange={(value) => setFormData({...formData, employment_status: value})}>
+                    <SelectTrigger className="mt-1 bg-white">
+                      <SelectValue placeholder="Seleccionar estado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="employed">Empleado</SelectItem>
+                      <SelectItem value="self_employed">Trabajador Independiente</SelectItem>
+                      <SelectItem value="unemployed">Desempleado</SelectItem>
+                      <SelectItem value="retired">Jubilado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="income_verification" className="text-xs font-medium text-gray-600">Verificación de Ingresos</Label>
+                  <Input
+                    id="income_verification"
+                    value={formData.income_verification}
+                    onChange={(e) => setFormData({...formData, income_verification: e.target.value})}
+                    placeholder="Documento de verificación"
+                    className="mt-1 bg-white"
+                  />
+                </div>
+              </div>
               <div>
-                <Label htmlFor="monthly_income">Ingresos Mensuales</Label>
-                <Input
-                  id="monthly_income"
-                  type="number"
-                  value={formData.monthly_income}
-                  onChange={(e) => setFormData({...formData, monthly_income: Number(e.target.value)})}
+                <Label htmlFor="collateral_description" className="text-xs font-medium text-gray-600">Descripción de Garantía</Label>
+                <Textarea
+                  id="collateral_description"
+                  value={formData.collateral_description}
+                  onChange={(e) => setFormData({...formData, collateral_description: e.target.value})}
+                  placeholder="Descripción de la garantía ofrecida (opcional)"
+                  rows={2}
+                  className="mt-1 bg-white"
                 />
               </div>
-              
-              <div>
-                <Label htmlFor="existing_debts">Deudas Existentes</Label>
-                <Input
-                  id="existing_debts"
-                  type="number"
-                  value={formData.existing_debts}
-                  onChange={(e) => setFormData({...formData, existing_debts: Number(e.target.value)})}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="employment_status">Estado de Empleo</Label>
-                <Select value={formData.employment_status} onValueChange={(value) => setFormData({...formData, employment_status: value})}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar estado" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="employed">Empleado</SelectItem>
-                    <SelectItem value="self_employed">Trabajador Independiente</SelectItem>
-                    <SelectItem value="unemployed">Desempleado</SelectItem>
-                    <SelectItem value="retired">Jubilado</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div>
-                <Label htmlFor="income_verification">Verificación de Ingresos</Label>
-                <Input
-                  id="income_verification"
-                  value={formData.income_verification}
-                  onChange={(e) => setFormData({...formData, income_verification: e.target.value})}
-                  placeholder="Documento de verificación"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label htmlFor="collateral_description">Descripción de Garantía</Label>
-              <Textarea
-                id="collateral_description"
-                value={formData.collateral_description}
-                onChange={(e) => setFormData({...formData, collateral_description: e.target.value})}
-                placeholder="Descripción de la garantía ofrecida (opcional)"
-              />
             </div>
 
             {/* Sección de Documentos */}
-            <div className="border-t pt-4">
-              <div className="flex items-center justify-between mb-4">
-                <Label className="text-base font-semibold flex items-center gap-2">
-                  <File className="h-5 w-5" />
+            <div className="border border-gray-200 rounded-xl overflow-hidden">
+              <div className="flex items-center justify-between bg-gray-50 px-4 py-3 border-b">
+                <span className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <File className="h-4 w-4" />
                   Documentos
-                </Label>
+                </span>
                 <div className="flex items-center gap-2">
                   <Select 
                     value={selectedDocumentType} 
@@ -2399,12 +2436,13 @@ const RequestsModule = () => {
                   </Button>
                 </div>
               </div>
+              <div className="p-4">
               {pendingDocuments.length > 0 ? (
                 <div className="space-y-2">
                   {pendingDocuments.map((doc, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                    <div key={index} className="flex items-center justify-between p-3 bg-blue-50 border border-blue-100 rounded-lg">
                       <div className="flex items-center gap-3">
-                        <File className="h-5 w-5 text-blue-600" />
+                        <File className="h-4 w-4 text-blue-600" />
                         <div>
                           <p className="text-sm font-medium">{doc.title}</p>
                           <p className="text-xs text-gray-500">
@@ -2431,16 +2469,38 @@ const RequestsModule = () => {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-gray-500 text-center py-4">
+                <p className="text-sm text-gray-500 text-center py-3">
                   No hay documentos agregados. Selecciona un tipo y haz clic en "Agregar" para subir documentos.
                 </p>
               )}
+              </div>
             </div>
 
             {/* Sección de Datos del Préstamo */}
-            <div className="border-t pt-4 sm:pt-6">
-              <h3 className="text-lg font-semibold mb-3 sm:mb-4 text-blue-600">📋 Datos del Préstamo</h3>
-              
+            <div className="border border-blue-200 rounded-xl overflow-hidden">
+              <div className="bg-blue-600 px-4 py-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <CreditCard className="h-4 w-4" />
+                  Datos del Préstamo
+                </h3>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs bg-white/10 border-white/30 text-white hover:bg-white/20"
+                  onClick={() => {
+                    if (!formData.requested_amount || !formData.interest_rate || !formData.term_months) {
+                      toast.error('Completa monto, tasa e interés primero');
+                      return;
+                    }
+                    setShowAmortizationPreview(true);
+                  }}
+                >
+                  <Calculator className="h-3 w-3 mr-1" />
+                  Ver Tabla de Amortización
+                </Button>
+              </div>
+              <div className="p-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <Label htmlFor="interest_rate">Tasa de Interés (%) *</Label>
@@ -2448,8 +2508,8 @@ const RequestsModule = () => {
                     id="interest_rate"
                     type="number"
                     step="0.01"
-                    value={formData.interest_rate}
-                    onChange={(e) => setFormData({...formData, interest_rate: Number(e.target.value)})}
+                    value={formData.interest_rate === 0 ? '' : formData.interest_rate}
+                    onChange={(e) => setFormData({...formData, interest_rate: e.target.value === '' ? 0 : Number(e.target.value)})}
                     placeholder="Ej: 15.5"
                     required
                   />
@@ -2531,72 +2591,42 @@ const RequestsModule = () => {
                     id="closing_costs"
                     type="number"
                     step="0.01"
-                    value={formData.closing_costs}
-                    onChange={(e) => setFormData({...formData, closing_costs: Number(e.target.value)})}
+                    value={formData.closing_costs === 0 ? '' : formData.closing_costs}
+                    onChange={(e) => setFormData({...formData, closing_costs: e.target.value === '' ? 0 : Number(e.target.value)})}
                     placeholder="0.00"
                   />
                 </div>
                 
               {/* Configuración de Mora */}
-              <div className="space-y-4">
-                <div className="flex items-center space-x-2">
+              <div className="col-span-1 sm:col-span-2 border border-orange-100 rounded-lg overflow-hidden">
+                <div className="flex items-center gap-3 bg-orange-50 px-3 py-2">
                   <input
                     type="checkbox"
                     id="late_fee_enabled"
                     checked={formData.late_fee_enabled}
                     onChange={(e) => setFormData({...formData, late_fee_enabled: e.target.checked})}
-                    className="rounded"
+                    className="rounded accent-orange-500"
                   />
-                  <Label htmlFor="late_fee_enabled">Incluir cargo por mora</Label>
+                  <Label htmlFor="late_fee_enabled" className="text-sm font-medium text-orange-700 cursor-pointer">Incluir cargo por mora</Label>
                 </div>
-                
                 {formData.late_fee_enabled && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3">
                     <div>
-                      <Label htmlFor="late_fee_rate">Tasa de Mora por Día (%)</Label>
-                      <Input
-                        id="late_fee_rate"
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        max="100"
-                        value={formData.late_fee_rate}
-                        onChange={(e) => setFormData({...formData, late_fee_rate: Number(e.target.value)})}
-                        placeholder="2.0"
-                      />
+                      <Label htmlFor="late_fee_rate" className="text-xs font-medium text-gray-600">Tasa de Mora por Día (%)</Label>
+                      <Input id="late_fee_rate" type="number" step="0.1" min="0" max="100" value={formData.late_fee_rate === 0 ? '' : formData.late_fee_rate} onChange={(e) => setFormData({...formData, late_fee_rate: e.target.value === '' ? 0 : Number(e.target.value)})} placeholder="2.0" className="mt-1" />
                     </div>
-                    
                     <div>
-                      <Label htmlFor="grace_period_days">Días de Gracia</Label>
-                      <Input
-                        id="grace_period_days"
-                        type="number"
-                        min="0"
-                        max="30"
-                        value={formData.grace_period_days}
-                        onChange={(e) => setFormData({...formData, grace_period_days: Number(e.target.value)})}
-                        placeholder="0"
-                      />
+                      <Label htmlFor="grace_period_days" className="text-xs font-medium text-gray-600">Días de Gracia</Label>
+                      <Input id="grace_period_days" type="number" min="0" max="30" value={formData.grace_period_days === 0 ? '' : formData.grace_period_days} onChange={(e) => setFormData({...formData, grace_period_days: e.target.value === '' ? 0 : Number(e.target.value)})} placeholder="0" className="mt-1" />
                     </div>
-                    
                     <div>
-                      <Label htmlFor="max_late_fee">Mora Máxima (RD$)</Label>
-                      <Input
-                        id="max_late_fee"
-                        type="number"
-                        min="0"
-                        value={formData.max_late_fee}
-                        onChange={(e) => setFormData({...formData, max_late_fee: Number(e.target.value)})}
-                        placeholder="0"
-                      />
+                      <Label htmlFor="max_late_fee" className="text-xs font-medium text-gray-600">Mora Máxima (RD$)</Label>
+                      <Input id="max_late_fee" type="number" min="0" value={formData.max_late_fee === 0 ? '' : formData.max_late_fee} onChange={(e) => setFormData({...formData, max_late_fee: e.target.value === '' ? 0 : Number(e.target.value)})} placeholder="0" className="mt-1" />
                     </div>
-                    
                     <div>
-                      <Label htmlFor="late_fee_calculation_type">Tipo de Cálculo</Label>
+                      <Label htmlFor="late_fee_calculation_type" className="text-xs font-medium text-gray-600">Tipo de Cálculo</Label>
                       <Select value={formData.late_fee_calculation_type} onValueChange={(value) => setFormData({...formData, late_fee_calculation_type: value})}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar tipo" />
-                        </SelectTrigger>
+                        <SelectTrigger className="mt-1"><SelectValue placeholder="Seleccionar tipo" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="daily">Diario</SelectItem>
                           <SelectItem value="monthly">Mensual</SelectItem>
@@ -2608,79 +2638,96 @@ const RequestsModule = () => {
                 )}
               </div>
               </div>
-              
-              {/* Sección de Garantía */}
-              <div className="mt-4 sm:mt-6">
-                <h4 className="text-md font-semibold mb-3 text-gray-700">👥 Información de Garantía</h4>
-                
-                <div className="flex items-center space-x-2 mb-4">
-                  <input
-                    type="checkbox"
-                    id="guarantor_required"
-                    checked={formData.guarantor_required}
-                    onChange={(e) => setFormData({...formData, guarantor_required: e.target.checked})}
-                    className="rounded"
-                  />
-                  <Label htmlFor="guarantor_required">Requiere garantía</Label>
-                </div>
-                
-                {formData.guarantor_required && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <Label htmlFor="guarantor_name">Nombre del Garante</Label>
-                      <Input
-                        id="guarantor_name"
-                        value={formData.guarantor_name}
-                        onChange={(e) => setFormData({...formData, guarantor_name: e.target.value})}
-                        placeholder="Nombre completo"
-                      />
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="guarantor_phone">Teléfono del Garante</Label>
-                      <Input
-                        id="guarantor_phone"
-                        value={formData.guarantor_phone}
-                        onChange={(e) => setFormData({...formData, guarantor_phone: e.target.value})}
-                        placeholder="(809) 123-4567"
-                      />
-                    </div>
-                    
-                    <div>
-                      <Label htmlFor="guarantor_dni">DNI del Garante</Label>
-                      <Input
-                        id="guarantor_dni"
-                        value={formData.guarantor_dni}
-                        onChange={(e) => setFormData({...formData, guarantor_dni: e.target.value})}
-                        placeholder="000-0000000-0"
-                      />
-                    </div>
-                  </div>
-                )}
               </div>
-              
-              {/* Campo de Notas */}
-              <div className="mt-4">
-                <Label htmlFor="notes">Notas Adicionales</Label>
-                <Textarea
-                  id="notes"
-                  value={formData.notes}
-                  onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                  placeholder="Información adicional sobre el préstamo..."
-                  rows={3}
+            </div>
+
+            {/* Sección de Garantía */}
+            <div className="border border-gray-200 rounded-xl overflow-hidden">
+              <div className="flex items-center gap-3 bg-gray-50 px-4 py-3 border-b">
+                <input
+                  type="checkbox"
+                  id="guarantor_required"
+                  checked={formData.guarantor_required}
+                  onChange={(e) => setFormData({...formData, guarantor_required: e.target.checked})}
+                  className="rounded accent-blue-600"
                 />
+                <Label htmlFor="guarantor_required" className="text-sm font-semibold text-gray-700 cursor-pointer flex items-center gap-2">
+                  <Shield className="h-4 w-4" />
+                  Requiere garantía
+                </Label>
               </div>
+              {formData.guarantor_required && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
+                  <div>
+                    <Label htmlFor="guarantor_name" className="text-xs font-medium text-gray-600">Nombre del Garante</Label>
+                    <Input id="guarantor_name" value={formData.guarantor_name} onChange={(e) => setFormData({...formData, guarantor_name: e.target.value})} placeholder="Nombre completo" className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="guarantor_phone" className="text-xs font-medium text-gray-600">Teléfono del Garante</Label>
+                    <Input id="guarantor_phone" value={formData.guarantor_phone} onChange={(e) => setFormData({...formData, guarantor_phone: e.target.value})} placeholder="(809) 123-4567" className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="guarantor_dni" className="text-xs font-medium text-gray-600">DNI del Garante</Label>
+                    <Input id="guarantor_dni" value={formData.guarantor_dni} onChange={(e) => setFormData({...formData, guarantor_dni: e.target.value})} placeholder="000-0000000-0" className="mt-1" />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Campo de Notas */}
+            <div>
+              <Label htmlFor="notes" className="text-xs font-medium text-gray-600">Notas Adicionales</Label>
+              <Textarea
+                id="notes"
+                value={formData.notes}
+                onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                placeholder="Información adicional sobre el préstamo..."
+                rows={3}
+                className="mt-1"
+              />
             </div>
 
             </form>
           </div>
           <div className="flex-shrink-0 border-t pt-4 mt-4">
-            <div className="flex justify-end">
-              <Button type="submit" form="request-form">Crear Solicitud</Button>
+            <div className="flex items-center justify-between gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  if (!formData.requested_amount || !formData.interest_rate || !formData.term_months) {
+                    toast.error('Completa monto, tasa e interés primero');
+                    return;
+                  }
+                  setShowAmortizationPreview(true);
+                }}
+                className="flex items-center gap-2"
+              >
+                <Calculator className="h-4 w-4" />
+                Tabla de Amortización
+              </Button>
+              <Button type="submit" form="request-form" className="bg-blue-600 hover:bg-blue-700">
+                <Plus className="h-4 w-4 mr-2" />
+                Crear Solicitud
+              </Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Amortization preview for request form */}
+      <AmortizationTable
+        isOpen={showAmortizationPreview}
+        onClose={() => setShowAmortizationPreview(false)}
+        loanData={{
+          amount: formData.requested_amount,
+          interestRate: formData.interest_rate,
+          frequency: formData.payment_frequency,
+          term: formData.term_months,
+          startDate: formData.first_payment_date,
+          amortizationType: formData.amortization_type
+        }}
+      />
 
       {/* Modal de Confirmación de Eliminación */}
       <Dialog open={showDeleteDialog} onOpenChange={(open) => {

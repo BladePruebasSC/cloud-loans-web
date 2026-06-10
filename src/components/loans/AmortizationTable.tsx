@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -154,50 +155,77 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
     const startDateObj = new Date(startDate);
 
     if (amortizationType === 'simple') {
-      // Amortización simple - Cuota fija
+      // Simple/Absoluto: interés fijo sobre capital original, capital dividido en partes iguales
+      const principalPerPayment = Math.round((amount / term) * 100) / 100;
+      const flatInterest = Math.round(amount * periodRate * 100) / 100;
       for (let i = 1; i <= term; i++) {
-        const interest = remainingBalance * periodRate;
-        const principal = periodPayment - interest;
-        const payment = periodPayment;
-        
-        // Calcular fecha de pago según la frecuencia
+        const isLast = i === term;
+        const principal = isLast ? Math.round(remainingBalance * 100) / 100 : principalPerPayment;
+        const interest = flatInterest;
+        const payment = Math.round((principal + interest) * 100) / 100;
+        const newBalance = isLast ? 0 : Math.round((remainingBalance - principal) * 100) / 100;
+
         const paymentDate = new Date(startDateObj);
         paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
 
         rows.push({
           installment: i,
           date: paymentDate.toISOString().split('T')[0],
-          interest: Math.round(interest * 100) / 100,
-          principal: Math.round(principal * 100) / 100,
-          payment: Math.round(payment * 100) / 100,
-          remainingBalance: Math.round((remainingBalance - principal) * 100) / 100
+          interest,
+          principal,
+          payment,
+          remainingBalance: newBalance
         });
 
-        remainingBalance = Math.round((remainingBalance - principal) * 100) / 100;
+        remainingBalance = newBalance;
+      }
+    } else if (amortizationType === 'french') {
+      // Francés: cuota total fija, interés sobre saldo insoluto decreciente
+      for (let i = 1; i <= term; i++) {
+        const isLast = i === term;
+        const interest = Math.round(remainingBalance * periodRate * 100) / 100;
+        const principal = isLast ? Math.round(remainingBalance * 100) / 100 : Math.round((periodPayment - interest) * 100) / 100;
+        const payment = Math.round((principal + interest) * 100) / 100;
+        const newBalance = isLast ? 0 : Math.round((remainingBalance - principal) * 100) / 100;
+
+        const paymentDate = new Date(startDateObj);
+        paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
+
+        rows.push({
+          installment: i,
+          date: paymentDate.toISOString().split('T')[0],
+          interest,
+          principal,
+          payment,
+          remainingBalance: newBalance
+        });
+
+        remainingBalance = newBalance;
       }
     } else if (amortizationType === 'german') {
       // Amortización alemana - Cuota decreciente
-      const principalPerPayment = amount / term;
-      
+      const principalPerPayment = Math.round((amount / term) * 100) / 100;
+
       for (let i = 1; i <= term; i++) {
-        const interest = remainingBalance * periodRate;
-        const principal = principalPerPayment;
-        const payment = principal + interest;
-        
-        // Calcular fecha de pago según la frecuencia
+        const isLast = i === term;
+        const interest = Math.round(remainingBalance * periodRate * 100) / 100;
+        const principal = isLast ? Math.round(remainingBalance * 100) / 100 : principalPerPayment;
+        const payment = Math.round((principal + interest) * 100) / 100;
+        const newBalance = isLast ? 0 : Math.round((remainingBalance - principal) * 100) / 100;
+
         const paymentDate = new Date(startDateObj);
         paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
 
         rows.push({
           installment: i,
           date: paymentDate.toISOString().split('T')[0],
-          interest: Math.round(interest * 100) / 100,
-          principal: Math.round(principal * 100) / 100,
-          payment: Math.round(payment * 100) / 100,
-          remainingBalance: Math.round((remainingBalance - principal) * 100) / 100
+          interest,
+          principal,
+          payment,
+          remainingBalance: newBalance
         });
 
-        remainingBalance = Math.round((remainingBalance - principal) * 100) / 100;
+        remainingBalance = newBalance;
       }
     } else if (amortizationType === 'american') {
       // Amortización americana - Solo intereses, capital al final
@@ -263,6 +291,18 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
 
     setAmortizationData(rows);
   };
+
+  // Sync loanData props into internal state each time the table opens
+  useEffect(() => {
+    if (isOpen && loanData) {
+      setAmount(loanData.amount || 10000);
+      setInterestRate(loanData.interestRate || 8);
+      setFrequency(loanData.frequency || 'monthly');
+      setTerm(loanData.term || 12);
+      setStartDate(loanData.startDate || new Date().toISOString().split('T')[0]);
+      setAmortizationType(loanData.amortizationType || 'simple');
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -438,9 +478,15 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
   const totalPayment = sortedData.reduce((sum, row) => sum + row.payment, 0);
   const adjustedInterestRate = calculateAdjustedInterestRate();
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
-      <div className="bg-white rounded-lg w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999] p-2 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-3 sm:p-6 border-b flex-shrink-0">
           <div className="flex items-center gap-2 sm:gap-4">
@@ -500,7 +546,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[10000]">
                   <SelectItem value="daily">Diario</SelectItem>
                   <SelectItem value="weekly">Semanal</SelectItem>
                   <SelectItem value="biweekly">Quincenal</SelectItem>
@@ -541,8 +587,9 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[10000]">
                   <SelectItem value="simple">Simple | Absoluto</SelectItem>
+                  <SelectItem value="french">Francés | Cuota Fija</SelectItem>
                   <SelectItem value="german">Alemán | Insoluto</SelectItem>
                   <SelectItem value="american">Americano | Línea de Crédito</SelectItem>
                   <SelectItem value="indefinite">Plazo Indefinido</SelectItem>
@@ -590,7 +637,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                   <SelectTrigger className="w-16">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[10000]">
                     <SelectItem value="10">10</SelectItem>
                     <SelectItem value="25">25</SelectItem>
                     <SelectItem value="50">50</SelectItem>
@@ -633,7 +680,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                   <SelectTrigger className="w-20">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="z-[10000]">
                     <SelectItem value="10">10</SelectItem>
                     <SelectItem value="25">25</SelectItem>
                     <SelectItem value="50">50</SelectItem>
@@ -807,6 +854,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
           Mostrando del 1 al {Math.min(recordsPerPage, sortedData.length)} de {sortedData.length} registros
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
