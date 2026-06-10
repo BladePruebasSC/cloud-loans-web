@@ -517,6 +517,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           for (const charge of chargesFromDB) {
             const dueDate = charge.due_date?.split('T')[0] || charge.due_date;
             const chargeTotal = (charge as any).total_amount || charge.amount || charge.principal_amount || 0;
+            const chargePaidAmount = (charge as any).paid_amount || 0;
             dynamicInstallments.push({
               id: charge.id,
               loan_id: loanId,
@@ -531,7 +532,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               paid_date: charge.paid_date || null,
               created_at: charge.created_at || new Date().toISOString(),
               updated_at: charge.updated_at || new Date().toISOString(),
-              total_amount: chargeTotal
+              total_amount: chargeTotal,
+              paid_amount: chargePaidAmount,
+              remaining_amount: Math.max(0, chargeTotal - chargePaidAmount)
             });
           }
 
@@ -751,6 +754,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             } else {
               chargeInst.is_paid = false;
               chargeInst.paid_date = null;
+              // Actualizar paid_amount y remaining_amount desde los pagos reales (más preciso que el valor de BD)
+              if (accumulatedPrincipal > 0.01) {
+                (chargeInst as any).paid_amount = accumulatedPrincipal;
+                (chargeInst as any).remaining_amount = Math.max(0, chargeTotal - accumulatedPrincipal);
+              }
             }
           }
 
@@ -1403,12 +1411,16 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       // Balance pendiente = Capital actual + Interés pendiente + Cargos no pagados
       const unpaidChargesAmountIndefinite = installments
         .filter(inst => {
-          const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 && 
+          const isCharge = Math.abs((inst as any).interest_amount || 0) < 0.01 &&
                           Math.abs((inst as any).principal_amount - ((inst as any).total_amount || inst.amount || 0)) < 0.01 &&
                           (inst as any).principal_amount > 0;
           return isCharge && !inst.is_paid;
         })
-        .reduce((sum, inst) => sum + Math.round(Number((inst as any).total_amount || inst.amount || 0)), 0);
+        .reduce((sum, inst) => {
+          const total = Math.round(Number((inst as any).total_amount || inst.amount || 0));
+          const paid = Math.round(Number((inst as any).paid_amount || 0));
+          return sum + Math.max(0, total - paid);
+        }, 0);
       
       const unpaidInterestTotal = installments
         .filter(inst => {
