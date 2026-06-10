@@ -2833,10 +2833,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             setSelectedCharges([]);
             setChargePaymentAmount(0);
             setChargePaymentReference('');
+
+            // Refrescar cuotas para que "Pagar Cargos" muestre datos actualizados
+            await fetchInstallments();
+            window.dispatchEvent(new CustomEvent('installmentsUpdated', { detail: { loanId: loan.id } }));
           }
           break;
 
-          
+
         case 'term_extension':
           {
             const additionalMonths = data.additional_months || 0;
@@ -5305,11 +5309,18 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               </thead>
                               <tbody>
                                 {(() => {
+                                  const _dbg = installments.map(i => ({
+                                    n: i.installment_number, int: i.interest_amount,
+                                    prin: i.principal_amount, tot: i.total_amount,
+                                    paid: i.paid_amount, done: i.is_paid
+                                  }));
+                                  console.log('🔍 Pagar Cargos installments JSON:', JSON.stringify(_dbg));
                                   const charges = installments.filter(inst => {
-                                    const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                    const pending = (inst.total_amount || 0) - (inst.paid_amount || 0);
-                                    return isCharge && pending > 0.01; // Solo cargos con monto pendiente
+                                    const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 &&
+                                                    Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01 &&
+                                                    (inst.principal_amount || 0) > 0;
+                                    // Use is_paid as the authoritative field; paid_amount may lag behind
+                                    return isCharge && !inst.is_paid;
                                   });
 
                                   if (charges.length === 0) {

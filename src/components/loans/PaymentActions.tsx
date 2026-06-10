@@ -322,6 +322,44 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         }
       }
 
+      // PASO 2.6: Si era un pago de cargo, recalcular paid_amount en la tabla installments
+      if (payment.notes?.startsWith('Pago de cargo') && payment.due_date) {
+        try {
+          const chargeDueDate = String(payment.due_date).split('T')[0];
+
+          // Sumar todos los pagos de cargo que quedan para esta cuota (mismo loan_id + due_date + sin interés)
+          const { data: remainingCargoPayments } = await supabase
+            .from('payments')
+            .select('principal_amount, amount')
+            .eq('loan_id', payment.loan_id)
+            .eq('due_date', chargeDueDate)
+            .lt('interest_amount', 0.01);
+
+          const totalRemaining = (remainingCargoPayments || []).reduce(
+            (sum: number, p: any) => sum + (Number(p.principal_amount) || Number(p.amount) || 0), 0
+          );
+
+          // Buscar el installment del cargo por loan_id + due_date
+          const { data: cargoInstallments } = await supabase
+            .from('installments')
+            .select('id, total_amount')
+            .eq('loan_id', payment.loan_id)
+            .eq('due_date', chargeDueDate)
+            .lt('interest_amount', 0.01);
+
+          for (const cargoInst of (cargoInstallments || [])) {
+            const newPaid = Math.min(totalRemaining, Number(cargoInst.total_amount) || 0);
+            const isNowFullyPaid = newPaid >= (Number(cargoInst.total_amount) || 0) - 0.01;
+            await supabase
+              .from('installments')
+              .update({ paid_amount: newPaid, is_paid: isNowFullyPaid })
+              .eq('id', cargoInst.id);
+          }
+        } catch (cargoUpdateError) {
+          console.error('🗑️ Error recalculando paid_amount del cargo:', cargoUpdateError);
+        }
+      }
+
       // PASO 3: Obtener todos los pagos restantes
       console.log('🗑️ OBTENIENDO PAGOS RESTANTES...');
       const { data: remainingPayments, error: paymentsError } = await supabase
