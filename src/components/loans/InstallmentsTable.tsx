@@ -723,33 +723,12 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               }
             }
 
-            // Si el cargo no se completó por due_date exacto, asignar pagos solo-principal no asignados
-            // (p. ej. pago guardado con due_date equivocado) al primer cargo pendiente
-            let fallbackPaymentForDate: typeof sortedPayments[0] | null = null;
-            if (accumulatedPrincipal < chargeTotal * 0.99) {
-              for (const payment of sortedPayments) {
-                if (assignedPaymentIds.has(payment.id)) continue;
-                const hasNoInterest = (payment.interest_amount || 0) < 0.01;
-                const paymentAmount = payment.principal_amount || payment.amount || 0;
-                if (!hasNoInterest || paymentAmount <= 0) continue;
-                const remainingCharge = chargeTotal - accumulatedPrincipal;
-                if (paymentAmount <= remainingCharge * 1.1) {
-                  assignedPaymentIds.add(payment.id);
-                  accumulatedPrincipal += paymentAmount;
-                  if (!fallbackPaymentForDate) fallbackPaymentForDate = payment;
-                  if (accumulatedPrincipal >= chargeTotal * 0.99) break;
-                }
-              }
-            }
-
             // Marcar el cargo como pagado si se acumuló suficiente monto
             if (accumulatedPrincipal >= chargeTotal * 0.99) {
               chargeInst.is_paid = true;
               const paymentForCharge = sortedPayments.find(p => assignedPaymentIds.has(p.id) && (p.due_date as string)?.split('T')[0] === chargeDueDate);
               if (paymentForCharge) {
                 chargeInst.paid_date = (paymentForCharge as any).payment_date?.split?.('T')[0] || (paymentForCharge as any).payment_date || null;
-              } else if (fallbackPaymentForDate) {
-                chargeInst.paid_date = (fallbackPaymentForDate as any).payment_date?.split?.('T')[0] || (fallbackPaymentForDate as any).payment_date || null;
               }
             } else {
               chargeInst.is_paid = false;
@@ -848,12 +827,13 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           for (const p of unassignedPayments) {
             const due = (p.due_date as string)?.split('T')[0] || (p.due_date as string) || null;
             if (!due || chargeDueDates.has(due)) continue;
-            // No contar pagos solo a capital (cargos) como pago de cuota regular: evita que un pago de cargo
-            // se muestre como "Parcial" en la cuota de interés cuando el due_date no coincide con el cargo.
-            if ((Number((p as any).interest_amount || 0) || 0) < 0.01) continue;
 
             const interest = Number((p as any).interest_amount || 0) || 0;
             const amt = Number((p as any).amount || 0) || 0;
+
+            // Skip payments that look like charge payments (no interest, and due_date falls on a non-charge period with wrong amount)
+            const isPureCapital = interest < 0.01 && (Number((p as any).principal_amount || 0) || 0) > 0.01;
+            if (isPureCapital) continue;
 
             // Preferir interest_amount; si viene 0, usar amount si es razonable para ESA cuota (monto vigente en esa fecha).
             const maxAcceptable = getMaxAcceptableForDue(due);

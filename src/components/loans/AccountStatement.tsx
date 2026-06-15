@@ -2455,9 +2455,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             <div class="payment-details">
               <h3>Detalle del Pago</h3>
               <table>
-                <tr><td>Monto Total:</td><td class="total">${formatCurrency(payment.amount)}</td></tr>
+                <tr><td>Monto Total:</td><td class="total">${formatCurrency(payment.amount + (payment.late_fee || 0))}</td></tr>
                 <tr><td>A Principal:</td><td>${formatCurrency(payment.principal_amount)}</td></tr>
-                <tr><td>A Intereses:</td><td>${formatCurrency(payment.interest_amount)}</td></tr>
+                <tr><td>A Intereses:</td><td>${formatCurrency(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0)))}</td></tr>
                 <tr><td>Mora:</td><td>${formatCurrency(payment.late_fee)}</td></tr>
                 <tr><td>Estado:</td><td>${payment.status}</td></tr>
               </table>
@@ -2689,9 +2689,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                   ${payments.map(payment => `
                     <tr>
                       <td>${formatDateTime(payment)}</td>
-                      <td>${formatCurrency(payment.amount)}</td>
+                      <td>${formatCurrency(payment.amount + (payment.late_fee || 0))}</td>
                       <td>${formatCurrency(payment.principal_amount)}</td>
-                      <td>${formatCurrency(payment.interest_amount)}</td>
+                      <td>${formatCurrency(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0)))}</td>
                       <td>${formatCurrency(payment.late_fee)}</td>
                       <td>${getPaymentMethodLabel(payment.payment_method)}</td>
                         <td>
@@ -2823,9 +2823,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 ${payments.map(payment => `
                   <tr style="background-color: #f9f9f9;">
                     <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatDateTime(payment)}</td>
-                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.amount)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.amount + (payment.late_fee || 0))}</td>
                     <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.principal_amount)}</td>
-                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.interest_amount)}</td>
+                    <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0)))}</td>
                     <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${formatCurrency(payment.late_fee)}</td>
                     <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${getPaymentMethodLabel(payment.payment_method)}</td>
                     <td style="padding: 6px; text-align: left; border: 1px solid #ddd;">${payment.status}</td>
@@ -3241,11 +3241,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                             </div>
                             <div className="text-right">
                               <div className="font-bold text-green-600">
-                                {formatCurrency(payment.amount)}
+                                {formatCurrency(payment.amount + (payment.late_fee || 0))}
                               </div>
                             </div>
                           </div>
-                          
+
                           <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
                             <div>
                               <span className="font-medium">Principal:</span>
@@ -3253,7 +3253,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                             </div>
                             <div>
                               <span className="font-medium">Interés:</span>
-                              <div>{formatCurrency(payment.interest_amount)}</div>
+                              <div>{formatCurrency(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0)))}</div>
                             </div>
                             <div>
                               <span className="font-medium">Mora:</span>
@@ -3313,10 +3313,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                             <tr key={payment.id} className="border-b hover:bg-gray-50">
                               <td className="p-3">{formatDateTime(payment)}</td>
                               <td className="p-3 font-semibold text-green-600">
-                                {formatCurrency(payment.amount)}
+                                {formatCurrency(payment.amount + (payment.late_fee || 0))}
                               </td>
                               <td className="p-3">{formatCurrency(payment.principal_amount)}</td>
-                              <td className="p-3">{formatCurrency(payment.interest_amount)}</td>
+                              <td className="p-3">{formatCurrency(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0)))}</td>
                               <td className="p-3">{formatCurrency(payment.late_fee)}</td>
                               <td className="p-3">{getPaymentMethodLabel(payment.payment_method)}</td>
                               <td className="p-3">{getStatusBadge(payment.status)}</td>
@@ -3416,7 +3416,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                       <div className="flex justify-between">
                         <span className="text-gray-600">Monto Total:</span>
                         <span className="font-bold text-lg text-green-600">
-                          {formatCurrency(selectedPayment.amount)}
+                          {formatCurrency(selectedPayment.amount + (selectedPayment.late_fee || 0))}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -3425,7 +3425,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">A Intereses:</span>
-                        <span className="font-semibold">{formatCurrency(selectedPayment.interest_amount)}</span>
+                        <span className="font-semibold">{formatCurrency(selectedPayment.interest_amount || Math.max(0, selectedPayment.amount - (selectedPayment.principal_amount || 0)))}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">Mora:</span>

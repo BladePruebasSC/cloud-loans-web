@@ -68,6 +68,7 @@ export const LoansModule = () => {
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
   const [initialLoanData, setInitialLoanData] = useState(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [showRequestSelector, setShowRequestSelector] = useState(false);
   const [requests, setRequests] = useState([]);
@@ -1828,8 +1829,11 @@ export const LoansModule = () => {
       // Solo configurar si hay al menos un parámetro válido
       if (initialData.client_id || initialData.amount) {
         setInitialLoanData(initialData);
+        if (initialData.request_id) {
+          setSelectedRequestId(initialData.request_id);
+        }
         setShowLoanForm(true);
-        
+
         // Limpiar URL para evitar re-aplicación
         window.history.replaceState({}, '', '/prestamos');
       }
@@ -1990,6 +1994,7 @@ export const LoansModule = () => {
     };
     
     setInitialLoanData(initialData);
+    setSelectedRequestId(request.id);
     setShowRequestSelector(false);
     setShowLoanForm(true);
   };
@@ -2216,11 +2221,18 @@ export const LoansModule = () => {
           setShowLoanForm(false);
           setInitialLoanData(null); // Limpiar datos iniciales
         }}
-        onLoanCreated={() => {
+        onLoanCreated={async () => {
+          if (selectedRequestId) {
+            await supabase
+              .from('loan_requests')
+              .update({ status: 'in_use' })
+              .eq('id', selectedRequestId);
+            setSelectedRequestId(null);
+          }
           setShowLoanForm(false);
-          setInitialLoanData(null); // Limpiar datos iniciales
-          setStatusFilter('pending'); // Cambiar automáticamente al filtro de pendientes
-          refetch(); // Actualizar los datos de préstamos
+          setInitialLoanData(null);
+          setStatusFilter('pending');
+          refetch();
         }}
         initialData={initialLoanData}
       />

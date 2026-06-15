@@ -679,6 +679,8 @@ const RequestsModule = () => {
         return <Badge variant="default" className="bg-green-100 text-green-800">Aprobada</Badge>;
       case 'rejected':
         return <Badge variant="destructive">Rechazada</Badge>;
+      case 'in_use':
+        return <Badge variant="secondary" className="bg-blue-100 text-blue-800">En Uso</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
@@ -699,6 +701,7 @@ const RequestsModule = () => {
   const pendingRequests = filteredRequests.filter(r => r.status === 'pending');
   const approvedRequests = filteredRequests.filter(r => r.status === 'approved');
   const rejectedRequests = filteredRequests.filter(r => r.status === 'rejected');
+  const inUseRequests = filteredRequests.filter(r => r.status === 'in_use');
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -711,7 +714,7 @@ const RequestsModule = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Solicitudes</CardTitle>
@@ -753,6 +756,17 @@ const RequestsModule = () => {
           <CardContent>
             <div className="text-2xl font-bold text-red-600">{rejectedRequests.length}</div>
             <p className="text-xs text-muted-foreground">No aprobadas</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">En Uso</CardTitle>
+            <ArrowRight className="h-4 w-4 text-blue-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600">{inUseRequests.length}</div>
+            <p className="text-xs text-muted-foreground">Con préstamo creado</p>
           </CardContent>
         </Card>
       </div>

@@ -1549,7 +1549,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">Pago a Intereses:</span>
-                        <span className="font-semibold">RD${payment.interest_amount.toLocaleString()}</span>
+                        <span className="font-semibold">RD${(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0))).toLocaleString()}</span>
                       </div>
                       {payment.late_fee > 0 && (
                         <div className="flex justify-between">
@@ -1560,7 +1560,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                       <hr className="my-2" />
                       <div className="flex justify-between text-lg font-bold text-green-600">
                         <span>TOTAL:</span>
-                        <span>RD${payment.amount.toLocaleString()}</span>
+                        <span>RD${(payment.amount + (payment.late_fee || 0)).toLocaleString()}</span>
                       </div>
                     </div>
                   </div>
