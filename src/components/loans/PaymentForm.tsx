@@ -1225,11 +1225,12 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               }
             : null;
 
-        // 4) Elegir qué se paga primero: SIEMPRE priorizar cargo pendiente sobre cuota regular
-        // (evita que un pago destinado al cargo se aplique a la cuota de interés por igual)
+        // 4) Elegir qué se paga primero: orden cronológico (la fecha más antigua primero)
         const choose = (() => {
           if (pendingChargeCandidate && regularCandidate) {
-            return { ...pendingChargeCandidate, isCharge: true };
+            return pendingChargeCandidate.dueDate <= regularCandidate.dueDate
+              ? { ...pendingChargeCandidate, isCharge: true }
+              : { ...regularCandidate, isCharge: false };
           }
           if (pendingChargeCandidate) return { ...pendingChargeCandidate, isCharge: true };
           if (regularCandidate) return { ...regularCandidate, isCharge: false };

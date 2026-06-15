@@ -881,11 +881,11 @@ const RequestsModule = () => {
                             <span className="hidden sm:inline">Ver</span>
                           </Button>
                           
-                          {/* Botón Crear Préstamo - Solo para solicitudes aprobadas */}
-                          {request.status === 'approved' && (
-                            <Button 
-                              size="sm" 
-                              variant="default" 
+                          {/* Botón Crear Préstamo - Para solicitudes aprobadas o en uso */}
+                          {(request.status === 'approved' || request.status === 'in_use') && (
+                            <Button
+                              size="sm"
+                              variant="default"
                               className="bg-blue-600 hover:bg-blue-700 text-white w-full sm:w-auto min-h-[36px] touch-manipulation"
                               onClick={() => handleCreateLoanFromRequest(request)}
                             >
@@ -894,9 +894,9 @@ const RequestsModule = () => {
                               <span className="hidden sm:inline">Crear Préstamo</span>
                             </Button>
                           )}
-                          
-                          {/* Botón Eliminar - Solo para solicitudes aprobadas */}
-                          {request.status === 'approved' && (
+
+                          {/* Botón Eliminar - Para solicitudes aprobadas o en uso */}
+                          {(request.status === 'approved' || request.status === 'in_use') && (
                             <Button 
                               size="sm" 
                               variant="outline" 

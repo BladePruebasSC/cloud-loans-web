@@ -851,6 +851,17 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             paidByDueDateRaw.set(due, { paid: nextPaid, firstPaidDate: nextFirstDate });
           }
 
+          // Mora pagada por due_date (para mostrar en la columna "Mora Pagada")
+          const lateFeePaidByDue = new Map<string, number>();
+          for (const p of unassignedPayments) {
+            const due = (p.due_date as string)?.split('T')[0] || null;
+            if (!due || chargeDueDates.has(due)) continue;
+            const lf = Number((p as any).late_fee || 0) || 0;
+            if (lf > 0.01) {
+              lateFeePaidByDue.set(due, round2((lateFeePaidByDue.get(due) || 0) + lf));
+            }
+          }
+
           // Calcular cuota activa con pagos válidos (>= firstDueFromStart)
           const validEntries: Array<[string, { paid: number; firstPaidDate: string | null }]> = [];
           const invalidEntries: Array<[string, { paid: number; firstPaidDate: string | null }]> = [];
@@ -951,7 +962,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 amount: expected,
                 principal_amount: 0,
                 interest_amount: expected,
-                late_fee_paid: 0,
+                late_fee_paid: lateFeePaidByDue.get(cur) || 0,
                 is_paid: isPaid,
                 is_settled: false,
                 paid_date: paidInfo?.firstPaidDate || null,
