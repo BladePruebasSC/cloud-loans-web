@@ -935,92 +935,39 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             }
           }
 
-          // ✅ INDEFINIDOS: Solo 1 cuota pendiente a la vez.
-          // Ya calculamos `fullyPaid` y `activeDue` arriba (y normalizamos invalid due_dates a activeDue).
-          const dueDates = new Set<string>(fullyPaid);
-          if (activeDue && !chargeDueDates.has(activeDue)) dueDates.add(activeDue);
-          const dueDatesSorted = Array.from(dueDates).sort((a, b) => a.localeCompare(b));
-
-          // Calculate accumulated scheduled + paid for the single active (unpaid) row.
-          // Sums all periods from firstDue to the first future period, skipping fully-paid ones
-          // (those get their own individual rows in the history).
-          const todayForAccumDate = new Date();
-          const todayForAccumIso = `${todayForAccumDate.getFullYear()}-${String(todayForAccumDate.getMonth() + 1).padStart(2, '0')}-${String(todayForAccumDate.getDate()).padStart(2, '0')}`;
+          // Mostrar cada período como fila individual según el tiempo sin pagar.
+          const todayIsoForRows = (() => {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          })();
           const fullyPaidSet = new Set(fullyPaid);
-          let accumulatedScheduled = 0;
-          let accumulatedPaidOnUnpaid = 0;
-          if (firstDueFromStart && interestPerPayment > 0.01) {
-            let cur = firstDueFromStart;
-            while (true) {
-              if (!fullyPaidSet.has(cur)) {
-                accumulatedScheduled = round2(accumulatedScheduled + getExpectedForDueDate(cur));
-                accumulatedPaidOnUnpaid = round2(accumulatedPaidOnUnpaid + round2(paidByDueDate.get(cur)?.paid || 0));
-              }
-              if (cur > todayForAccumIso) break;
-              cur = addPeriodIso(cur, freq);
-            }
-          }
-          // Ensure at least one period's interest if no periods were counted
-          if (accumulatedScheduled < 0.01 && interestPerPayment > 0.01) {
-            accumulatedScheduled = interestPerPayment;
-          }
-
           const regularInstallments: any[] = [];
-          for (let idx = 0; idx < dueDatesSorted.length; idx++) {
-            const due = dueDatesSorted[idx];
-            const isActive = due === activeDue && !fullyPaidSet.has(due);
-            const paidInfo = paidByDueDate.get(due);
-            const paid = isActive ? accumulatedPaidOnUnpaid : round2(paidInfo?.paid || 0);
-            // For the active row use accumulated total; for paid history rows use individual expected
-            const expected = isActive ? accumulatedScheduled : getExpectedForDueDate(due);
-            const remaining = round2(Math.max(0, expected - paid));
 
-            const isPaid = remaining <= 0.01 && paid > 0.01;
-            const isPartial = !isPaid && paid > 0.01 && remaining > 0.01;
+          if (firstDueFromStart) {
+            let cur = firstDueFromStart;
+            let rowNum = 1;
+            const MAX_PERIODS = 500;
 
-            regularInstallments.push({
-              id: `regular-${loanId}-${due}`,
-              loan_id: loanId,
-              installment_number: idx + 1,
-              due_date: due,
-              amount: expected,
-              principal_amount: 0,
-              interest_amount: expected,
-              late_fee_paid: 0,
-              is_paid: isPaid,
-              is_settled: false,
-              paid_date: paidInfo?.firstPaidDate || null,
-              created_at: nowIso,
-              updated_at: nowIso,
-              // extras para UI
-              expected_amount: expected,
-              paid_amount: paid,
-              remaining_amount: remaining,
-              is_partial: isPartial
-            });
-          }
+            while (rowNum <= MAX_PERIODS) {
+              // Las fechas de cargos tienen su propia fila; no generar cuota regular en esa fecha
+              if (chargeDueDates.has(cur)) {
+                if (cur > todayIsoForRows) break;
+                cur = addPeriodIso(cur, freq);
+                continue;
+              }
 
-          // ✅ Garantía de comportamiento indefinido:
-          // Siempre debe existir UNA cuota pendiente visible.
-          // Si por cualquier razón no quedó incluida la `activeDue` (o quedaron todas pagadas),
-          // agregar la siguiente cuota.
-          const hasAnyPendingRegular = regularInstallments.some((r) => !r.is_paid && (Number(r.remaining_amount || 0) > 0.01));
-
-          // 1) Asegurar que exista la cuota activa calculada
-          if (activeDue && !chargeDueDates.has(activeDue)) {
-            const existsActive = regularInstallments.some((r) => String(r.due_date).split('T')[0] === activeDue);
-            if (!existsActive) {
-              const paidInfo = paidByDueDate.get(activeDue);
-              const paid = accumulatedPaidOnUnpaid;
-              const expected = accumulatedScheduled;
+              const paidInfo = paidByDueDate.get(cur);
+              const paid = round2(paidInfo?.paid || 0);
+              const expected = getExpectedForDueDate(cur);
               const remaining = round2(Math.max(0, expected - paid));
-              const isPaid = remaining <= 0.01 && paid > 0.01;
+              const isPaid = fullyPaidSet.has(cur) || (remaining <= 0.01 && paid > 0.01);
               const isPartial = !isPaid && paid > 0.01 && remaining > 0.01;
+
               regularInstallments.push({
-                id: `regular-${loanId}-${activeDue}`,
+                id: `regular-${loanId}-${cur}`,
                 loan_id: loanId,
-                installment_number: regularInstallments.length + 1,
-                due_date: activeDue,
+                installment_number: rowNum,
+                due_date: cur,
                 amount: expected,
                 principal_amount: 0,
                 interest_amount: expected,
@@ -1035,34 +982,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 remaining_amount: remaining,
                 is_partial: isPartial
               });
-            }
-          }
 
-          // 2) Si aun así no hay pendiente (todas pagadas), agregar la siguiente
-          if (!hasAnyPendingRegular) {
-            const baseForNext = activeDue || maxFull || firstDueFromStart;
-            const nextDue = baseForNext ? addPeriodIso(baseForNext, freq) : null;
-            if (nextDue && !chargeDueDates.has(nextDue)) {
-              const expected = getExpectedForDueDate(nextDue);
-              regularInstallments.push({
-                id: `regular-${loanId}-${nextDue}`,
-                loan_id: loanId,
-                installment_number: regularInstallments.length + 1,
-                due_date: nextDue,
-                amount: expected,
-                principal_amount: 0,
-                interest_amount: expected,
-                late_fee_paid: 0,
-                is_paid: false,
-                is_settled: false,
-                paid_date: null,
-                created_at: nowIso,
-                updated_at: nowIso,
-                expected_amount: expected,
-                paid_amount: 0,
-                remaining_amount: expected,
-                is_partial: false
-              });
+              rowNum++;
+              // Parar después de incluir el primer período futuro (próxima cuota pendiente)
+              if (cur > todayIsoForRows) break;
+              cur = addPeriodIso(cur, freq);
             }
           }
 

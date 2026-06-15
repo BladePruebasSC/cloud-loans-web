@@ -116,14 +116,15 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [isLatestPayment, setIsLatestPayment] = useState(false);
+  const [hasLaterCapitalPayment, setHasLaterCapitalPayment] = useState(false);
   const [forceDelete, setForceDelete] = useState(false);
-  
-  // Verificar si este pago es el último del préstamo
+
+  // Verificar si este pago es el último del préstamo y si hay abonos a capital posteriores
   useEffect(() => {
     const checkIfLatestPayment = async () => {
       try {
         console.log('🔍 Verificando último pago para:', payment.id);
-        
+
         const { data: allPayments, error } = await supabase
           .from('payments')
           .select('id, created_at')
@@ -140,18 +141,30 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         if (allPayments && allPayments.length > 0) {
           const latestPaymentId = allPayments[0].id;
           const isLatest = latestPaymentId === payment.id;
-          
+
           console.log('🔍 Resultado:', {
             currentPaymentId: payment.id,
             latestPaymentId: latestPaymentId,
             totalPayments: allPayments.length,
             isLatest: isLatest
           });
-          
+
           setIsLatestPayment(isLatest);
         } else {
           console.log('🔍 No hay pagos encontrados');
           setIsLatestPayment(false);
+        }
+
+        // Verificar si existe algún abono a capital posterior a este pago
+        const paymentDate = (payment.payment_date as string)?.split('T')[0] || payment.payment_date;
+        if (paymentDate) {
+          const { data: laterCapital } = await supabase
+            .from('capital_payments')
+            .select('id')
+            .eq('loan_id', payment.loan_id)
+            .gt('created_at', paymentDate)
+            .limit(1);
+          setHasLaterCapitalPayment(!!(laterCapital && laterCapital.length > 0));
         }
       } catch (error) {
         console.error('🔍 Error en verificación:', error);
@@ -266,6 +279,28 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       }
 
       console.log('🗑️ Datos del préstamo obtenidos:', loanData);
+
+      // VALIDACIÓN: No permitir eliminar un pago si existe un abono a capital posterior a él.
+      // Eliminarlo alteraría el historial de saldo sobre el que se calculó ese abono.
+      const paymentDate = (payment.payment_date as string)?.split('T')[0] || payment.payment_date;
+      if (paymentDate) {
+        const { data: laterCapitalPayments, error: capCheckError } = await supabase
+          .from('capital_payments')
+          .select('id, created_at, amount')
+          .eq('loan_id', payment.loan_id)
+          .gt('created_at', paymentDate)
+          .limit(1);
+
+        if (!capCheckError && laterCapitalPayments && laterCapitalPayments.length > 0) {
+          const capDate = String(laterCapitalPayments[0].created_at).split('T')[0];
+          toast.error(
+            `No se puede eliminar este pago porque existe un abono a capital realizado el ${capDate} que depende del historial previo. Elimine primero el abono a capital.`
+          );
+          setLoading(false);
+          setShowDeleteModal(false);
+          return;
+        }
+      }
 
       // PASO 2: Eliminar el pago
       console.log('🗑️ ELIMINANDO PAGO...');
@@ -1284,8 +1319,8 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <MessageCircle className="mr-2 h-4 w-4" />
             Enviar por WhatsApp
           </DropdownMenuItem>
-          {isLatestPayment && loanStatus !== 'paid' && (
-            <DropdownMenuItem 
+          {isLatestPayment && loanStatus !== 'paid' && !hasLaterCapitalPayment && (
+            <DropdownMenuItem
               onClick={() => {
                 setForceDelete(false);
                 setShowPasswordVerification(true);

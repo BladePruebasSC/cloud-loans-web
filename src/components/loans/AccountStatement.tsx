@@ -1443,76 +1443,59 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
       }
 
-      const dueDates = new Set<string>(fullyPaidDueDates);
-      if (activeDue && !chargeDueDates.has(activeDue)) {
-        dueDates.add(activeDue);
-      }
-      const dueDatesSorted = Array.from(dueDates).sort((a, b) => a.localeCompare(b));
+      // Mostrar cada período como fila individual según el tiempo sin pagar.
+      const todayIsoForRows = (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      })();
+      const fullyPaidSet = new Set<string>(fullyPaidDueDates);
 
-      let regularRows = dueDatesSorted.map((due, idx) => {
-        const paidInfo = paymentsByDue.get(due);
-        const paidAmt = round2(paidInfo?.paid || 0);
-        // En indefinidos, la cuota “esperada” es fija por período (no se reduce por pago parcial)
-        const expected = getExpectedForDueDate(due);
-        const remaining = round2(Math.max(0, expected - paidAmt));
-        const isPaid = remaining <= 0.01 && paidAmt > 0.01;
-        const isPartial = !isPaid && paidAmt > 0.01 && remaining > 0.01;
+      const regularRows: any[] = [];
+      if (firstDueFromStart) {
+        let cur = firstDueFromStart;
+        let rowNum = 1;
+        const MAX_PERIODS = 500;
 
-        return {
-          installment: `${idx + 1}/X`,
-          rowKey: `regular-${loanData.id}-${due}`,
-          dueDate: due,
-          monthlyPayment: round2(expected),
-          principalPayment: 0,
-          interestPayment: round2(expected),
-          principalPaid: 0,
-          interestPaid: paidAmt,
-          remainingPrincipal: 0,
-          remainingInterest: remaining,
-          remainingPayment: remaining,
-          remainingBalance: remainingBalanceNow,
-          isPaid,
-          isPartial,
-          isSettled: false,
-          paidDate: (isPaid || isPartial) ? (paidInfo?.lastPaidDate || null) : null,
-          hasRealData: true,
-          paymentStatus: isPaid ? 'paid' : isPartial ? 'partial' : 'pending',
-          actualPaymentAmount: isPaid ? expected : isPartial ? paidAmt : 0
-        };
-      });
+        while (rowNum <= MAX_PERIODS) {
+          if (chargeDueDates.has(cur)) {
+            if (cur > todayIsoForRows) break;
+            cur = addPeriodIso(cur, frequency);
+            continue;
+          }
 
-      // ✅ Garantía: en indefinidos siempre debe existir UNA cuota pendiente.
-      // Si quedaron todas como 'paid', agregar la siguiente cuota para que aparezca como pendiente.
-      const hasPending = regularRows.some((r: any) => r.paymentStatus !== 'paid');
-      if (!hasPending) {
-        const baseForNext = activeDue || maxFullyPaidDue || firstDueFromStart;
-        const nextDue = baseForNext ? addPeriodIso(baseForNext, frequency) : null;
-        if (nextDue && !chargeDueDates.has(nextDue)) {
-          const expected = round2(getExpectedForDueDate(nextDue));
-          regularRows = [
-            ...regularRows,
-            {
-              installment: `${regularRows.length + 1}/X`,
-              rowKey: `regular-${loanData.id}-${nextDue}`,
-              dueDate: nextDue,
-              monthlyPayment: expected,
-              principalPayment: 0,
-              interestPayment: expected,
-              principalPaid: 0,
-              interestPaid: 0,
-              remainingPrincipal: 0,
-              remainingInterest: expected,
-              remainingPayment: expected,
-              remainingBalance: remainingBalanceNow,
-              isPaid: false,
-              isPartial: false,
-              isSettled: false,
-              paidDate: null,
-              hasRealData: true,
-              paymentStatus: 'pending',
-              actualPaymentAmount: 0
-            }
-          ];
+          const paidInfo = paymentsByDue.get(cur);
+          const paidAmt = round2(paidInfo?.paid || 0);
+          const expected = getExpectedForDueDate(cur);
+          const remaining = round2(Math.max(0, expected - paidAmt));
+          const isPaid = fullyPaidSet.has(cur) || (remaining <= 0.01 && paidAmt > 0.01);
+          const isPartial = !isPaid && paidAmt > 0.01 && remaining > 0.01;
+
+          regularRows.push({
+            installment: `${rowNum}/X`,
+            rowKey: `regular-${loanData.id}-${cur}`,
+            dueDate: cur,
+            monthlyPayment: round2(expected),
+            principalPayment: 0,
+            interestPayment: round2(expected),
+            principalPaid: 0,
+            interestPaid: paidAmt,
+            remainingPrincipal: 0,
+            remainingInterest: remaining,
+            remainingPayment: remaining,
+            remainingBalance: remainingBalanceNow,
+            isPaid,
+            isPartial,
+            isSettled: false,
+            paidDate: (isPaid || isPartial) ? (paidInfo?.lastPaidDate || null) : null,
+            hasRealData: true,
+            paymentStatus: isPaid ? 'paid' : isPartial ? 'partial' : 'pending',
+            actualPaymentAmount: isPaid ? expected : isPartial ? paidAmt : 0
+          });
+
+          rowNum++;
+          // Parar después de incluir el primer período futuro (próxima cuota pendiente)
+          if (cur > todayIsoForRows) break;
+          cur = addPeriodIso(cur, frequency);
         }
       }
 
