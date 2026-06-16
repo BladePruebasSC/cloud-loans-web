@@ -177,7 +177,26 @@ export const getLateFeeBreakdownFromInstallments = async (
         total_amount: installment.total_amount,
         hasAssignedPayment: Array.from(paymentToInstallmentMap.values()).includes(installment.installment_number)
       });
-      
+
+      // Para préstamos indefinidos: confiar en next_payment_date como fuente de verdad.
+      // Cualquier cuota anterior a next_payment_date ya fue cubierta por pagos reales.
+      if (isIndefinite && loan.next_payment_date) {
+        const instDue = String(installment.due_date || '').split('T')[0];
+        const nextPay = loan.next_payment_date.split('T')[0];
+        if (instDue < nextPay) {
+          lateFeePaidSurplusPool += installment.late_fee_paid || 0;
+          breakdown.push({
+            installment: installment.installment_number,
+            dueDate: instDue,
+            daysOverdue: 0,
+            principal: 0,
+            lateFee: 0,
+            isPaid: true
+          });
+          continue;
+        }
+      }
+
       if (isActuallyPaid) {
         // Si está pagada, mostrar 0 días y 0 mora
         daysOverdue = 0;
@@ -366,9 +385,14 @@ export const getLateFeeBreakdownFromInstallments = async (
         const existingInstallment = breakdown.find(item => item.dueDate === dueDateStr);
         
         if (!existingInstallment) {
-          // CORRECCIÓN: Verificar si esta cuota está pagada basándose en el número de cuotas pagadas
-          // La cuota 1 es la primera, así que si se pagaron 4 cuotas, las cuotas 1-4 están pagadas
-          const isPaid = isIndefinite && installmentNum <= paidInstallmentsCount;
+          // CORRECCIÓN: Verificar si esta cuota está pagada.
+          // Primero: si la fecha < next_payment_date, está pagada (fuente de verdad: payments table)
+          // Segundo: fallback con paidInstallmentsCount (para cuando next_payment_date no cubre el período)
+          const nextPayStr = loan.next_payment_date?.split('T')[0] || '';
+          const isPaid = isIndefinite && (
+            (nextPayStr && dueDateStr < nextPayStr) ||
+            installmentNum <= paidInstallmentsCount
+          );
           
           const daysSinceDue = Math.floor((calculationDate.getTime() - installmentDate.getTime()) / (1000 * 60 * 60 * 24));
           const daysOverdueForInstallment = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));

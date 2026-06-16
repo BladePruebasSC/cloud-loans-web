@@ -649,7 +649,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       // Esto asegura que cuando se elimina un pago, las cuotas se actualicen correctamente
       const { data: allPaymentsForStatus, error: paymentsStatusError } = await supabase
         .from('payments')
-        .select('id, principal_amount, interest_amount, payment_date, amount, due_date')
+        .select('id, principal_amount, interest_amount, payment_date, amount, due_date, late_fee')
         .eq('loan_id', loanId)
         .order('payment_date', { ascending: true });
 

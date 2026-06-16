@@ -1510,12 +1510,25 @@ export const LoansModule = () => {
       const currentDate = getCurrentDateInSantoDomingo();
       let totalCurrentLateFee = 0;
 
+      const isLoanIndefinite = String(loan.amortization_type || '').toLowerCase() === 'indefinite';
+      // Para indefinidos: usar la fecha calculada dinámicamente (no el campo estale de BD)
+      const effectiveNextPayDate = isLoanIndefinite
+        ? (nextPaymentDates[loan.id] || loan.next_payment_date || '')
+        : '';
+
       installments.forEach((installment: any) => {
+        // Para indefinidos: cuotas anteriores a effectiveNextPayDate ya fueron pagadas
+        if (isLoanIndefinite && effectiveNextPayDate) {
+          const instDue = String(installment.due_date || '').split('T')[0];
+          const nextPay = effectiveNextPayDate.split('T')[0];
+          if (instDue < nextPay) return;
+        }
+
         // Parsear la fecha de vencimiento como fecha local para evitar problemas de zona horaria
         const [year, month, day] = installment.due_date.split('-').map(Number);
         const dueDate = new Date(year, month - 1, day);
         const daysOverdue = Math.max(0, Math.floor((currentDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
-        
+
         // Solo calcular mora para cuotas vencidas y no pagadas
         if (daysOverdue > 0 && !installment.is_paid) {
           const gracePeriod = loan.grace_period_days || 0;
@@ -1676,12 +1689,18 @@ export const LoansModule = () => {
     return loans.map(l => `${l.id}-${l.start_date}-${l.next_payment_date}`).join(',');
   }, [loans?.map(l => `${l.id}-${l.start_date}-${l.next_payment_date}`).join(',')]);
 
+  // Firma de fechas calculadas para préstamos indefinidos (evita stale closure en la mora)
+  const indefiniteNextPaySignature = (loans || [])
+    .filter(l => String((l as any).amortization_type || '').toLowerCase() === 'indefinite' && l.late_fee_enabled)
+    .map(l => `${l.id}:${nextPaymentDates[l.id] || ''}`)
+    .join(',');
+
   // Memoizar función para evitar recreaciones
   const updateDynamicLateFeesMemo = useCallback(async () => {
     if (!loans || loans.length === 0) return;
-    
+
     const newLateFees: {[key: string]: number} = {};
-    
+
     // Solo calcular para préstamos que tienen mora habilitada
     const loansWithLateFee = loans.filter(loan => loan.late_fee_enabled);
     
@@ -1703,7 +1722,7 @@ export const LoansModule = () => {
     });
     
     setDynamicLateFees(newLateFees);
-  }, [loans?.length]);
+  }, [loans?.length, indefiniteNextPaySignature]);
 
   const updatePendingInterestForIndefiniteMemo = useCallback(async () => {
     if (!loans || loans.length === 0) {
