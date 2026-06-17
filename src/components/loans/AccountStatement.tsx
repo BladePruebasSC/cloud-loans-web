@@ -451,7 +451,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           // Calcular cuántas cuotas se han pagado basándose en los pagos
           // Para préstamos indefinidos, acumular interés pagado para manejar múltiples pagos
           const periodRate = (loanData.interest_rate || 0) / 100;
-          const interestPerPayment = (loanData.amount || 0) * periodRate;
+          // Usar monthly_payment si está disponible: ya refleja la frecuencia de pago correcta.
+          // Fallback a capital×tasa mensual solo si monthly_payment no está definido.
+          const interestPerPayment = (loanData.monthly_payment && loanData.monthly_payment > 0)
+            ? Number(loanData.monthly_payment)
+            : (loanData.amount || 0) * periodRate;
           let paidInstallmentsCount = 0;
           if (allPayments && interestPerPayment > 0) {
             // CORRECCIÓN: Acumular interés pagado para contar correctamente cuando hay múltiples pagos
@@ -1163,6 +1167,29 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         return st !== 'failed';
       });
 
+      // Monto por cuota correcto para la frecuencia actual (monthly_payment ya incluye el factor quincenal/semanal)
+      const currentPeriodPayment = (loanData.monthly_payment && loanData.monthly_payment > 0)
+        ? Number(loanData.monthly_payment)
+        : round2(principal * (interestRate / 100));
+
+      // Obtener total_amount de BD para cada cuota (el handler de abono a capital los actualiza)
+      // Solo se guarda si el monto no supera el esperado actual: si lo supera es el monto mensual
+      // incorrecto que se guardó para un préstamo quincenal/semanal y debe ignorarse.
+      const { data: dbInstallmentsForExp } = await supabase
+        .from('installments')
+        .select('due_date, total_amount, interest_amount, principal_amount')
+        .eq('loan_id', loanData.id);
+      const dbAmountByDueDateForSchedule = new Map<string, number>();
+      for (const inst of dbInstallmentsForExp || []) {
+        const isCh = Math.abs(Number((inst as any).interest_amount || 0)) < 0.01 && Number((inst as any).principal_amount || 0) > 0;
+        if (isCh) continue;
+        const due = (inst as any).due_date?.split('T')[0];
+        const amt = Number((inst as any).total_amount || 0);
+        if (due && amt > 0.01 && amt <= currentPeriodPayment * 1.05) {
+          dbAmountByDueDateForSchedule.set(due, amt);
+        }
+      }
+
       // Para indefinidos: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
       // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
       const addPeriodForCap = (iso: string, f: string) => {
@@ -1185,16 +1212,23 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         .order('created_at', { ascending: true });
       const frequencyForCap = String((loanData as any)?.payment_frequency || 'monthly');
       const getExpectedForDueDate = (dueDate: string): number => {
-        if (!dueDate) return round2(principal * (interestRate / 100));
-        if (!capitalPaymentsForSchedule || capitalPaymentsForSchedule.length === 0) return round2(principal * (interestRate / 100));
+        if (!dueDate) return currentPeriodPayment;
+        // Priorizar total_amount de BD si fue actualizado por abono a capital
+        // (ya filtrado: solo valores <= currentPeriodPayment * 1.05)
+        const dbAmt = dbAmountByDueDateForSchedule.get(dueDate);
+        if (dbAmt && dbAmt > 0.01) return dbAmt;
+        if (!capitalPaymentsForSchedule || capitalPaymentsForSchedule.length === 0) return currentPeriodPayment;
+        // rateRatio = currentPeriodPayment / capital_actual: ya incorpora la frecuencia.
+        // capital_before * rateRatio devuelve el monto correcto para la frecuencia del préstamo.
+        const rateRatioForSchedule = principal > 0.01 ? currentPeriodPayment / principal : (interestRate / 100);
         for (const cp of capitalPaymentsForSchedule) {
           const createdDate = (cp as any).created_at ? String((cp as any).created_at).split('T')[0] : null;
           if (!createdDate) continue;
           const cutoff = addPeriodForCap(createdDate, frequencyForCap);
-          if (dueDate <= cutoff) return round2(Number((cp as any).capital_before) * (interestRate / 100));
+          if (dueDate <= cutoff) return round2(Number((cp as any).capital_before) * rateRatioForSchedule);
         }
         const last = capitalPaymentsForSchedule[capitalPaymentsForSchedule.length - 1];
-        return round2(Number((last as any).capital_after) * (interestRate / 100));
+        return round2(Number((last as any).capital_after) * rateRatioForSchedule);
       };
 
       const dueKeyOf = (d: any) => (String(d || '').split('T')[0] || '').trim() || null;

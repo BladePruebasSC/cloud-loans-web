@@ -2751,7 +2751,12 @@ export const LoansModule = () => {
                             <div className="text-2xl font-bold text-blue-700 mb-1">
                               ${formatCurrencyNumber(Math.round(loan.monthly_payment))}
                             </div>
-                            <div className="text-sm text-blue-600 font-medium">Cuota Mensual</div>
+                            <div className="text-sm text-blue-600 font-medium">
+                              {loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal'
+                                : loan.payment_frequency === 'weekly' ? 'Cuota Semanal'
+                                : loan.payment_frequency === 'daily' ? 'Cuota Diaria'
+                                : 'Cuota Mensual'}
+                            </div>
                           </div>
                         </div>
 
@@ -3508,7 +3513,12 @@ export const LoansModule = () => {
                                    )}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
-                                   <span className="font-medium text-xs sm:text-sm">Cuota Mensual:</span> 
+                                   <span className="font-medium text-xs sm:text-sm">
+                                     {loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal:'
+                                       : loan.payment_frequency === 'weekly' ? 'Cuota Semanal:'
+                                       : loan.payment_frequency === 'daily' ? 'Cuota Diaria:'
+                                       : 'Cuota Mensual:'}
+                                   </span>
                                    <span className="text-xs sm:text-sm">${formatCurrencyNumber(loan.monthly_payment)}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">

@@ -212,7 +212,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       if (installmentsResult.error) throw installmentsResult.error;
 
       let data = installmentsResult.data || [];
-      
+      // Mapa due_date → total_amount original de BD (se popula en el loop de indefinidos)
+      // Necesario para que getExpectedForDueDate use el monto actualizado por abono a capital
+      const dbAmountByDueDate = new Map<string, number>();
+
       // Para préstamos indefinidos, separar cargos de cuotas regulares
       let chargesFromDB: typeof data = [];
       let regularInstallmentsFromDB: typeof data = [];
@@ -482,7 +485,21 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             // Buscar cuota regular en BD (ignorar cargos: tienen fila propia y due_date distinto)
             const rawExisting = data.find(inst => inst.installment_number === i);
             const existingInstallment = rawExisting && isChargeInstallment(rawExisting) ? null : rawExisting;
-            
+
+            // Guardar total_amount original de BD para esta fecha calculada.
+            // El handler de abono a capital actualiza total_amount en DB pero dynamicInstallments
+            // lo sobreescribe con scheduledInterest; este mapa permite a getExpectedForDueDate
+            // usar el monto actualizado y así reconocer pagos parciales como completos.
+            if (existingInstallment) {
+              const dbAmt = (existingInstallment as any).total_amount || existingInstallment.amount || 0;
+              // Solo usar total_amount de BD si no excede el monto esperado actual (con pequeña tolerancia).
+              // Si lo excede, significa que la BD tiene el monto mensual (incorrecto para préstamos
+              // quincenal/semanal) y debe ignorarse para usar el monthly_payment correcto.
+              if (dbAmt > 0.01 && dbAmt <= interestPerPayment * 1.05) {
+                dbAmountByDueDate.set(formattedDate, dbAmt);
+              }
+            }
+
             // CORRECCIÓN: Para préstamos indefinidos, siempre usar la fecha calculada
             // para evitar usar fechas incorrectas guardadas en la BD
             const finalDueDate = formattedDate; // Siempre usar la fecha calculada correctamente
@@ -764,16 +781,26 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           };
           const getExpectedForDueDate = (dueDate: string): number => {
             if (!dueDate) return interestPerPayment;
+            // Priorizar el total_amount de BD si fue actualizado por abono a capital
+            // (ya filtrado en la carga: solo se guardaron valores <= interestPerPayment * 1.05)
+            const dbAmt = dbAmountByDueDate.get(dueDate);
+            if (dbAmt && dbAmt > 0.01) return dbAmt;
             if (!capitalPaymentsDataRaw || capitalPaymentsDataRaw.length === 0) return interestPerPayment;
+            // Relación tasa/capital actual, ya ajustada a la frecuencia (interestPerPayment = monthly_payment).
+            // Ej: quincenal 5%/año → interestPerPayment=$1,235; amount=$49,400 → ratio=0.025
+            // Así capital_before*ratio da el monto correcto para la frecuencia, no el mensual crudo.
+            const rateRatio = (loanInfo?.amount && Number(loanInfo.amount) > 0.01)
+              ? interestPerPayment / Number(loanInfo.amount)
+              : (Number(loanInfo?.interest_rate || 0) / 100);
             const freq = String(loanInfo?.payment_frequency || 'monthly');
             for (const cp of capitalPaymentsDataRaw) {
               const createdDate = (cp as any).created_at ? String((cp as any).created_at).split('T')[0] : null;
               if (!createdDate) continue;
               const cutoff = addPeriodIsoForCap(createdDate, freq);
-              if (dueDate <= cutoff) return round2(Number((cp as any).capital_before) * (Number(loanInfo?.interest_rate || 0) / 100));
+              if (dueDate <= cutoff) return round2(Number((cp as any).capital_before) * rateRatio);
             }
             const last = capitalPaymentsDataRaw[capitalPaymentsDataRaw.length - 1];
-            return round2(Number((last as any).capital_after) * (Number(loanInfo?.interest_rate || 0) / 100));
+            return round2(Number((last as any).capital_after) * rateRatio);
           };
 
           // Conjunto de due_dates de cargos (evita mezclar pagos de cargos con cuotas regulares)
