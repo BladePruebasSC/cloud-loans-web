@@ -38,12 +38,15 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 
 interface LoanDetailsViewProps {
   loanId: string;
   isOpen: boolean;
   onClose: () => void;
   onRefresh?: () => void;
+  /** Fecha de próximo pago calculada dinámicamente (pasa desde LoansModule para que coincida con la tarjeta) */
+  overrideNextPaymentDate?: string | null;
 }
 
 interface LoanDetails {
@@ -81,7 +84,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   loanId,
   isOpen,
   onClose,
-  onRefresh
+  onRefresh,
+  overrideNextPaymentDate,
 }) => {
   const [loan, setLoan] = useState<LoanDetails | null>(null);
   const [loading, setLoading] = useState(true);
@@ -119,7 +123,9 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const navigate = useNavigate();
   const { user, companyId } = useAuth();
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
-  
+  /** Mora calculada con getLateFeeBreakdownFromInstallments (misma lógica que la tarjeta/LateFeeInfo) */
+  const [breakdownLateFee, setBreakdownLateFee] = useState<number | null>(null);
+
   // Estados para generar documentos
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   const [availableDocuments, setAvailableDocuments] = useState<string[]>([]);
@@ -136,6 +142,35 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       fetchDocuments();
     }
   }, [isOpen, loanId]);
+
+  // Calcular mora usando la misma función que LateFeeInfo (getLateFeeBreakdownFromInstallments)
+  useEffect(() => {
+    if (!loan || !loan.late_fee_enabled || loan.status === 'paid') {
+      setBreakdownLateFee(null);
+      return;
+    }
+    const effectiveNextPay = overrideNextPaymentDate ?? nextPaymentDate ?? loan.next_payment_date?.split('T')[0] ?? '';
+    const loanData = {
+      id: loan.id,
+      remaining_balance: loan.remaining_balance,
+      next_payment_date: effectiveNextPay,
+      late_fee_rate: loan.late_fee_rate,
+      grace_period_days: loan.grace_period_days,
+      max_late_fee: loan.max_late_fee || 0,
+      late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
+      late_fee_enabled: loan.late_fee_enabled,
+      amount: loan.amount,
+      term: loan.term_months,
+      payment_frequency: loan.payment_frequency,
+      interest_rate: loan.interest_rate,
+      monthly_payment: loan.monthly_payment,
+      start_date: loan.start_date,
+      amortization_type: loan.amortization_type,
+    };
+    getLateFeeBreakdownFromInstallments(loan.id, loanData as any)
+      .then(result => setBreakdownLateFee(result.totalLateFee))
+      .catch(() => setBreakdownLateFee(null));
+  }, [loan?.id, loan?.late_fee_enabled, loan?.status, overrideNextPaymentDate, nextPaymentDate]);
 
   // Obtener/actualizar abonos a capital (debe refrescarse tras cada abono)
   const fetchCapitalPayments = async () => {
@@ -437,10 +472,16 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
             : (Number(loan.amount || 0) * (Number(loan.interest_rate || 0) / 100));
         const tol = 0.05;
 
+        const freq = String(loan.payment_frequency || 'monthly');
+        const startIso = String(loan.start_date).split('T')[0];
+        const firstDueFromStart = addPeriodIso(startIso, freq);
+
         const paidByDue = new Map<string, number>();
         for (const p of (payRows || []) as any[]) {
           const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
           if (!due) continue;
+          // Ignorar pagos con due_date antes del primer vencimiento real (ej. pagos de inicio anticipados)
+          if (due < firstDueFromStart) continue;
           const interest = Number(p?.interest_amount || 0) || 0;
           const amt = Number(p?.amount || 0) || 0;
           const paidValue = interest > 0.01 ? interest : (amt > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
@@ -460,9 +501,6 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         }
         const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
 
-        const freq = String(loan.payment_frequency || 'monthly');
-        const startIso = String(loan.start_date).split('T')[0];
-        const firstDueFromStart = addPeriodIso(startIso, freq);
         const next = partialDue || (maxFull ? addPeriodIso(maxFull, freq) : firstDueFromStart);
         setNextPaymentDate(next);
         return;
@@ -1171,58 +1209,63 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   
   // Si el préstamo está saldado, la mora debe ser 0
   const isLoanSettled = loan.status === 'paid';
-  // CORRECCIÓN: Calcular la mora actual si está en 0 o no está disponible
-  let effectiveLateFee = isLoanSettled ? 0 : (loan.current_late_fee || 0);
-  
-  // Si la mora está habilitada pero el valor es 0, intentar calcularla desde las cuotas
-  if (!isLoanSettled && loan.late_fee_enabled && effectiveLateFee === 0 && installments.length > 0) {
-    const today = getCurrentDateInSantoDomingo();
-    let calculatedLateFee = 0;
-    
-    installments.forEach((installment: any) => {
-      if (installment.is_paid) return;
-      
-      // Parsear la fecha de vencimiento como fecha local para evitar problemas de zona horaria
-      const [year, month, day] = installment.due_date.split('-').map(Number);
-      const dueDate = new Date(year, month - 1, day);
-      const daysOverdue = Math.max(0, Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
-      const gracePeriod = loan.grace_period_days || 0;
-      const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
-      
-      if (effectiveDaysOverdue > 0) {
-        // Para préstamos indefinidos, usar interest_amount o total_amount
-        const isIndefinite = loan.amortization_type === 'indefinite';
-        const baseAmount = isIndefinite && installment.principal_amount === 0
-          ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
-          : (installment.principal_amount || installment.total_amount || installment.amount || 0);
-        const lateFeeRate = loan.late_fee_rate || 0;
-        
-        let lateFee = 0;
-        switch (loan.late_fee_calculation_type) {
-          case 'daily':
-            lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
-            break;
-          case 'monthly':
-            const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
-            lateFee = (baseAmount * lateFeeRate / 100) * monthsOverdue;
-            break;
-          case 'compound':
-            lateFee = baseAmount * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
-            break;
-          default:
-            lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
+  // Usar la mora del breakdown (misma lógica que LateFeeInfo/tarjeta) cuando esté disponible.
+  // Si no, usar current_late_fee del DB; si está en 0, calcular desde cuotas como fallback.
+  let effectiveLateFee: number;
+  if (isLoanSettled) {
+    effectiveLateFee = 0;
+  } else if (breakdownLateFee !== null) {
+    effectiveLateFee = breakdownLateFee;
+  } else {
+    effectiveLateFee = loan.current_late_fee || 0;
+
+    // Fallback: si current_late_fee es 0, calcular desde cuotas
+    if (!isLoanSettled && loan.late_fee_enabled && effectiveLateFee === 0 && installments.length > 0) {
+      const today = getCurrentDateInSantoDomingo();
+      let calculatedLateFee = 0;
+
+      installments.forEach((installment: any) => {
+        if (installment.is_paid) return;
+
+        const [year, month, day] = installment.due_date.split('-').map(Number);
+        const dueDate = new Date(year, month - 1, day);
+        const daysOverdue = Math.max(0, Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
+        const gracePeriod = loan.grace_period_days || 0;
+        const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
+
+        if (effectiveDaysOverdue > 0) {
+          const isIndefiniteLoanFb = loan.amortization_type === 'indefinite';
+          const baseAmount = isIndefiniteLoanFb && installment.principal_amount === 0
+            ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
+            : (installment.principal_amount || installment.total_amount || installment.amount || 0);
+          const lateFeeRate = loan.late_fee_rate || 0;
+
+          let lateFee = 0;
+          switch (loan.late_fee_calculation_type) {
+            case 'daily':
+              lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
+              break;
+            case 'monthly':
+              const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
+              lateFee = (baseAmount * lateFeeRate / 100) * monthsOverdue;
+              break;
+            case 'compound':
+              lateFee = baseAmount * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
+              break;
+            default:
+              lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
+          }
+
+          if (loan.max_late_fee && loan.max_late_fee > 0) {
+            lateFee = Math.min(lateFee, loan.max_late_fee);
+          }
+
+          calculatedLateFee += Math.max(0, lateFee - (installment.late_fee_paid || 0));
         }
-        
-        if (loan.max_late_fee && loan.max_late_fee > 0) {
-          lateFee = Math.min(lateFee, loan.max_late_fee);
-        }
-        
-        const remainingLateFee = Math.max(0, lateFee - (installment.late_fee_paid || 0));
-        calculatedLateFee += remainingLateFee;
-      }
-    });
-    
-    effectiveLateFee = Math.round(calculatedLateFee * 100) / 100;
+      });
+
+      effectiveLateFee = Math.round(calculatedLateFee * 100) / 100;
+    }
   }
   
   // Total pendiente = balance restante (incluye cargos) + mora
@@ -1407,7 +1450,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                           {(loan.status === 'paid' || remainingBalance === 0) 
                             ? 'N/A' 
                             : (() => {
-                                const nextDue = computedNextPaymentDate ?? nextPaymentDate ?? loan.next_payment_date?.split('T')[0];
+                                const nextDue = overrideNextPaymentDate ?? computedNextPaymentDate ?? nextPaymentDate ?? loan.next_payment_date?.split('T')[0];
                                 return nextDue ? formatDateStringForSantoDomingo(nextDue) : 'N/A';
                               })()}
                         </div>

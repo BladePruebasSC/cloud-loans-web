@@ -815,23 +815,37 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   // Calcular cuotas vencidas para validación de abono a capital
   const overdueInstallmentsCount = useMemo(() => {
     if (form.watch('update_type') !== 'capital_payment') return 0;
-    
+
     const today = getCurrentDateInSantoDomingo();
     const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
+    const gracePeriod = (loan as any).grace_period_days || 0;
+
+    // Para préstamos indefinidos, las cuotas vencidas pueden ser dinámicas (no en DB).
+    // Se verifica directamente si next_payment_date ya pasó el período de gracia.
+    if (isIndefiniteLoan) {
+      const effectiveNext = displayNextPaymentDate ?? loan.next_payment_date ?? '';
+      if (effectiveNext) {
+        const [ny, nm, nd] = effectiveNext.split('T')[0].split('-').map(Number);
+        const nextDate = new Date(ny, nm - 1, nd);
+        const daysPast = Math.floor((todayDateOnly.getTime() - nextDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (daysPast > gracePeriod) return 1; // Al menos una cuota vencida
+      }
+    }
+
     return installments.filter(inst => {
       if (inst.is_paid) return false;
-      
+
       const dueDateStr = inst.due_date?.split('T')[0];
       if (!dueDateStr) return false;
-      
+
       const [dueYear, dueMonth, dueDay] = dueDateStr.split('-').map(Number);
       const dueDate = new Date(dueYear, dueMonth - 1, dueDay);
       const dueDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-      
-      return dueDateOnly < todayDateOnly;
+      const daysPast = Math.floor((todayDateOnly.getTime() - dueDateOnly.getTime()) / (1000 * 60 * 60 * 24));
+
+      return daysPast > gracePeriod;
     }).length;
-  }, [form.watch('update_type'), installments]);
+  }, [form.watch('update_type'), installments, isIndefiniteLoan, displayNextPaymentDate, loan]);
 
   // Función para calcular las cuotas futuras después del abono
   const calculatePreviewInstallments = () => {
@@ -3344,12 +3358,27 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               console.log(`✅ Eliminando mora: ${lateFeeToRemove} de ${currentLateFeeValue}, nueva mora: ${newLateFee}`);
             } else {
               // Calcular la mora total de todas las cuotas pendientes para distribuir proporcionalmente
-              const currentDate = new Date();
+              const currentDate = getCurrentDateInSantoDomingo();
               let totalCalculatedLateFee = 0;
               const installmentLateFees: Array<{ id: string; lateFee: number }> = [];
-              
+
+              // Para indefinidos: usar la fecha efectiva de próximo pago (igual que getLateFeeBreakdownFromInstallments)
+              // para saber qué cuotas ignorar (las que ya pasaron y están cubiertas por pagos anteriores).
+              const effectiveNextPayDateForWaiver = isIndefiniteLoan
+                ? (displayNextPaymentDate ?? loan.next_payment_date ?? '')
+                : '';
+
               installments.forEach((installment: any) => {
-                const dueDate = new Date(installment.due_date);
+                // Para indefinidos: ignorar cuotas con due_date < next_payment_date (ya cubiertas).
+                // Esto garantiza distribuir solo en las cuotas que getLateFeeBreakdownFromInstallments incluye.
+                if (isIndefiniteLoan && effectiveNextPayDateForWaiver) {
+                  const instDue = String(installment.due_date || '').split('T')[0];
+                  const nextPay = effectiveNextPayDateForWaiver.split('T')[0];
+                  if (instDue < nextPay) return;
+                }
+
+                const [dy, dm, dd] = String(installment.due_date).split('T')[0].split('-').map(Number);
+                const dueDate = new Date(dy, dm - 1, dd);
                 const daysOverdue = Math.max(0, Math.floor((currentDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
                 
                 if (daysOverdue > 0) {
@@ -3459,26 +3488,37 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }
 
             // Validar que no haya cuotas vencidas antes de permitir el abono a capital
-            const today = getCurrentDateInSantoDomingo();
-            const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-            
-            const overdueInstallments = installments.filter(inst => {
-              if (inst.is_paid) return false; // Excluir cuotas pagadas
-              
-              const dueDateStr = inst.due_date?.split('T')[0];
-              if (!dueDateStr) return false;
-              
-              const [dueYear, dueMonth, dueDay] = dueDateStr.split('-').map(Number);
-              const dueDate = new Date(dueYear, dueMonth - 1, dueDay);
-              const dueDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-              
-              return dueDateOnly < todayDateOnly;
-            });
+            {
+              const todayCheck = getCurrentDateInSantoDomingo();
+              const todayOnly = new Date(todayCheck.getFullYear(), todayCheck.getMonth(), todayCheck.getDate());
+              const graceCheck = (loan as any).grace_period_days || 0;
+              let hasOverdue = false;
 
-            if (overdueInstallments.length > 0) {
-              toast.error(`No se puede realizar un abono a capital mientras haya cuotas vencidas. Tiene ${overdueInstallments.length} cuota(s) vencida(s). Por favor, pague las cuotas vencidas primero.`);
-              setLoading(false);
-              return;
+              if (isIndefiniteLoan) {
+                const nextEff = displayNextPaymentDate ?? loan.next_payment_date ?? '';
+                if (nextEff) {
+                  const [ny, nm, nd] = nextEff.split('T')[0].split('-').map(Number);
+                  const nextD = new Date(ny, nm - 1, nd);
+                  const days = Math.floor((todayOnly.getTime() - nextD.getTime()) / (1000 * 60 * 60 * 24));
+                  if (days > graceCheck) hasOverdue = true;
+                }
+              } else {
+                hasOverdue = installments.some(inst => {
+                  if (inst.is_paid) return false;
+                  const dueDateStr = inst.due_date?.split('T')[0];
+                  if (!dueDateStr) return false;
+                  const [dy2, dm2, dd2] = dueDateStr.split('-').map(Number);
+                  const dD = new Date(dy2, dm2 - 1, dd2);
+                  const days = Math.floor((todayOnly.getTime() - dD.getTime()) / (1000 * 60 * 60 * 24));
+                  return days > graceCheck;
+                });
+              }
+
+              if (hasOverdue) {
+                toast.error('No se puede realizar un abono a capital mientras haya cuotas vencidas. Pague las cuotas vencidas primero.');
+                setLoading(false);
+                return;
+              }
             }
 
             const keepInstallments = data.keep_installments || false;

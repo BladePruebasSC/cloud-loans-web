@@ -4572,6 +4572,7 @@ export const LoansModule = () => {
             setSelectedLoan(null);
           }}
           onRefresh={refetch}
+          overrideNextPaymentDate={nextPaymentDates[(selectedLoan as any).id] ?? null}
         />
       )}
 
