@@ -2887,7 +2887,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               });
 
               // Calcular el monto de capital e interés para cada cuota nueva
-              const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+              // La tasa es mensual; ajustar por frecuencia para quincenal/semanal/diario
+              const freqFactorExt = frequency === 'biweekly' ? 0.5
+                : frequency === 'weekly' ? 0.25
+                : frequency === 'daily' ? 1 / 30
+                : 1;
+              const fixedInterestPerPayment = ((loan.amount * loan.interest_rate) / 100) * freqFactorExt;
               const principalPerPayment = calculatedValues.newPayment - fixedInterestPerPayment;
 
               console.log('🔍 LoanUpdateForm: Distribución por cuota:', {

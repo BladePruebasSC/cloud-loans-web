@@ -874,7 +874,14 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
     
     // Calcular cuotas según el tipo de amortización
     let principalPerPayment, interestPerPayment;
-    
+
+    // La tasa guardada en interest_rate es mensual. Para frecuencias distintas a mensual
+    // se divide por el número de periodos por mes (quincenal=2, semanal=4, diario=30).
+    const freqFactor = loan.payment_frequency === 'biweekly' ? 0.5
+      : loan.payment_frequency === 'weekly' ? 0.25
+      : loan.payment_frequency === 'daily' ? 1 / 30
+      : 1;
+
     if (loan.amortization_type === 'french') {
       // Amortización francesa - cuota fija, capital creciente, interés decreciente
       const periodRate = loan.interest_rate / 100;
@@ -890,9 +897,9 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
         interestPerPayment = 0;
       }
     } else {
-      // Amortización simple (por defecto)
-      principalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
-      interestPerPayment = loan.amount * loan.interest_rate / 100;
+      // Amortización simple (por defecto): aplicar factor de frecuencia a la tasa mensual
+      interestPerPayment = (loan.amount * loan.interest_rate / 100) * freqFactor;
+      principalPerPayment = loan.monthly_payment - interestPerPayment;
     }
     
     // Generar cada cuota
@@ -900,9 +907,11 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
     
     // Para préstamos con plazo indefinido, generar solo una cuota inicial
     if (loan.amortization_type === 'indefinite') {
-      // Solo intereses, sin capital
-      const periodRate = loan.interest_rate / 100;
-      const interestPerPayment = loan.amount * periodRate;
+      // Solo intereses, sin capital. Usar monthly_payment si ya fue calculado correctamente.
+      const periodRate = (loan.interest_rate / 100) * freqFactor;
+      const interestPerPayment = (loan.monthly_payment && loan.monthly_payment > 0)
+        ? loan.monthly_payment
+        : loan.amount * periodRate;
       
       // Formatear fecha correctamente usando la fecha local (no UTC) para evitar problemas de zona horaria
       const formattedDate = `${baseYear}-${String(baseMonth).padStart(2, '0')}-${String(baseDay).padStart(2, '0')}`;
@@ -958,11 +967,15 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
         
         if (loan.amortization_type === 'french') {
           // Amortización francesa - cuota fija, capital creciente, interés decreciente
-          const periodRate = loan.interest_rate / 100;
+          // periodRate ajustado a la frecuencia real (la tasa guardada es mensual)
+          const periodRate = (loan.interest_rate / 100) * freqFactor;
           const totalPeriods = loan.term_months;
-          
+
           if (periodRate > 0) {
-            const fixedPayment = loan.amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
+            // Usar monthly_payment como cuota fija si ya se calculó correctamente en el preview
+            const fixedPayment = (loan.monthly_payment && loan.monthly_payment > 0)
+              ? loan.monthly_payment
+              : loan.amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
             currentInterestAmount = remainingBalance * periodRate;
             currentPrincipalAmount = fixedPayment - currentInterestAmount;
             currentTotalAmount = fixedPayment;

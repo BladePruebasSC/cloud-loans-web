@@ -761,7 +761,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           // SEGUNDO: En indefinidos, mostrar 1 fila por cuota regular (por due_date).
           // Esto permite que una cuota de RD$500 pagada parcialmente se vea como “Parcial” y “Falta RD$250.00”.
           const round2 = (v: number) => Math.round(v * 100) / 100;
-          const interestPerPayment = round2(((loanInfo?.amount || 0) * (loanInfo?.interest_rate || 0)) / 100);
+          // Usar monthly_payment si disponible: ya incorpora el factor de frecuencia (quincenal, semanal…).
+          // Fallback a capital×tasa_mensual solo si monthly_payment no está definido.
+          const interestPerPayment = (loanInfo?.monthly_payment && loanInfo.monthly_payment > 0)
+            ? round2(Number(loanInfo.monthly_payment))
+            : round2(((loanInfo?.amount || 0) * (loanInfo?.interest_rate || 0)) / 100);
           const nowIso = new Date().toISOString();
 
           // Monto de cuota vigente: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
