@@ -1848,7 +1848,12 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                       <div className="font-semibold">RD${formatCurrencyNumber(totalPending)}</div>
                     </div>
                     <div>
-                      <span className="text-gray-600">Cuota Mensual:</span>
+                      <span className="text-gray-600">
+                        {loanInfo.payment_frequency === 'biweekly' ? 'Cuota Quincenal:'
+                          : loanInfo.payment_frequency === 'weekly' ? 'Cuota Semanal:'
+                          : loanInfo.payment_frequency === 'daily' ? 'Cuota Diaria:'
+                          : 'Cuota Mensual:'}
+                      </span>
                       <div className="font-semibold">RD${formatCurrencyNumber(loanInfo.monthly_payment || 0)}</div>
                     </div>
                   </div>

@@ -2587,7 +2587,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 <tr><td>Cédula:</td><td>${loan.clients.dni}</td></tr>
                 <tr><td>Monto Original:</td><td>${formatCurrency(loan.amount)}</td></tr>
                 <tr><td>Balance Restante:</td><td>${formatCurrency(loan.remaining_balance)}</td></tr>
-                <tr><td>Cuota Mensual:</td><td>${formatCurrency(loan.monthly_payment)}</td></tr>
+                <tr><td>${loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal:' : loan.payment_frequency === 'weekly' ? 'Cuota Semanal:' : loan.payment_frequency === 'daily' ? 'Cuota Diaria:' : 'Cuota Mensual:'}</td><td>${formatCurrency(loan.monthly_payment)}</td></tr>
                 <tr><td>Tasa de Interés:</td><td>${loan.interest_rate}%</td></tr>
                 <tr><td>Fecha de Inicio:</td><td>${formatDate(loan.start_date)}</td></tr>
                 <tr><td>Próximo Pago:</td><td>${
@@ -2643,7 +2643,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                   <tr>
                     <th>Cuota</th>
                     <th>Fecha Vencimiento</th>
-                    <th>Cuota Mensual</th>
+                    <th>${loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal' : loan.payment_frequency === 'weekly' ? 'Cuota Semanal' : loan.payment_frequency === 'daily' ? 'Cuota Diaria' : 'Cuota Mensual'}</th>
                     <th>Capital</th>
                     <th>Interés</th>
                     <th>Capital Pendiente</th>
@@ -2789,7 +2789,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Cédula:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.clients.dni}</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Monto Original:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.amount)}</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Balance Restante:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.remaining_balance)}</td></tr>
-            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Cuota Mensual:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.monthly_payment)}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">${loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal:' : loan.payment_frequency === 'weekly' ? 'Cuota Semanal:' : loan.payment_frequency === 'daily' ? 'Cuota Diaria:' : 'Cuota Mensual:'}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatCurrency(loan.monthly_payment)}</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Tasa de Interés:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${loan.interest_rate}%</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Fecha de Inicio:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${formatDate(loan.start_date)}</td></tr>
             <tr><td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; background-color: #f8f9fa;">Próximo Pago:</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${
@@ -2980,7 +2980,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                     <div className="font-semibold">{formatCurrency(loan.remaining_balance)}</div>
                   </div>
                   <div>
-                    <span className="text-gray-600">Cuota Mensual:</span>
+                    <span className="text-gray-600">
+                      {loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal:'
+                        : loan.payment_frequency === 'weekly' ? 'Cuota Semanal:'
+                        : loan.payment_frequency === 'daily' ? 'Cuota Diaria:'
+                        : 'Cuota Mensual:'}
+                    </span>
                     <div className="font-semibold">{formatCurrency(loan.monthly_payment)}</div>
                   </div>
                   <div>
@@ -3079,7 +3084,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                       <tr className="border-b bg-gray-50">
                         <th className="text-left p-3 font-semibold">Cuota</th>
                         <th className="text-left p-3 font-semibold">Fecha Vencimiento</th>
-                        <th className="text-left p-3 font-semibold">Cuota Mensual</th>
+                        <th className="text-left p-3 font-semibold">
+                          {loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal'
+                            : loan.payment_frequency === 'weekly' ? 'Cuota Semanal'
+                            : loan.payment_frequency === 'daily' ? 'Cuota Diaria'
+                            : 'Cuota Mensual'}
+                        </th>
                         <th className="text-left p-3 font-semibold">Capital</th>
                         <th className="text-left p-3 font-semibold">Interés</th>
                         <th className="text-left p-3 font-semibold">Capital Pendiente</th>
