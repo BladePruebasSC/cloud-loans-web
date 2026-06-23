@@ -3535,15 +3535,36 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                 </div>
                                 <div className="space-y-1">
                                   {lateFeeBreakdown.breakdown.map((item: any, index: number) => (
-                                    <div key={index} className={`flex justify-between items-center text-xs ${item.isPaid ? 'bg-green-100 border border-green-300 rounded px-2 py-1' : ''}`}>
-                                      <span className={`text-orange-700 ${item.isPaid ? 'text-green-700' : ''}`}>
-                                        {item.isCharge ? `Cargo #${item.installment}` : `Cuota ${item.installment}`} ({item.daysOverdue} días):
-                                        {item.isPaid && ' ✅ PAGADA'}
-                                      </span>
-                                      <span className={`font-semibold ${item.isPaid ? 'text-green-700' : 'text-orange-800'}`}>
-                                        RD${item.lateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                      </span>
-                                    </div>
+                                    item.isCharge ? (
+                                      <div key={index} className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs">
+                                        <div className="flex justify-between items-center">
+                                          <span className="font-semibold text-amber-800">
+                                            ⚡ Cargo #{item.installment}
+                                            <span className="ml-1 text-amber-600 font-normal">({item.daysOverdue} días vencido)</span>
+                                          </span>
+                                        </div>
+                                        <div className="flex justify-between items-center mt-0.5">
+                                          <span className="text-amber-700">Monto del cargo:</span>
+                                          <span className="font-semibold text-amber-900">RD${(item.principal || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        </div>
+                                        {item.lateFee > 0 && (
+                                          <div className="flex justify-between items-center mt-0.5">
+                                            <span className="text-amber-700">Mora del cargo:</span>
+                                            <span className="font-semibold text-orange-700">RD${item.lateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div key={index} className={`flex justify-between items-center text-xs ${item.isPaid ? 'bg-green-100 border border-green-300 rounded px-2 py-1' : ''}`}>
+                                        <span className={`text-orange-700 ${item.isPaid ? 'text-green-700' : ''}`}>
+                                          Cuota {item.installment} ({item.daysOverdue} días):
+                                          {item.isPaid && ' ✅ PAGADA'}
+                                        </span>
+                                        <span className={`font-semibold ${item.isPaid ? 'text-green-700' : 'text-orange-800'}`}>
+                                          RD${item.lateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                      </div>
+                                    )
                                   ))}
                                   <div className="border-t pt-1 mt-2 flex justify-between items-center font-bold text-orange-900">
                                     <span>Total Mora Pendiente:</span>
@@ -3551,7 +3572,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                   </div>
                                 </div>
                                  <div className="mt-2 text-xs text-gray-600">
-                                   💡 Solo se muestran las cuotas pendientes de pago
+                                   💡 Solo se muestran las cuotas y cargos pendientes de pago
                                  </div>
                               </div>
                             )}
