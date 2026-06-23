@@ -125,6 +125,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
   /** Mora calculada con getLateFeeBreakdownFromInstallments (misma lógica que la tarjeta/LateFeeInfo) */
   const [breakdownLateFee, setBreakdownLateFee] = useState<number | null>(null);
+  /** Breakdown completo para determinar isPaid correcto en calculateBalanceByAge */
+  const [breakdownItems, setBreakdownItems] = useState<Array<{ installment: number; isPaid: boolean; daysOverdue: number }>>([]);
 
   // Estados para generar documentos
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
@@ -168,8 +170,11 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       amortization_type: loan.amortization_type,
     };
     getLateFeeBreakdownFromInstallments(loan.id, loanData as any)
-      .then(result => setBreakdownLateFee(result.totalLateFee))
-      .catch(() => setBreakdownLateFee(null));
+      .then(result => {
+        setBreakdownLateFee(result.totalLateFee);
+        setBreakdownItems(result.breakdown.map(b => ({ installment: b.installment, isPaid: b.isPaid, daysOverdue: b.daysOverdue })));
+      })
+      .catch(() => { setBreakdownLateFee(null); setBreakdownItems([]); });
   }, [loan?.id, loan?.late_fee_enabled, loan?.status, overrideNextPaymentDate, nextPaymentDate]);
 
   // Obtener/actualizar abonos a capital (debe refrescarse tras cada abono)
@@ -1333,25 +1338,36 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       '181+': 0
     };
 
+    // Build a map of paid status from breakdown (more reliable than inst.is_paid from DB)
+    const breakdownPaidMap = new Map<number, boolean>();
+    breakdownItems.forEach(b => breakdownPaidMap.set(b.installment, b.isPaid));
+
     installments.forEach(inst => {
-      if (!inst.is_paid && inst.due_date) {
-        const [dy, dm, dd] = String(inst.due_date).split('T')[0].split('-').map(Number);
-        const dueDate = new Date(dy, dm - 1, dd);
-        const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        
-        let range: keyof typeof capitalRanges | null = null;
-        if (daysDiff >= 1 && daysDiff <= 30) range = '1-30';
-        else if (daysDiff >= 31 && daysDiff <= 60) range = '31-60';
-        else if (daysDiff >= 61 && daysDiff <= 90) range = '61-90';
-        else if (daysDiff >= 91 && daysDiff <= 120) range = '91-120';
-        else if (daysDiff >= 121 && daysDiff <= 150) range = '121-150';
-        else if (daysDiff >= 151 && daysDiff <= 180) range = '151-180';
-        else if (daysDiff > 180) range = '181+';
-        
-        if (range) {
-          capitalRanges[range] += inst.principal_amount || 0;
-          interestRanges[range] += inst.interest_amount || 0;
-        }
+      if (!inst.due_date) return;
+
+      // Use breakdown isPaid if available; fall back to DB is_paid
+      const isPaid = breakdownPaidMap.has(inst.installment_number)
+        ? breakdownPaidMap.get(inst.installment_number)!
+        : (inst.is_paid ?? false);
+
+      if (isPaid) return;
+
+      const [dy, dm, dd] = String(inst.due_date).split('T')[0].split('-').map(Number);
+      const dueDate = new Date(dy, dm - 1, dd);
+      const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      let range: keyof typeof capitalRanges | null = null;
+      if (daysDiff >= 1 && daysDiff <= 30) range = '1-30';
+      else if (daysDiff >= 31 && daysDiff <= 60) range = '31-60';
+      else if (daysDiff >= 61 && daysDiff <= 90) range = '61-90';
+      else if (daysDiff >= 91 && daysDiff <= 120) range = '91-120';
+      else if (daysDiff >= 121 && daysDiff <= 150) range = '121-150';
+      else if (daysDiff >= 151 && daysDiff <= 180) range = '151-180';
+      else if (daysDiff > 180) range = '181+';
+
+      if (range) {
+        capitalRanges[range] += inst.principal_amount || 0;
+        interestRanges[range] += inst.interest_amount || 0;
       }
     });
 

@@ -240,10 +240,16 @@ export const getLateFeeBreakdownFromInstallments = async (
             case 'daily':
               lateFee = (baseAmount * loan.late_fee_rate / 100) * daysOverdue;
               break;
-            case 'monthly':
-              const monthsOverdue = Math.ceil(daysOverdue / 30);
-              lateFee = (baseAmount * loan.late_fee_rate / 100) * monthsOverdue;
+            case 'monthly': {
+              // Usar el largo del período según la frecuencia de pago, no siempre 30 días
+              const periodDays =
+                loan.payment_frequency === 'weekly' ? 7 :
+                loan.payment_frequency === 'biweekly' ? 14 :
+                loan.payment_frequency === 'daily' ? 1 : 30;
+              const periodsOverdue = Math.ceil(daysOverdue / periodDays);
+              lateFee = (baseAmount * loan.late_fee_rate / 100) * periodsOverdue;
               break;
+            }
             case 'compound':
               lateFee = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdue) - 1);
               break;
@@ -329,11 +335,29 @@ export const getLateFeeBreakdownFromInstallments = async (
       }
       
       // Calcular cuántas cuotas deberían existir desde firstPaymentDate hasta hoy
-      const monthsElapsed = Math.max(0, 
-        (calculationDate.getFullYear() - firstPaymentDate.getFullYear()) * 12 + 
-        (calculationDate.getMonth() - firstPaymentDate.getMonth())
-      );
-      const totalExpected = monthsElapsed + 1;
+      // Usar períodos según frecuencia, no siempre meses
+      const daysSinceFirst = Math.floor((calculationDate.getTime() - firstPaymentDate.getTime()) / (1000 * 60 * 60 * 24));
+      let totalExpected: number;
+      switch (frequency) {
+        case 'daily':
+          totalExpected = Math.max(0, daysSinceFirst) + 1;
+          break;
+        case 'weekly':
+          totalExpected = Math.max(0, Math.floor(daysSinceFirst / 7)) + 1;
+          break;
+        case 'biweekly':
+          totalExpected = Math.max(0, Math.floor(daysSinceFirst / 14)) + 1;
+          break;
+        case 'monthly':
+        default: {
+          const monthsElapsed = Math.max(0,
+            (calculationDate.getFullYear() - firstPaymentDate.getFullYear()) * 12 +
+            (calculationDate.getMonth() - firstPaymentDate.getMonth())
+          );
+          totalExpected = monthsElapsed + 1;
+          break;
+        }
+      }
       
       // Calcular el monto base para la mora (interés por cuota para indefinidos)
       const isIndefinite = loan.amortization_type === 'indefinite';
@@ -502,10 +526,15 @@ export const getLateFeeBreakdownFromInstallments = async (
             case 'daily':
               lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForNext;
               break;
-            case 'monthly':
-              const monthsOverdue = Math.ceil(daysOverdueForNext / 30);
-              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * monthsOverdue;
+            case 'monthly': {
+              const periodDays2 =
+                loan.payment_frequency === 'weekly' ? 7 :
+                loan.payment_frequency === 'biweekly' ? 14 :
+                loan.payment_frequency === 'daily' ? 1 : 30;
+              const periodsOverdue2 = Math.ceil(daysOverdueForNext / periodDays2);
+              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * periodsOverdue2;
               break;
+            }
             case 'compound':
               lateFeeForNext = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdueForNext) - 1);
               break;
