@@ -36,6 +36,7 @@ export const getLateFeeBreakdownFromInstallments = async (
     principal: number;
     lateFee: number;
     isPaid: boolean;
+    isCharge?: boolean;
   }>;
 }> => {
   try {
@@ -211,7 +212,9 @@ export const getLateFeeBreakdownFromInstallments = async (
       } else {
         // Calcular días de atraso desde la fecha de vencimiento hasta hoy
         // Parsear la fecha como fecha local para evitar problemas de zona horaria
-        const [year, month, day] = installment.due_date.split('-').map(Number);
+        // split('T')[0] handles both 'YYYY-MM-DD' and 'YYYY-MM-DDTHH:MM:SS' formats from DB
+        const dueDateOnly = String(installment.due_date || '').split('T')[0];
+        const [year, month, day] = dueDateOnly.split('-').map(Number);
         const dueDate = new Date(year, month - 1, day); // month es 0-indexado
         const daysSinceDue = Math.floor((calculationDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
         daysOverdue = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
@@ -269,14 +272,21 @@ export const getLateFeeBreakdownFromInstallments = async (
         totalLateFee += lateFee;
       }
       
+      // Detect CARGO (charge): interest = 0, principal = total, no interest component
+      const isCharge = Math.abs(installment.interest_amount || 0) < 0.01 &&
+        (installment.principal_amount || 0) > 0.01;
+
       // SIEMPRE agregar la cuota al desglose (pagada o pendiente)
+      // Normalize dueDate to YYYY-MM-DD to avoid timestamp mismatch issues
+      const normalizedDueDate = String(installment.due_date || '').split('T')[0];
       breakdown.push({
         installment: installment.installment_number,
-        dueDate: installment.due_date,
+        dueDate: normalizedDueDate,
         daysOverdue,
         principal: installment.principal_amount,
         lateFee: isActuallyPaid ? 0 : lateFee,
-        isPaid: isActuallyPaid
+        isPaid: isActuallyPaid,
+        isCharge
       });
     }
     

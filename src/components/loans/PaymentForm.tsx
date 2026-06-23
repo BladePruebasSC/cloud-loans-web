@@ -3537,7 +3537,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                                   {lateFeeBreakdown.breakdown.map((item: any, index: number) => (
                                     <div key={index} className={`flex justify-between items-center text-xs ${item.isPaid ? 'bg-green-100 border border-green-300 rounded px-2 py-1' : ''}`}>
                                       <span className={`text-orange-700 ${item.isPaid ? 'text-green-700' : ''}`}>
-                                        Cuota {item.installment} ({item.daysOverdue} días):
+                                        {item.isCharge ? `Cargo #${item.installment}` : `Cuota ${item.installment}`} ({item.daysOverdue} días):
                                         {item.isPaid && ' ✅ PAGADA'}
                                       </span>
                                       <span className={`font-semibold ${item.isPaid ? 'text-green-700' : 'text-orange-800'}`}>

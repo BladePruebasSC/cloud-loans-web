@@ -659,7 +659,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                           }`}>
                             <div className="text-sm">
                               <span className="font-medium">
-                                Cuota {item.installment}
+                                {(item as any).isCharge ? `Cargo #${item.installment}` : `Cuota ${item.installment}`}
                                 {item.isPaid && <span className="ml-2 text-green-600 text-xs">✅ PAGADA</span>}
                               </span>
                               <div className="text-xs text-gray-600">
