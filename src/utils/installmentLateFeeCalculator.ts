@@ -131,6 +131,9 @@ export const getLateFeeBreakdownFromInstallments = async (
       }
     }
     
+    // Si no hay pagos reales, no aplicar next_payment_date como "corte de pagados"
+    const hasAnyPayments = payments && payments.length > 0;
+
     // Procesar cada cuota de la base de datos
     for (const installment of installments) {
       let daysOverdue = 0;
@@ -178,9 +181,9 @@ export const getLateFeeBreakdownFromInstallments = async (
         hasAssignedPayment: Array.from(paymentToInstallmentMap.values()).includes(installment.installment_number)
       });
 
-      // Para préstamos indefinidos: confiar en next_payment_date como fuente de verdad.
-      // Cualquier cuota anterior a next_payment_date ya fue cubierta por pagos reales.
-      if (isIndefinite && loan.next_payment_date) {
+      // Para préstamos indefinidos con pagos: confiar en next_payment_date como fuente de verdad.
+      // Sin pagos, no podemos asumir que ninguna cuota está pagada por fecha.
+      if (isIndefinite && loan.next_payment_date && hasAnyPayments) {
         const instDue = String(installment.due_date || '').split('T')[0];
         const nextPay = loan.next_payment_date.split('T')[0];
         if (instDue < nextPay) {
@@ -390,7 +393,7 @@ export const getLateFeeBreakdownFromInstallments = async (
           // Segundo: fallback con paidInstallmentsCount (para cuando next_payment_date no cubre el período)
           const nextPayStr = loan.next_payment_date?.split('T')[0] || '';
           const isPaid = isIndefinite && (
-            (nextPayStr && dueDateStr < nextPayStr) ||
+            (hasAnyPayments && nextPayStr && dueDateStr < nextPayStr) ||
             installmentNum <= paidInstallmentsCount
           );
           

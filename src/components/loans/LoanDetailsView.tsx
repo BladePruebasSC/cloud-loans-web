@@ -1335,7 +1335,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
 
     installments.forEach(inst => {
       if (!inst.is_paid && inst.due_date) {
-        const dueDate = new Date(inst.due_date);
+        const [dy, dm, dd] = String(inst.due_date).split('T')[0].split('-').map(Number);
+        const dueDate = new Date(dy, dm - 1, dd);
         const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
         
         let range: keyof typeof capitalRanges | null = null;
@@ -1360,6 +1361,19 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const { capitalRanges, interestRanges } = calculateBalanceByAge();
   const totalCapitalByAge = Object.values(capitalRanges).reduce((sum, val) => sum + val, 0);
   const totalInterestByAge = Object.values(interestRanges).reduce((sum, val) => sum + val, 0);
+
+  const agingRangeLabel = (key: string) =>
+    key === '181+' ? 'Más de 181 Días de atraso' : `${key} Días de atraso`;
+
+  // Badge = rango más antiguo (más crítico) con monto pendiente mayor a 0.
+  // En análisis de antigüedad, el bucket más viejo es el más preocupante.
+  const ageRangeOrder = ['1-30', '31-60', '61-90', '91-120', '121-150', '151-180', '181+'];
+  const topCapitalRange = ageRangeOrder.slice().reverse().find(
+    k => (capitalRanges as Record<string, number>)[k] > 0
+  ) || '1-30';
+  const topInterestRange = ageRangeOrder.slice().reverse().find(
+    k => (interestRanges as Record<string, number>)[k] > 0
+  ) || '1-30';
 
   return (
     <>
@@ -1649,12 +1663,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                     <div className="space-y-3">
                       <div className="flex justify-between items-center p-2 bg-blue-50 rounded">
                         <span className="font-medium">Capital total RD {totalCapitalByAge.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <Badge>1-30 Días de atraso</Badge>
+                        <Badge>{agingRangeLabel(topCapitalRange)}</Badge>
                       </div>
                       {Object.entries(capitalRanges).map(([range, amount]) => (
-                        <div key={range} className="flex justify-between items-center p-2">
-                          <span className="text-sm text-gray-600">{range === '181+' ? 'Más de 181 Días de atraso' : `${range} Días de atraso`}</span>
-                          <span className="font-semibold">RD {amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <div key={range} className={`flex justify-between items-center p-2 rounded ${range === topCapitalRange && amount > 0 ? 'bg-blue-50' : ''}`}>
+                          <span className={`text-sm ${range === topCapitalRange && amount > 0 ? 'text-blue-700 font-medium' : 'text-gray-600'}`}>{range === '181+' ? 'Más de 181 Días de atraso' : `${range} Días de atraso`}</span>
+                          <span className={`font-semibold ${range === topCapitalRange && amount > 0 ? 'text-blue-700' : ''}`}>RD {amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       ))}
                     </div>
@@ -1671,12 +1685,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                   <div className="space-y-3">
                     <div className="flex justify-between items-center p-2 bg-blue-50 rounded">
                       <span className="font-medium">Total interés pendiente. RD {totalInterestByAge.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      <Badge>1-30 Días de atraso</Badge>
+                      <Badge>{agingRangeLabel(topInterestRange)}</Badge>
                     </div>
                     {Object.entries(interestRanges).map(([range, amount]) => (
-                      <div key={range} className="flex justify-between items-center p-2">
-                        <span className="text-sm text-gray-600">{range === '181+' ? 'Más de 181 Días de atraso' : `${range} Días de atraso`}</span>
-                        <span className="font-semibold">RD {amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <div key={range} className={`flex justify-between items-center p-2 rounded ${range === topInterestRange && amount > 0 ? 'bg-blue-50' : ''}`}>
+                        <span className={`text-sm ${range === topInterestRange && amount > 0 ? 'text-blue-700 font-medium' : 'text-gray-600'}`}>{range === '181+' ? 'Más de 181 Días de atraso' : `${range} Días de atraso`}</span>
+                        <span className={`font-semibold ${range === topInterestRange && amount > 0 ? 'text-blue-700' : ''}`}>RD {amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     ))}
                   </div>

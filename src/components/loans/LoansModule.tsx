@@ -1517,8 +1517,12 @@ export const LoansModule = () => {
         : '';
 
       installments.forEach((installment: any) => {
-        // Para indefinidos: cuotas anteriores a effectiveNextPayDate ya fueron pagadas
-        if (isLoanIndefinite && effectiveNextPayDate) {
+        // Los cargos (interest_amount≈0, principal>0) siempre generan mora por su propia fecha;
+        // no los saltamos con la lógica de next_payment_date de los préstamos indefinidos.
+        const isCharge = Math.abs(installment.interest_amount || 0) < 0.01 &&
+          (installment.principal_amount || 0) > 0.01;
+        // Para indefinidos: cuotas regulares anteriores a effectiveNextPayDate ya fueron pagadas
+        if (isLoanIndefinite && effectiveNextPayDate && !isCharge) {
           const instDue = String(installment.due_date || '').split('T')[0];
           const nextPay = effectiveNextPayDate.split('T')[0];
           if (instDue < nextPay) return;
