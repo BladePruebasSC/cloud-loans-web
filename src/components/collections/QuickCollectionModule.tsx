@@ -496,21 +496,27 @@ export const QuickCollectionModule = () => {
           const daysSinceDue = Math.floor((calculationDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
           const daysOverdue = Math.max(0, daysSinceDue - (selectedLoan.grace_period_days || 0));
           
+          // For indefinite loans, regular cuotas have principal_amount=0; use interest_amount instead.
+          const isIndefiniteForDist = String(selectedLoan.amortization_type || '').toLowerCase() === 'indefinite';
+          const baseForMora = isIndefiniteForDist && (!installment.principal_amount || installment.principal_amount === 0)
+            ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
+            : installment.principal_amount;
+
           let totalLateFeeForThisInstallment = 0;
           if (daysOverdue > 0) {
             switch (selectedLoan.late_fee_calculation_type) {
               case 'daily':
-                totalLateFeeForThisInstallment = (installment.principal_amount * selectedLoan.late_fee_rate / 100) * daysOverdue;
+                totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * daysOverdue;
                 break;
               case 'monthly':
                 const monthsOverdue = Math.ceil(daysOverdue / 30);
-                totalLateFeeForThisInstallment = (installment.principal_amount * selectedLoan.late_fee_rate / 100) * monthsOverdue;
+                totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * monthsOverdue;
                 break;
               case 'compound':
-                totalLateFeeForThisInstallment = installment.principal_amount * (Math.pow(1 + selectedLoan.late_fee_rate / 100, daysOverdue) - 1);
+                totalLateFeeForThisInstallment = baseForMora * (Math.pow(1 + selectedLoan.late_fee_rate / 100, daysOverdue) - 1);
                 break;
               default:
-                totalLateFeeForThisInstallment = (installment.principal_amount * selectedLoan.late_fee_rate / 100) * daysOverdue;
+                totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * daysOverdue;
             }
             
             if (selectedLoan.max_late_fee && selectedLoan.max_late_fee > 0) {

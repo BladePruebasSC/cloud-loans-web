@@ -749,7 +749,13 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         const baseBreakdown = await getLateFeeBreakdownFromInstallments(payment.loan_id, loanDataForLateFeeBase);
         let remainingToApply = remainingTotalLateFeePaid;
 
-        for (const item of baseBreakdown.breakdown) {
+        // Sort by dueDate ascending so chronologically earlier installments (e.g. a CARGO
+        // with due_date before regular cuotas) get their late_fee_paid restored first.
+        const sortedBreakdown = [...baseBreakdown.breakdown].sort((a, b) =>
+          (a.dueDate || '').localeCompare(b.dueDate || '')
+        );
+
+        for (const item of sortedBreakdown) {
           if (remainingToApply <= 0) break;
           if (item.isPaid) continue;
           if ((Number(item.lateFee) || 0) <= 0) continue;

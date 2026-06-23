@@ -264,10 +264,17 @@ export const getLateFeeBreakdownFromInstallments = async (
           lateFee = Math.round(lateFee * 100) / 100;
 
           // Restar la mora ya pagada de esta cuota
-          const lateFeePaid = installment.late_fee_paid || 0;
-          // For indefinite: any late_fee_paid exceeding this installment's mora becomes surplus
-          if (isIndefinite && lateFeePaid > lateFee) {
-            lateFeePaidSurplusPool += Math.round((lateFeePaid - lateFee) * 100) / 100;
+          const rawLateFeePaid = installment.late_fee_paid || 0;
+          let lateFeePaid = rawLateFeePaid;
+          // For indefinite loans: if there is no payment directly linked to this installment
+          // but late_fee_paid is set, treat it as surplus for dynamic installments.
+          // This prevents stale late_fee_paid values (from incorrect redistribution or a
+          // "Eliminar Mora" that predates a newly-added CARGO) from hiding owed mora.
+          if (isIndefinite && rawLateFeePaid > 0 && totalPaidForInstallment <= 0) {
+            lateFeePaidSurplusPool += Math.round(rawLateFeePaid * 100) / 100;
+            lateFeePaid = 0;
+          } else if (isIndefinite && rawLateFeePaid > lateFee) {
+            lateFeePaidSurplusPool += Math.round((rawLateFeePaid - lateFee) * 100) / 100;
           }
           lateFee = Math.max(0, lateFee - lateFeePaid);
         }
@@ -364,8 +371,16 @@ export const getLateFeeBreakdownFromInstallments = async (
       let baseAmount = 0;
       
       if (isIndefinite) {
-        const lastInstallment = installments[installments.length - 1];
-        baseAmount = lastInstallment?.interest_amount || lastInstallment?.total_amount || lastInstallment?.amount || loan.monthly_payment || 0;
+        // Skip CARGO installments (interest_amount≈0, principal_amount>0) when determining
+        // the per-period interest base. CARGOs are one-off charges, not recurring interest cuotas.
+        const nonCharges = installments.filter(inst =>
+          !(Math.abs(inst.interest_amount || 0) < 0.01 && (inst.principal_amount || 0) > 0.01)
+        );
+        const lastNonCharge = nonCharges[nonCharges.length - 1];
+        baseAmount = lastNonCharge?.interest_amount ||
+          lastNonCharge?.total_amount ||
+          lastNonCharge?.amount ||
+          loan.monthly_payment || 0;
       } else {
         const lastInstallment = installments[installments.length - 1];
         baseAmount = lastInstallment?.principal_amount || lastInstallment?.total_amount || lastInstallment?.amount || 0;
