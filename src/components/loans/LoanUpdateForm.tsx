@@ -1108,12 +1108,72 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // Primero intentar calcular la mora desde las cuotas reales
           const lateFeeEnabled = (loan as any).late_fee_enabled;
           const lateFeeRate = (loan as any).late_fee_rate;
-          
+
           if (lateFeeEnabled && lateFeeRate) {
+            // Para préstamos indefinidos: calcular next_payment_date real desde pagos,
+            // igual que LoanDetailsView. El valor en DB puede estar desactualizado y
+            // haría que todas las cuotas parezcan pagadas (mora = 0).
+            let effectiveNextPaymentDate = loan.next_payment_date;
+
+            if (isIndefiniteLoan && loan.start_date) {
+              const addPeriodIso = (iso: string, freq: string) => {
+                const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
+                if (!yy || !mm || !dd) return iso;
+                const base = new Date(yy, mm - 1, dd);
+                const dt = new Date(base);
+                switch (String(freq || 'monthly').toLowerCase()) {
+                  case 'daily': dt.setDate(dt.getDate() + 1); break;
+                  case 'weekly': dt.setDate(dt.getDate() + 7); break;
+                  case 'biweekly': dt.setDate(dt.getDate() + 14); break;
+                  default: dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate()); break;
+                }
+                return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+              };
+
+              const { data: payRows } = await supabase
+                .from('payments')
+                .select('amount, interest_amount, due_date')
+                .eq('loan_id', loan.id);
+
+              const interestPerPayment =
+                (Number(loan.monthly_payment || 0) > 0.01)
+                  ? Number(loan.monthly_payment)
+                  : (Number(loan.amount || 0) * (Number(loan.interest_rate || 0) / 100));
+              const tol = 0.05;
+              const freq = String(loan.payment_frequency || 'monthly');
+              const startIso = String(loan.start_date).split('T')[0];
+              const firstDueFromStart = addPeriodIso(startIso, freq);
+
+              const paidByDue = new Map<string, number>();
+              for (const p of (payRows || []) as any[]) {
+                const due = p?.due_date ? String(p.due_date).split('T')[0] : null;
+                if (!due || due < firstDueFromStart) continue;
+                const interest = Number(p?.interest_amount || 0) || 0;
+                const amt = Number(p?.amount || 0) || 0;
+                const paidValue = interest > 0.01 ? interest : (amt > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
+                if (paidValue <= 0.01) continue;
+                paidByDue.set(due, (paidByDue.get(due) || 0) + paidValue);
+              }
+
+              const fullyPaid: string[] = [];
+              let partialDue: string | null = null;
+              for (const [due, paid] of paidByDue.entries()) {
+                if (paid <= 0.01) continue;
+                if (paid + tol < interestPerPayment) {
+                  partialDue = !partialDue || due < partialDue ? due : partialDue;
+                } else {
+                  fullyPaid.push(due);
+                }
+              }
+              const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
+              effectiveNextPaymentDate = partialDue || (maxFull ? addPeriodIso(maxFull, freq) : firstDueFromStart);
+              console.log('🔍 LoanUpdateForm: next_payment_date efectivo para indefinido:', effectiveNextPaymentDate);
+            }
+
             const loanData = {
               id: loan.id,
               remaining_balance: loan.remaining_balance,
-              next_payment_date: loan.next_payment_date,
+              next_payment_date: effectiveNextPaymentDate,
               late_fee_rate: lateFeeRate || 0,
               grace_period_days: (loan as any).grace_period_days || 0,
               max_late_fee: (loan as any).max_late_fee || 0,
@@ -1127,9 +1187,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               start_date: loan.start_date,
               amortization_type: loan.amortization_type
             };
-            
+
             console.log('🔍 LoanUpdateForm: Calculando mora con datos:', loanData);
-            
+
             const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanData);
             if (breakdown && breakdown.totalLateFee !== undefined) {
               const calculatedLateFee = Math.round(breakdown.totalLateFee * 100) / 100;
