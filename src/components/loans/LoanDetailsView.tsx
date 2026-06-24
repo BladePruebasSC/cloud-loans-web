@@ -125,8 +125,10 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<number>(0);
   /** Mora calculada con getLateFeeBreakdownFromInstallments (misma lógica que la tarjeta/LateFeeInfo) */
   const [breakdownLateFee, setBreakdownLateFee] = useState<number | null>(null);
-  /** Breakdown completo para determinar isPaid correcto en calculateBalanceByAge */
+  /** isPaid por cuota para calculateBalanceByAge (no-indefinidos) */
   const [breakdownItems, setBreakdownItems] = useState<Array<{ installment: number; isPaid: boolean; daysOverdue: number }>>([]);
+  /** Desglose completo (incluye cuotas dinámicas) para calculateBalanceByAge en préstamos indefinidos */
+  const [fullBreakdown, setFullBreakdown] = useState<Array<{ installment: number; dueDate: string; daysOverdue: number; principal: number; lateFee: number; isPaid: boolean; isCharge?: boolean }>>([]);
 
   // Estados para generar documentos
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
@@ -145,10 +147,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     }
   }, [isOpen, loanId]);
 
-  // Calcular mora usando la misma función que LateFeeInfo (getLateFeeBreakdownFromInstallments)
+  // Calcular mora y obtener estado de pago real de cada cuota para balance por antigüedad.
+  // Se ejecuta para todos los préstamos activos, no solo los que tienen mora habilitada,
+  // porque breakdownItems es necesario para determinar isPaid correctamente en calculateBalanceByAge.
   useEffect(() => {
-    if (!loan || !loan.late_fee_enabled || loan.status === 'paid') {
+    if (!loan || loan.status === 'paid') {
       setBreakdownLateFee(null);
+      setBreakdownItems([]);
+      setFullBreakdown([]);
       return;
     }
     const effectiveNextPay = overrideNextPaymentDate ?? nextPaymentDate ?? loan.next_payment_date?.split('T')[0] ?? '';
@@ -171,10 +177,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     };
     getLateFeeBreakdownFromInstallments(loan.id, loanData as any)
       .then(result => {
-        setBreakdownLateFee(result.totalLateFee);
+        // Only expose the late fee amount when late fees are actually enabled
+        setBreakdownLateFee(loan.late_fee_enabled ? result.totalLateFee : null);
         setBreakdownItems(result.breakdown.map(b => ({ installment: b.installment, isPaid: b.isPaid, daysOverdue: b.daysOverdue })));
+        setFullBreakdown(result.breakdown);
       })
-      .catch(() => { setBreakdownLateFee(null); setBreakdownItems([]); });
+      .catch(() => { setBreakdownLateFee(null); setBreakdownItems([]); setFullBreakdown([]); });
   }, [loan?.id, loan?.late_fee_enabled, loan?.status, overrideNextPaymentDate, nextPaymentDate]);
 
   // Obtener/actualizar abonos a capital (debe refrescarse tras cada abono)
@@ -1338,38 +1346,66 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       '181+': 0
     };
 
-    // Build a map of paid status from breakdown (more reliable than inst.is_paid from DB)
-    const breakdownPaidMap = new Map<number, boolean>();
-    breakdownItems.forEach(b => breakdownPaidMap.set(b.installment, b.isPaid));
+    const getRange = (daysDiff: number): keyof typeof capitalRanges | null => {
+      if (daysDiff >= 1 && daysDiff <= 30) return '1-30';
+      if (daysDiff >= 31 && daysDiff <= 60) return '31-60';
+      if (daysDiff >= 61 && daysDiff <= 90) return '61-90';
+      if (daysDiff >= 91 && daysDiff <= 120) return '91-120';
+      if (daysDiff >= 121 && daysDiff <= 150) return '121-150';
+      if (daysDiff >= 151 && daysDiff <= 180) return '151-180';
+      if (daysDiff > 180) return '181+';
+      return null;
+    };
 
-    installments.forEach(inst => {
-      if (!inst.due_date) return;
+    const isIndefiniteLoan = String(loan?.amortization_type || '').toLowerCase() === 'indefinite';
 
-      // Use breakdown isPaid if available; fall back to DB is_paid
-      const isPaid = breakdownPaidMap.has(inst.installment_number)
-        ? breakdownPaidMap.get(inst.installment_number)!
-        : (inst.is_paid ?? false);
+    if (isIndefiniteLoan && fullBreakdown.length > 0) {
+      // Indefinite loans: DB installments don't capture dynamic cuotas, so use the full breakdown
+      // which includes every generated period. breakdown.principal = interest per period for regular
+      // cuotas; for CARGOs (isCharge=true) it is the charge amount (goes to capital column).
+      for (const item of fullBreakdown) {
+        if (item.isPaid) continue;
+        if (!item.dueDate) continue;
 
-      if (isPaid) return;
+        const [dy, dm, dd] = item.dueDate.split('-').map(Number);
+        const dueDate = new Date(dy, dm - 1, dd);
+        const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+        const range = getRange(daysDiff);
 
-      const [dy, dm, dd] = String(inst.due_date).split('T')[0].split('-').map(Number);
-      const dueDate = new Date(dy, dm - 1, dd);
-      const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-
-      let range: keyof typeof capitalRanges | null = null;
-      if (daysDiff >= 1 && daysDiff <= 30) range = '1-30';
-      else if (daysDiff >= 31 && daysDiff <= 60) range = '31-60';
-      else if (daysDiff >= 61 && daysDiff <= 90) range = '61-90';
-      else if (daysDiff >= 91 && daysDiff <= 120) range = '91-120';
-      else if (daysDiff >= 121 && daysDiff <= 150) range = '121-150';
-      else if (daysDiff >= 151 && daysDiff <= 180) range = '151-180';
-      else if (daysDiff > 180) range = '181+';
-
-      if (range) {
-        capitalRanges[range] += inst.principal_amount || 0;
-        interestRanges[range] += inst.interest_amount || 0;
+        if (range) {
+          if (item.isCharge) {
+            capitalRanges[range] += item.principal || 0;
+          } else {
+            interestRanges[range] += item.principal || 0;
+          }
+        }
       }
-    });
+    } else {
+      // Non-indefinite loans: iterate DB installments; use breakdown paid status when available
+      // (more accurate than stale is_paid from DB).
+      const breakdownPaidMap = new Map<number, boolean>();
+      breakdownItems.forEach(b => breakdownPaidMap.set(b.installment, b.isPaid));
+
+      installments.forEach(inst => {
+        if (!inst.due_date) return;
+
+        const isPaid = breakdownPaidMap.has(inst.installment_number)
+          ? breakdownPaidMap.get(inst.installment_number)!
+          : (inst.is_paid ?? false);
+
+        if (isPaid) return;
+
+        const [dy, dm, dd] = String(inst.due_date).split('T')[0].split('-').map(Number);
+        const dueDate = new Date(dy, dm - 1, dd);
+        const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+        const range = getRange(daysDiff);
+
+        if (range) {
+          capitalRanges[range] += inst.principal_amount || 0;
+          interestRanges[range] += inst.interest_amount || 0;
+        }
+      });
+    }
 
     return { capitalRanges, interestRanges };
   };

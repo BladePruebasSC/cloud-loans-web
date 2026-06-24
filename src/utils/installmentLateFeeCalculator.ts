@@ -117,17 +117,22 @@ export const getLateFeeBreakdownFromInstallments = async (
       // SEGUNDO: Asignar pagos restantes (sin due_date o sin coincidencia) secuencialmente
       // IMPORTANTE: En préstamos indefinidos NO hacemos asignación secuencial, porque rompería el “pago parcial” (saltaría de cuota).
       if (!isIndefinite) {
-        let paymentIndex = 0;
-        for (let i = 0; i < installments.length && paymentIndex < sortedPayments.length; i++) {
+        // Pre-filter: only payments not yet assigned in the first pass
+        const unassignedPayments = sortedPayments.filter(p => !assignedPaymentIds.has(p.id));
+        // Pre-compute which installment numbers already have a payment from the first pass
+        const coveredInstNums = new Set(paymentToInstallmentMap.values());
+
+        let unassignedIdx = 0;
+        for (let i = 0; i < installments.length && unassignedIdx < unassignedPayments.length; i++) {
           const installment = installments[i];
-          const payment = sortedPayments[paymentIndex];
-          
-          if (payment && !assignedPaymentIds.has(payment.id)) {
-            assignedPaymentIds.add(payment.id);
-            paymentToInstallmentMap.set(payment.id, installment.installment_number);
-            paymentIndex++;
-            console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación secuencial - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
-          }
+          // Skip installments already covered by a due_date-matched payment
+          if (coveredInstNums.has(installment.installment_number)) continue;
+
+          const payment = unassignedPayments[unassignedIdx];
+          assignedPaymentIds.add(payment.id);
+          paymentToInstallmentMap.set(payment.id, installment.installment_number);
+          unassignedIdx++;
+          console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación secuencial - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
         }
       }
     }
@@ -296,7 +301,12 @@ export const getLateFeeBreakdownFromInstallments = async (
         installment: installment.installment_number,
         dueDate: normalizedDueDate,
         daysOverdue,
-        principal: installment.principal_amount,
+        // For regular indefinite cuotas (not CARGOs): principal_amount is 0, but interest_amount
+        // is the per-period payment. Store the interest amount so aging balance can display it.
+        // CARGOs (isCharge=true) keep their principal_amount (the charge amount).
+        principal: (isIndefinite && !isCharge)
+          ? (installment.interest_amount || installment.total_amount || 0)
+          : installment.principal_amount,
         lateFee: isActuallyPaid ? 0 : lateFee,
         isPaid: isActuallyPaid,
         isCharge
@@ -486,7 +496,9 @@ export const getLateFeeBreakdownFromInstallments = async (
             installment: installmentNum,
             dueDate: dueDateStr,
             daysOverdue: isPaid ? 0 : daysOverdueForInstallment,
-            principal: isIndefinite ? 0 : baseAmount,
+            // baseAmount for indefinite = per-period interest; for non-indefinite = principal per cuota.
+            // Both cases: store in principal so aging balance can consume it uniformly.
+            principal: baseAmount,
             lateFee: isPaid ? 0 : lateFeeForInstallment,
             isPaid: isPaid
           });

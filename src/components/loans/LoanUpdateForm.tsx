@@ -91,13 +91,15 @@ const updateSchema = z.object({
   path: ['charge_date'],
 }).refine((data) => {
   if (data.update_type === 'edit_loan') {
-    return data.edit_amount !== undefined && data.edit_interest_rate !== undefined && 
+    // edit_amount is excluded here because it may be disabled (undefined) for pending/factura loans.
+    // The onSubmit handler validates edit_amount separately for non-pending loans.
+    return data.edit_interest_rate !== undefined &&
            data.edit_term_months !== undefined && data.edit_amortization_type !== undefined;
   }
   return true;
 }, {
   message: 'Debe completar todos los campos requeridos para editar el préstamo',
-  path: ['edit_amount'],
+  path: ['edit_interest_rate'],
 }).refine((data) => {
   if (data.update_type === 'settle_loan') {
     // Validar que al menos uno de los campos tenga un valor mayor a 0
