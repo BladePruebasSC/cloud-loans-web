@@ -2655,7 +2655,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                     <th>${loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal' : loan.payment_frequency === 'weekly' ? 'Cuota Semanal' : loan.payment_frequency === 'daily' ? 'Cuota Diaria' : 'Cuota Mensual'}</th>
                     <th>Capital</th>
                     <th>Interés</th>
-                    <th>Capital Pendiente</th>
+                    <th>${String(loan?.amortization_type || '').toLowerCase() === 'indefinite' ? 'Balance Pendiente' : 'Capital Pendiente'}</th>
                     <th>Estado</th>
                   </tr>
                 </thead>
@@ -3101,7 +3101,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                         </th>
                         <th className="text-left p-3 font-semibold">Capital</th>
                         <th className="text-left p-3 font-semibold">Interés</th>
-                        <th className="text-left p-3 font-semibold">Capital Pendiente</th>
+                        <th className="text-left p-3 font-semibold">{String(loan?.amortization_type || '').toLowerCase() === 'indefinite' ? 'Balance Pendiente' : 'Capital Pendiente'}</th>
                         <th className="text-left p-3 font-semibold">Estado</th>
                       </tr>
                     </thead>

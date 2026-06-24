@@ -6336,6 +6336,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   monthly_payment={loan.monthly_payment}
                   paid_installments={loan.paid_installments}
                   start_date={loan.start_date}
+                  amortization_type={loan.amortization_type}
                 />
               </div>
             )}
