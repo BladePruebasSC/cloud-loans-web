@@ -1168,6 +1168,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
               effectiveNextPaymentDate = partialDue || (maxFull ? addPeriodIso(maxFull, freq) : firstDueFromStart);
               console.log('🔍 LoanUpdateForm: next_payment_date efectivo para indefinido:', effectiveNextPaymentDate);
+              // Actualizar localNextPaymentDate para que LateFeeInfo use la fecha correcta.
+              // El useEffect de localNextPaymentDate la deja en null para indefinidos, así que
+              // la sobreescribimos aquí una vez que tenemos el valor calculado.
+              setLocalNextPaymentDate(effectiveNextPaymentDate);
             }
 
             const loanData = {

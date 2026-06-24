@@ -1140,7 +1140,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     // Construimos el schedule directamente desde installmentsData (igual que "Ver Cuotas") y damos una key única.
     if (amortizationType === 'indefinite') {
       const round2 = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 100) / 100;
-      const remainingBalanceNow = round2(Number(loanData.remaining_balance ?? principal));
+      let remainingBalanceNow = 0; // computed dynamically below after rows are built
 
       const isCharge = (inst: any) => {
         const interest = Math.abs(Number(inst?.interest_amount || 0));
@@ -1532,6 +1532,15 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           cur = addPeriodIso(cur, frequency);
         }
       }
+
+      // Compute remaining balance dynamically: current principal + sum of all unpaid interest periods
+      const currentPrincipal = capitalPaymentsForSchedule && capitalPaymentsForSchedule.length > 0
+        ? round2(Number(capitalPaymentsForSchedule[capitalPaymentsForSchedule.length - 1].capital_after))
+        : principal;
+      const unpaidInterestTotal = round2(regularRows.filter((r: any) => !r.isPaid).reduce((s: number, r: any) => s + r.monthlyPayment, 0));
+      remainingBalanceNow = round2(currentPrincipal + unpaidInterestTotal);
+      for (const r of chargeRows) r.remainingBalance = remainingBalanceNow;
+      for (const r of regularRows) r.remainingBalance = remainingBalanceNow;
 
       const combined = [...chargeRows, ...regularRows].sort((a, b) => {
         if (a.dueDate && b.dueDate) {
