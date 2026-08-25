@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 
 export interface LateFeeCalculation {
   days_overdue: number;
@@ -32,21 +33,60 @@ export const useLateFee = () => {
   const { user } = useAuth();
 
   // Calcular mora para un préstamo específico
+  //
+  // CORRECCIÓN CRÍTICA (auditoría de cálculos): esta función llamaba antes a la función SQL
+  // `recalculate_late_fee_from_scratch`, que calculaba la mora multiplicando la tasa por
+  // `loans.remaining_balance` (el saldo de TODO el préstamo: capital + interés de todas las
+  // cuotas pendientes, no solo de la vencida) y por los días de atraso de una única cuota
+  // (`next_payment_date`). Eso podía inflar la mora varias veces por encima del valor correcto,
+  // y además no coincidía con la mora que se muestra en el resto del sistema (estado de cuenta,
+  // detalle de préstamo, formulario de cobro), que SÍ se calcula cuota por cuota. Ahora se usa la
+  // misma función centralizada que esas pantallas para que el resultado sea siempre el mismo.
   const calculateLateFee = async (
-    loanId: string, 
+    loanId: string,
     calculationDate: Date = new Date()
   ): Promise<LateFeeCalculation | null> => {
     try {
       setLoading(true);
-      
-      const { data, error } = await supabase.rpc('recalculate_late_fee_from_scratch', {
-        p_loan_id: loanId,
-        p_calculation_date: calculationDate.toISOString().split('T')[0]
-      });
 
-      if (error) throw error;
+      const { data: loan, error: loanError } = await supabase
+        .from('loans')
+        .select('id, amount, remaining_balance, next_payment_date, start_date, term_months, payment_frequency, amortization_type, interest_rate, monthly_payment, late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type, late_fee_enabled, status')
+        .eq('id', loanId)
+        .single();
 
-      return data && data.length > 0 ? data[0] : null;
+      if (loanError || !loan) throw loanError || new Error('Préstamo no encontrado');
+      if (loan.status !== 'active' && loan.status !== 'overdue') {
+        return { days_overdue: 0, late_fee_amount: 0, total_late_fee: 0 };
+      }
+
+      const loanDataForCalculation = {
+        id: loan.id,
+        amount: loan.amount,
+        interest_rate: loan.interest_rate,
+        monthly_payment: loan.monthly_payment,
+        remaining_balance: loan.remaining_balance,
+        next_payment_date: loan.next_payment_date,
+        start_date: loan.start_date,
+        term_months: loan.term_months,
+        term: loan.term_months,
+        payment_frequency: loan.payment_frequency || 'monthly',
+        late_fee_enabled: loan.late_fee_enabled || false,
+        late_fee_rate: loan.late_fee_rate || 2.0,
+        grace_period_days: loan.grace_period_days || 0,
+        max_late_fee: loan.max_late_fee || 0,
+        late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
+        amortization_type: loan.amortization_type
+      };
+
+      const breakdown = await getLateFeeBreakdownFromInstallments(loanId, loanDataForCalculation as any);
+      const daysOverdue = breakdown.breakdown.reduce((max, item) => Math.max(max, item.isPaid ? 0 : item.daysOverdue), 0);
+
+      return {
+        days_overdue: daysOverdue,
+        late_fee_amount: breakdown.totalLateFee,
+        total_late_fee: breakdown.totalLateFee
+      };
     } catch (error) {
       console.error('Error calculating late fee:', error);
       return null;
@@ -56,19 +96,95 @@ export const useLateFee = () => {
   };
 
   // Actualizar mora de todos los préstamos vencidos
+  //
+  // CORRECCIÓN CRÍTICA (auditoría de cálculos): esta función llamaba antes a la función SQL
+  // `update_all_late_fees_from_scratch`, que sufría el mismo problema descrito arriba y además
+  // ESCRIBÍA directamente `loans.current_late_fee` para todos los préstamos activos vencidos.
+  // Ese valor incorrecto luego se filtraba a Notificaciones, Reportes ("mora acumulada") y al
+  // listado de préstamos (como respaldo mientras carga el cálculo en vivo), produciendo montos de
+  // mora distintos entre pantallas. Ahora se recalcula cada préstamo con la misma función
+  // centralizada usada en el resto de la aplicación antes de guardar el resultado.
   const updateAllLateFees = async (
     calculationDate: Date = new Date()
   ): Promise<number> => {
     try {
       setLoading(true);
-      
-      const { data, error } = await supabase.rpc('update_all_late_fees_from_scratch', {
-        p_calculation_date: calculationDate.toISOString().split('T')[0]
-      });
 
-      if (error) throw error;
+      const calcDateStr = calculationDate.toISOString().split('T')[0];
 
-      return data || 0;
+      const { data: loans, error: loansError } = await supabase
+        .from('loans')
+        .select('id, amount, remaining_balance, next_payment_date, start_date, term_months, payment_frequency, amortization_type, interest_rate, monthly_payment, late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type, late_fee_enabled, status')
+        .in('status', ['active', 'overdue'])
+        .eq('late_fee_enabled', true);
+
+      if (loansError) throw loansError;
+
+      let updatedCount = 0;
+
+      for (const loan of loans || []) {
+        try {
+          const loanDataForCalculation = {
+            id: loan.id,
+            amount: loan.amount,
+            interest_rate: loan.interest_rate,
+            monthly_payment: loan.monthly_payment,
+            remaining_balance: loan.remaining_balance,
+            next_payment_date: loan.next_payment_date,
+            start_date: loan.start_date,
+            term_months: loan.term_months,
+            term: loan.term_months,
+            payment_frequency: loan.payment_frequency || 'monthly',
+            late_fee_enabled: loan.late_fee_enabled || false,
+            late_fee_rate: loan.late_fee_rate || 2.0,
+            grace_period_days: loan.grace_period_days || 0,
+            max_late_fee: loan.max_late_fee || 0,
+            late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
+            amortization_type: loan.amortization_type
+          };
+
+          const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanDataForCalculation as any);
+          const daysOverdue = breakdown.breakdown.reduce((max, item) => Math.max(max, item.isPaid ? 0 : item.daysOverdue), 0);
+
+          const newStatus =
+            daysOverdue > 0 && loan.status === 'active'
+              ? 'overdue'
+              : daysOverdue === 0 && loan.status === 'overdue'
+                ? 'active'
+                : loan.status;
+
+          const { error: updateError } = await supabase
+            .from('loans')
+            .update({
+              current_late_fee: breakdown.totalLateFee,
+              last_late_fee_calculation: calcDateStr,
+              status: newStatus
+            })
+            .eq('id', loan.id);
+
+          if (updateError) {
+            console.error(`Error updating loan ${loan.id} late fee:`, updateError);
+            continue;
+          }
+
+          if (breakdown.totalLateFee > 0) {
+            await supabase.from('late_fee_history').insert({
+              loan_id: loan.id,
+              calculation_date: calcDateStr,
+              days_overdue: daysOverdue,
+              late_fee_rate: loan.late_fee_rate,
+              late_fee_amount: breakdown.totalLateFee,
+              total_late_fee: breakdown.totalLateFee
+            });
+          }
+
+          updatedCount++;
+        } catch (perLoanError) {
+          console.error(`Error recalculando mora del préstamo ${loan.id}:`, perLoanError);
+        }
+      }
+
+      return updatedCount;
     } catch (error) {
       console.error('Error updating late fees:', error);
       return 0;

@@ -491,7 +491,14 @@ export const QuickCollectionModule = () => {
           if (installment.is_paid) continue;
           
           const currentLateFeePaid = installment.late_fee_paid || 0;
-          const dueDate = new Date(installment.due_date);
+          // CORRECCIÓN (auditoría de cálculos): `new Date(installment.due_date)` interpreta
+          // "YYYY-MM-DD" como medianoche UTC en vez de medianoche en Santo Domingo (UTC-4), lo que
+          // puede restar un día de mora cerca de la medianoche y desalinear este cálculo con el
+          // desglose que el usuario vio antes de cobrar. Se usa el mismo parseo seguro que el
+          // resto de la aplicación (installmentLateFeeCalculator.ts).
+          const dueDateOnly = String(installment.due_date || '').split('T')[0];
+          const [dueYear, dueMonth, dueDay] = dueDateOnly.split('-').map(Number);
+          const dueDate = new Date(dueYear, (dueMonth || 1) - 1, dueDay || 1);
           const calculationDate = getCurrentDateInSantoDomingo();
           const daysSinceDue = Math.floor((calculationDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
           const daysOverdue = Math.max(0, daysSinceDue - (selectedLoan.grace_period_days || 0));

@@ -76,9 +76,12 @@ export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
         : loan.next_payment_date;
 
       // Determinar si es un cargo
-      const isCharge = firstUnpaidInstallment && firstUnpaidInstallment.length > 0 &&
-        firstUnpaidInstallment[0].interest_amount === 0 &&
-        firstUnpaidInstallment[0].principal_amount === firstUnpaidInstallment[0].total_amount;
+      // CORRECCIÓN (auditoría de cálculos): tolerancia de 0.01 en vez de igualdad estricta, para
+      // que coincida con el resto de la aplicación (InstallmentsTable.tsx, AccountStatement.tsx,
+      // installmentLateFeeCalculator.ts) y no muestre "cuota a pagar" incorrecta por redondeo.
+      const isCharge = !!(firstUnpaidInstallment && firstUnpaidInstallment.length > 0 &&
+        Math.abs(firstUnpaidInstallment[0].interest_amount || 0) < 0.01 &&
+        Math.abs((firstUnpaidInstallment[0].principal_amount || 0) - (firstUnpaidInstallment[0].total_amount || 0)) < 0.01);
 
       // Obtener todos los pagos para este préstamo
       const { data: payments, error } = await supabase

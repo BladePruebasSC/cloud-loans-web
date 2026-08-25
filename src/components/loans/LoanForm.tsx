@@ -1544,20 +1544,27 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       case 'daily':
         // Si el plazo es 12, son 12 días
         totalPeriods = term_months;
-        // Para interés compuesto, convertir tasa mensual a diaria
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria basada en mensual
+        // CORRECCIÓN (auditoría de cálculos): antes se convertía la tasa mensual a diaria de forma
+        // COMPUESTA (Math.pow(1+r,1/30)-1). Esto no coincidía con la fórmula LINEAL (tasa/30) que
+        // usa el simulador "Tabla de Amortización" (AmortizationTable.tsx) y que usa este mismo
+        // formulario para el tipo "simple" un poco más abajo. Con la fórmula compuesta, la cuota
+        // previsualizada al simular una solicitud podía terminar siendo distinta de la cuota real
+        // generada al crear el préstamo. Se unifica a la fórmula lineal en todos los casos.
+        periodRate = (interest_rate / 100) / 30; // Tasa diaria = tasa mensual / 30
         break;
       case 'weekly':
         // Si el plazo es 12, son 12 semanas
         totalPeriods = term_months;
-        // Para interés compuesto, convertir tasa mensual a semanal
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal basada en mensual
+        // CORRECCIÓN (auditoría de cálculos): ver nota en el caso 'daily' de este mismo switch.
+        // Se unifica a la fórmula lineal (tasa mensual / 4) para que coincida con el simulador.
+        periodRate = (interest_rate / 100) / 4; // Tasa semanal = tasa mensual / 4
         break;
       case 'biweekly':
         // Si el plazo es 12, son 12 quincenas
         totalPeriods = term_months;
-        // Para interés compuesto, convertir tasa mensual a quincenal
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal basada en mensual
+        // CORRECCIÓN (auditoría de cálculos): ver nota en el caso 'daily' de este mismo switch.
+        // Se unifica a la fórmula lineal (tasa mensual / 2) para que coincida con el simulador.
+        periodRate = (interest_rate / 100) / 2; // Tasa quincenal = tasa mensual / 2
         break;
       case 'monthly':
       default:
@@ -1720,20 +1727,27 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       case 'daily':
         // Si el plazo es 12, son 12 días
         totalPeriods = amortization_type === 'indefinite' ? 1 : term_months;
-        // Para interés compuesto, convertir tasa mensual a diaria
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/30) - 1; // Tasa diaria basada en mensual
+        // CORRECCIÓN (auditoría de cálculos): antes se convertía la tasa mensual a diaria de forma
+        // COMPUESTA (Math.pow(1+r,1/30)-1). Esto no coincidía con la fórmula LINEAL (tasa/30) que
+        // usa el simulador "Tabla de Amortización" (AmortizationTable.tsx) y que usa este mismo
+        // formulario para el tipo "simple" un poco más abajo. Con la fórmula compuesta, la cuota
+        // previsualizada al simular una solicitud podía terminar siendo distinta de la cuota real
+        // generada al crear el préstamo. Se unifica a la fórmula lineal en todos los casos.
+        periodRate = (interest_rate / 100) / 30; // Tasa diaria = tasa mensual / 30
         break;
       case 'weekly':
         // Si el plazo es 12, son 12 semanas
         totalPeriods = amortization_type === 'indefinite' ? 1 : term_months;
-        // Para interés compuesto, convertir tasa mensual a semanal
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/4) - 1; // Tasa semanal basada en mensual
+        // CORRECCIÓN (auditoría de cálculos): ver nota en el caso 'daily' de este mismo switch.
+        // Se unifica a la fórmula lineal (tasa mensual / 4) para que coincida con el simulador.
+        periodRate = (interest_rate / 100) / 4; // Tasa semanal = tasa mensual / 4
         break;
       case 'biweekly':
         // Si el plazo es 12, son 12 quincenas
         totalPeriods = amortization_type === 'indefinite' ? 1 : term_months;
-        // Para interés compuesto, convertir tasa mensual a quincenal
-        periodRate = Math.pow(1 + (interest_rate / 100), 1/2) - 1; // Tasa quincenal basada en mensual
+        // CORRECCIÓN (auditoría de cálculos): ver nota en el caso 'daily' de este mismo switch.
+        // Se unifica a la fórmula lineal (tasa mensual / 2) para que coincida con el simulador.
+        periodRate = (interest_rate / 100) / 2; // Tasa quincenal = tasa mensual / 2
         break;
       case 'monthly':
       default:

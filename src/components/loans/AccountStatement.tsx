@@ -1750,9 +1750,13 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const chargeInstallments: number[] = [];
       for (let i = 1; i <= numberOfPayments; i++) {
         const realInstallment = installmentsMap.get(i);
-        const isCharge = realInstallment && 
-                         realInstallment.interest_amount === 0 && 
-                         realInstallment.principal_amount > 0 && 
+        // CORRECCIÓN (auditoría de cálculos): `interest_amount === 0` con igualdad estricta podía
+        // clasificar una cuota como "cargo" aquí y como "cuota regular" en InstallmentsTable.tsx
+        // (que sí usa tolerancia) si el valor tenía un residuo de punto flotante. Se usa tolerancia
+        // de 0.01 en ambos archivos para que el Estado de Cuenta y la Tabla de Cuotas coincidan.
+        const isCharge = realInstallment &&
+                         Math.abs(realInstallment.interest_amount || 0) < 0.01 &&
+                         realInstallment.principal_amount > 0 &&
                          Math.abs(realInstallment.principal_amount - (realInstallment.amount || (realInstallment as any).total_amount || 0)) < 0.01;
         if (isCharge) {
           chargeInstallments.push(i);
@@ -1847,11 +1851,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       for (let i = 1; i <= numberOfPayments; i++) {
         const realInstallment = installmentsMap.get(i);
         if (!realInstallment) continue;
-        
-        const isCharge = realInstallment.interest_amount === 0 && 
-                         realInstallment.principal_amount > 0 && 
+
+        // CORRECCIÓN (auditoría de cálculos): tolerancia de 0.01 (ver nota más arriba en este archivo).
+        const isCharge = Math.abs(realInstallment.interest_amount || 0) < 0.01 &&
+                         realInstallment.principal_amount > 0 &&
                          Math.abs(realInstallment.principal_amount - (realInstallment.amount || (realInstallment as any).total_amount || 0)) < 0.01;
-        
+
         if (!isCharge) {
           regularInstallments.push({ installmentNumber: i, installment: realInstallment });
         }
@@ -1970,9 +1975,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       
       // CORRECCIÓN: Siempre usar los valores reales de la cuota cuando estén disponibles
       // Esto asegura que coincida con InstallmentsTable
-      const isCharge = realInstallment && 
-                       realInstallment.interest_amount === 0 && 
-                       realInstallment.principal_amount > 0 && 
+      // CORRECCIÓN (auditoría de cálculos): tolerancia de 0.01 (ver nota más arriba en este archivo)
+      // en vez de igualdad estricta, para que esta comparación coincida de verdad con InstallmentsTable.
+      const isCharge = realInstallment &&
+                       Math.abs(realInstallment.interest_amount || 0) < 0.01 &&
+                       realInstallment.principal_amount > 0 &&
                        Math.abs(realInstallment.principal_amount - (realInstallment.amount || (realInstallment as any).total_amount || 0)) < 0.01;
       
       // CORRECCIÓN: Usar siempre los valores reales de la base de datos cuando estén disponibles

@@ -182,16 +182,23 @@ export const LoanStatistics: React.FC<LoanStatisticsProps> = ({
       });
 
       // Calcular días de atraso
+      // CORRECCIÓN (auditoría de cálculos): parsear fechas "YYYY-MM-DD" con `new Date(str)` las
+      // interpreta como medianoche UTC, no medianoche en Santo Domingo (UTC-4), lo que puede
+      // desplazar el conteo de días/clasificación "puntual vs tardío" cerca de la medianoche.
+      const parseLocalDateOnly = (value?: string | null): Date => {
+        const [y, m, d] = String(value || '').split('T')[0].split('-').map(Number);
+        return new Date(y || 1970, (m || 1) - 1, d || 1);
+      };
       const today = new Date();
-      const nextPaymentDate = new Date(loanData.next_payment_date);
-      const daysOverdue = loanData.status === 'overdue' 
+      const nextPaymentDate = parseLocalDateOnly(loanData.next_payment_date);
+      const daysOverdue = loanData.status === 'overdue'
         ? Math.floor((today.getTime() - nextPaymentDate.getTime()) / (1000 * 60 * 60 * 24))
         : 0;
 
       // Calcular pagos puntuales vs tardíos
       const onTimePayments = paymentsData.filter(payment => {
-        const paymentDate = new Date(payment.payment_date);
-        const dueDate = new Date(payment.due_date);
+        const paymentDate = parseLocalDateOnly(payment.payment_date);
+        const dueDate = parseLocalDateOnly(payment.due_date);
         return paymentDate <= dueDate;
       }).length;
 

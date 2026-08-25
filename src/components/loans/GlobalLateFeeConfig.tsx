@@ -8,8 +8,15 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { useLateFee } from '@/hooks/useLateFee';
-import { calculateLateFee as calculateLateFeeUtil, updateLoanLateFee } from '@/utils/lateFeeCalculator';
+// NOTA (auditoría de cálculos - CORRECCIÓN CRÍTICA): antes este archivo llamaba a
+// `calculateLateFeeUtil` (el motor "sintético" de lateFeeCalculator.ts) pasándole `amount: 0` y
+// `term: 0` a propósito, lo cual hacía que su bucle de cálculo por cuota NUNCA se ejecutara
+// (`for (i=1; i<=0; i++)` no itera) y devolviera SIEMPRE mora = 0. Resultado real: cada vez que
+// un administrador guardaba la configuración global de mora, este botón PONÍA EN CERO la mora
+// (`current_late_fee`) de TODOS los préstamos activos con mora habilitada, sin importar cuánta
+// mora tuvieran realmente. Se reemplaza por la misma función que usan las demás pantallas
+// (estado de cuenta, detalle de préstamo, cobros) para que el resultado sea siempre consistente.
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { toast } from 'sonner';
 import { 
   Settings, 
@@ -43,7 +50,6 @@ export const GlobalLateFeeConfig: React.FC<GlobalLateFeeConfigProps> = ({ onConf
   const [loading, setLoading] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
   const { user } = useAuth();
-  const { updateAllLateFees } = useLateFee();
 
   // Cargar configuración actual
   useEffect(() => {
@@ -128,9 +134,11 @@ export const GlobalLateFeeConfig: React.FC<GlobalLateFeeConfigProps> = ({ onConf
       toast.info('Recalculando mora actual...');
       
       // Obtener todos los préstamos activos para recalcular la mora
+      // IMPORTANTE: se necesitan todos estos campos porque getLateFeeBreakdownFromInstallments
+      // calcula la mora cuota por cuota (tabla `installments`), no con una fórmula "global".
       const { data: activeLoans, error: loansError } = await supabase
         .from('loans')
-        .select('id, remaining_balance, next_payment_date, late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type, late_fee_enabled')
+        .select('id, amount, remaining_balance, next_payment_date, start_date, term_months, payment_frequency, amortization_type, interest_rate, monthly_payment, late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type, late_fee_enabled')
         .eq('status', 'active')
         .eq('late_fee_enabled', true);
 
@@ -140,37 +148,50 @@ export const GlobalLateFeeConfig: React.FC<GlobalLateFeeConfigProps> = ({ onConf
         return;
       }
 
-      // Actualizar la mora de todos los préstamos activos manualmente
+      // Actualizar la mora de todos los préstamos activos, usando la MISMA función que el resto
+      // de la aplicación (estado de cuenta, detalle de préstamo, cobros) para que el número
+      // guardado en `current_late_fee` sea siempre consistente con lo que ve el usuario en pantalla.
       let updatedCount = 0;
-      
-      for (const loan of activeLoans || []) {
-        // Calcular la mora usando la función centralizada
-        const calculation = calculateLateFeeUtil({
-          remaining_balance: loan.remaining_balance,
-          next_payment_date: loan.next_payment_date,
-          late_fee_rate: loan.late_fee_rate,
-          grace_period_days: loan.grace_period_days,
-          max_late_fee: loan.max_late_fee,
-          late_fee_calculation_type: loan.late_fee_calculation_type,
-          late_fee_enabled: loan.late_fee_enabled,
-          amount: 0,
-          term: 0,
-          payment_frequency: 'monthly'
-        });
 
-        // Actualizar directamente en la base de datos
-        const { error: updateError } = await supabase
-          .from('loans')
-          .update({
-            current_late_fee: calculation.lateFeeAmount,
-            last_late_fee_calculation: new Date().toISOString().split('T')[0]
-          })
-          .eq('id', loan.id);
-        
-        if (!updateError) {
-          updatedCount++;
-        } else {
-          console.error('Error updating loan late fee:', updateError);
+      for (const loan of activeLoans || []) {
+        try {
+          const loanDataForCalculation = {
+            id: loan.id,
+            amount: loan.amount,
+            interest_rate: loan.interest_rate,
+            monthly_payment: loan.monthly_payment,
+            remaining_balance: loan.remaining_balance,
+            next_payment_date: loan.next_payment_date,
+            start_date: loan.start_date,
+            term_months: loan.term_months,
+            term: loan.term_months,
+            payment_frequency: loan.payment_frequency || 'monthly',
+            late_fee_enabled: loan.late_fee_enabled || false,
+            late_fee_rate: loan.late_fee_rate || 2.0,
+            grace_period_days: loan.grace_period_days || 0,
+            max_late_fee: loan.max_late_fee || 0,
+            late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
+            amortization_type: loan.amortization_type
+          };
+
+          const calculation = await getLateFeeBreakdownFromInstallments(loan.id, loanDataForCalculation as any);
+
+          // Actualizar directamente en la base de datos
+          const { error: updateError } = await supabase
+            .from('loans')
+            .update({
+              current_late_fee: calculation.totalLateFee,
+              last_late_fee_calculation: new Date().toISOString().split('T')[0]
+            })
+            .eq('id', loan.id);
+
+          if (!updateError) {
+            updatedCount++;
+          } else {
+            console.error('Error updating loan late fee:', updateError);
+          }
+        } catch (perLoanError) {
+          console.error(`Error recalculando mora del préstamo ${loan.id}:`, perLoanError);
         }
       }
       

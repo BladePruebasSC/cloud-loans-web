@@ -584,9 +584,19 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
         // Verificar si es un cargo (cuando principal_amount es igual a total_amount y interest_amount es 0)
         // Los cargos no tienen interés, solo capital
-        const isCharge = correctedInterest === 0 && 
-                         correctedPrincipal > 0 && 
-                         Math.abs(correctedPrincipal - correctedAmount) < 0.01; // Permitir pequeñas diferencias por redondeo
+        // CORRECCIÓN (auditoría de cálculos): antes se comparaba `correctedInterest === 0` con
+        // igualdad estricta, mientras que el resto del sistema (isChargeInstallment más arriba,
+        // installmentLateFeeCalculator.ts, loanBalanceBreakdown.ts) usa una tolerancia de 0.01.
+        // Un valor con residuo de punto flotante (p.ej. 0.0000000001 en vez de 0 exacto) hacía que
+        // esta cuota se clasificara como "cargo" en unas pantallas y como "cuota regular" en otras,
+        // una de las causas de que las distintas tablas de amortización mostraran datos distintos.
+        // Se reutiliza el mismo helper `isChargeInstallment` (con tolerancia) que usa el resto del
+        // archivo, en vez de reimplementar la comparación de forma distinta aquí.
+        const isCharge = isChargeInstallment({
+                           interest_amount: correctedInterest,
+                           principal_amount: correctedPrincipal,
+                           total_amount: correctedAmount
+                         });
 
         // Si no es un cargo y no hay interés, calcularlo
         if (!isCharge && (!correctedInterest || correctedInterest === 0)) {
@@ -1033,9 +1043,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           // PRIMERO: Procesar TODOS los cargos (cada pago solo puede asignarse a un cargo)
           const chargeInstallments: typeof sortedInstallments = [];
           for (const inst of sortedInstallments) {
-            const isCharge = inst.interest_amount === 0 && 
-                            inst.principal_amount > 0 && 
-                            Math.abs(inst.principal_amount - (inst.total_amount || inst.amount || 0)) < 0.01;
+            // CORRECCIÓN (auditoría de cálculos): unificado con el helper `isChargeInstallment`
+            // (tolerancia de 0.01) en vez de comparar `interest_amount === 0` con igualdad
+            // estricta; ver nota detallada más arriba en este mismo archivo.
+            const isCharge = isChargeInstallment(inst);
             if (isCharge) {
               chargeInstallments.push(inst);
             }
@@ -1102,9 +1113,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
           for (const regularInst of sortedInstallments) {
             // Saltar si es un cargo (ya fue procesado)
-            const isCharge = regularInst.interest_amount === 0 && 
-                            regularInst.principal_amount > 0 && 
-                            Math.abs(regularInst.principal_amount - (regularInst.total_amount || regularInst.amount || 0)) < 0.01;
+            // CORRECCIÓN (auditoría de cálculos): unificado con el helper `isChargeInstallment`
+            // (tolerancia de 0.01) en vez de comparar `interest_amount === 0` con igualdad
+            // estricta; ver nota detallada más arriba en este mismo archivo.
+            const isCharge = isChargeInstallment(regularInst);
             if (isCharge) {
               continue;
             }

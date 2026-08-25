@@ -16,7 +16,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useLoanPaymentStatusSimple } from '@/hooks/useLoanPaymentStatusSimple';
 import { useLateFee } from '@/hooks/useLateFee';
-import { calculateLateFee as calculateLateFeeUtil, getDetailedLateFeeBreakdown, getOriginalLateFeeBreakdown, getFixedLateFeeBreakdown, applyLateFeePayment, calculateFixedLateFeeBreakdown } from '@/utils/lateFeeCalculator';
+// NOTA (auditoría de cálculos): antes se importaban aquí varias funciones de un motor de mora
+// "sintético" (basado en un cronograma inventado, no en la tabla `installments` real) que ya no
+// existe. La única fuente de verdad para la mora es `getLateFeeBreakdownFromInstallments`
+// (importado más abajo desde installmentLateFeeCalculator). `applyLateFeePayment` solo distribuye
+// un abono sobre ese desglose real, no recalcula montos por su cuenta.
+import { applyLateFeePayment } from '@/utils/lateFeeCalculator';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/dateUtils';
 import { toast } from 'sonner';
@@ -1515,8 +1520,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           // Actualización optimista inmediata solo si es un cargo nuevo no pagado
           if (payload.new) {
             const newInstallment = payload.new as any;
-            const isCharge = newInstallment.interest_amount === 0 && 
-                            newInstallment.principal_amount === newInstallment.total_amount;
+            // CORRECCIÓN (auditoría de cálculos): tolerancia de 0.01 en vez de igualdad estricta
+            // (ver nota en InstallmentsTable.tsx), para no clasificar mal un cargo por redondeo.
+            const isCharge = Math.abs(newInstallment.interest_amount || 0) < 0.01 &&
+                            Math.abs((newInstallment.principal_amount || 0) - (newInstallment.total_amount || 0)) < 0.01;
             
             if (isCharge && !newInstallment.is_paid) {
               setNextPaymentInfo({
@@ -2248,9 +2255,18 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             if (installment.is_paid) continue; // Saltar cuotas ya pagadas
             
             const currentLateFeePaid = installment.late_fee_paid || 0;
-            
+
             // Calcular la mora total de esta cuota (sin considerar pagos previos)
-            const dueDate = new Date(installment.due_date);
+            // CORRECCIÓN (auditoría de cálculos): `new Date(installment.due_date)` interpreta una
+            // fecha "YYYY-MM-DD" como medianoche UTC, no como medianoche en Santo Domingo (UTC-4).
+            // Eso desplaza el instante ~4 horas hacia atrás y puede restar 1 día de mora cerca de
+            // la medianoche, distinto del desglose que el usuario ve justo antes de pagar (que sí
+            // parsea la fecha como fecha LOCAL). Se usa el mismo parseo seguro que el resto de la
+            // aplicación (installmentLateFeeCalculator.ts) para que el monto de mora que se
+            // distribuye entre cuotas coincida con el que se mostró en pantalla.
+            const dueDateOnly = String(installment.due_date || '').split('T')[0];
+            const [dueYear, dueMonth, dueDay] = dueDateOnly.split('-').map(Number);
+            const dueDate = new Date(dueYear, (dueMonth || 1) - 1, dueDay || 1);
             const calculationDate = getCurrentDateInSantoDomingo();
             const daysSinceDue = Math.floor((calculationDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
             const daysOverdue = Math.max(0, daysSinceDue - (selectedLoan.grace_period_days || 0));
@@ -2640,8 +2656,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           
           // Verificar si el pago cubre esta cuota
           const installmentAmount = firstUnpaidInstallment.total_amount;
-          const isCharge = firstUnpaidInstallment.interest_amount === 0 && 
-                          firstUnpaidInstallment.principal_amount === firstUnpaidInstallment.total_amount;
+          // CORRECCIÓN (auditoría de cálculos): tolerancia de 0.01 en vez de igualdad estricta.
+          const isCharge = Math.abs(firstUnpaidInstallment.interest_amount || 0) < 0.01 &&
+                          Math.abs((firstUnpaidInstallment.principal_amount || 0) - (firstUnpaidInstallment.total_amount || 0)) < 0.01;
           
           // Si es un cargo, el pago debe cubrir el monto completo del cargo (acumulando pagos parciales)
           // Si es una cuota regular, verificar si el pago cubre suficiente capital e interés

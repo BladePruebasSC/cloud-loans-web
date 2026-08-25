@@ -4,12 +4,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useLateFee, LateFeeCalculation, LateFeeHistory } from '@/hooks/useLateFee';
-import { 
-  calculateLateFee as calculateLateFeeUtil, 
-  calculateLateFeeWithValidation,
-  getDetailedLateFeeBreakdown,
-  getOriginalLateFeeBreakdown
-} from '@/utils/lateFeeCalculator';
+// NOTA (auditoría de cálculos): se retiró la importación de un motor de mora "sintético"
+// (calculateLateFee/getDetailedLateFeeBreakdown/getOriginalLateFeeBreakdown de lateFeeCalculator.ts)
+// que no se usaba en este componente y calculaba un cronograma inventado en lugar de leer la
+// tabla `installments`. La única fuente de verdad para la mora es getLateFeeBreakdownFromInstallments.
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { getCurrentDateInSantoDomingo, getCurrentDateString, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { LateFeeConfigModal } from './LateFeeConfigModal';

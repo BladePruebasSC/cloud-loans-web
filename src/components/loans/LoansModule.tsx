@@ -1207,8 +1207,10 @@ export const LoansModule = () => {
       // Si tenemos el payload del evento, usar los datos directamente para actualización inmediata
       if (payload?.new) {
         const newInstallment = payload.new as any;
-        const isCharge = newInstallment.interest_amount === 0 && 
-                        newInstallment.principal_amount === newInstallment.total_amount;
+        // CORRECCIÓN (auditoría de cálculos): tolerancia de 0.01 en vez de igualdad estricta
+        // (ver nota en InstallmentsTable.tsx), para no clasificar mal un cargo por redondeo.
+        const isCharge = Math.abs(newInstallment.interest_amount || 0) < 0.01 &&
+                        Math.abs((newInstallment.principal_amount || 0) - (newInstallment.total_amount || 0)) < 0.01;
         
         if (isCharge) {
           // CORRECCIÓN: NO hacer actualización optimista aquí porque los triggers de la BD
