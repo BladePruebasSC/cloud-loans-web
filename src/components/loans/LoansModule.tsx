@@ -806,6 +806,11 @@ export const LoansModule = () => {
         const loan = (loans || []).find((l: any) => l.id === affectedLoanId);
         if (!loan) return;
 
+        // Invalidar mora / interés pendiente en caché de este préstamo (ver invalidateLoanCaches):
+        // este bloque ya refresca balance/cargos directamente abajo, pero no tocaba esas dos cachés,
+        // así que quedaban con el valor de antes del abono hasta un refresh manual de la página.
+        invalidateLoanCaches(affectedLoanId);
+
         calculateBalanceBreakdown(loan).then((b) => {
           setCalculatedRemainingBalances((prev) => ({
             ...prev,
@@ -1492,6 +1497,50 @@ export const LoansModule = () => {
     }
   };
 
+  // CORRECCIÓN (auditoría de cálculos — "a veces actualiza, a veces no"):
+  //
+  // "Balance Pendiente", "Balance Total Pendiente" y "Mora Actual" en la tarjeta de cada préstamo
+  // NO se recalculan directamente desde `loans` en cada render: se guardan en caché por id de
+  // préstamo (calculatedRemainingBalances, calculatedBaseBalances, calculatedPendingCharges,
+  // dynamicLateFees, pendingInterestForIndefinite...) y los efectos que las alimentan solo rellenan
+  // la caché para préstamos que TODAVÍA NO tienen un valor guardado (ver el filtro `!has` unas
+  // líneas más abajo). Eso es intencional para no recalcular constantemente TODOS los préstamos,
+  // pero tiene una consecuencia: cuando se EDITA un préstamo que ya tenía un valor en caché, ese
+  // valor sigue estando "presente" (aunque quedó desactualizado), así que ningún efecto lo vuelve a
+  // calcular — hasta que una recarga completa de la página vacía la caché por completo. Por eso el
+  // refresco manual "arregla" el número: no es que el cálculo esté mal, es que nada le avisa a la
+  // caché que ese préstamo específico cambió. Los mecanismos de Realtime existentes cubren algunos
+  // casos (cambios directos en `installments`), pero no todos (p.ej. mora e interés pendiente).
+  //
+  // La solución: cuando ESTA pestaña es la que acaba de guardar un cambio (editar préstamo,
+  // aprobar, cancelar, recuperar, registrar un pago, recalcular mora masivamente...), invalidar
+  // explícitamente la entrada de ese préstamo en todas las cachés para que se recalcule de inmediato
+  // con datos frescos, en vez de esperar a que algún efecto indirecto lo note por su cuenta.
+  const invalidateLoanCaches = (loanId?: string) => {
+    const omit = (prev: { [key: string]: number }) => {
+      if (!loanId) return {}; // Sin id: invalidar TODO (usado en operaciones masivas, ej. mora global)
+      if (!(loanId in prev)) return prev; // Ya estaba invalidado: no generar un re-render de más
+      const next = { ...prev };
+      delete next[loanId];
+      return next;
+    };
+    setCalculatedRemainingBalances(omit);
+    setCalculatedBaseBalances(omit);
+    setCalculatedPendingCharges(omit);
+    setDynamicLateFees(omit);
+    setPendingInterestForIndefinite(omit);
+    setPaidInstallmentsCountForIndefinite(omit);
+  };
+
+  // Espera a que `refetch()` traiga los datos frescos de la BD y RECIÉN DESPUÉS invalidra la caché
+  // del préstamo afectado. El orden importa: si se invalidara antes, el efecto que rellena la caché
+  // podría dispararse con los datos VIEJOS de `loans` (que todavía no se actualizó) y volver a
+  // guardar un valor obsoleto, dejando el mismo problema que se quiere resolver.
+  const refetchAndInvalidate = async (loanId?: string) => {
+    await refetch();
+    invalidateLoanCaches(loanId);
+  };
+
   // Abre el formulario de CREACIÓN de préstamo (LoanForm), pre-llenado con los datos de un
   // préstamo pendiente, para editarlo. Reemplaza el flujo anterior que abría LoanUpdateForm en
   // modo "editOnly": ese formulario solo exponía un subconjunto reducido de campos (y en algunos
@@ -1945,7 +1994,9 @@ export const LoansModule = () => {
       const updatedCount = await updateAllLateFees();
       if (updatedCount > 0) {
         toast.success(`Mora actualizada para ${updatedCount} préstamos`);
-        refetch(); // Recargar los préstamos para mostrar los cambios
+        // Afecta un número variable de préstamos: invalidar la caché de mora de TODOS (sin id)
+        // en vez de intentar adivinar cuáles cambiaron.
+        await refetchAndInvalidate();
       } else {
         toast.info('No hay préstamos que requieran actualización de mora');
       }
@@ -2027,7 +2078,7 @@ export const LoansModule = () => {
       }
 
       toast.success('Préstamo aprobado exitosamente');
-      refetch(); // Actualizar los datos de préstamos
+      refetchAndInvalidate(loanId); // Actualizar los datos de préstamos (e invalidar su caché)
     } catch (error) {
       console.error('Error al aprobar préstamo:', error);
       toast.error('Error al aprobar el préstamo');
@@ -2069,7 +2120,7 @@ export const LoansModule = () => {
 
       console.log('Préstamo cancelado exitosamente');
       toast.success('Préstamo cancelado exitosamente');
-      refetch(); // Actualizar los datos de préstamos
+      refetchAndInvalidate(loanToCancel.id); // Actualizar los datos de préstamos (e invalidar su caché)
       setShowCancelDialog(false);
       setLoanToCancel(null);
     } catch (error) {
@@ -2099,7 +2150,7 @@ export const LoansModule = () => {
       }
 
       toast.success('Préstamo recuperado exitosamente');
-      refetch(); // Actualizar los datos de préstamos
+      refetchAndInvalidate(loanId); // Actualizar los datos de préstamos (e invalidar su caché)
     } catch (error) {
       console.error('Error al recuperar préstamo:', error);
       toast.error('Error al recuperar el préstamo');
@@ -2248,12 +2299,13 @@ export const LoansModule = () => {
           setStatusFilter('pending');
           refetch();
         }}
-        onLoanUpdated={() => {
+        onLoanUpdated={async () => {
+          const updatedLoanId = editingLoanId;
           setShowLoanForm(false);
           setInitialLoanData(null);
           setEditingLoanId(null);
           setStatusFilter('pending');
-          refetch();
+          await refetchAndInvalidate(updatedLoanId || undefined);
         }}
         editingLoanId={editingLoanId || undefined}
         initialData={initialLoanData}
@@ -2274,15 +2326,16 @@ export const LoansModule = () => {
           // Resetear processedActionRef para permitir abrir desde nuevas notificaciones
           processedActionRef.current = null;
           lastUrlHadParamsRef.current = false;
-          // Refetch para obtener datos actualizados
-          refetch();
-        }} 
+          // Refetch para obtener datos actualizados (e invalidar su caché de balance/mora)
+          refetchAndInvalidate(selectedLoanForPayment?.id);
+        }}
         preselectedLoan={selectedLoanForPayment}
         onPaymentSuccess={() => {
           // Refetch inmediatamente después de registrar un pago
           // Los datos se actualizarán automáticamente vía Realtime
+          const paidLoanId = selectedLoanForPayment?.id;
           setTimeout(() => {
-            refetch();
+            refetchAndInvalidate(paidLoanId);
           }, 50); // Pequeño delay para asegurar que el cambio se haya guardado
         }}
       />
@@ -2299,12 +2352,13 @@ export const LoansModule = () => {
           setSelectedLoan(null);
           setIsEditMode(false);
         }}
-        onUpdate={() => {
+        onUpdate={async () => {
+          const updatedLoanId = selectedLoan?.id;
           setShowUpdateForm(false);
           setSelectedLoan(null);
           setIsEditMode(false);
-          // Refresh loans data
-          refetch();
+          // Refresh loans data (y su caché de balance/mora: ver invalidateLoanCaches)
+          await refetchAndInvalidate(updatedLoanId);
         }}
         editOnly={isEditMode}
         displayNextPaymentDate={nextPaymentDates[selectedLoan.id] ?? selectedLoan.next_payment_date?.split('T')[0] ?? null}
