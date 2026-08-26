@@ -29,6 +29,7 @@ import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurre
 import { formatCurrencyNumber } from '@/lib/utils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { getFirstUnpaidDueDate } from '@/utils/nextPaymentDateFromInstallments';
+import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { 
   CreditCard, 
   Plus, 
@@ -68,6 +69,8 @@ export const LoansModule = () => {
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedLoanForPayment, setSelectedLoanForPayment] = useState(null);
   const [initialLoanData, setInitialLoanData] = useState(null);
+  // Id del préstamo pendiente que se está editando con el formulario de creación (ver openEditLoanForm).
+  const [editingLoanId, setEditingLoanId] = useState<string | null>(null);
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [showRequestSelector, setShowRequestSelector] = useState(false);
@@ -1489,95 +1492,80 @@ export const LoansModule = () => {
     }
   };
 
+  // Abre el formulario de CREACIÓN de préstamo (LoanForm), pre-llenado con los datos de un
+  // préstamo pendiente, para editarlo. Reemplaza el flujo anterior que abría LoanUpdateForm en
+  // modo "editOnly": ese formulario solo exponía un subconjunto reducido de campos (y en algunos
+  // casos bloqueaba el monto), mientras que este reutiliza el mismo formulario con el que se creó
+  // el préstamo, con todos sus campos editables.
+  const openEditLoanForm = (loan: any) => {
+    setEditingLoanId(loan.id);
+    setInitialLoanData({
+      client_id: loan.client_id,
+      amount: loan.amount,
+      purpose: loan.purpose,
+      interest_rate: loan.interest_rate,
+      term_months: loan.term_months,
+      loan_type: loan.loan_type,
+      amortization_type: loan.amortization_type,
+      payment_frequency: loan.payment_frequency,
+      first_payment_date: (loan.first_payment_date || loan.start_date || '').split('T')[0],
+      closing_costs: loan.closing_costs,
+      portfolio: loan.portfolio_id || '',
+      fixed_payment_enabled: loan.fixed_payment_enabled,
+      fixed_payment_amount: loan.fixed_payment_amount,
+      late_fee_enabled: loan.late_fee_enabled,
+      late_fee_rate: loan.late_fee_rate,
+      grace_period_days: loan.grace_period_days,
+      max_late_fee: loan.max_late_fee,
+      late_fee_calculation_type: loan.late_fee_calculation_type,
+      minimum_payment_type: loan.minimum_payment_type,
+      minimum_payment_percentage: loan.minimum_payment_percentage,
+      guarantor_required: !!loan.guarantor_name,
+      guarantor_name: loan.guarantor_name,
+      guarantor_phone: loan.guarantor_phone,
+      guarantor_dni: loan.guarantor_dni,
+      notes: loan.notes,
+    } as any);
+    setShowLoanForm(true);
+  };
+
   // Función para calcular la mora actual de un préstamo
+  //
+  // CORRECCIÓN CRÍTICA (auditoría de cálculos): esta función reimplementaba su propio cálculo de
+  // mora recorriendo solo las cuotas que YA existen físicamente en la tabla `installments`. Para
+  // préstamos indefinidos eso es incompleto: la función centralizada (getLateFeeBreakdownFromInstallments)
+  // genera dinámicamente una cuota por cada período vencido (ej. una por cada día, en un préstamo
+  // de frecuencia diaria) aunque no exista una fila en la BD para cada una. Como esta función no
+  // lo hacía, calculaba mora solo sobre la(s) cuota(s) realmente insertadas (normalmente 1), dando
+  // un total muy por debajo del real — y distinto del que muestra "Mora Actual" (LateFeeInfo, que sí
+  // usa la función centralizada) en la misma pantalla. Ahora delega en la misma función para que
+  // "Balance Total Pendiente" y "Mora Actual" siempre coincidan.
   const calculateCurrentLateFee = async (loan: any) => {
     try {
       if (!loan.late_fee_enabled || !loan.late_fee_rate) {
         return 0;
       }
 
-      // Obtener las cuotas del préstamo
-      const { data: installments, error } = await supabase
-        .from('installments')
-        .select('*')
-        .eq('loan_id', loan.id)
-        .order('installment_number', { ascending: true });
+      const loanDataForCalculation = {
+        id: loan.id,
+        amount: loan.amount,
+        interest_rate: loan.interest_rate,
+        monthly_payment: loan.monthly_payment,
+        remaining_balance: loan.remaining_balance,
+        next_payment_date: nextPaymentDates[loan.id] || loan.next_payment_date,
+        start_date: loan.start_date,
+        term: loan.term_months,
+        payment_frequency: loan.payment_frequency || 'monthly',
+        late_fee_enabled: loan.late_fee_enabled || false,
+        late_fee_rate: loan.late_fee_rate || 2.0,
+        grace_period_days: loan.grace_period_days || 0,
+        max_late_fee: loan.max_late_fee || 0,
+        late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
+        amortization_type: loan.amortization_type
+      };
 
-      if (error || !installments) {
-        console.error('Error obteniendo cuotas:', error);
-        return loan.current_late_fee || 0;
-      }
-
-      // Calcular mora actual basándose en las cuotas reales
-      const currentDate = getCurrentDateInSantoDomingo();
-      let totalCurrentLateFee = 0;
-
-      const isLoanIndefinite = String(loan.amortization_type || '').toLowerCase() === 'indefinite';
-      // Para indefinidos: usar la fecha calculada dinámicamente (no el campo estale de BD)
-      const effectiveNextPayDate = isLoanIndefinite
-        ? (nextPaymentDates[loan.id] || loan.next_payment_date || '')
-        : '';
-
-      installments.forEach((installment: any) => {
-        // Los cargos (interest_amount≈0, principal>0) siempre generan mora por su propia fecha;
-        // no los saltamos con la lógica de next_payment_date de los préstamos indefinidos.
-        const isCharge = Math.abs(installment.interest_amount || 0) < 0.01 &&
-          (installment.principal_amount || 0) > 0.01;
-        // Para indefinidos: cuotas regulares anteriores a effectiveNextPayDate ya fueron pagadas
-        if (isLoanIndefinite && effectiveNextPayDate && !isCharge) {
-          const instDue = String(installment.due_date || '').split('T')[0];
-          const nextPay = effectiveNextPayDate.split('T')[0];
-          if (instDue < nextPay) return;
-        }
-
-        // Parsear la fecha de vencimiento como fecha local para evitar problemas de zona horaria
-        const [year, month, day] = installment.due_date.split('-').map(Number);
-        const dueDate = new Date(year, month - 1, day);
-        const daysOverdue = Math.max(0, Math.floor((currentDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
-
-        // Solo calcular mora para cuotas vencidas y no pagadas
-        if (daysOverdue > 0 && !installment.is_paid) {
-          const gracePeriod = loan.grace_period_days || 0;
-          const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
-          
-          if (effectiveDaysOverdue > 0) {
-            // CORRECCIÓN: Para préstamos indefinidos, usar interest_amount o total_amount
-            // ya que principal_amount es 0
-            const isIndefinite = loan.amortization_type === 'indefinite';
-            const baseAmount = isIndefinite && installment.principal_amount === 0
-              ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
-              : (installment.principal_amount || installment.total_amount || installment.amount || 0);
-            const lateFeeRate = loan.late_fee_rate || 2;
-            
-            let lateFee = 0;
-            switch (loan.late_fee_calculation_type) {
-              case 'daily':
-                lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
-                break;
-              case 'monthly':
-                const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
-                lateFee = (baseAmount * lateFeeRate / 100) * monthsOverdue;
-                break;
-              case 'compound':
-                lateFee = baseAmount * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
-                break;
-              default:
-                lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
-            }
-            
-            // Aplicar límite máximo de mora si está configurado
-            if (loan.max_late_fee && loan.max_late_fee > 0) {
-              lateFee = Math.min(lateFee, loan.max_late_fee);
-            }
-            
-            // Restar la mora ya pagada de esta cuota
-            const remainingLateFee = Math.max(0, lateFee - installment.late_fee_paid);
-            totalCurrentLateFee += remainingLateFee;
-          }
-        }
-      });
-
-      return Math.round(totalCurrentLateFee * 100) / 100;
+      const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanDataForCalculation as any);
+      return Math.round((breakdown.totalLateFee || 0) * 100) / 100;
     } catch (error) {
       console.error('Error calculando mora actual:', error);
       return loan.current_late_fee || 0;
@@ -2241,10 +2229,11 @@ export const LoansModule = () => {
 
   if (showLoanForm) {
     return (
-      <LoanForm 
+      <LoanForm
         onBack={() => {
           setShowLoanForm(false);
           setInitialLoanData(null); // Limpiar datos iniciales
+          setEditingLoanId(null);
         }}
         onLoanCreated={async () => {
           if (selectedRequestId) {
@@ -2259,6 +2248,14 @@ export const LoansModule = () => {
           setStatusFilter('pending');
           refetch();
         }}
+        onLoanUpdated={() => {
+          setShowLoanForm(false);
+          setInitialLoanData(null);
+          setEditingLoanId(null);
+          setStatusFilter('pending');
+          refetch();
+        }}
+        editingLoanId={editingLoanId || undefined}
         initialData={initialLoanData}
       />
     );
@@ -2848,11 +2845,7 @@ export const LoansModule = () => {
                               <Button
                                 variant="outline"
                                 size="lg"
-                                onClick={() => {
-                                  setSelectedLoan(loan);
-                                  setIsEditMode(true);
-                                  setShowUpdateForm(true);
-                                }}
+                                onClick={() => openEditLoanForm(loan)}
                                 className="h-12 text-base font-semibold border-2 border-blue-200 text-blue-700 hover:bg-blue-50 hover:border-blue-300 transition-all duration-200"
                               >
                                 <Edit className="h-5 w-5 mr-2" />

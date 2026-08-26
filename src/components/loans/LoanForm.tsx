@@ -1097,6 +1097,15 @@ interface AmortizationRow {
 interface LoanFormProps {
   onBack: () => void;
   onLoanCreated?: () => void;
+  /** Se llama al terminar de EDITAR un préstamo existente (ver editingLoanId). Si no se pasa, se usa onLoanCreated. */
+  onLoanUpdated?: () => void;
+  /**
+   * Cuando se pasa, este formulario deja de "crear" un préstamo nuevo y en su lugar ACTUALIZA el
+   * préstamo con este id (y regenera sus cuotas con los nuevos parámetros). Se usa para que
+   * "Editar" en un préstamo pendiente reutilice este mismo formulario de creación en vez de un
+   * formulario de edición aparte y más limitado.
+   */
+  editingLoanId?: string;
   initialData?: {
     client_id?: string;
     amount?: number;
@@ -1112,6 +1121,9 @@ interface LoanFormProps {
     payment_frequency?: string;
     first_payment_date?: string;
     closing_costs?: number;
+    portfolio?: string;
+    fixed_payment_enabled?: boolean;
+    fixed_payment_amount?: number;
     late_fee_enabled?: boolean;
     late_fee_rate?: number;
     grace_period_days?: number;
@@ -1129,7 +1141,7 @@ interface LoanFormProps {
   };
 }
 
-export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) => {
+export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, initialData }: LoanFormProps) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [clientSearch, setClientSearch] = useState('');
@@ -1417,6 +1429,15 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
       }
       if (initialData.closing_costs !== undefined) {
         form.setValue('closing_costs', initialData.closing_costs);
+      }
+      if (initialData.portfolio !== undefined) {
+        form.setValue('portfolio', initialData.portfolio);
+      }
+      if (initialData.fixed_payment_enabled !== undefined) {
+        form.setValue('fixed_payment_enabled', initialData.fixed_payment_enabled);
+      }
+      if (initialData.fixed_payment_amount !== undefined) {
+        form.setValue('fixed_payment_amount', initialData.fixed_payment_amount);
       }
       if (initialData.late_fee_enabled !== undefined) {
         form.setValue('late_fee_enabled', initialData.late_fee_enabled);
@@ -2362,14 +2383,52 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
         fixed_payment_amount: Math.round(data.fixed_payment_amount || 0),
       };
 
-      console.log('Loan data to insert:', loanData);
-      
+      console.log('Loan data to insert/update:', loanData);
+
+      // ── MODO EDICIÓN: actualizar el préstamo existente y regenerar sus cuotas ──
+      // (en vez de crear un préstamo/cliente nuevo). Ver nota en LoanFormProps.editingLoanId.
+      if (editingLoanId) {
+        const { data: updatedLoan, error: updateError } = await supabase
+          .from('loans')
+          .update(loanData)
+          .eq('id', editingLoanId)
+          .select()
+          .single();
+
+        if (updateError) {
+          console.error('Database error updating loan:', updateError);
+          throw updateError;
+        }
+
+        // Las cuotas anteriores ya no corresponden a los nuevos parámetros (monto, tasa, plazo,
+        // frecuencia, tipo de amortización pueden haber cambiado): se eliminan y se regeneran
+        // con la MISMA función que genera las cuotas de un préstamo recién creado, para que la
+        // tabla de amortización de este préstamo editado sea idéntica a la de uno nuevo con los
+        // mismos parámetros.
+        const { error: deleteInstallmentsError } = await supabase
+          .from('installments')
+          .delete()
+          .eq('loan_id', editingLoanId);
+
+        if (deleteInstallmentsError) {
+          console.error('Error eliminando cuotas anteriores:', deleteInstallmentsError);
+          throw deleteInstallmentsError;
+        }
+
+        await generateOriginalInstallments(updatedLoan, data);
+
+        toast.success('Préstamo actualizado exitosamente. Las cuotas fueron recalculadas.');
+        (onLoanUpdated || onLoanCreated)?.();
+        return; // finally (más abajo) se encarga de setLoading(false)
+      }
+
+      // ── MODO CREACIÓN (comportamiento original, sin cambios) ──
       // Verificar campos UUID antes de enviar
       console.log('UUID fields check:');
       console.log('client_id:', loanData.client_id, 'type:', typeof loanData.client_id);
       console.log('loan_officer_id:', loanData.loan_officer_id, 'type:', typeof loanData.loan_officer_id);
       console.log('portfolio_id:', loanData.portfolio_id, 'type:', typeof loanData.portfolio_id);
-      
+
       const { data: insertedLoan, error } = await supabase
         .from('loans')
         .insert([loanData])
@@ -2646,8 +2705,14 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
           VOLVER
         </Button>
         <div className="flex-1 text-center sm:text-left">
-          <h2 className="text-xl md:text-2xl font-bold">CREAR PRÉSTAMO</h2>
-          <p className="text-blue-600 cursor-pointer text-sm md:text-base">¿No sabes como crear un préstamo?</p>
+          <h2 className="text-xl md:text-2xl font-bold">{editingLoanId ? 'EDITAR PRÉSTAMO' : 'CREAR PRÉSTAMO'}</h2>
+          {editingLoanId ? (
+            <p className="text-amber-600 text-sm md:text-base">
+              Al guardar, se eliminarán las cuotas actuales y se generarán nuevas según los parámetros que edites.
+            </p>
+          ) : (
+            <p className="text-blue-600 cursor-pointer text-sm md:text-base">¿No sabes como crear un préstamo?</p>
+          )}
         </div>
       </div>
 
@@ -3553,12 +3618,12 @@ export const LoanForm = ({ onBack, onLoanCreated, initialData }: LoanFormProps) 
               </Card>
 
                              <div className="flex justify-center">
-                 <Button 
-                   type="submit" 
+                 <Button
+                   type="submit"
                    disabled={loading || !selectedClient || calculatedValues.monthlyPayment === 0}
                    className="bg-blue-500 hover:bg-blue-600 px-6 sm:px-12 py-2 sm:py-3 text-base sm:text-lg w-full sm:w-auto"
                  >
-                   💰 CREAR PRÉSTAMO
+                   {editingLoanId ? (loading ? 'GUARDANDO...' : '💾 GUARDAR CAMBIOS') : (loading ? 'CREANDO...' : '💰 CREAR PRÉSTAMO')}
                  </Button>
                </div>
             </form>
