@@ -1324,9 +1324,26 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const safePaidPercentage = Math.max(0, Math.min(100, paidPercentage));
 
   // Calcular balance por antigüedad
+  //
+  // CORRECCIÓN (auditoría de cálculos): `getRange` devolvía `null` para cualquier cuota que
+  // todavía NO estuviera vencida (daysDiff <= 0), y esas cuotas simplemente se descartaban sin
+  // sumarse a ningún rango. Como "Capital/Interés pend. hoy" (más arriba en esta misma pantalla)
+  // SÍ suma TODAS las cuotas pendientes —vencidas o no— el total de este panel de antigüedad
+  // terminaba siendo menor que el de "pend. hoy" en cualquier préstamo con al menos una cuota que
+  // aún no llega a su fecha de vencimiento (es decir, casi todos). Se agrega un rango "Al día" para
+  // que la suma de todos los rangos coincida siempre con "pend. hoy": este panel es otra forma de
+  // ver el MISMO monto pendiente (agrupado por antigüedad), no un subconjunto de él.
+  //
+  // De paso, se alinea con el período de gracia: antes esta función marcaba una cuota como "1-30
+  // días de atraso" desde el día siguiente a su vencimiento, sin importar el período de gracia del
+  // préstamo — distinto a como se calcula la mora en el resto de la aplicación (que sí resta los
+  // días de gracia antes de contar atraso). Ahora una cuota dentro de su período de gracia cae en
+  // "Al día", igual que en el cálculo de mora.
   const calculateBalanceByAge = () => {
     const today = new Date();
+    const gracePeriod = loan?.grace_period_days || 0;
     const capitalRanges = {
+      'current': 0,
       '1-30': 0,
       '31-60': 0,
       '61-90': 0,
@@ -1337,6 +1354,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     };
 
     const interestRanges = {
+      'current': 0,
       '1-30': 0,
       '31-60': 0,
       '61-90': 0,
@@ -1346,15 +1364,15 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       '181+': 0
     };
 
-    const getRange = (daysDiff: number): keyof typeof capitalRanges | null => {
-      if (daysDiff >= 1 && daysDiff <= 30) return '1-30';
-      if (daysDiff >= 31 && daysDiff <= 60) return '31-60';
-      if (daysDiff >= 61 && daysDiff <= 90) return '61-90';
-      if (daysDiff >= 91 && daysDiff <= 120) return '91-120';
-      if (daysDiff >= 121 && daysDiff <= 150) return '121-150';
-      if (daysDiff >= 151 && daysDiff <= 180) return '151-180';
-      if (daysDiff > 180) return '181+';
-      return null;
+    const getRange = (effectiveDaysDiff: number): keyof typeof capitalRanges => {
+      if (effectiveDaysDiff <= 0) return 'current'; // Aún no vencida, o dentro del período de gracia
+      if (effectiveDaysDiff <= 30) return '1-30';
+      if (effectiveDaysDiff <= 60) return '31-60';
+      if (effectiveDaysDiff <= 90) return '61-90';
+      if (effectiveDaysDiff <= 120) return '91-120';
+      if (effectiveDaysDiff <= 150) return '121-150';
+      if (effectiveDaysDiff <= 180) return '151-180';
+      return '181+';
     };
 
     const isIndefiniteLoan = String(loan?.amortization_type || '').toLowerCase() === 'indefinite';
@@ -1370,14 +1388,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         const [dy, dm, dd] = item.dueDate.split('-').map(Number);
         const dueDate = new Date(dy, dm - 1, dd);
         const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        const range = getRange(daysDiff);
+        const range = getRange(daysDiff - gracePeriod);
 
-        if (range) {
-          if (item.isCharge) {
-            capitalRanges[range] += item.principal || 0;
-          } else {
-            interestRanges[range] += item.principal || 0;
-          }
+        if (item.isCharge) {
+          capitalRanges[range] += item.principal || 0;
+        } else {
+          interestRanges[range] += item.principal || 0;
         }
       }
     } else {
@@ -1398,12 +1414,10 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         const [dy, dm, dd] = String(inst.due_date).split('T')[0].split('-').map(Number);
         const dueDate = new Date(dy, dm - 1, dd);
         const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        const range = getRange(daysDiff);
+        const range = getRange(daysDiff - gracePeriod);
 
-        if (range) {
-          capitalRanges[range] += inst.principal_amount || 0;
-          interestRanges[range] += inst.interest_amount || 0;
-        }
+        capitalRanges[range] += inst.principal_amount || 0;
+        interestRanges[range] += inst.interest_amount || 0;
       });
     }
 
@@ -1415,17 +1429,21 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const totalInterestByAge = Object.values(interestRanges).reduce((sum, val) => sum + val, 0);
 
   const agingRangeLabel = (key: string) =>
-    key === '181+' ? 'Más de 181 Días de atraso' : `${key} Días de atraso`;
+    key === 'current' ? 'Al día (aún no vence)'
+      : key === '181+' ? 'Más de 181 Días de atraso'
+      : `${key} Días de atraso`;
 
   // Badge = rango más antiguo (más crítico) con monto pendiente mayor a 0.
   // En análisis de antigüedad, el bucket más viejo es el más preocupante.
+  // CORRECCIÓN: si NADA está vencido (todo el pendiente es "current"), el respaldo debe ser
+  // 'current' — no '1-30', que sugeriría falsamente que hay algo atrasado.
   const ageRangeOrder = ['1-30', '31-60', '61-90', '91-120', '121-150', '151-180', '181+'];
   const topCapitalRange = ageRangeOrder.slice().reverse().find(
     k => (capitalRanges as Record<string, number>)[k] > 0
-  ) || '1-30';
+  ) || 'current';
   const topInterestRange = ageRangeOrder.slice().reverse().find(
     k => (interestRanges as Record<string, number>)[k] > 0
-  ) || '1-30';
+  ) || 'current';
 
   return (
     <>
@@ -1719,7 +1737,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       </div>
                       {Object.entries(capitalRanges).map(([range, amount]) => (
                         <div key={range} className={`flex justify-between items-center p-2 rounded ${range === topCapitalRange && amount > 0 ? 'bg-blue-50' : ''}`}>
-                          <span className={`text-sm ${range === topCapitalRange && amount > 0 ? 'text-blue-700 font-medium' : 'text-gray-600'}`}>{range === '181+' ? 'Más de 181 Días de atraso' : `${range} Días de atraso`}</span>
+                          <span className={`text-sm ${range === topCapitalRange && amount > 0 ? 'text-blue-700 font-medium' : 'text-gray-600'}`}>{agingRangeLabel(range)}</span>
                           <span className={`font-semibold ${range === topCapitalRange && amount > 0 ? 'text-blue-700' : ''}`}>RD {amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       ))}
@@ -1741,7 +1759,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                     </div>
                     {Object.entries(interestRanges).map(([range, amount]) => (
                       <div key={range} className={`flex justify-between items-center p-2 rounded ${range === topInterestRange && amount > 0 ? 'bg-blue-50' : ''}`}>
-                        <span className={`text-sm ${range === topInterestRange && amount > 0 ? 'text-blue-700 font-medium' : 'text-gray-600'}`}>{range === '181+' ? 'Más de 181 Días de atraso' : `${range} Días de atraso`}</span>
+                        <span className={`text-sm ${range === topInterestRange && amount > 0 ? 'text-blue-700 font-medium' : 'text-gray-600'}`}>{agingRangeLabel(range)}</span>
                         <span className={`font-semibold ${range === topInterestRange && amount > 0 ? 'text-blue-700' : ''}`}>RD {amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     ))}
