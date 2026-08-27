@@ -365,30 +365,50 @@ export const getLateFeeBreakdownFromInstallments = async (
           break;
       }
       
-      // Calcular cuántas cuotas deberían existir desde firstPaymentDate hasta hoy
-      // Usar períodos según frecuencia, no siempre meses
-      const daysSinceFirst = Math.floor((calculationDate.getTime() - firstPaymentDate.getTime()) / (1000 * 60 * 60 * 24));
-      let totalExpected: number;
-      switch (frequency) {
-        case 'daily':
-          totalExpected = Math.max(0, daysSinceFirst) + 1;
-          break;
-        case 'weekly':
-          totalExpected = Math.max(0, Math.floor(daysSinceFirst / 7)) + 1;
-          break;
-        case 'biweekly':
-          totalExpected = Math.max(0, Math.floor(daysSinceFirst / 14)) + 1;
-          break;
-        case 'monthly':
-        default: {
-          const monthsElapsed = Math.max(0,
-            (calculationDate.getFullYear() - firstPaymentDate.getFullYear()) * 12 +
-            (calculationDate.getMonth() - firstPaymentDate.getMonth())
-          );
-          totalExpected = monthsElapsed + 1;
-          break;
+      // Calcular cuántas cuotas deberían existir: SOLO las que ya vencieron o vencen HOY
+      // (calculationDate). Se cuenta período por período (en vez de aproximar con "días/30"
+      // o diferencia de meses) para que sea exacto en cualquier frecuencia y NUNCA incluya un
+      // período cuya fecha de vencimiento todavía no ha llegado. La aproximación anterior por
+      // diferencia de meses (para 'monthly') tenía el mismo problema que "días/30" tenía para
+      // diario/semanal/quincenal: contaba un período como vencido con solo que cambiara el mes,
+      // sin fijarse si el día del mes de vencimiento ya había llegado o no (ej: cuota vence el
+      // día 25 y hoy es el día 10 del mes siguiente → esa cuota aún no vence, pero se contaba).
+      const toIsoLocal = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const calculationDateIso = toIsoLocal(calculationDate);
+
+      const addPeriodsToDate = (base: Date, periods: number): Date => {
+        const dt = new Date(base);
+        switch (frequency) {
+          case 'daily':
+            dt.setDate(dt.getDate() + periods);
+            break;
+          case 'weekly':
+            dt.setDate(dt.getDate() + (periods * 7));
+            break;
+          case 'biweekly':
+            dt.setDate(dt.getDate() + (periods * 14));
+            break;
+          case 'monthly':
+          default: {
+            const day = base.getDate();
+            const targetMonth = base.getMonth() + periods;
+            const targetYear = base.getFullYear();
+            const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+            dt.setFullYear(targetYear, targetMonth, Math.min(day, lastDayOfTargetMonth));
+            break;
+          }
         }
+        return dt;
+      };
+
+      let totalExpected = 0;
+      for (let n = 0; n < 100000; n++) { // safety cap, nunca debería alcanzarse
+        const dueIso = toIsoLocal(addPeriodsToDate(firstPaymentDate, n));
+        if (dueIso > calculationDateIso) break;
+        totalExpected = n + 1;
       }
+      totalExpected = Math.max(1, totalExpected);
       
       // Calcular el monto base para la mora (interés por cuota para indefinidos)
       const isIndefinite = loan.amortization_type === 'indefinite';

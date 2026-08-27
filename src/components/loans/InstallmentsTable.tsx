@@ -345,101 +345,48 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             }
           }
 
-          // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
-          let monthsElapsed = 0;
-          
-          switch (frequency) {
-            case 'daily':
-              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 30));
-              break;
-            case 'weekly':
-              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 7 * 4));
-              break;
-            case 'biweekly':
-              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 14 * 2));
-              break;
-            case 'monthly':
-            default:
-              // Calcular meses transcurridos correctamente
-              const yearsDiff = today.getFullYear() - firstPaymentDateBase.getFullYear();
-              const monthsDiff = today.getMonth() - firstPaymentDateBase.getMonth();
-              monthsElapsed = yearsDiff * 12 + monthsDiff;
-              // Si el día del mes ya pasó o es el mismo día, contar ese mes también
-              if (today.getDate() >= firstPaymentDateBase.getDate()) {
-                monthsElapsed += 1;
-              }
-              break;
-          }
-          
-          // INDEFINIDOS: solo debe existir 1 cuota pendiente a la vez.
-          // - Si NO hay pagos: generar solo la primera cuota (firstPaymentDateBase)
-          // - Si hay pagos: mostrar historial (hasta max due pagada) y generar SOLO la siguiente.
-          const monthsFromTime = Math.max(1, monthsElapsed + 1);
-          if (maxDueDateFromPayments) {
-            // Extender generación hasta cubrir (maxDueDateFromPayments + 1 período) para que,
-            // tras pagar la cuota, se genere la siguiente (sin crear 2 pendientes).
-            const maxDueNext = (() => {
-              const [yy, mm, dd] = String(maxDueDateFromPayments).split('T')[0].split('-').map(Number);
-              if (!yy || !mm || !dd) return maxDueDateFromPayments;
-              const base = new Date(yy, mm - 1, dd);
-              const dt = new Date(base);
-              switch (String(frequency || 'monthly').toLowerCase()) {
-                case 'daily':
-                  dt.setDate(dt.getDate() + 1);
-                  break;
-                case 'weekly':
-                  dt.setDate(dt.getDate() + 7);
-                  break;
-                case 'biweekly':
-                  dt.setDate(dt.getDate() + 14);
-                  break;
-                case 'monthly':
-                default:
-                  // overflow intencional
-                  dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
-                  break;
-              }
-              const y = dt.getFullYear();
-              const m = String(dt.getMonth() + 1).padStart(2, '0');
-              const d = String(dt.getDate()).padStart(2, '0');
-              return `${y}-${m}-${d}`;
-            })();
-
-            let probeCount = 1;
-            while (probeCount < 500) { // safety
-              const probeDate = new Date(firstPaymentDateBase);
-              switch (frequency) {
-                case 'daily':
-                  probeDate.setDate(firstPaymentDateBase.getDate() + (probeCount - 1));
-                  break;
-                case 'weekly':
-                  probeDate.setDate(firstPaymentDateBase.getDate() + ((probeCount - 1) * 7));
-                  break;
-                case 'biweekly':
-                  probeDate.setDate(firstPaymentDateBase.getDate() + ((probeCount - 1) * 14));
-                  break;
-                case 'monthly':
-                default:
-                  probeDate.setFullYear(firstPaymentDateBase.getFullYear(), firstPaymentDateBase.getMonth() + (probeCount - 1), firstPaymentDateBase.getDate());
-                  break;
-              }
-              const y = probeDate.getFullYear();
-              const m = probeDate.getMonth() + 1;
-              const d = probeDate.getDate();
-              const probeKey = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-              if (probeKey >= maxDueNext) {
+          // Calcular cuántas cuotas deben existir: SOLO las que ya vencieron o vencen HOY.
+          // CORRECCIÓN (auditoría de cálculos): antes esto se aproximaba con "días transcurridos / 30"
+          // (diario/semanal/quincenal) o con diferencia de meses (mensual), y luego se le sumaba +1
+          // "por si acaso". Ambas cosas causaban que SIEMPRE se generara una cuota extra cuya fecha de
+          // vencimiento todavía no había llegado (ej: en un préstamo diario, la cuota de "mañana"
+          // aparecía como pendiente desde HOY, antes de que mañana llegara). Ahora se cuenta período
+          // por período de forma exacta (sin aproximaciones), frecuencia por frecuencia, deteniéndose
+          // en cuanto la fecha calculada supera a "hoy".
+          const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+          const dateToKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          const addPeriodsToBase = (periods: number): Date => {
+            const dt = new Date(firstPaymentDateBase);
+            switch (frequency) {
+              case 'daily':
+                dt.setDate(firstPaymentDateBase.getDate() + periods);
                 break;
-              }
-              probeCount++;
+              case 'weekly':
+                dt.setDate(firstPaymentDateBase.getDate() + (periods * 7));
+                break;
+              case 'biweekly':
+                dt.setDate(firstPaymentDateBase.getDate() + (periods * 14));
+                break;
+              case 'monthly':
+              default:
+                dt.setFullYear(firstPaymentDateBase.getFullYear(), firstPaymentDateBase.getMonth() + periods, firstPaymentDateBase.getDate());
+                break;
             }
-            monthsElapsed = Math.max(monthsFromTime, probeCount);
-          } else {
-            monthsElapsed = monthsFromTime;
+            return dt;
+          };
+
+          let monthsElapsed = 0;
+          for (let n = 0; n < 100000; n++) { // safety cap, nunca debería alcanzarse
+            const dueKey = dateToKey(addPeriodsToBase(n));
+            if (dueKey > todayKey) break;
+            monthsElapsed = n + 1;
           }
-          
+          // INDEFINIDOS: siempre debe existir al menos 1 cuota visible (la primera, aunque su fecha
+          // de vencimiento sea futura, para que se vea "lo que viene" apenas se crea el préstamo).
+          monthsElapsed = Math.max(1, monthsElapsed);
+
           console.log('🔍 InstallmentsTable: Cálculo de cuotas para préstamo indefinido:', {
             loanId,
-            monthsFromTime,
             finalMonthsElapsed: monthsElapsed,
             totalPayments: allPayments?.length || 0,
             interestPerPayment

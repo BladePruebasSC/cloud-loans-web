@@ -233,11 +233,13 @@ export async function getLoanBalanceBreakdown(
     if (firstDueFromStart && interestPerPayment > 0.01) {
       let currentDue = firstDueFromStart;
       while (true) {
+        // No incluir un período cuya fecha de vencimiento todavía no ha llegado (ej: la cuota de
+        // "mañana" no debe sumarse hoy). Antes este chequeo iba DESPUÉS de sumar el período, por lo
+        // que siempre se colaba un período futuro de más en "Interés pend. hoy".
+        if (currentDue > todayIso) break;
         const paid = round2(paidByDueValid.get(currentDue) || 0);
         const unpaid = round2(Math.max(0, round2(interestPerPayment - paid)));
         totalPendingInterest = round2(totalPendingInterest + unpaid);
-        // Stop after processing the first period that's in the future
-        if (currentDue > todayIso) break;
         currentDue = addPeriod(currentDue, freq);
       }
     }

@@ -470,32 +470,40 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             paidInstallmentsCount = Math.floor(totalInterestPaid / interestPerPayment);
           }
           
-          // Calcular cuántas cuotas deben generarse basándose en la frecuencia y tiempo transcurrido
+          // Calcular cuántos períodos ya vencieron (fecha de vencimiento <= hoy).
+          // CORRECCIÓN (auditoría de cálculos): la aproximación anterior ("días transcurridos / 30"
+          // para diario, "/28" para semanal, diferencia de meses para mensual) daba un conteo muy
+          // por debajo de la realidad en diario/semanal/quincenal (ej. subestimaba ~30x un préstamo
+          // diario), y en mensual podía contar un mes antes de que el día de vencimiento llegara.
+          // Ahora se cuenta período por período de forma exacta, sin aproximaciones.
+          const dateToKeyAS = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          const todayKeyAS = dateToKeyAS(today);
+          const addPeriodsFromBaseAS = (periods: number): Date => {
+            const dt = new Date(firstPaymentDateBase);
+            switch (frequency) {
+              case 'daily':
+                dt.setDate(firstPaymentDateBase.getDate() + periods);
+                break;
+              case 'weekly':
+                dt.setDate(firstPaymentDateBase.getDate() + (periods * 7));
+                break;
+              case 'biweekly':
+                dt.setDate(firstPaymentDateBase.getDate() + (periods * 14));
+                break;
+              case 'monthly':
+              default:
+                dt.setFullYear(firstPaymentDateBase.getFullYear(), firstPaymentDateBase.getMonth() + periods, firstPaymentDateBase.getDate());
+                break;
+            }
+            return dt;
+          };
           let monthsElapsed = 0;
-          
-          switch (frequency) {
-            case 'daily':
-              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 30));
-              break;
-            case 'weekly':
-              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 7 * 4));
-              break;
-            case 'biweekly':
-              monthsElapsed = Math.floor((today.getTime() - firstPaymentDateBase.getTime()) / (1000 * 60 * 60 * 24 * 14 * 2));
-              break;
-            case 'monthly':
-            default:
-              // Calcular meses transcurridos correctamente
-              const yearsDiff = today.getFullYear() - firstPaymentDateBase.getFullYear();
-              const monthsDiff = today.getMonth() - firstPaymentDateBase.getMonth();
-              monthsElapsed = yearsDiff * 12 + monthsDiff;
-              // Si el día del mes ya pasó o es el mismo día, contar ese mes también
-              if (today.getDate() >= firstPaymentDateBase.getDate()) {
-                monthsElapsed += 1;
-              }
-              break;
+          for (let n = 0; n < 100000; n++) { // safety cap, nunca debería alcanzarse
+            const dueKeyAS = dateToKeyAS(addPeriodsFromBaseAS(n));
+            if (dueKeyAS > todayKeyAS) break;
+            monthsElapsed = n + 1;
           }
-          
+
           // CORRECCIÓN: Para préstamos indefinidos, usar el máximo entre:
           // 1. Cuotas pagadas (basadas en pagos reales)
           // 2. Meses transcurridos + 1 mes futuro
