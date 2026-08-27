@@ -1532,13 +1532,77 @@ export const LoansModule = () => {
     setPaidInstallmentsCountForIndefinite(omit);
   };
 
-  // Espera a que `refetch()` traiga los datos frescos de la BD y RECIÉN DESPUÉS invalidra la caché
-  // del préstamo afectado. El orden importa: si se invalidara antes, el efecto que rellena la caché
-  // podría dispararse con los datos VIEJOS de `loans` (que todavía no se actualizó) y volver a
-  // guardar un valor obsoleto, dejando el mismo problema que se quiere resolver.
+  // CORRECCIÓN (segunda vuelta — "aprobar" dejaba la mora en 0 hasta un refresh):
+  //
+  // Invalidar la caché (dejarla en `undefined`) no alcanza por sí solo, porque el efecto que la
+  // vuelve a llenar (updateDynamicLateFeesMemo / updatePendingInterestForIndefiniteMemo) solo se
+  // dispara cuando cambia `loansSignature`, una firma armada con `id-start_date-next_payment_date`
+  // de cada préstamo. Aprobar, cancelar o recuperar un préstamo solo cambia su `status` — ninguno
+  // de esos tres campos — así que esa firma queda IDÉNTICA y el efecto nunca se vuelve a ejecutar.
+  // El resultado: "Mora Actual" se queda en `undefined`, cae al respaldo `loan.current_late_fee || 0`
+  // (que suele ser 0), y "Balance Total Pendiente" termina mostrando el mismo monto que "Balance
+  // Pendiente" — hasta que una recarga completa fuerza a todos los efectos a correr desde cero.
+  //
+  // Tampoco alcanza con llamar directamente a updateDynamicLateFeesMemo()/…Indefinido(): esas
+  // funciones son útiles para el barrido periódico, pero leen `loans` por closure — la versión
+  // "actual" de esas funciones en el momento en que se llama desde aquí puede seguir siendo la de
+  // ANTES del refetch (closure obsoleta de React), sobre todo si se llama justo después de cambiar
+  // datos que sí afectan la mora (tasa, fecha, monto), no solo el status.
+  //
+  // Por eso esta función trae los datos MÁS FRESCOS posibles directo de la BD (sin pasar por el
+  // estado `loans` de React en absoluto) y recalcula con esos datos.
+  const refreshLoanCalculations = async (loanId?: string) => {
+    const { data: targetLoans } = loanId
+      ? await supabase.from('loans').select('*').eq('id', loanId)
+      : await supabase.from('loans').select('*').neq('status', 'deleted');
+
+    if (!targetLoans || targetLoans.length === 0) return;
+
+    const lateFeeUpdates: { [key: string]: number } = {};
+    const pendingInterestUpdates: { [key: string]: number } = {};
+    const paidCountUpdates: { [key: string]: number } = {};
+    const balanceUpdates: { [key: string]: number } = {};
+    const baseBalanceUpdates: { [key: string]: number } = {};
+    const chargesUpdates: { [key: string]: number } = {};
+
+    await Promise.all(targetLoans.map(async (loan: any) => {
+      if (loan.late_fee_enabled) {
+        lateFeeUpdates[loan.id] = await calculateCurrentLateFee(loan);
+      }
+      if (String(loan.amortization_type || '').toLowerCase() === 'indefinite') {
+        const result = await calculatePendingInterestForIndefinite(loan);
+        pendingInterestUpdates[loan.id] = result.pendingInterest;
+        paidCountUpdates[loan.id] = result.paidCount;
+      }
+      if (loan.status !== 'deleted' && loan.status !== 'paid') {
+        const breakdown = await calculateBalanceBreakdown(loan);
+        balanceUpdates[loan.id] = Math.round((breakdown.totalBalance || 0) * 100) / 100;
+        baseBalanceUpdates[loan.id] = Math.round((breakdown.baseBalance || 0) * 100) / 100;
+        chargesUpdates[loan.id] = Math.round((breakdown.pendingCharges || 0) * 100) / 100;
+      }
+    }));
+
+    if (Object.keys(lateFeeUpdates).length > 0) {
+      setDynamicLateFees(prev => ({ ...prev, ...lateFeeUpdates }));
+    }
+    if (Object.keys(pendingInterestUpdates).length > 0) {
+      setPendingInterestForIndefinite(prev => ({ ...prev, ...pendingInterestUpdates }));
+      setPaidInstallmentsCountForIndefinite(prev => ({ ...prev, ...paidCountUpdates }));
+    }
+    if (Object.keys(balanceUpdates).length > 0) {
+      setCalculatedRemainingBalances(prev => ({ ...prev, ...balanceUpdates }));
+      setCalculatedBaseBalances(prev => ({ ...prev, ...baseBalanceUpdates }));
+      setCalculatedPendingCharges(prev => ({ ...prev, ...chargesUpdates }));
+    }
+  };
+
+  // Espera a que `refetch()` traiga los datos frescos de la BD (para que `loans` en pantalla quede
+  // al día), invalida la caché del préstamo afectado y RECIÉN DESPUÉS fuerza el recálculo real
+  // (ver refreshLoanCalculations) — no basta con invalidar y esperar a que algún efecto lo note.
   const refetchAndInvalidate = async (loanId?: string) => {
     await refetch();
     invalidateLoanCaches(loanId);
+    await refreshLoanCalculations(loanId);
   };
 
   // Abre el formulario de CREACIÓN de préstamo (LoanForm), pre-llenado con los datos de un
