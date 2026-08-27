@@ -316,8 +316,22 @@ export const getLateFeeBreakdownFromInstallments = async (
     // CORRECCIÓN: Para préstamos indefinidos, generar dinámicamente todas las cuotas vencidas
     // desde la primera no pagada hasta hoy
     if (loan.amortization_type === 'indefinite' && loan.start_date && loan.next_payment_date) {
-      const maxInstallmentNumber = installments.length > 0 
-        ? Math.max(...installments.map(i => i.installment_number))
+      // CORRECCIÓN CRÍTICA (auditoría de cálculos): `maxInstallmentNumber` se usa más abajo para
+      // saber "cuántos períodos de interés ya existen" y a partir de ahí generar los que faltan
+      // hasta hoy. Un CARGO se numera con `installment_number = max(actual) + 1` (ver add_charge
+      // en LoanUpdateForm.tsx/PaymentForm.tsx) SIN importar su fecha — puede caer a mitad del
+      // préstamo pero de todos modos "roba" el siguiente número de la secuencia. Si se incluye a
+      // los cargos en este cálculo, `maxInstallmentNumber` queda inflado por cada cargo agregado,
+      // y la generación dinámica de cuotas de interés empieza a contar desde un número más alto
+      // del que le corresponde: se salta un período completo de interés/mora y, peor, TODAS las
+      // fechas de las cuotas generadas después quedan corridas un período entero (por eso "cuando
+      // llega a un cargo deja de seguir bien" el interés o el balance). Se excluyen los cargos:
+      // solo las cuotas regulares (con interés) cuentan como "períodos" para esta numeración.
+      const isChargeInstallmentForSeq = (inst: any) =>
+        Math.abs(inst.interest_amount || 0) < 0.01 && (inst.principal_amount || 0) > 0.01;
+      const regularInstallmentsForSeq = installments.filter(i => !isChargeInstallmentForSeq(i));
+      const maxInstallmentNumber = regularInstallmentsForSeq.length > 0
+        ? Math.max(...regularInstallmentsForSeq.map(i => i.installment_number))
         : 0;
       
       // Calcular la primera fecha de pago desde start_date
@@ -528,8 +542,13 @@ export const getLateFeeBreakdownFromInstallments = async (
       
       // Si no existe y la fecha está vencida, generar dinámicamente la cuota
       if (!existingInstallment && daysSinceNextPayment > 0) {
-        const maxInstallmentNumber = installments.length > 0 
-          ? Math.max(...installments.map(i => i.installment_number))
+        // Ver nota arriba sobre excluir cargos al numerar períodos (mismo bug, aplicado aquí solo
+        // a la etiqueta de la cuota generada, no a fechas — impacto menor pero mismo origen).
+        const isChargeInstallmentForSeq2 = (inst: any) =>
+          Math.abs(inst.interest_amount || 0) < 0.01 && (inst.principal_amount || 0) > 0.01;
+        const regularInstallmentsForSeq2 = installments.filter(i => !isChargeInstallmentForSeq2(i));
+        const maxInstallmentNumber = regularInstallmentsForSeq2.length > 0
+          ? Math.max(...regularInstallmentsForSeq2.map(i => i.installment_number))
           : 0;
         const nextInstallmentNumber = maxInstallmentNumber + 1;
         
