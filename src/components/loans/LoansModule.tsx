@@ -3038,9 +3038,16 @@ export const LoansModule = () => {
                                 variant="outline"
                                 size="lg"
                                 onClick={() => {
-                                  setSelectedLoan(loan);
-                                  setIsEditMode(loan.status === 'pending');
-                                  setShowUpdateForm(true);
+                                  // CORRECCIÓN: un préstamo pendiente siempre se edita con el
+                                  // formulario de creación (openEditLoanForm), nunca con el editor
+                                  // reducido de LoanUpdateForm (ver nota junto a openEditLoanForm).
+                                  if (loan.status === 'pending') {
+                                    openEditLoanForm(loan);
+                                  } else {
+                                    setSelectedLoan(loan);
+                                    setIsEditMode(false);
+                                    setShowUpdateForm(true);
+                                  }
                                 }}
                                 disabled={loan.status === 'paid'}
                                 className="h-12 text-base font-semibold border-2 border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 disabled:opacity-50 transition-all duration-200"
@@ -3404,9 +3411,13 @@ export const LoansModule = () => {
                                  variant="outline"
                                  size="sm"
                                  onClick={() => {
-                                   setSelectedLoan(loan);
-                                   setIsEditMode(loan.status === 'pending');
-                                   setShowUpdateForm(true);
+                                   if (loan.status === 'pending') {
+                                     openEditLoanForm(loan);
+                                   } else {
+                                     setSelectedLoan(loan);
+                                     setIsEditMode(false);
+                                     setShowUpdateForm(true);
+                                   }
                                  }}
                                  disabled={loan.status === 'paid'}
                                  className="w-full sm:w-auto text-xs"
@@ -3678,9 +3689,13 @@ export const LoansModule = () => {
                                      variant="outline"
                                      size="sm"
                                      onClick={() => {
-                                       setSelectedLoan(loan);
-                                       setIsEditMode(loan.status === 'pending');
-                                       setShowUpdateForm(true);
+                                       if (loan.status === 'pending') {
+                                         openEditLoanForm(loan);
+                                       } else {
+                                         setSelectedLoan(loan);
+                                         setIsEditMode(false);
+                                         setShowUpdateForm(true);
+                                       }
                                      }}
                                      className="w-full sm:w-auto text-xs"
                                    >
@@ -3745,9 +3760,13 @@ export const LoansModule = () => {
                                      variant="outline"
                                      size="sm"
                                      onClick={() => {
-                                       setSelectedLoan(loan);
-                                       setIsEditMode(loan.status === 'pending');
-                                       setShowUpdateForm(true);
+                                       if (loan.status === 'pending') {
+                                         openEditLoanForm(loan);
+                                       } else {
+                                         setSelectedLoan(loan);
+                                         setIsEditMode(false);
+                                         setShowUpdateForm(true);
+                                       }
                                      }}
                                      className="w-full sm:w-auto text-xs"
                                    >

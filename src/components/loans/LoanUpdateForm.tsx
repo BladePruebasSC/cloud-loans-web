@@ -3289,11 +3289,36 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           }
           
           // Calcular nuevas fechas
-          const startDate = new Date(loan.start_date);
+          // CORRECCIÓN (auditoría de cálculos): antes esto SIEMPRE sumaba "+1 mes" al calcular
+          // nextPaymentDate/firstPaymentDate, sin importar la frecuencia de pago del préstamo — una
+          // cuota diaria, semanal o quincenal terminaba con su primera fecha mal calculada (fuera de
+          // orden respecto a start_date). También se parseaba `loan.start_date` con `new Date(string)`,
+          // que interpreta una fecha "YYYY-MM-DD" como medianoche UTC en vez de Santo Domingo.
+          // Este código está inactivo en la práctica (edit_loan solo se disparaba desde el botón
+          // "Editar" de un préstamo pendiente, y ese botón ahora usa el formulario de creación —
+          // ver openEditLoanForm en LoansModule.tsx), pero se corrige de todos modos como red de
+          // seguridad, y por si algún préstamo ya quedó con cuotas mal generadas por este bug.
+          const editFrequency = data.edit_payment_frequency || loan.payment_frequency || 'monthly';
+          const [editStartYear, editStartMonth, editStartDay] = String(loan.start_date).split('T')[0].split('-').map(Number);
+          const startDate = new Date(editStartYear, editStartMonth - 1, editStartDay);
           const newEndDate = new Date(startDate);
           newEndDate.setMonth(newEndDate.getMonth() + data.edit_term_months);
           const nextPaymentDate = new Date(startDate);
-          nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
+          switch (editFrequency) {
+            case 'daily':
+              nextPaymentDate.setDate(nextPaymentDate.getDate() + 1);
+              break;
+            case 'weekly':
+              nextPaymentDate.setDate(nextPaymentDate.getDate() + 7);
+              break;
+            case 'biweekly':
+              nextPaymentDate.setDate(nextPaymentDate.getDate() + 14);
+              break;
+            case 'monthly':
+            default:
+              nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
+              break;
+          }
           const firstPaymentDate = new Date(nextPaymentDate);
           
           // Calcular total_amount
