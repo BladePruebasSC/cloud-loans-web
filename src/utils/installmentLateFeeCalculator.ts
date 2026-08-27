@@ -456,10 +456,17 @@ export const getLateFeeBreakdownFromInstallments = async (
         }
         
         const dueDateStr = `${installmentDate.getFullYear()}-${String(installmentDate.getMonth() + 1).padStart(2, '0')}-${String(installmentDate.getDate()).padStart(2, '0')}`;
-        
-        // Verificar si ya existe una cuota con esta fecha en el breakdown
-        const existingInstallment = breakdown.find(item => item.dueDate === dueDateStr);
-        
+
+        // Verificar si ya existe una CUOTA REGULAR con esta fecha en el breakdown.
+        // CORRECCIÓN CRÍTICA (auditoría de cálculos): antes este `find` no excluía los cargos, así
+        // que si un cargo tenía la MISMA fecha que el período regular que tocaba generar (algo común:
+        // se agrega un cargo el mismo día que vence una cuota), el código creía "esta fecha ya tiene
+        // una cuota" y se saltaba por completo la generación del interés de ese período — el cargo y
+        // la cuota de interés son dos obligaciones distintas que pueden coincidir en fecha, no la
+        // misma cosa. Ese período de interés desaparecía sin dejar rastro del cálculo, dando un
+        // total de interés pendiente (y de la tabla "por antigüedad") menor al real.
+        const existingInstallment = breakdown.find(item => item.dueDate === dueDateStr && !item.isCharge);
+
         if (!existingInstallment) {
           // CORRECCIÓN: Verificar si esta cuota está pagada.
           // Primero: si la fecha < next_payment_date, está pagada (fuente de verdad: payments table)

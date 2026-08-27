@@ -1396,6 +1396,23 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
           interestRanges[range] += item.principal || 0;
         }
       }
+
+      // CORRECCIÓN (auditoría de cálculos): "Interés pend. hoy" (pendingInterestForIndefinite, más
+      // arriba en esta pantalla) y este desglose por antigüedad vienen de DOS motores de cálculo
+      // distintos que no cuentan los períodos exactamente igual: el de "pend. hoy" (getLoanBalanceBreakdown)
+      // siempre incluye el próximo período aún no vencido, mientras que el generador de cuotas
+      // dinámicas de este desglose se detiene en el período "actual". El resultado es que, sin
+      // este ajuste, la suma de este panel queda sistemáticamente por debajo de "Interés pend. hoy"
+      // en TODO préstamo indefinido (no solo los que tienen cargos) — falta justamente la porción
+      // que aún no vence. En vez de perseguir dos motores para que cuenten períodos idéntico
+      // (frágil: cualquier cambio futuro los vuelve a desalinear), se reconcilia el total aquí: si
+      // falta algo para llegar al monto real de "Interés pend. hoy", esa diferencia SIEMPRE es
+      // interés que aún no vence, así que se coloca en el rango "Al día".
+      const interestSummedSoFar = Object.values(interestRanges).reduce((sum, val) => sum + val, 0);
+      const interestShortfall = round2(interestPending - interestSummedSoFar);
+      if (interestShortfall > 0.01) {
+        interestRanges['current'] = round2(interestRanges['current'] + interestShortfall);
+      }
     } else {
       // Non-indefinite loans: iterate DB installments; use breakdown paid status when available
       // (more accurate than stale is_paid from DB).
