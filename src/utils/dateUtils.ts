@@ -6,11 +6,36 @@
  */
 export const getCurrentDateInSantoDomingo = (): Date => {
   const now = new Date();
-  
-  // Convertir a la zona horaria de Santo Domingo
-  const santoDomingoDate = new Date(now.toLocaleString("en-US", {timeZone: "America/Santo_Domingo"}));
-  
-  return santoDomingoDate;
+
+  // CORRECCIÓN (auditoría de cálculos): antes esto formateaba "now" como texto localizado
+  // (`toLocaleString`) y volvía a parsear ese texto con `new Date(string)`. Parsear una fecha a
+  // partir de texto no-ISO es "implementation-defined" en el estándar de JavaScript — el resultado
+  // puede variar entre motores/navegadores, y cualquier variación en el formato del texto puede
+  // desplazar el día calculado (esto causaba, por ejemplo, que en préstamos indefinidos de pago
+  // diario apareciera como "pendiente" la cuota de mañana antes de que llegara). Se reemplaza por
+  // `Intl.DateTimeFormat.formatToParts`, que entrega año/mes/día/hora ya calculados para la zona
+  // horaria de Santo Domingo directamente como números, sin pasar por texto ni volver a parsear.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Santo_Domingo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(now);
+
+  const getPart = (type: string) => Number(parts.find(p => p.type === type)?.value || 0);
+  const year = getPart('year');
+  const month = getPart('month');
+  const day = getPart('day');
+  // Con hour12:false, algunos motores devuelven "24" para la medianoche en vez de "00".
+  const hour = getPart('hour') % 24;
+  const minute = getPart('minute');
+  const second = getPart('second');
+
+  return new Date(year, month - 1, day, hour, minute, second);
 };
 
 /**
