@@ -2353,12 +2353,15 @@ export const LoansModule = () => {
           setIsEditMode(false);
         }}
         onUpdate={async () => {
-          const updatedLoanId = selectedLoan?.id;
           setShowUpdateForm(false);
           setSelectedLoan(null);
           setIsEditMode(false);
-          // Refresh loans data (y su caché de balance/mora: ver invalidateLoanCaches)
-          await refetchAndInvalidate(updatedLoanId);
+          // Refresh loans data. Se invalida la caché de TODOS los préstamos (sin pasar un id
+          // específico): LoanUpdateForm cubre muchas operaciones (agregar cargo, abono a capital,
+          // saldar, extender plazo, quitar mora...) y algunas afectan más de un préstamo indirectamente
+          // (p.ej. un acuerdo de pago). Limpiar todo es más costoso mientras se recalcula, pero
+          // elimina cualquier duda de que el id correcto se haya invalidado.
+          await refetchAndInvalidate();
         }}
         editOnly={isEditMode}
         displayNextPaymentDate={nextPaymentDates[selectedLoan.id] ?? selectedLoan.next_payment_date?.split('T')[0] ?? null}
