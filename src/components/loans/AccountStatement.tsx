@@ -504,14 +504,16 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
             monthsElapsed = n + 1;
           }
 
-          // CORRECCIÓN: Para préstamos indefinidos, usar el máximo entre:
-          // 1. Cuotas pagadas (basadas en pagos reales)
-          // 2. Meses transcurridos + 1 mes futuro
-          // Esto asegura que se muestren todas las cuotas pagadas y al menos 1 mes futuro
-          // ✅ Siempre generar al menos 2 filas: cuota actual + próxima
-          const monthsFromTime = Math.max(2, monthsElapsed + 2); // +2 para incluir mes siguiente
-          const monthsFromPayments = Math.max(2, paidInstallmentsCount + 2); // +2 para incluir la próxima cuota
-          monthsElapsed = Math.max(monthsFromTime, monthsFromPayments);
+          // CORRECCIÓN (auditoría de cálculos): esto antes sumaba "+2" a propósito para mostrar
+          // siempre la cuota actual MÁS la siguiente ("para incluir mes siguiente"), sin importar si
+          // esa siguiente cuota ya estaba vencida o no. En un préstamo indefinido de pago diario, esto
+          // hacía aparecer la cuota de "mañana" (e incluso "pasado mañana") como pendiente desde HOY,
+          // antes de que su fecha llegara. Un préstamo indefinido NO debe mostrar la próxima cuota
+          // hasta que llegue su fecha de vencimiento (o esté vencida) — igual que en "Ver cuotas"
+          // (InstallmentsTable.tsx). Se usa `monthsElapsed` (ya calculado arriba, período por período,
+          // sin aproximaciones) directamente, sin sumar cuotas futuras de más; solo se garantiza cubrir
+          // las cuotas que ya constan como pagadas.
+          monthsElapsed = Math.max(1, monthsElapsed, paidInstallmentsCount);
           
           // Generar cuotas dinámicamente
           const dynamicInstallments = [];
@@ -737,11 +739,58 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
           const startDate = new Date(startYear, startMonth - 1, startDay);
           const currentDate = getCurrentDateInSantoDomingo();
-          const monthsElapsed = Math.max(0, 
-            (currentDate.getFullYear() - startDate.getFullYear()) * 12 + 
-            (currentDate.getMonth() - startDate.getMonth())
-          );
-          
+
+          // CORRECCIÓN (auditoría de cálculos): "monthsElapsed" se aproximaba como diferencia de
+          // meses de calendario entre start_date y hoy, sin importar la frecuencia real del préstamo.
+          // Para un préstamo diario/semanal/quincenal creado el mismo mes en curso, esto siempre daba
+          // 0 (o un valor mucho menor al real), subestimando gravemente el interés pendiente. Se
+          // reemplaza por un conteo exacto período por período (misma técnica ya usada más arriba en
+          // este archivo y en InstallmentsTable.tsx), respetando la frecuencia real de pago.
+          const frequencyRB = String(loanData.payment_frequency || 'monthly');
+          const firstPaymentDateBaseRB = new Date(startDate);
+          switch (frequencyRB) {
+            case 'daily':
+              firstPaymentDateBaseRB.setDate(startDate.getDate() + 1);
+              break;
+            case 'weekly':
+              firstPaymentDateBaseRB.setDate(startDate.getDate() + 7);
+              break;
+            case 'biweekly':
+              firstPaymentDateBaseRB.setDate(startDate.getDate() + 14);
+              break;
+            case 'monthly':
+            default:
+              firstPaymentDateBaseRB.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
+              break;
+          }
+          const dateToKeyRB = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          const todayKeyRB = dateToKeyRB(currentDate);
+          const addPeriodsRB = (periods: number): Date => {
+            const dt = new Date(firstPaymentDateBaseRB);
+            switch (frequencyRB) {
+              case 'daily':
+                dt.setDate(firstPaymentDateBaseRB.getDate() + periods);
+                break;
+              case 'weekly':
+                dt.setDate(firstPaymentDateBaseRB.getDate() + (periods * 7));
+                break;
+              case 'biweekly':
+                dt.setDate(firstPaymentDateBaseRB.getDate() + (periods * 14));
+                break;
+              case 'monthly':
+              default:
+                dt.setFullYear(firstPaymentDateBaseRB.getFullYear(), firstPaymentDateBaseRB.getMonth() + periods, firstPaymentDateBaseRB.getDate());
+                break;
+            }
+            return dt;
+          };
+          let monthsElapsed = 0;
+          for (let n = 0; n < 100000; n++) { // safety cap, nunca debería alcanzarse
+            const dueKeyRB = dateToKeyRB(addPeriodsRB(n));
+            if (dueKeyRB > todayKeyRB) break;
+            monthsElapsed = n + 1;
+          }
+
           // Calcular cuántas cuotas se han pagado
         let paidCount = 0;
         if (paymentsData && interestPerPayment > 0) {
@@ -753,10 +802,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           }, 0);
           paidCount = Math.floor(totalInterestPaid / interestPerPayment);
         }
-          
-          // CORRECCIÓN: El total esperado debe ser al menos (paidCount + 1) para asegurar que siempre hay 1 cuota pendiente
-          // También debe ser al menos (monthsElapsed + 1) para reflejar el tiempo transcurrido
-          const totalExpectedInstallments = Math.max(paidCount + 1, monthsElapsed + 1);
+
+          // CORRECCIÓN: El total esperado debe ser al menos (paidCount + 1) para asegurar que siempre
+          // hay 1 cuota pendiente, y al menos `monthsElapsed` (ya es la cuenta exacta de cuotas
+          // vencidas o que vencen hoy, no un aproximado que necesite +1 extra).
+          const totalExpectedInstallments = Math.max(paidCount + 1, monthsElapsed);
           
           const unpaidCount = Math.max(1, totalExpectedInstallments - paidCount); // Siempre al menos 1 cuota pendiente
           pendingInterest = unpaidCount * interestPerPayment;

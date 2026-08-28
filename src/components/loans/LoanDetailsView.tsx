@@ -1334,14 +1334,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   // que la suma de todos los rangos coincida siempre con "pend. hoy": este panel es otra forma de
   // ver el MISMO monto pendiente (agrupado por antigüedad), no un subconjunto de él.
   //
-  // De paso, se alinea con el período de gracia: antes esta función marcaba una cuota como "1-30
-  // días de atraso" desde el día siguiente a su vencimiento, sin importar el período de gracia del
-  // préstamo — distinto a como se calcula la mora en el resto de la aplicación (que sí resta los
-  // días de gracia antes de contar atraso). Ahora una cuota dentro de su período de gracia cae en
-  // "Al día", igual que en el cálculo de mora.
   const calculateBalanceByAge = () => {
     const today = new Date();
-    const gracePeriod = loan?.grace_period_days || 0;
     const capitalRanges = {
       'current': 0,
       '1-30': 0,
@@ -1387,8 +1381,15 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
 
         const [dy, dm, dd] = item.dueDate.split('-').map(Number);
         const dueDate = new Date(dy, dm - 1, dd);
+        // CORRECCIÓN (auditoría de cálculos): antes se restaba el período de gracia aquí, para
+        // "alinear" esta tabla con el cálculo de mora. Pero "Al día (aún no vence)" y el período de
+        // gracia son dos cosas distintas: el período de gracia dice cuándo EMPIEZA A COBRARSE MORA
+        // sobre una cuota ya vencida, no si la cuota está vencida o no. Al restarlo aquí, una cuota
+        // vencida ayer (pero aún dentro del período de gracia) se clasificaba como "Al día", inflando
+        // ese rango con cuotas que sí deberían contar como atrasadas. "Al día" debe ser exactamente
+        // las cuotas cuya fecha de vencimiento es hoy o futura — sin ajuste por gracia.
         const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        const range = getRange(daysDiff - gracePeriod);
+        const range = getRange(daysDiff);
 
         if (item.isCharge) {
           capitalRanges[range] += item.principal || 0;
@@ -1431,7 +1432,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         const [dy, dm, dd] = String(inst.due_date).split('T')[0].split('-').map(Number);
         const dueDate = new Date(dy, dm - 1, dd);
         const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        const range = getRange(daysDiff - gracePeriod);
+        const range = getRange(daysDiff);
 
         capitalRanges[range] += inst.principal_amount || 0;
         interestRanges[range] += inst.interest_amount || 0;
