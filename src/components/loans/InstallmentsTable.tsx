@@ -240,7 +240,12 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         // para evitar fechas “clamp” (ej. 30-ene → 28-feb). Usamos overflow (30-ene + 1 mes = 02-mar).
         const firstPaymentDateStr = loanInfo.start_date?.split('T')[0];
         let firstPaymentDateBase: Date;
-        const today = getCurrentDateInSantoDomingo();
+        // NOTA (auditoría de cálculos): se usa `new Date()` directamente en vez de
+        // `getCurrentDateInSantoDomingo()` para el conteo de períodos, igual que en
+        // loanBalanceBreakdown.ts (fuente de "Interés pend. hoy", ya validado). Mantener un único
+        // punto de referencia de "hoy" entre los distintos cálculos de un préstamo evita que puedan
+        // desalinearse entre sí por cualquier motivo (zona horaria del entorno, redondeo, etc.).
+        const today = new Date();
         const frequency = loanInfo.payment_frequency || 'monthly';
         
         if (firstPaymentDateStr) {

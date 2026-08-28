@@ -410,7 +410,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         // y usar overflow (30-ene + 1 mes = 02-mar), NO “clamp” a fin de mes (28-feb).
         const startDateStr = loanData.start_date?.split('T')[0];
         let firstPaymentDateBase: Date;
-        const today = getCurrentDateInSantoDomingo();
+        // NOTA (auditoría de cálculos): `new Date()` directo, igual que loanBalanceBreakdown.ts
+        // (fuente ya validada de "Interés pend. hoy") y que InstallmentsTable.tsx, para que todos
+        // los cálculos de un mismo préstamo partan del mismo punto de referencia de "hoy".
+        const today = new Date();
         const frequency = loanData.payment_frequency || 'monthly';
         
         if (!startDateStr) {
@@ -738,7 +741,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         if (startDateStr) {
           const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
           const startDate = new Date(startYear, startMonth - 1, startDay);
-          const currentDate = getCurrentDateInSantoDomingo();
+          const currentDate = new Date();
 
           // CORRECCIÓN (auditoría de cálculos): "monthsElapsed" se aproximaba como diferencia de
           // meses de calendario entre start_date y hoy, sin importar la frecuencia real del préstamo.
