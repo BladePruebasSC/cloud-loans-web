@@ -183,6 +183,10 @@ function App() {
       <Route path="/mapa" element={<Index />} />
       <Route path="/cobro-rapido" element={<Index />} />
       <Route path="/crm" element={<Index />} />
+      <Route path="/cobranza" element={<Index />} />
+      <Route path="/cobranza/casos" element={<Index />} />
+      <Route path="/cobranza/casos/:id" element={<Index />} />
+      <Route path="/cobranza/intimaciones" element={<Index />} />
       <Route path="/backup" element={<Index />} />
       <Route path="/admin/codigos-registro" element={<Index />} />
       <Route path="*" element={<NotFound />} />

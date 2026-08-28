@@ -95,11 +95,81 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   const { companyId } = useAuth();
   const [history, setHistory] = useState<LoanHistoryEntry[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  /** Cuotas y cargos del préstamo, para indicar a qué se aplicó cada pago */
+  const [installments, setInstallments] = useState<any[]>([]);
   const [loan, setLoan] = useState<Loan | null>(null);
   const [loading, setLoading] = useState(true);
   const [companySettings, setCompanySettings] = useState<any>(null);
 
   const round2 = (n: number) => Math.round((Number(n || 0) * 100)) / 100;
+
+  // A qué cuota o cargo se aplicó cada pago. Mismo criterio que InstallmentsTable /
+  // nextPaymentDateFromInstallments: los pagos SIN interés con la misma fecha de vencimiento
+  // que un cargo se asignan al cargo (en orden, hasta cubrirlo); el resto va a la cuota
+  // regular de esa fecha. Si no existe fila (períodos dinámicos de indefinidos), se muestra
+  // la fecha del período.
+  const paymentAllocationById = useMemo(() => {
+    const map = new Map<string, { label: string; kind: 'charge' | 'installment' | 'period' }>();
+    if (!payments.length) return map;
+    const dateOnly = (d: any) => String(d || '').split('T')[0];
+    const fmtDate = (iso: string) => {
+      const [y, m, d] = iso.split('-').map(Number);
+      return y && m && d ? new Date(y, m - 1, d).toLocaleDateString('es-DO', { day: 'numeric', month: 'short', year: 'numeric' }) : iso;
+    };
+    const fmtMoney = (n: number) => `RD$${Number(n || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const isCharge = (i: any) => {
+      const interest = Math.abs(Number(i.interest_amount || 0));
+      const principal = Number(i.principal_amount || 0);
+      const total = Number(i.total_amount ?? i.amount ?? 0);
+      return interest < 0.01 && principal > 0.01 && Math.abs(principal - total) < 0.01;
+    };
+    const regular = installments.filter(i => !isCharge(i)).sort((a, b) => a.installment_number - b.installment_number);
+    const charges = installments.filter(isCharge).sort((a, b) => dateOnly(a.due_date).localeCompare(dateOnly(b.due_date)) || a.installment_number - b.installment_number);
+    const totalRegular = regular.length;
+
+    // Descripción del cargo desde el historial ("Agregar Cargo: <motivo>. Monto: …")
+    const chargeDescription = (ch: any): string => {
+      const amt = Number(ch.total_amount || 0);
+      const entries = history.filter(e => e.change_type === 'add_charge');
+      const h = entries.find(e => dateOnly((e as any).charge_due_date) === dateOnly(ch.due_date) && Math.abs(Number((e as any).amount || 0) - amt) < 0.01)
+        || entries.find(e => Math.abs(Number((e as any).amount || 0) - amt) < 0.01);
+      const raw = String((h as any)?.reason || (h as any)?.description || '');
+      return raw.replace(/^Agregar Cargo:\s*/i, '').split('. Monto:')[0].split('. Notas:')[0].trim();
+    };
+
+    const remainingByCharge = new Map<string, number>(charges.map(c => [c.id, Number(c.total_amount || 0)]));
+    const asc = [...payments].sort((a, b) =>
+      new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime() ||
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    const chargeOrdinal = new Map<string, number>(charges.map((c, i) => [c.id, i + 1]));
+
+    for (const p of asc) {
+      const pDue = dateOnly(p.due_date);
+      const noInterest = Number(p.interest_amount || 0) < 0.01;
+      const amt = Number(p.principal_amount || p.amount || 0);
+
+      if (noInterest && pDue) {
+        const ch = charges.find(c => dateOnly(c.due_date) === pDue && (remainingByCharge.get(c.id) || 0) > 0.01);
+        if (ch) {
+          remainingByCharge.set(ch.id, (remainingByCharge.get(ch.id) || 0) - amt);
+          const desc = chargeDescription(ch);
+          map.set(p.id, {
+            kind: 'charge',
+            label: `Cargo #${chargeOrdinal.get(ch.id)}${desc ? ` "${desc}"` : ''} · ${fmtMoney(Number(ch.total_amount || 0))} · ${fmtDate(dateOnly(ch.due_date))}`,
+          });
+          continue;
+        }
+      }
+      const reg = pDue ? regular.find(i => dateOnly(i.due_date) === pDue) : null;
+      if (reg) {
+        map.set(p.id, { kind: 'installment', label: `Cuota #${reg.installment_number}${totalRegular > 1 ? `/${totalRegular}` : ''} · vence ${fmtDate(pDue)}` });
+      } else if (pDue) {
+        map.set(p.id, { kind: 'period', label: `Cuota del ${fmtDate(pDue)}` });
+      }
+    }
+    return map;
+  }, [installments, payments, history]);
 
   // ✅ Para "Agregar Cargo": recalcular balances mostrados usando el total base real
   // (evita desfaces como 245,996 vs 246,000 por cuota redondeada).
@@ -277,14 +347,21 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   const fetchPayments = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('payments')
-        .select('*')
-        .eq('loan_id', loanId)
-        .order('payment_date', { ascending: false });
+      const [{ data, error }, { data: instData }] = await Promise.all([
+        supabase
+          .from('payments')
+          .select('*')
+          .eq('loan_id', loanId)
+          .order('payment_date', { ascending: false }),
+        supabase
+          .from('installments')
+          .select('id, installment_number, due_date, principal_amount, interest_amount, total_amount, is_paid')
+          .eq('loan_id', loanId),
+      ]);
 
       if (error) throw error;
-      
+      setInstallments(instData || []);
+
       // Ordenar por fecha de pago (descendente) y luego por created_at (descendente) como orden secundario
       const sortedPayments = (data || []).sort((a, b) => {
         const dateA = new Date(a.payment_date).getTime();
@@ -935,6 +1012,17 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                       <span className="font-medium">Método:</span> {getPaymentMethodLabel(payment.payment_method)}
                                     </div>
                                   </div>
+
+                                  {(() => {
+                                    const alloc = paymentAllocationById.get(payment.id);
+                                    if (!alloc) return null;
+                                    const cls = alloc.kind === 'charge' ? 'text-orange-700' : 'text-blue-700';
+                                    return (
+                                      <div className={`text-sm mt-2 ${cls}`}>
+                                        <span className="font-medium">Aplicado a:</span> {alloc.label}
+                                      </div>
+                                    );
+                                  })()}
 
                                   {payment.late_fee > 0 && (
                                     <div className="text-sm text-red-600 mt-2">

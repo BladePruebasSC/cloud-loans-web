@@ -108,6 +108,22 @@ const PERMISSIONS_CONFIG: PermissionConfig = {
   'crm.view': { label: 'Ver CRM', description: 'Puede ver la calificación (score), categoría y comportamiento de pago de los clientes', category: 'CRM' },
   'crm.edit': { label: 'Editar CRM', description: 'Puede asignar categoría manual, etiquetas y notas a los clientes', category: 'CRM' },
 
+  // ========== COBRANZA LEGAL ==========
+  // Presets sugeridos: Cobranza = view/manage/open/request_intimation · Supervisor = + assign/review/close ·
+  // Legal = + approve/issue/escalate/override_duplicate · Admin/Dueño = todo (+ config). Se validan también en la BD.
+  'legal.view': { label: 'Ver Cobranza Legal', description: 'Puede ver la bandeja de cobranza, casos e intimaciones', category: 'Cobranza Legal' },
+  'legal.manage': { label: 'Gestionar casos', description: 'Puede registrar gestiones, promesas, tareas, documentos y notificaciones', category: 'Cobranza Legal' },
+  'legal.open': { label: 'Abrir casos', description: 'Puede evaluar elegibilidad y abrir un caso en pre-legal', category: 'Cobranza Legal' },
+  'legal.request_intimation': { label: 'Solicitar intimación', description: 'Puede enviar una intimación a aprobación (expediente completo)', category: 'Cobranza Legal' },
+  'legal.assign': { label: 'Asignar responsables', description: 'Puede cambiar el responsable o abogado de un caso', category: 'Cobranza Legal' },
+  'legal.review': { label: 'Revisar solicitudes', description: 'Supervisor: puede marcar solicitudes de intimación como revisadas', category: 'Cobranza Legal' },
+  'legal.approve': { label: 'Aprobar intimaciones', description: 'Legal: puede aprobar o rechazar solicitudes de intimación', category: 'Cobranza Legal' },
+  'legal.issue': { label: 'Emitir intimaciones', description: 'Legal: puede redactar y emitir la carta de intimación aprobada', category: 'Cobranza Legal' },
+  'legal.escalate': { label: 'Escalar casos', description: 'Puede escalar un caso a proceso legal o judicial', category: 'Cobranza Legal' },
+  'legal.close': { label: 'Cerrar / suspender casos', description: 'Puede cerrar, resolver o suspender casos con motivo', category: 'Cobranza Legal' },
+  'legal.override_duplicate': { label: 'Reemplazar caso duplicado', description: 'Puede abrir un caso nuevo cuando ya existe uno activo (con justificación)', category: 'Cobranza Legal' },
+  'legal.config': { label: 'Configurar cobranza legal', description: 'Puede modificar umbrales, plazos, checklist, plantilla y transiciones del workflow', category: 'Cobranza Legal' },
+
   // ========== PAGOS ==========
   'payments.view': { label: 'Ver Pagos', description: 'Puede ver el historial de pagos', category: 'Pagos' },
   'payments.create': { label: 'Registrar Pagos', description: 'Puede registrar nuevos pagos', category: 'Pagos' },

@@ -24,6 +24,7 @@ import { PawnShopModule } from '@/components/pawnshop/PawnShopModule';
 import PointOfSaleModule from '@/components/pos/PointOfSaleModule';
 import { QuickCollectionModule } from '@/components/collections/QuickCollectionModule';
 import { CRMModule } from '@/components/crm/CRMModule';
+import { LegalModule } from '@/components/legal/LegalModule';
 import { BackupExportModule } from '@/components/backup/BackupExportModule';
 import { useAutoBackup } from '@/hooks/useAutoBackup';
 import { Building, CreditCard, Package, Users, BarChart3, Key } from 'lucide-react';
@@ -37,7 +38,8 @@ const RestrictedAccess = ({ module }: { module: string }) => {
     reports: 'Reportes',
     company: 'Configuración de Empresa',
     admin: 'Administración',
-    crm: 'CRM de Clientes'
+    crm: 'CRM de Clientes',
+    legal: 'Cobranza Legal'
   };
 
   return (
@@ -47,6 +49,7 @@ const RestrictedAccess = ({ module }: { module: string }) => {
           {module === 'loans' && <CreditCard className="h-12 w-12" />}
           {module === 'clients' && <Users className="h-12 w-12" />}
           {module === 'crm' && <Users className="h-12 w-12" />}
+          {module === 'legal' && <Key className="h-12 w-12" />}
           {module === 'inventory' && <Package className="h-12 w-12" />}
           {module === 'reports' && <BarChart3 className="h-12 w-12" />}
           {module === 'company' && <Building className="h-12 w-12" />}
@@ -78,6 +81,9 @@ const Index = () => {
       console.log('User is owner, granting all permissions for:', permission);
       return true; // Los dueños tienen todos los permisos
     }
+    // Alineado con Sidebar.hasPermission: el rol "admin" tiene acceso total. Antes el menú
+    // mostraba el ítem habilitado y esta función lo bloqueaba con "Acceso restringido".
+    if (profile?.role === 'admin') return true;
     if (!profile?.permissions) return false; // Si no hay permisos definidos, denegar acceso
     const hasAccess = profile?.permissions?.[permission] === true;
     console.log(`Permission check for ${permission}:`, hasAccess, 'User permissions:', profile?.permissions);
@@ -173,6 +179,15 @@ const Index = () => {
           return <RestrictedAccess module="crm" />;
         }
         return <CRMModule />;
+
+      case '/cobranza':
+      case '/cobranza/casos':
+      case '/cobranza/intimaciones':
+      case path.match(/^\/cobranza\/casos\//)?.input:
+        if (!hasPermission('legal.view')) {
+          return <RestrictedAccess module="legal" />;
+        }
+        return <LegalModule />;
 
       case '/acuerdos':
         return <PaymentAgreementsModule />;

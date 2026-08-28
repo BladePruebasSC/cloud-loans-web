@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, Save, Building, Globe, Phone, Mail, MapPin, CreditCard, Settings, Shield, Bell, FileText, TrendingUp, Clock, Copy, Check, AlertTriangle, Trash2, Key, RefreshCw, Database } from 'lucide-react';
+import { Upload, Save, Building, Globe, Phone, Mail, MapPin, CreditCard, Settings, Shield, Bell, FileText, TrendingUp, Clock, Copy, Check, AlertTriangle, Trash2, Key, RefreshCw, Database, Gavel } from 'lucide-react';
+import { LegalSettingsTab } from '@/components/legal/LegalSettingsTab';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -590,7 +591,7 @@ const CompanySettings = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="general" className="flex items-center gap-2">
             <Building className="h-4 w-4" />
             General
@@ -599,7 +600,17 @@ const CompanySettings = () => {
             <Settings className="h-4 w-4" />
             Configuración
           </TabsTrigger>
+          <TabsTrigger value="cobranza-legal" className="flex items-center gap-2">
+            <Gavel className="h-4 w-4" />
+            Cobranza legal
+          </TabsTrigger>
         </TabsList>
+
+        {/* Configuración del módulo de Cobranza Legal (umbrales, plazos, checklist, plantilla, workflow).
+            Se guarda con su propio botón vía RPC legal_save_settings (permiso legal.config). */}
+        <TabsContent value="cobranza-legal" className="space-y-6">
+          <LegalSettingsTab />
+        </TabsContent>
 
                                    <TabsContent value="general" className="space-y-6">
             {/* Código de Empresa - Visible en la parte superior */}

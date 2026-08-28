@@ -21,7 +21,10 @@ import {
 
 interface Notification {
   id: string;
-  type: 'payment_due' | 'payment_overdue' | 'follow_up_due' | 'follow_up_overdue' | 'late_fee_critical' | 'late_fee_high' | 'late_fee_accumulated';
+  type: 'payment_due' | 'payment_overdue' | 'follow_up_due' | 'follow_up_overdue' | 'late_fee_critical' | 'late_fee_high' | 'late_fee_accumulated'
+    | 'legal_approval_pending' | 'legal_deadline_soon' | 'legal_deadline_overdue' | 'legal_task_overdue' | 'legal_promise_broken' | 'legal_prelegal_ready';
+  /** Para notificaciones legales: id del caso al que navegar */
+  caseId?: string;
   title: string;
   message: string;
   priority: 'high' | 'medium' | 'low';
@@ -41,10 +44,17 @@ const Notifications: React.FC = () => {
   const navigate = useNavigate();
 
   // Función para navegar a la acción específica de la notificación
-  const handleNavigateToAction = (loanId: string, notificationType: string, clientName: string) => {
+  const handleNavigateToAction = (loanId: string, notificationType: string, clientName: string, caseId?: string) => {
     // Cerrar el modal de notificaciones
     setIsOpen(false);
-    
+
+    if (notificationType.startsWith('legal_')) {
+      // Notificaciones del módulo de Cobranza Legal: abrir el caso (o la bandeja si aún no hay caso)
+      navigate(caseId ? `/cobranza/casos/${caseId}` : '/cobranza?tab=bandeja', { replace: false });
+      toast.success(`Abriendo cobranza legal de ${clientName}...`);
+      return;
+    }
+
     if (notificationType === 'payment_overdue' || notificationType === 'payment_due') {
       // Para pagos vencidos o próximos, navegar al módulo de préstamos con acción de pago
       navigate(`/prestamos?action=payment&loanId=${loanId}`, { replace: false });
@@ -438,6 +448,63 @@ const Notifications: React.FC = () => {
         });
       }
 
+      // 5. Cobranza Legal (calculadas igual que el resto; si las tablas no existen se omiten)
+      try {
+        const todayIso = getCurrentDateStringForSantoDomingo();
+        const [{ data: openCases }, { data: cfg }] = await Promise.all([
+          supabase.from('legal_cases')
+            .select('id, case_number, status, next_action_at, next_action_note, last_action_at, assigned_to, client:client_id(full_name)')
+            .eq('company_id', companyId as string)
+            .not('status', 'in', '("resolved","closed")'),
+          supabase.rpc('legal_get_settings' as any, { p_company: companyId } as any),
+        ]);
+        const followupDays = Number((cfg as any)?.followup_days ?? 3);
+        const caseIds = (openCases || []).map((c: any) => c.id);
+        if (caseIds.length > 0) {
+          const nameOf = (id: string) => ((openCases || []).find((c: any) => c.id === id) as any)?.client?.full_name || 'Cliente';
+          const numberOf = (id: string) => ((openCases || []).find((c: any) => c.id === id) as any)?.case_number || '';
+          const dayDiff = (iso: string) => Math.round((new Date(iso + 'T00:00:00').getTime() - new Date(todayIso + 'T00:00:00').getTime()) / 86400000);
+
+          const [{ data: approvalsPending }, { data: intims }, { data: tasksDue }, { data: brokenPromises }] = await Promise.all([
+            supabase.from('legal_approvals').select('id, case_id, status, requested_at').in('case_id', caseIds).in('status', ['requested', 'reviewed']),
+            supabase.from('legal_intimations').select('id, case_id, intimation_number, status, deadline_date').in('case_id', caseIds).in('status', ['notified', 'expired']),
+            supabase.from('legal_case_tasks').select('id, case_id, title, due_date, status').in('case_id', caseIds).in('status', ['pending', 'in_progress', 'overdue']).lte('due_date', todayIso),
+            supabase.from('collection_promises').select('id, case_id, amount, promised_date, resolved_at').in('case_id', caseIds).eq('status', 'broken').gte('resolved_at', new Date(Date.now() - 7 * 86400000).toISOString()),
+          ]);
+
+          (approvalsPending || []).forEach((a: any) => notificationsList.push({
+            id: `legal-approval-${a.id}`, type: 'legal_approval_pending', title: '⚖️ Intimación pendiente de aprobación',
+            message: `${nameOf(a.case_id)} · ${numberOf(a.case_id)} ${a.status === 'reviewed' ? '(revisada, falta aprobar)' : '(sin revisar)'}`,
+            priority: 'high', dueDate: String(a.requested_at).split('T')[0], caseId: a.case_id, clientName: nameOf(a.case_id),
+          }));
+          (intims || []).forEach((i: any) => {
+            if (!i.deadline_date) return;
+            const d = dayDiff(i.deadline_date);
+            if (i.status === 'expired' || d < 0) {
+              notificationsList.push({ id: `legal-deadline-over-${i.id}`, type: 'legal_deadline_overdue', title: '🔴 Plazo de intimación vencido', message: `${nameOf(i.case_id)} · ${i.intimation_number || numberOf(i.case_id)} venció hace ${-d} día${-d === 1 ? '' : 's'}`, priority: 'high', dueDate: i.deadline_date, caseId: i.case_id, clientName: nameOf(i.case_id) });
+            } else if (d <= followupDays) {
+              notificationsList.push({ id: `legal-deadline-soon-${i.id}`, type: 'legal_deadline_soon', title: '⏳ Plazo de intimación por vencer', message: `${nameOf(i.case_id)} · ${i.intimation_number || numberOf(i.case_id)} vence ${d === 0 ? 'HOY' : `en ${d} día${d === 1 ? '' : 's'}`}`, priority: d <= 1 ? 'high' : 'medium', dueDate: i.deadline_date, caseId: i.case_id, clientName: nameOf(i.case_id) });
+            }
+          });
+          (tasksDue || []).forEach((t: any) => notificationsList.push({
+            id: `legal-task-${t.id}`, type: 'legal_task_overdue', title: dayDiff(t.due_date) < 0 ? '📋 Tarea legal vencida' : '📋 Tarea legal para hoy',
+            message: `${t.title} · ${nameOf(t.case_id)} · ${numberOf(t.case_id)}`, priority: dayDiff(t.due_date) < 0 ? 'high' : 'medium', dueDate: t.due_date, caseId: t.case_id, clientName: nameOf(t.case_id),
+          }));
+          (brokenPromises || []).forEach((p: any) => notificationsList.push({
+            id: `legal-promise-${p.id}`, type: 'legal_promise_broken', title: '💔 Promesa de pago incumplida',
+            message: `${nameOf(p.case_id)} prometió RD$${Number(p.amount).toLocaleString()} para el ${p.promised_date}`, priority: 'high', dueDate: p.promised_date, caseId: p.case_id, clientName: nameOf(p.case_id), amount: Number(p.amount),
+          }));
+          (openCases || []).forEach((c: any) => {
+            if (c.next_action_at && dayDiff(c.next_action_at) <= 0 && !['paid', 'suspended'].includes(c.status)) {
+              notificationsList.push({ id: `legal-next-${c.id}`, type: 'legal_prelegal_ready', title: dayDiff(c.next_action_at) < 0 ? '⚖️ Acción legal atrasada' : '⚖️ Acción legal para hoy', message: `${c.client?.full_name} · ${c.case_number}: ${c.next_action_note || 'próxima acción programada'}`, priority: dayDiff(c.next_action_at) < 0 ? 'high' : 'medium', dueDate: c.next_action_at, caseId: c.id, clientName: c.client?.full_name || 'Cliente' });
+            }
+          });
+        }
+      } catch (legalErr) {
+        // Módulo legal no instalado o sin permiso: no bloquear el resto de notificaciones
+        console.warn('Notificaciones legales no disponibles:', legalErr);
+      }
+
       // Ordenar notificaciones por prioridad y fecha
       notificationsList.sort((a, b) => {
         const priorityOrder = { high: 3, medium: 2, low: 1 };
@@ -496,6 +563,14 @@ const Notifications: React.FC = () => {
         return <AlertTriangle className="h-4 w-4 text-orange-600" />;
       case 'late_fee_accumulated':
         return <DollarSign className="h-4 w-4 text-yellow-600" />;
+      case 'legal_deadline_overdue':
+      case 'legal_promise_broken':
+        return <AlertTriangle className="h-4 w-4 text-purple-700" />;
+      case 'legal_approval_pending':
+      case 'legal_deadline_soon':
+      case 'legal_task_overdue':
+      case 'legal_prelegal_ready':
+        return <Calendar className="h-4 w-4 text-purple-600" />;
       default:
         return <Clock className="h-4 w-4 text-gray-500" />;
     }
@@ -588,11 +663,11 @@ const Notifications: React.FC = () => {
                 <Card 
                   key={notification.id} 
                   className={`border-l-4 ${getPriorityColor(notification.priority, notification.type)} ${
-                    notification.loanId ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
+                    (notification.loanId || notification.caseId) ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
                   }`}
                   onClick={() => {
-                    if (notification.loanId) {
-                      handleNavigateToAction(notification.loanId, notification.type, notification.clientName);
+                    if (notification.loanId || notification.caseId) {
+                      handleNavigateToAction(notification.loanId || '', notification.type, notification.clientName, notification.caseId);
                     }
                   }}
                 >
@@ -626,7 +701,7 @@ const Notifications: React.FC = () => {
                           </div>
                         </div>
                       </div>
-                      {notification.loanId && (
+                      {(notification.loanId || notification.caseId) && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -642,7 +717,7 @@ const Notifications: React.FC = () => {
                           }
                           onClick={(e) => {
                             e.stopPropagation(); // Evitar doble click
-                            handleNavigateToAction(notification.loanId!, notification.type, notification.clientName);
+                            handleNavigateToAction(notification.loanId || '', notification.type, notification.clientName, notification.caseId);
                           }}
                         >
                           <ChevronRight className="h-4 w-4" />

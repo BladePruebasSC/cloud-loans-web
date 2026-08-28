@@ -38,6 +38,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { LoanCollectionCard } from '@/components/legal/LoanCollectionCard';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 
 interface LoanDetailsViewProps {
@@ -1420,22 +1421,73 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       const breakdownPaidMap = new Map<number, boolean>();
       breakdownItems.forEach(b => breakdownPaidMap.set(b.installment, b.isPaid));
 
-      installments.forEach(inst => {
+      // CORRECCIÓN (2026-08-28): antes se sumaba el capital y el interés COMPLETOS de toda
+      // cuota que no estuviera marcada como pagada, así que un abono parcial no cambiaba nada
+      // en este panel hasta que la cuota quedara saldada del todo. Ahora se descuenta lo ya
+      // pagado por fecha de vencimiento con la misma regla que "Capital/Interés pend. hoy"
+      // (loanBalanceBreakdown.ts): el abono cubre primero el interés de la cuota y el resto
+      // va a capital. Los pagos aplicados a CARGOS (sin interés, misma fecha que un cargo) no
+      // se cuentan contra la cuota regular; se descuentan del cargo.
+      const dateOnly = (d: any) => String(d || '').split('T')[0];
+      const isChargeInst = (inst: any) => {
+        const interest = Math.abs(Number(inst?.interest_amount || 0));
+        const principal = Number(inst?.principal_amount || 0);
+        const total = Number(inst?.total_amount ?? inst?.amount ?? 0);
+        return interest < 0.01 && principal > 0.01 && Math.abs(principal - total) < 0.01;
+      };
+      const chargeDueDates = new Set(installments.filter(isChargeInst).map(i => dateOnly(i.due_date)));
+      const paidByDue = new Map<string, number>();          // pagos a cuotas regulares
+      const paidToChargesByDue = new Map<string, number>(); // pagos a cargos
+      for (const p of payments || []) {
+        const due = dateOnly(p.due_date);
+        if (!due) continue;
+        const amt = round2(Number(p.amount) || 0);
+        if (amt <= 0) continue;
+        const isChargePayment = chargeDueDates.has(due) && Math.abs(Number(p.interest_amount || 0)) < 0.01;
+        if (isChargePayment) paidToChargesByDue.set(due, round2((paidToChargesByDue.get(due) || 0) + amt));
+        else paidByDue.set(due, round2((paidByDue.get(due) || 0) + amt));
+      }
+      // Asignación secuencial de pagos a cargos con la misma fecha (por número de cuota)
+      const remainingChargePaid = new Map(paidToChargesByDue);
+      const sortedInstallments = [...installments].sort((a, b) =>
+        dateOnly(a.due_date).localeCompare(dateOnly(b.due_date)) || (a.installment_number || 0) - (b.installment_number || 0)
+      );
+
+      sortedInstallments.forEach(inst => {
         if (!inst.due_date) return;
+        const due = dateOnly(inst.due_date);
 
-        const isPaid = breakdownPaidMap.has(inst.installment_number)
-          ? breakdownPaidMap.get(inst.installment_number)!
-          : (inst.is_paid ?? false);
-
-        if (isPaid) return;
-
-        const [dy, dm, dd] = String(inst.due_date).split('T')[0].split('-').map(Number);
+        const [dy, dm, dd] = due.split('-').map(Number);
         const dueDate = new Date(dy, dm - 1, dd);
         const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
         const range = getRange(daysDiff);
 
-        capitalRanges[range] += inst.principal_amount || 0;
-        interestRanges[range] += inst.interest_amount || 0;
+        if (isChargeInst(inst)) {
+          const total = round2(Number(inst.total_amount ?? inst.amount ?? inst.principal_amount ?? 0));
+          const available = remainingChargePaid.get(due) || 0;
+          const applied = round2(Math.min(available, total));
+          remainingChargePaid.set(due, round2(available - applied));
+          const pendingCharge = round2(Math.max(0, total - applied));
+          if (pendingCharge > 0.01) capitalRanges[range] += pendingCharge;
+          return;
+        }
+
+        const isPaid = breakdownPaidMap.has(inst.installment_number)
+          ? breakdownPaidMap.get(inst.installment_number)!
+          : (inst.is_paid ?? false);
+        if (isPaid) return;
+
+        const expectedInterest = round2(Number(inst.interest_amount || 0));
+        const expectedPrincipal = round2(Number(inst.principal_amount || 0));
+        const totalPaid = paidByDue.get(due) || 0;
+        const interestPaid = Math.min(expectedInterest, totalPaid);
+        const principalPaid = Math.min(expectedPrincipal, Math.max(0, round2(totalPaid - expectedInterest)));
+        const pendingPrincipal = round2(Math.max(0, expectedPrincipal - principalPaid));
+        const pendingInterest = round2(Math.max(0, expectedInterest - interestPaid));
+        if (pendingPrincipal <= 0.01 && pendingInterest <= 0.01) return; // saldada por pagos
+
+        capitalRanges[range] += pendingPrincipal;
+        interestRanges[range] += pendingInterest;
       });
     }
 
@@ -1676,6 +1728,20 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Cobranza / Legal: etapa, mora, caso, gestiones, promesa, próxima acción */}
+              <LoanCollectionCard
+                loan={{
+                  id: loan.id,
+                  client_id: (loan as any).client_id,
+                  next_payment_date: loan.next_payment_date,
+                  grace_period_days: (loan as any).grace_period_days,
+                  status: loan.status,
+                  collection_stage: (loan as any).collection_stage,
+                  collection_stage_since: (loan as any).collection_stage_since,
+                }}
+                clientName={(loan as any).client?.full_name || 'Cliente'}
+              />
 
               {/* Pago Mínimo */}
               <Card>

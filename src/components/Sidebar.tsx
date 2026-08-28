@@ -24,7 +24,8 @@ import {
   Scale,
   Zap,
   Database,
-  Target
+  Target,
+  Gavel
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -89,6 +90,12 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       icon: Target,
       path: '/crm',
       permission: 'crm.view',
+    },
+    {
+      name: 'Cobranza Legal',
+      icon: Gavel,
+      path: '/cobranza',
+      permission: 'legal.view',
     },
     { 
       name: 'Carteras', 

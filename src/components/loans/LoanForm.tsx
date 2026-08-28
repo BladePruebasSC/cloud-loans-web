@@ -98,7 +98,8 @@ const replaceTemplateVariablesForLoan = (content: string, loanData: any, company
 
 // Función para renderizar HTML a PDF
 // Función auxiliar para agregar el logo de la empresa arriba a la derecha
-const addCompanyLogo = async (doc: any, logoUrl: string | null | undefined, margin: number, pageWidth: number): Promise<number> => {
+// Exportadas para reutilizarlas en la generación de la carta de intimación (módulo legal)
+export const addCompanyLogo = async (doc: any, logoUrl: string | null | undefined, margin: number, pageWidth: number): Promise<number> => {
   if (!logoUrl) return 0;
   
   try {
@@ -152,7 +153,7 @@ const addCompanyLogo = async (doc: any, logoUrl: string | null | undefined, marg
   }
 };
 
-const renderHtmlToPdf = async (doc: any, htmlContent: string, startY: number, margin: number, pageWidth: number, pageHeight: number, logoUrl?: string | null) => {
+export const renderHtmlToPdf = async (doc: any, htmlContent: string, startY: number, margin: number, pageWidth: number, pageHeight: number, logoUrl?: string | null) => {
   // Agregar logo si está disponible
   let adjustedStartY = startY;
   if (logoUrl) {

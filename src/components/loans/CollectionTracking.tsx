@@ -27,10 +27,13 @@ import {
   ChevronLeft
 } from 'lucide-react';
 
+type ContactType = 'phone' | 'whatsapp' | 'sms' | 'email' | 'visit' | 'notification' | 'letter' | 'meeting' | 'other';
+type ContactResult = 'contacted' | 'no_answer' | 'wrong_number' | 'not_located' | 'payment_promise' | 'refuses' | 'requests_negotiation' | 'payment_made' | 'agreement' | 'escalate' | 'other';
+
 interface CollectionTracking {
   id: string;
   loan_id: string;
-  contact_type: 'phone' | 'email' | 'sms' | 'visit' | 'letter' | 'other';
+  contact_type: ContactType;
   contact_date: string;
   contact_time: string;
   client_response: string | null;
@@ -39,7 +42,28 @@ interface CollectionTracking {
   created_by: string;
   created_at: string;
   updated_at: string;
+  // Campos de cobranza (módulo legal). Opcionales: registros antiguos no los tienen.
+  result?: ContactResult | null;
+  contacted?: boolean | null;
+  contacted_person?: string | null;
+  promise_amount?: number | null;
+  promise_date?: string | null;
+  legal_case_id?: string | null;
 }
+
+const contactResultLabels: Record<ContactResult, string> = {
+  contacted: 'Contactado',
+  no_answer: 'No contestó',
+  wrong_number: 'Número incorrecto',
+  not_located: 'Cliente no localizado',
+  payment_promise: 'Promesa de pago',
+  refuses: 'Rechaza pagar',
+  requests_negotiation: 'Solicita negociación',
+  payment_made: 'Pago realizado',
+  agreement: 'Acuerdo realizado',
+  escalate: 'Escalar a legal',
+  other: 'Otro'
+};
 
 interface CollectionTrackingProps {
   loanId: string;
@@ -48,30 +72,39 @@ interface CollectionTrackingProps {
   onClose: () => void;
 }
 
-const contactTypeIcons = {
+const contactTypeIcons: Record<ContactType, any> = {
   phone: Phone,
+  whatsapp: MessageSquare,
   email: Mail,
   sms: MessageSquare,
   visit: MapPin,
+  notification: FileText,
   letter: FileText,
+  meeting: User,
   other: MoreHorizontal
 };
 
-const contactTypeLabels = {
+const contactTypeLabels: Record<ContactType, string> = {
   phone: 'Llamada Telefónica',
+  whatsapp: 'WhatsApp',
   email: 'Correo Electrónico',
   sms: 'Mensaje de Texto',
   visit: 'Visita Personal',
+  notification: 'Notificación formal',
   letter: 'Carta',
+  meeting: 'Reunión',
   other: 'Otro'
 };
 
-const contactTypeColors = {
+const contactTypeColors: Record<ContactType, string> = {
   phone: 'bg-blue-100 text-blue-800',
+  whatsapp: 'bg-emerald-100 text-emerald-800',
   email: 'bg-green-100 text-green-800',
   sms: 'bg-purple-100 text-purple-800',
   visit: 'bg-orange-100 text-orange-800',
+  notification: 'bg-red-100 text-red-800',
   letter: 'bg-gray-100 text-gray-800',
+  meeting: 'bg-indigo-100 text-indigo-800',
   other: 'bg-yellow-100 text-yellow-800'
 };
 
@@ -89,14 +122,19 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
   const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
   const { user } = useAuth();
 
-  const [formData, setFormData] = useState({
-    contact_type: 'phone' as 'phone' | 'email' | 'sms' | 'visit' | 'letter' | 'other',
+  const emptyForm = () => ({
+    contact_type: 'phone' as ContactType,
     contact_date: new Date().toISOString().split('T')[0],
     contact_time: new Date().toTimeString().slice(0, 5),
     client_response: '',
     additional_notes: '',
-    next_contact_date: ''
+    next_contact_date: '',
+    result: '' as ContactResult | '',
+    contacted_person: '',
+    promise_amount: '',
+    promise_date: ''
   });
+  const [formData, setFormData] = useState(emptyForm());
 
   // Cargar registros de seguimiento
   const fetchTrackingRecords = async () => {
@@ -124,6 +162,10 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
     e.preventDefault();
     
     try {
+      if (formData.result === 'payment_promise' && (!formData.promise_amount || !formData.promise_date)) {
+        toast.error('Para registrar una promesa de pago indica monto y fecha prometida');
+        return;
+      }
       const submitData = {
         loan_id: loanId,
         contact_type: formData.contact_type,
@@ -132,7 +174,13 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
         client_response: formData.client_response || null,
         additional_notes: formData.additional_notes || null,
         next_contact_date: formData.next_contact_date || null,
-        created_by: user?.id
+        created_by: user?.id,
+        // Campos de cobranza: si el resultado es "promesa de pago", la BD crea la promesa
+        // automáticamente (trigger legal_on_tracking_after_insert) y la enlaza al caso legal.
+        result: formData.result || null,
+        contacted_person: formData.contacted_person || null,
+        promise_amount: formData.result === 'payment_promise' && formData.promise_amount ? Number(formData.promise_amount) : null,
+        promise_date: formData.result === 'payment_promise' && formData.promise_date ? formData.promise_date : null
       };
 
       if (editingRecord) {
@@ -155,14 +203,7 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
       }
 
       // Limpiar formulario y recargar datos
-      setFormData({
-        contact_type: 'phone',
-        contact_date: new Date().toISOString().split('T')[0],
-        contact_time: new Date().toTimeString().slice(0, 5),
-        client_response: '',
-        additional_notes: '',
-        next_contact_date: ''
-      });
+      setFormData(emptyForm());
       setShowAddForm(false);
       setEditingRecord(null);
       fetchTrackingRecords();
@@ -206,7 +247,11 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
       contact_time: record.contact_time,
       client_response: record.client_response || '',
       additional_notes: record.additional_notes || '',
-      next_contact_date: record.next_contact_date || ''
+      next_contact_date: record.next_contact_date || '',
+      result: record.result || '',
+      contacted_person: record.contacted_person || '',
+      promise_amount: record.promise_amount != null ? String(record.promise_amount) : '',
+      promise_date: record.promise_date || ''
     });
     setEditingRecord(record);
     setShowAddForm(true);
@@ -244,14 +289,7 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
               onClick={() => {
                 setShowAddForm(true);
                 setEditingRecord(null);
-                setFormData({
-                  contact_type: 'phone',
-                  contact_date: new Date().toISOString().split('T')[0],
-                  contact_time: new Date().toTimeString().slice(0, 5),
-                  client_response: '',
-                  additional_notes: '',
-                  next_contact_date: ''
-                });
+                setFormData(emptyForm());
               }}
               className="h-12 bg-white/20 hover:bg-white/30 text-white border-white/30 hover:border-white/50 transition-all duration-200 font-semibold"
             >
@@ -296,7 +334,7 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
                       </Label>
                       <Select
                         value={formData.contact_type}
-                        onValueChange={(value: 'phone' | 'email' | 'sms' | 'visit' | 'letter' | 'other') => setFormData({...formData, contact_type: value})}
+                        onValueChange={(value: ContactType) => setFormData({...formData, contact_type: value})}
                       >
                         <SelectTrigger className="h-12 border-2 border-gray-200 focus:border-blue-500 transition-colors">
                           <SelectValue />
@@ -361,6 +399,52 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
                       />
                     </div>
                   </div>
+
+                  {/* Resultado de la gestión y persona contactada (cobranza) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold text-gray-700">Resultado de la gestión</Label>
+                      <Select
+                        value={formData.result || 'none'}
+                        onValueChange={(value) => setFormData({...formData, result: value === 'none' ? '' : (value as ContactResult)})}
+                      >
+                        <SelectTrigger className="h-12 border-2 border-gray-200 focus:border-blue-500 transition-colors">
+                          <SelectValue placeholder="Sin especificar" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Sin especificar</SelectItem>
+                          {Object.entries(contactResultLabels).map(([key, label]) => (
+                            <SelectItem key={key} value={key}>{label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="contacted_person" className="text-sm font-semibold text-gray-700">Persona contactada</Label>
+                      <Input
+                        id="contacted_person"
+                        value={formData.contacted_person}
+                        onChange={(e) => setFormData({...formData, contacted_person: e.target.value})}
+                        placeholder="Cliente, familiar, codeudor…"
+                        className="h-12 border-2 border-gray-200 focus:border-blue-500 transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Promesa de pago (se crea automáticamente en Cobranza Legal) */}
+                  {formData.result === 'payment_promise' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <div className="space-y-2">
+                        <Label className="text-sm font-semibold text-amber-900">Monto prometido *</Label>
+                        <Input type="number" min="1" value={formData.promise_amount} onChange={(e) => setFormData({...formData, promise_amount: e.target.value})} className="h-12 border-2 border-amber-200" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm font-semibold text-amber-900">Fecha prometida *</Label>
+                        <Input type="date" min={new Date().toISOString().split('T')[0]} value={formData.promise_date} onChange={(e) => setFormData({...formData, promise_date: e.target.value})} className="h-12 border-2 border-amber-200" />
+                      </div>
+                      <p className="sm:col-span-2 text-xs text-amber-800">Si pasa la fecha sin un pago igual o mayor, el sistema marcará la promesa como incumplida y quedará en el historial del caso.</p>
+                    </div>
+                  )}
 
                   {/* Respuesta del cliente */}
                   <div className="space-y-2">
@@ -464,6 +548,17 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
                               <div className="text-sm text-gray-500 font-medium">
                                 {new Date(record.contact_date).toLocaleDateString()} a las {record.contact_time}
                               </div>
+                              {record.result && (
+                                <Badge variant="outline" className={`text-xs ${record.result === 'payment_promise' ? 'border-amber-300 text-amber-800 bg-amber-50' : record.result === 'contacted' || record.result === 'payment_made' || record.result === 'agreement' ? 'border-green-300 text-green-800 bg-green-50' : 'border-gray-300 text-gray-700'}`}>
+                                  {contactResultLabels[record.result] || record.result}
+                                  {record.contacted_person ? ` · ${record.contacted_person}` : ''}
+                                </Badge>
+                              )}
+                              {record.result === 'payment_promise' && record.promise_amount != null && (
+                                <span className="text-xs text-amber-800 font-medium">
+                                  Promesa: RD${Number(record.promise_amount).toLocaleString('es-DO')} para el {record.promise_date ? new Date(record.promise_date + 'T00:00:00').toLocaleDateString() : '—'}
+                                </span>
+                              )}
                             </div>
 
                             {/* Contenido del registro */}

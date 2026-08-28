@@ -362,6 +362,24 @@ exclusivo de los indefinidos, donde los períodos se generan dinámicamente.
 
 ---
 
+## Cuarta ronda: ajustes reportados desde producción
+
+### 40. El capital por antigüedad ignoraba los abonos parciales
+`LoanDetailsView.tsx` → `calculateBalanceByAge` (préstamos a plazo fijo)
+
+Sumaba el capital y el interés **completos** de toda cuota que no estuviera marcada como
+pagada. Un abono parcial no movía el panel hasta que la cuota quedara saldada por completo.
+→ Ahora descuenta lo pagado por fecha de vencimiento con la misma regla que "Capital/Interés
+pend. hoy" (primero interés, luego capital), separa los pagos a cargos de los pagos a cuotas, y
+descuenta también los abonos a cargos.
+
+### 41. El historial del préstamo no decía a qué se aplicó cada pago
+`LoanHistoryView.tsx` — cada pago muestra ahora **"Aplicado a: Cuota #N/T · vence dd mmm"** o
+**"Cargo #N "descripción" · monto · fecha"**, con el mismo criterio de asignación que el resto
+del sistema (pagos sin interés con la fecha de un cargo → al cargo, en orden hasta cubrirlo).
+
+---
+
 ## Verificación
 
 ```
