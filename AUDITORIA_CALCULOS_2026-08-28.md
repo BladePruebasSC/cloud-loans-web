@@ -1,17 +1,18 @@
 # Auditoría de cálculos de préstamos — 28 de agosto de 2026
 
 Revisión de la lógica de **amortización, frecuencias de pago, préstamos indefinidos, mora y
-actualización de préstamos**. Se encontraron **38 defectos** y se corrigieron **todos**.
+actualización de préstamos**. Se encontraron **39 defectos** y se corrigieron **todos**.
 
 Todos los cambios están comentados en el código con el prefijo `CORRECCIÓN (auditoría 2026-08-28)`
 explicando qué hacía antes, por qué estaba mal y qué consecuencia tenía.
 
 **Estado:** `npm run build` correcto. Errores de TypeScript: **34 → 0**.
-36 pruebas automatizadas, todas correctas.
+44 pruebas automatizadas, todas correctas.
 
-> La auditoría se hizo en dos rondas. La primera cerró 26 defectos de cálculo y dejó 5 hallazgos
+> La auditoría se hizo en tres rondas. La primera cerró 26 defectos de cálculo y dejó 5 hallazgos
 > pendientes de decisión, más 16 errores de tipos preexistentes. La **segunda ronda** cerró esos 21
-> puntos y descubrió 2 defectos adicionales al hacerlo (ver *Segunda ronda* al final).
+> puntos y descubrió 2 defectos adicionales al hacerlo. La **tercera** corrigió el interés de la
+> cuota en curso, reportado desde producción.
 
 ---
 
@@ -315,12 +316,58 @@ desestructura `data`.
 
 ---
 
+## Tercera ronda: el interés de la cuota en curso
+
+### 39. "Interés pend. hoy" y el panel de antigüedad no contaban la cuota en curso
+`loanBalanceBreakdown.ts` + migración SQL
+
+En préstamos indefinidos, el interés pendiente se cortaba en el **último período vencido** e
+ignoraba la cuota **ya pendiente cuya fecha de vencimiento aún no llegaba**. Eso dejaba tres
+pantallas del mismo préstamo contradiciéndose entre sí:
+
+| Panel | Mostraba |
+|---|---|
+| Interés pend. hoy | RD$5.550 (15 × 370) |
+| Balance de interés por antigüedad → "Al día (aún no vence)" | RD$0,00 |
+| Ver cuotas → Total a Pagar | RD$20.920 (= 15.000 + **16** × 370) |
+
+La tabla de cuotas sí listaba la cuota en curso (#16, 5 sept); los otros dos paneles no.
+
+→ Ahora se suma el período en curso y se corta ahí (exactamente **un** período futuro: el que se
+está devengando). Los períodos posteriores siguen sin contarse, porque aún no se han devengado.
+
+Como el panel de antigüedad ya reconcilia su total contra "Interés pend. hoy" y coloca la
+diferencia en el rango "Al día (aún no vence)", **un solo cambio corrige los dos lados**. También
+se ajustó la función SQL `calculate_loan_remaining_balance` (`v_periods_elapsed + 1`) para que
+`loans.remaining_balance` no vuelva a divergir de la pantalla — `LoanUpdateForm.tsx` lo usa como
+fuente de verdad.
+
+Verificado contra el préstamo real de la captura (RD$15.000, quincenal, cuota RD$370, inicio
+24-ene-2026):
+
+```
+Primera cuota      2026-02-07   ✓ coincide con pantalla (7 feb de 2026)
+Períodos vencidos  15           ✓ último 2026-08-22 (#15)
+Período en curso    1           ✓ 2026-09-05 (#16, Pendiente)
+
+Interés pendiente   5.550 → 5.920
+Balance restante   20.550 → 20.920   ✓ ahora coincide con "Ver cuotas"
+"Al día"             0,00 →    370
+Fórmula SQL                      5.920   ✓ coincide con el frontend
+```
+
+*Nota:* los préstamos a plazo fijo ya lo hacían bien (el panel clasifica en "Al día" toda cuota con
+`daysDiff <= 0`, y el interés pendiente suma todas las cuotas impagas, vencidas o no). El fallo era
+exclusivo de los indefinidos, donde los períodos se generan dinámicamente.
+
+---
+
 ## Verificación
 
 ```
-npm run build            ✓ built in 15.57s
+npm run build            ✓ built in 13.32s
 npx tsc --noEmit         34 → 0 errores
-36 pruebas automatizadas ✓ todas correctas
+44 pruebas automatizadas ✓ todas correctas
 ```
 
 - **28 pruebas de aritmética de frecuencias**: recorte de fin de mes (31-ene → 28-feb, incluido año
@@ -329,6 +376,9 @@ npx tsc --noEmit         34 → 0 errores
   que vence mañana no cuenta como vencida hoy**).
 - **8 pruebas de asignación de pagos en cascada**: abonos parciales sobre la misma cuota, mezcla con
   asignación por `due_date`, y no-regresión del caso de un pago completo por cuota.
+- **8 comprobaciones del interés pendiente** contra el préstamo real de producción: fecha de primera
+  cuota, conteo de períodos vencidos, identificación del período en curso, y coincidencia entre el
+  frontend, el panel de antigüedad y la fórmula SQL.
 
 ---
 

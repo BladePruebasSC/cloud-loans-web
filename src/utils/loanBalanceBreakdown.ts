@@ -206,21 +206,36 @@ export async function getLoanBalanceBreakdown(
     // mora podían referirse a días distintos y no cuadrar entre pantallas.
     const todayIso = getCurrentDateStringForSantoDomingo();
 
+    // CAMBIO SOLICITADO (2026-08-28): "Interés pend. hoy" debe incluir TAMBIÉN el interés de la
+    // cuota EN CURSO —la que ya está pendiente pero cuya fecha de vencimiento aún no llegó—, no
+    // solo el de los períodos ya vencidos.
+    //
+    // Antes se cortaba en el último período vencido (`if (currentDue > todayIso) break;` ANTES de
+    // sumar). Eso dejaba este panel por debajo de la tabla de cuotas, que sí lista la cuota en
+    // curso: un préstamo quincenal de RD$370 con 15 cuotas vencidas mostraba RD$5,550 aquí
+    // (15 × 370) mientras "Ver cuotas" totalizaba RD$5,920 (16 × 370). Dos cifras distintas para
+    // lo mismo, en la misma pantalla.
+    //
+    // Ahora se suma el período en curso y LUEGO se corta, de modo que se incluye exactamente un
+    // período futuro: el actual. Esto alinea "Interés pend. hoy", "Balance restante", el desglose
+    // por antigüedad (que reconcilia su total contra este valor y coloca la diferencia en el rango
+    // "Al día (aún no vence)") y la tabla de cuotas.
     let totalPendingInterest = 0;
     if (firstDueFromStart && interestPerPayment > 0.01) {
       let currentDue = firstDueFromStart;
       while (true) {
-        // No incluir un período cuya fecha de vencimiento todavía no ha llegado (ej: la cuota de
-        // "mañana" no debe sumarse hoy). Antes este chequeo iba DESPUÉS de sumar el período, por lo
-        // que siempre se colaba un período futuro de más en "Interés pend. hoy".
-        if (currentDue > todayIso) break;
+        const isNotDueYet = currentDue > todayIso;
         const paid = round2(paidByDueValid.get(currentDue) || 0);
         const unpaid = round2(Math.max(0, round2(interestPerPayment - paid)));
         totalPendingInterest = round2(totalPendingInterest + unpaid);
+        // Se incluye el período en curso (el primero que aún no vence) y se detiene ahí:
+        // los períodos posteriores todavía no se han devengado.
+        if (isNotDueYet) break;
         currentDue = addPeriod(currentDue, freq);
       }
     }
-    // If all periods are fully paid, the next upcoming period's interest is still pending
+    // Respaldo: en un préstamo indefinido siempre hay al menos un período devengándose, así que
+    // nunca debe mostrarse RD$0 de interés pendiente.
     if (totalPendingInterest <= 0.01 && interestPerPayment > 0.01) {
       totalPendingInterest = interestPerPayment;
     }

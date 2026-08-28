@@ -1,19 +1,184 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es-DO">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ProPréstamos</title>
-    <meta name="description" content="ProPréstamos Web" />
-    <meta name="author" content="Blade Santana" />
 
-    <meta property="og:title" content="ProPréstamos" />
-    <meta property="og:description" content="ProPréstamos Web" />
+    <!-- ================================================================== -->
+    <!-- SEO base                                                            -->
+    <!-- ================================================================== -->
+    <!-- El título es lo que Google muestra como enlace azul. Antes era solo
+         "ProPréstamos": no decía qué hace el producto ni contenía ningún
+         término por el que alguien pudiera buscarlo. Se mantiene la marca
+         delante (importa para búsquedas del propio nombre) y se añade la
+         propuesta de valor. Recomendado: máx. ~60 caracteres. -->
+    <title>ProPréstamos | Software de préstamos, empeños y punto de venta</title>
+
+    <!-- La descripción es el texto gris bajo el enlace en Google. No influye
+         en el ranking, pero sí en cuánta gente hace clic. Antes decía
+         "ProPréstamos Web", que no aporta nada. Recomendado: ~150-160
+         caracteres. -->
+    <meta
+      name="description"
+      content="Sistema para prestamistas: control de préstamos, cálculo automático de intereses y mora, tablas de amortización, empeños, inventario y punto de venta. Gestiona tu cartera desde cualquier dispositivo."
+    />
+
+    <meta name="author" content="Blade Santana" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="application-name" content="ProPréstamos" />
+
+    <!-- ================================================================== -->
+    <!-- Iconos                                                              -->
+    <!-- ================================================================== -->
+    <!-- `public/favicon.ico` es en realidad un PNG de 1024x1024 y 1,37 MB
+         renombrado a .ico. Se descargaba en CADA visita y perjudicaba el
+         tiempo de carga, que sí es un factor de posicionamiento. Se generaron
+         versiones optimizadas (32px = 1,2 KB) y se declaran explícitamente
+         para que el navegador no recurra al archivo pesado por defecto.
+         El original se conserva por compatibilidad con navegadores antiguos,
+         pero queda al final de la lista de preferencia. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+
+    <!-- ================================================================== -->
+    <!-- Open Graph (WhatsApp, Facebook, LinkedIn)                            -->
+    <!-- ================================================================== -->
+    <!-- Antes solo había og:title, og:description y og:type. Sin og:image, un
+         enlace compartido por WhatsApp aparecía como texto plano sin vista
+         previa — importante aquí, porque WhatsApp es el canal habitual para
+         compartir en el mercado dominicano. -->
+    <meta property="og:site_name" content="ProPréstamos" />
+    <meta property="og:title" content="ProPréstamos | Software de préstamos, empeños y punto de venta" />
+    <meta
+      property="og:description"
+      content="Control de préstamos, cálculo automático de intereses y mora, tablas de amortización, empeños, inventario y punto de venta en un solo sistema."
+    />
     <meta property="og:type" content="website" />
+    <meta property="og:locale" content="es_DO" />
+    <meta property="og:image" content="/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="ProPréstamos — préstamos, empeños, inventario y punto de venta" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ProPréstamos | Software de préstamos, empeños y punto de venta" />
+    <meta
+      name="twitter:description"
+      content="Control de préstamos, cálculo automático de intereses y mora, tablas de amortización, empeños, inventario y punto de venta en un solo sistema."
+    />
+    <meta name="twitter:image" content="/og-image.png" />
+
+    <!-- ================================================================== -->
+    <!-- ⚠️  PENDIENTE: dominio de producción                                -->
+    <!-- ================================================================== -->
+    <!-- Cuando el sitio tenga dominio fijo, DESCOMENTA estas 3 líneas y pon la
+         URL real. Es importante:
+           · canonical  → la app sirve la landing en CUALQUIER ruta desconocida
+                          (App.tsx: `<Route path="*" element={<LandingPage />} />`),
+                          así que sin canonical Google ve infinitas URLs con el
+                          mismo contenido y reparte el posicionamiento entre
+                          todas en vez de concentrarlo en la portada.
+           · og:image absoluta → los rastreadores de WhatsApp y Facebook NO
+                          ejecutan JavaScript y muchos no resuelven rutas
+                          relativas, así que la vista previa al compartir solo
+                          funciona del todo con la URL completa.
+         NO pongas un dominio "de prueba": un canonical apuntando a un dominio
+         equivocado le dice a Google que el sitio real es una copia, y hace más
+         daño que no tenerlo.
+    -->
+    <!--
+    <link rel="canonical" href="https://TU-DOMINIO.com/" />
+    <meta property="og:url" content="https://TU-DOMINIO.com/" />
+    <meta property="og:image" content="https://TU-DOMINIO.com/og-image.png" />
+    -->
+
+    <!-- Mientras tanto: canonical y URLs absolutas resueltas en el navegador.
+         Google sí ejecuta JavaScript al indexar, así que esto ya le da el
+         canonical correcto y la imagen absoluta. Los rastreadores de redes
+         sociales no lo ejecutan: para ellos hace falta el bloque de arriba. -->
+    <script>
+      (function () {
+        var origin = location.origin;
+        var canonical = document.createElement('link');
+        canonical.rel = 'canonical';
+        // Solo la portada se indexa como tal; el resto son rutas de la aplicación.
+        canonical.href = origin + '/';
+        document.head.appendChild(canonical);
+
+        var ogUrl = document.createElement('meta');
+        ogUrl.setAttribute('property', 'og:url');
+        ogUrl.content = origin + '/';
+        document.head.appendChild(ogUrl);
+
+        // Convertir las imágenes sociales a URL absoluta
+        var imgTags = document.querySelectorAll(
+          'meta[property="og:image"], meta[name="twitter:image"]'
+        );
+        for (var i = 0; i < imgTags.length; i++) {
+          var c = imgTags[i].getAttribute('content');
+          if (c && c.charAt(0) === '/') imgTags[i].setAttribute('content', origin + c);
+        }
+      })();
+    </script>
+
+    <!-- ================================================================== -->
+    <!-- Rendimiento: adelantar la conexión a Supabase                        -->
+    <!-- ================================================================== -->
+    <!-- La app pide datos a Supabase nada más cargar. Abrir la conexión (DNS +
+         TLS) en paralelo con la descarga del JS ahorra unos cientos de ms en
+         móvil, y la velocidad de carga es un factor de posicionamiento. -->
+    <link rel="preconnect" href="https://jabiezfpkfyzfpiswcwz.supabase.co" crossorigin />
+    <link rel="dns-prefetch" href="https://jabiezfpkfyzfpiswcwz.supabase.co" />
+
+    <!-- ================================================================== -->
+    <!-- Datos estructurados (JSON-LD)                                        -->
+    <!-- ================================================================== -->
+    <!-- Le dice a Google explícitamente qué es esto: una aplicación de
+         software financiero. Habilita resultados enriquecidos y ayuda a que
+         aparezca en búsquedas de categoría, no solo por el nombre de marca. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "ProPréstamos",
+        "applicationCategory": "BusinessApplication",
+        "applicationSubCategory": "Software de gestión de préstamos",
+        "operatingSystem": "Web",
+        "inLanguage": "es-DO",
+        "description": "Sistema para prestamistas: control de préstamos, cálculo automático de intereses y mora, tablas de amortización, empeños, inventario y punto de venta.",
+        "featureList": [
+          "Gestión de préstamos y carteras",
+          "Tablas de amortización (simple, francés, alemán, americano e indefinido)",
+          "Cálculo automático de intereses y mora",
+          "Frecuencias de pago diaria, semanal, quincenal y mensual",
+          "Empeños y tasación de artículos",
+          "Inventario y punto de venta",
+          "Reportes y estado de cuenta"
+        ]
+      }
+    </script>
   </head>
 
   <body>
     <div id="root"></div>
+
+    <!-- Sin JavaScript esta página queda completamente en blanco (es una SPA).
+         Un mensaje visible evita que un rastreador o un visitante con JS
+         desactivado se encuentre una página vacía. -->
+    <noscript>
+      <div style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; text-align: center; color: #0f172a;">
+        <h1 style="font-size: 1.5rem; margin-bottom: 0.5rem;">ProPréstamos</h1>
+        <p>
+          Software de gestión de préstamos, empeños, inventario y punto de venta.
+          Para usar la aplicación necesitas activar JavaScript en tu navegador.
+        </p>
+      </div>
+    </noscript>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

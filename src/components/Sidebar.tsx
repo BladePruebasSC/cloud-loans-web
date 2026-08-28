@@ -23,7 +23,8 @@ import {
   ShoppingCart,
   Scale,
   Zap,
-  Database
+  Database,
+  Target
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -82,6 +83,12 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       icon: Zap,
       path: '/cobro-rapido',
       permission: 'loans.view',
+    },
+    {
+      name: 'CRM',
+      icon: Target,
+      path: '/crm',
+      permission: 'crm.view',
     },
     { 
       name: 'Carteras', 

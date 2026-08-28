@@ -217,9 +217,18 @@ BEGIN
             v_paid_count := 0;
         END IF;
 
-        -- En un indefinido SIEMPRE hay al menos un período pendiente: si el cliente está al
-        -- día, lo que debe es el interés del período en curso.
-        v_total_expected_count := GREATEST(v_paid_count + 1, v_periods_elapsed);
+        -- Períodos devengados = los ya vencidos MÁS el que está en curso.
+        --
+        -- El `+ 1` incluye la cuota EN CURSO: la que ya está pendiente pero cuya fecha de
+        -- vencimiento aún no ha llegado. Es el mismo criterio que aplica el frontend en
+        -- `loanBalanceBreakdown.ts` ("Interés pend. hoy") y el que ya usaba la tabla de cuotas
+        -- ("Ver cuotas"). Sin él, un préstamo quincenal de RD$370 con 15 cuotas vencidas
+        -- reportaba RD$5,550 de interés (15 × 370) mientras la tabla de cuotas totalizaba
+        -- RD$5,920 (16 × 370): dos cifras distintas para el mismo préstamo.
+        --
+        -- En un indefinido SIEMPRE hay al menos un período devengándose, así que el interés
+        -- pendiente nunca es 0 aunque el cliente esté completamente al día.
+        v_total_expected_count := GREATEST(v_paid_count + 1, v_periods_elapsed + 1);
         v_pending_interest := v_interest_per_period
                               * GREATEST(1, v_total_expected_count - v_paid_count);
 

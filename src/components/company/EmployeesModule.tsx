@@ -103,7 +103,11 @@ const PERMISSIONS_CONFIG: PermissionConfig = {
   'clients.create': { label: 'Crear Clientes', description: 'Puede registrar nuevos clientes', category: 'Clientes' },
   'clients.edit': { label: 'Editar Clientes', description: 'Puede modificar información de clientes', category: 'Clientes' },
   'clients.delete': { label: 'Eliminar Clientes', description: 'Puede eliminar clientes', category: 'Clientes' },
-  
+
+  // ========== CRM ==========
+  'crm.view': { label: 'Ver CRM', description: 'Puede ver la calificación (score), categoría y comportamiento de pago de los clientes', category: 'CRM' },
+  'crm.edit': { label: 'Editar CRM', description: 'Puede asignar categoría manual, etiquetas y notas a los clientes', category: 'CRM' },
+
   // ========== PAGOS ==========
   'payments.view': { label: 'Ver Pagos', description: 'Puede ver el historial de pagos', category: 'Pagos' },
   'payments.create': { label: 'Registrar Pagos', description: 'Puede registrar nuevos pagos', category: 'Pagos' },

@@ -1,14 +1,50 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
+# robots.txt — ProPréstamos
+#
+# La versión anterior era `Allow: /` para todos los rastreadores, repetido para
+# cinco user-agents distintos. Eso deja indexable TODO, incluido el panel de
+# códigos de registro y las rutas internas de la aplicación.
+#
+# Nota sobre esta app: al no haber sesión iniciada, cualquier ruta desconocida
+# devuelve la landing (App.tsx: `<Route path="*" element={<LandingPage />} />`).
+# Sin las reglas de abajo, Google acabaría indexando decenas de URLs distintas
+# con exactamente el mismo contenido, repartiendo el posicionamiento entre todas
+# en vez de concentrarlo en la portada.
 
 User-agent: *
-Allow: /
+Allow: /$
+Allow: /login
+Allow: /register
+
+# Panel de administración: nunca debe aparecer en buscadores
+Disallow: /admin/
+
+# Rutas internas de la aplicación (requieren sesión y no aportan
+# contenido indexable: sin sesión todas devuelven la misma landing)
+Disallow: /prestamos
+Disallow: /carteras
+Disallow: /clientes
+Disallow: /inventario
+Disallow: /compra-venta
+Disallow: /punto-venta
+Disallow: /documentos
+Disallow: /solicitudes
+Disallow: /bancos
+Disallow: /utilidades
+Disallow: /turnos
+Disallow: /mi-empresa
+Disallow: /empresa
+Disallow: /acuerdos
+Disallow: /reportes
+Disallow: /mapa
+Disallow: /cobro-rapido
+Disallow: /backup
+
+# Las imágenes sociales sí deben ser accesibles para que WhatsApp, Facebook
+# y X puedan generar la vista previa al compartir un enlace.
+Allow: /og-image.png
+Allow: /favicon-32x32.png
+Allow: /apple-touch-icon.png
+Allow: /icon-512.png
+
+# PENDIENTE: cuando el sitio tenga dominio fijo, descomenta y pon la URL real.
+# Sitemap: https://TU-DOMINIO.com/sitemap.xml

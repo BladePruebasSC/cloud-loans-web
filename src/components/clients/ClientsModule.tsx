@@ -23,7 +23,8 @@ import {
   Eye,
   UserCheck,
   UserX,
-  Filter
+  Filter,
+  Target
 } from 'lucide-react';
 
 interface Client {
@@ -288,7 +289,8 @@ export const ClientsModule = () => {
                             {client.credit_score && (
                               <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                                 <span className="font-medium text-xs sm:text-sm">Score:</span>
-                                <span className={`text-xs sm:text-sm ${client.credit_score >= 700 ? 'text-green-600' : client.credit_score >= 600 ? 'text-yellow-600' : 'text-red-600'}`}>
+                                {/* Umbrales alineados con el CRM: ≥700 Caliente, ≥450 Tibio, <450 Frío */}
+                                <span className={`text-xs sm:text-sm ${client.credit_score >= 700 ? 'text-green-600' : client.credit_score >= 450 ? 'text-yellow-600' : 'text-red-600'}`}>
                                   {client.credit_score}
                                 </span>
                               </div>
@@ -324,6 +326,11 @@ export const ClientsModule = () => {
                           <Button variant="outline" size="sm" onClick={() => navigate(`/clientes/editar/${client.id}`)} className="flex-1 sm:flex-none text-xs">
                             <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
                             <span className="sm:hidden">Editar</span>
+                          </Button>
+
+                          <Button variant="outline" size="sm" onClick={() => navigate(`/crm?client=${client.id}`)} className="flex-1 sm:flex-none text-xs" title="Ver ficha CRM">
+                            <Target className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-0" />
+                            <span className="sm:hidden">CRM</span>
                           </Button>
                         </div>
                       </div>

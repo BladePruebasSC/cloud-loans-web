@@ -23,6 +23,7 @@ import RegistrationCodeModal from '@/components/RegistrationCodeModal';
 import { PawnShopModule } from '@/components/pawnshop/PawnShopModule';
 import PointOfSaleModule from '@/components/pos/PointOfSaleModule';
 import { QuickCollectionModule } from '@/components/collections/QuickCollectionModule';
+import { CRMModule } from '@/components/crm/CRMModule';
 import { BackupExportModule } from '@/components/backup/BackupExportModule';
 import { useAutoBackup } from '@/hooks/useAutoBackup';
 import { Building, CreditCard, Package, Users, BarChart3, Key } from 'lucide-react';
@@ -35,7 +36,8 @@ const RestrictedAccess = ({ module }: { module: string }) => {
     inventory: 'Inventario',
     reports: 'Reportes',
     company: 'Configuración de Empresa',
-    admin: 'Administración'
+    admin: 'Administración',
+    crm: 'CRM de Clientes'
   };
 
   return (
@@ -44,6 +46,7 @@ const RestrictedAccess = ({ module }: { module: string }) => {
         <div className="h-12 w-12 mx-auto mb-4 text-gray-400">
           {module === 'loans' && <CreditCard className="h-12 w-12" />}
           {module === 'clients' && <Users className="h-12 w-12" />}
+          {module === 'crm' && <Users className="h-12 w-12" />}
           {module === 'inventory' && <Package className="h-12 w-12" />}
           {module === 'reports' && <BarChart3 className="h-12 w-12" />}
           {module === 'company' && <Building className="h-12 w-12" />}
@@ -162,7 +165,15 @@ const Index = () => {
           return <RestrictedAccess module="loans" />;
         }
         return <QuickCollectionModule />;
-      
+
+      case '/crm':
+        // Los dueños siempre entran; los empleados necesitan el permiso crm.view
+        // (nuevo permiso: hay que otorgarlo desde Mi Empresa → Empleados).
+        if (!hasPermission('crm.view')) {
+          return <RestrictedAccess module="crm" />;
+        }
+        return <CRMModule />;
+
       case '/acuerdos':
         return <PaymentAgreementsModule />;
       
