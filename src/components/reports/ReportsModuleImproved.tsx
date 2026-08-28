@@ -442,7 +442,8 @@ export const ReportsModule = () => {
               .from('products')
               .select('id, name, itbis_rate')
               .in('id', productIdsFromSales)
-          : { data: null, error: null };
+          // Solo se desestructura `data`; incluir `error` aquí generaba un error de tipos.
+          : { data: null };
 
         // Obtener todos los clientes necesarios en una sola consulta
         const { data: allClients } = clientIds.length > 0
@@ -450,7 +451,8 @@ export const ReportsModule = () => {
               .from('clients')
               .select('id, full_name, phone')
               .in('id', clientIds)
-          : { data: null, error: null };
+          // Solo se desestructura `data`; incluir `error` aquí generaba un error de tipos.
+          : { data: null };
 
         // Crear mapas para acceso rápido
         const saleDetailsMap = new Map<string, any[]>();

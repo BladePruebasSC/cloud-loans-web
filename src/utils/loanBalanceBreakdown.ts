@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { getCurrentDateStringForSantoDomingo } from './dateUtils';
+import { addPeriodsToIsoDate, getFirstDueDateIso } from './frequencyUtils';
 
 export type LoanBalanceBreakdown = {
   baseBalance: number; // capital + interés (SIN cargos)
@@ -17,43 +19,15 @@ const isChargeInst = (inst: any) => {
   return Math.abs(principal - total) < 0.01 || (principal < 0.01 && total > 0.01);
 };
 
-const parseIsoToLocalDate = (iso: string): Date | null => {
-  if (!iso) return null;
-  const [y, m, d] = iso.split('T')[0].split('-').map(Number);
-  if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d);
-};
-
-const formatLocalDateToIso = (dt: Date): string => {
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, '0');
-  const d = String(dt.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-};
-
-const addPeriod = (iso: string, frequency: string): string => {
-  const base = parseIsoToLocalDate(iso);
-  if (!base) return iso;
-  const freq = String(frequency || 'monthly').toLowerCase();
-  const dt = new Date(base);
-  switch (freq) {
-    case 'daily':
-      dt.setDate(dt.getDate() + 1);
-      break;
-    case 'weekly':
-      dt.setDate(dt.getDate() + 7);
-      break;
-    case 'biweekly':
-      dt.setDate(dt.getDate() + 14);
-      break;
-    case 'monthly':
-    default:
-      // Preservar el día del mes y dejar que JS haga rollover (ej. 30-Jan + 1 mes => 02-Mar)
-      dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
-      break;
-  }
-  return formatLocalDateToIso(dt);
-};
+// CORRECCIÓN (auditoría 2026-08-28): esta función hacía "rollover" en la frecuencia mensual
+// (31-ene + 1 mes => 03-mar, tal como documentaba su propio comentario), mientras que el motor
+// de mora y el avance de `next_payment_date` RECORTAN al último día del mes (=> 28-feb). Con dos
+// reglas distintas para el mismo préstamo, las fechas de período dejaban de coincidir a partir
+// de cualquier mes con 31 días y el "Interés pendiente hoy" contaba períodos que la tabla de
+// cuotas situaba en otra fecha. Ahora se delega en `frequencyUtils` (recorte, no rollover), que
+// además soporta las frecuencias trimestral y anual.
+const addPeriod = (iso: string, frequency: string): string =>
+  addPeriodsToIsoDate(iso, 1, frequency);
 
 export async function getLoanBalanceBreakdown(
   supabase: SupabaseClient,
@@ -149,7 +123,7 @@ export async function getLoanBalanceBreakdown(
     // Normalizar pagos con due_date inválido (ej. 28-feb "clamp") hacia la cuota activa real.
     const freq = String(loan.payment_frequency || 'monthly');
     const startIso = loan.start_date ? String(loan.start_date).split('T')[0] : '';
-    const firstDueFromStart = startIso ? addPeriod(startIso, freq) : null;
+    const firstDueFromStart = startIso ? getFirstDueDateIso(startIso, freq) : null;
     const tol = 0.05;
 
     const interestPerPayment =
@@ -225,9 +199,12 @@ export async function getLoanBalanceBreakdown(
       paidByDueValid.set(activeDue, paidActive);
     }
 
-    // Sum ALL pending interest: iterate every period from firstDue to the first upcoming future period
-    const todayDate = new Date();
-    const todayIso = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, '0')}-${String(todayDate.getDate()).padStart(2, '0')}`;
+    // Sum ALL pending interest: iterate every period from firstDue to the first upcoming future period.
+    // CORRECCIÓN (auditoría 2026-08-28): "hoy" se tomaba de la zona horaria del EQUIPO
+    // (`new Date()`), no de Santo Domingo. Todo el resto del sistema (mora, estado de cuenta)
+    // usa la fecha de Santo Domingo, así que en las horas de la noche el saldo pendiente y la
+    // mora podían referirse a días distintos y no cuadrar entre pantallas.
+    const todayIso = getCurrentDateStringForSantoDomingo();
 
     let totalPendingInterest = 0;
     if (firstDueFromStart && interestPerPayment > 0.01) {

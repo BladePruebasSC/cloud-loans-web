@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
+import { getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { formatDateLocalIso } from '@/utils/frequencyUtils';
 
 export interface LateFeeCalculation {
   days_overdue: number;
@@ -42,9 +44,13 @@ export const useLateFee = () => {
   // y además no coincidía con la mora que se muestra en el resto del sistema (estado de cuenta,
   // detalle de préstamo, formulario de cobro), que SÍ se calcula cuota por cuota. Ahora se usa la
   // misma función centralizada que esas pantallas para que el resultado sea siempre el mismo.
+  // CORRECCIÓN (auditoría 2026-08-28): `calculationDate` se recibía pero NUNCA se pasaba a
+  // `getLateFeeBreakdownFromInstallments`, así que pedir la mora "a una fecha dada" devolvía
+  // silenciosamente la mora de hoy. Además el valor por defecto era `new Date()` (fecha del
+  // equipo) en vez de la fecha de Santo Domingo que usa el resto del sistema.
   const calculateLateFee = async (
     loanId: string,
-    calculationDate: Date = new Date()
+    calculationDate: Date = getCurrentDateInSantoDomingo()
   ): Promise<LateFeeCalculation | null> => {
     try {
       setLoading(true);
@@ -79,7 +85,7 @@ export const useLateFee = () => {
         amortization_type: loan.amortization_type
       };
 
-      const breakdown = await getLateFeeBreakdownFromInstallments(loanId, loanDataForCalculation as any);
+      const breakdown = await getLateFeeBreakdownFromInstallments(loanId, loanDataForCalculation as any, calculationDate);
       const daysOverdue = breakdown.breakdown.reduce((max, item) => Math.max(max, item.isPaid ? 0 : item.daysOverdue), 0);
 
       return {
@@ -105,12 +111,16 @@ export const useLateFee = () => {
   // mora distintos entre pantallas. Ahora se recalcula cada préstamo con la misma función
   // centralizada usada en el resto de la aplicación antes de guardar el resultado.
   const updateAllLateFees = async (
-    calculationDate: Date = new Date()
+    calculationDate: Date = getCurrentDateInSantoDomingo()
   ): Promise<number> => {
     try {
       setLoading(true);
 
-      const calcDateStr = calculationDate.toISOString().split('T')[0];
+      // CORRECCIÓN (auditoría 2026-08-28): `toISOString()` convierte a UTC. En Santo Domingo
+      // (UTC-4) cualquier ejecución después de las 20:00 registraba `last_late_fee_calculation`
+      // y `late_fee_history.calculation_date` con la fecha del DÍA SIGUIENTE, descuadrando los
+      // reportes de mora por día y provocando registros de historial duplicados/faltantes.
+      const calcDateStr = formatDateLocalIso(calculationDate);
 
       const { data: loans, error: loansError } = await supabase
         .from('loans')
@@ -143,7 +153,7 @@ export const useLateFee = () => {
             amortization_type: loan.amortization_type
           };
 
-          const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanDataForCalculation as any);
+          const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanDataForCalculation as any, calculationDate);
           const daysOverdue = breakdown.breakdown.reduce((max, item) => Math.max(max, item.isPaid ? 0 : item.daysOverdue), 0);
 
           const newStatus =

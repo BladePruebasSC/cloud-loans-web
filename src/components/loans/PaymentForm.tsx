@@ -24,6 +24,13 @@ import { useLateFee } from '@/hooks/useLateFee';
 import { applyLateFeePayment } from '@/utils/lateFeeCalculator';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { getCurrentDateInSantoDomingo, getCurrentDateString } from '@/utils/dateUtils';
+import {
+  addPeriodsToDate,
+  formatDateLocalIso,
+  getFrequencyRateFactor,
+  getLateFeePeriodDays,
+  parseIsoDateLocal,
+} from '@/utils/frequencyUtils';
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle, Printer, Download } from 'lucide-react';
 import { Search, User } from 'lucide-react';
@@ -2237,10 +2244,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         console.log('🔍 PaymentForm: Distribuyendo pago de mora entre cuotas...');
         let remainingLateFeePayment = data.late_fee_amount;
         
-        // Obtener TODAS las cuotas del préstamo (no solo las del desglose actual)
+        // Obtener TODAS las cuotas del préstamo (no solo las del desglose actual).
+        // CORRECCIÓN (auditoría 2026-08-28): este `select` NO pedía `interest_amount`,
+        // `total_amount` ni `amount`, pero el código de abajo los lee para determinar la base de
+        // mora de las cuotas de préstamos indefinidos (donde `principal_amount` es 0). Al venir
+        // `undefined`, la base quedaba en 0 y la mora de esas cuotas se calculaba como 0: el abono
+        // de mora se repartía mal entre cuotas y `late_fee_paid` quedaba con valores incorrectos.
         const { data: allInstallments, error: installmentsError } = await supabase
           .from('installments')
-          .select('installment_number, late_fee_paid, is_paid, due_date, principal_amount')
+          .select('installment_number, late_fee_paid, is_paid, due_date, principal_amount, interest_amount, total_amount, amount')
           .eq('loan_id', data.loan_id)
           .order('installment_number', { ascending: true });
         
@@ -2283,10 +2295,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                 case 'daily':
                   totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * daysOverdue;
                   break;
-                case 'monthly':
-                  const monthsOverdue = Math.ceil(daysOverdue / 30);
-                  totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * monthsOverdue;
+                case 'monthly': {
+                  // CORRECCIÓN (auditoría 2026-08-28): "/30" fijo. El motor de mora
+                  // (installmentLateFeeCalculator.ts) prorratea según el período REAL de la
+                  // frecuencia, así que al distribuir el abono aquí se usaba una mora distinta
+                  // de la que se le mostró al cliente y quedaba saldo pendiente fantasma.
+                  const periodsOverdue = Math.ceil(daysOverdue / getLateFeePeriodDays(selectedLoan.payment_frequency));
+                  totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * periodsOverdue;
                   break;
+                }
                 case 'compound':
                   totalLateFeeForThisInstallment = baseForMora * (Math.pow(1 + selectedLoan.late_fee_rate / 100, daysOverdue) - 1);
                   break;
@@ -2450,8 +2467,22 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             .eq('loan_id', selectedLoan.id)
             .order('payment_date', { ascending: true });
           
-          // Calcular cuántas cuotas se han pagado basándose en el interés pagado
-          const interestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
+          // Calcular cuántas cuotas se han pagado basándose en el interés pagado.
+          //
+          // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): `interestPerPayment` se calculaba como
+          // `amount * interest_rate / 100`, es decir, con la tasa MENSUAL completa, sin
+          // ajustarla a la frecuencia de pago. En un préstamo indefinido QUINCENAL cada cuota
+          // vale la mitad de eso, así que hacían falta DOS pagos para que el contador
+          // reconociera UNA cuota pagada: `next_payment_date` se quedaba clavado en la cuota
+          // anterior, el préstamo aparecía en mora aunque el cliente estuviera al día, y la
+          // mora se seguía acumulando sobre una cuota ya cobrada. En semanal el factor era 4×
+          // y en diario 30×. Se usa `monthly_payment` (que ya viene ajustado a la frecuencia)
+          // y, si no está disponible, la tasa ajustada por el factor de frecuencia.
+          const interestPerPayment =
+            Number(selectedLoan.monthly_payment || 0) > 0.01
+              ? Number(selectedLoan.monthly_payment)
+              : (selectedLoan.amount * selectedLoan.interest_rate / 100) *
+                getFrequencyRateFactor(selectedLoan.payment_frequency);
           let paidInstallmentsCount = 0;
           let currentInstallmentInterestPaid = 0;
           
@@ -2483,77 +2514,27 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           const startDate = new Date(startYear, startMonth - 1, startDay);
           
           // Calcular la primera fecha de pago (un período después de start_date)
-          const firstPaymentDate = new Date(startDate);
           const frequency = selectedLoan.payment_frequency || 'monthly';
-          
-          switch (frequency) {
-            case 'daily':
-              firstPaymentDate.setDate(startDate.getDate() + 1);
-              break;
-            case 'weekly':
-              firstPaymentDate.setDate(startDate.getDate() + 7);
-              break;
-            case 'biweekly':
-              firstPaymentDate.setDate(startDate.getDate() + 14);
-              break;
-            case 'monthly':
-            default:
-              // Para indefinidos, preservar el día del mes de start_date
-              const startDay = startDate.getDate();
-              const nextMonth = startDate.getMonth() + 1;
-              const nextYear = startDate.getFullYear();
-              // Verificar si el día existe en el mes siguiente
-              const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-              const dayToUse = Math.min(startDay, lastDayOfNextMonth);
-              firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
-              break;
-          }
-          
+          const firstPaymentDate = addPeriodsToDate(startDate, 1, frequency);
+
           // CORRECCIÓN: Calcular la primera cuota NO PAGADA (vencida o no)
           // Si se pagó 1 cuota (noviembre), la próxima cuota no pagada es la cuota 2 (diciembre)
           // La cuota 2 está a 1 período después de la primera cuota (noviembre)
-          const nextDate = new Date(firstPaymentDate);
-          // La próxima cuota no pagada está a 'paidInstallmentsCount' períodos de la primera cuota
-          // Si se pagó 1 cuota, la próxima no pagada es la cuota 2, que está a 1 período de la primera
-          const periodsToAdd = paidInstallmentsCount; // La próxima cuota no pagada está a 'paidInstallmentsCount' períodos de la primera
-          
+          // La próxima cuota no pagada está a 'paidInstallmentsCount' períodos de la primera
+          // (si se pagó 1 cuota, la próxima no pagada es la 2, a 1 período de la primera).
+          const periodsToAdd = paidInstallmentsCount;
+          const nextDate = addPeriodsToDate(firstPaymentDate, periodsToAdd, frequency);
+
           console.log('🔍 PaymentForm: Cálculo de próxima fecha para indefinido:', {
             startDate: startDateStr,
-            firstPaymentDate: `${firstPaymentDate.getFullYear()}-${String(firstPaymentDate.getMonth() + 1).padStart(2, '0')}-${String(firstPaymentDate.getDate()).padStart(2, '0')}`,
+            firstPaymentDate: formatDateLocalIso(firstPaymentDate),
             paidInstallmentsCount,
             periodsToAdd,
             interestPerPayment,
             currentPaymentInterest: interestPayment
           });
-          
-          switch (frequency) {
-            case 'daily':
-              nextDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
-              break;
-            case 'weekly':
-              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
-              break;
-            case 'biweekly':
-              nextDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
-              break;
-            case 'monthly':
-            default:
-              // Preservar el día del mes de firstPaymentDate
-              const paymentDay = firstPaymentDate.getDate();
-              const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
-              const targetYear = firstPaymentDate.getFullYear();
-              // Verificar si el día existe en el mes objetivo
-              const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-              const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
-              nextDate.setFullYear(targetYear, targetMonth, dayToUse);
-              break;
-          }
-          
-          // Formatear como YYYY-MM-DD
-          const finalYear = nextDate.getFullYear();
-          const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
-          const finalDay = String(nextDate.getDate()).padStart(2, '0');
-          nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
+
+          nextPaymentDate = formatDateLocalIso(nextDate);
         } else if (chargeCompleted) {
           // Si se completó un cargo, buscar la siguiente cuota/cargo pendiente
           const { data: nextUnpaid } = await supabase
@@ -2569,41 +2550,23 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             console.log('🔍 PaymentForm: Cargo completado, próxima fecha actualizada a:', nextPaymentDate);
           }
         } else {
-          // Para otros tipos de préstamos, usar la lógica original
-        const [year, month, day] = selectedLoan.next_payment_date.split('-').map(Number);
-          const nextDate = new Date(year, month - 1, day);
-
-        switch (selectedLoan.payment_frequency) {
-          case 'daily':
-            nextDate.setDate(nextDate.getDate() + 1);
-            break;
-          case 'weekly':
-            nextDate.setDate(nextDate.getDate() + 7);
-            break;
-          case 'biweekly':
-            nextDate.setDate(nextDate.getDate() + 14);
-            break;
-          case 'monthly':
-              const originalDay = nextDate.getDate();
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDay);
-            break;
-          case 'quarterly':
-            const originalDayQuarterly = nextDate.getDate();
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 3, originalDayQuarterly);
-            break;
-          case 'yearly':
-            const originalDayYearly = nextDate.getDate();
-            nextDate.setFullYear(nextDate.getFullYear() + 1, nextDate.getMonth(), originalDayYearly);
-            break;
-          default:
-            const originalDayDefault = nextDate.getDate();
-            nextDate.setFullYear(nextDate.getFullYear(), nextDate.getMonth() + 1, originalDayDefault);
-        }
-
-        const finalYear = nextDate.getFullYear();
-        const finalMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
-        const finalDay = String(nextDate.getDate()).padStart(2, '0');
-        nextPaymentDate = `${finalYear}-${finalMonth}-${finalDay}`;
+          // Para otros tipos de préstamos, avanzar un período desde la fecha actual.
+          //
+          // CORRECCIÓN (auditoría 2026-08-28): dos problemas aquí.
+          // 1) `next_payment_date.split('-')` NO quitaba antes la parte horaria: si la BD
+          //    devolvía un timestamp ('2025-03-02T00:00:00'), el día quedaba en NaN y
+          //    `new Date(y, m, NaN)` era Invalid Date → `next_payment_date` se guardaba como
+          //    "NaN-NaN-NaN" y el préstamo perdía su fecha de próximo pago.
+          // 2) Las ramas mensual/trimestral/anual NO recortaban el día al último del mes, así
+          //    que una cuota del 31 de enero saltaba al 3 de marzo (se comía febrero entero).
+          //    `addPeriodsToDate` recorta correctamente a 28-feb.
+          const currentDueIso = String(selectedLoan.next_payment_date || '').split('T')[0];
+          const currentDue = parseIsoDateLocal(currentDueIso);
+          if (currentDue) {
+            nextPaymentDate = formatDateLocalIso(
+              addPeriodsToDate(currentDue, 1, selectedLoan.payment_frequency)
+            );
+          }
         }
 
         // CORRECCIÓN: Si el pago es para un cargo, buscar específicamente ese cargo
@@ -3061,21 +3024,27 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           payment_frequency: selectedLoan.payment_frequency || 'monthly',
           interest_rate: selectedLoan.interest_rate,
           monthly_payment: selectedLoan.monthly_payment,
-          start_date: selectedLoan.start_date
+          start_date: selectedLoan.start_date,
+          // CORRECCIÓN (auditoría 2026-08-28): faltaba `amortization_type`. Sin él, el motor de
+          // mora trataba TODO préstamo indefinido como de plazo fijo justo después de cobrar:
+          // no generaba los períodos de interés dinámicos y guardaba una mora menor a la real
+          // en `loans.current_late_fee`, que es la que ven notificaciones y reportes.
+          amortization_type: selectedLoan.amortization_type
         };
-        
+
         // USAR LA FUNCIÓN CORRECTA QUE CONSIDERA PAGOS PARCIALES
         console.log('🔍 PaymentForm: Recalculando con getLateFeeBreakdownFromInstallments...');
         const updatedBreakdown = await getLateFeeBreakdownFromInstallments(data.loan_id, updatedLoanData);
-        
+
         console.log('🔍 PaymentForm: Desglose actualizado después del pago:', updatedBreakdown);
-        
+
         // Actualizar la mora en la base de datos con el resultado correcto
         const { error: lateFeeError } = await supabase
           .from('loans')
-          .update({ 
+          .update({
             current_late_fee: updatedBreakdown.totalLateFee,
-            last_late_fee_calculation: new Date().toISOString().split('T')[0]
+            // Fecha de Santo Domingo, no UTC (`toISOString()` adelanta un día por las noches).
+            last_late_fee_calculation: getCurrentDateString()
           })
           .eq('id', data.loan_id);
           

@@ -8,6 +8,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Switch } from '@/components/ui/switch';
 import { Calendar, Plus, Edit, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+// CORRECCIÓN (auditoría 2026-08-28): este componente se usaba al final del JSX pero NUNCA se
+// importaba. En producción `PasswordVerificationDialog` era un identificador inexistente, así que
+// el módulo de Días Feriados lanzaba ReferenceError al renderizar y la pantalla quedaba en blanco.
+// El build de Vite no hace type-check, por eso el fallo no aparecía al compilar.
+import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 
 interface Holiday {
   id: string;

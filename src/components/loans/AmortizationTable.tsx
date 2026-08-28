@@ -14,6 +14,13 @@ import {
   X
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  addPeriodsToDate,
+  formatDateLocalIso,
+  getFrequencyLabel,
+  getFrequencyRateFactor,
+  parseIsoDateLocal,
+} from '@/utils/frequencyUtils';
 
 interface AmortizationRow {
   installment: number | string;
@@ -55,25 +62,20 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
   const [fixedPaymentEnabled, setFixedPaymentEnabled] = useState(false);
   const [fixedPaymentAmount, setFixedPaymentAmount] = useState<number | ''>('');
 
-  // Obtener frecuencia de pago y período
-  const getFrequencyInfo = () => {
-    switch (frequency) {
-      case 'daily':
-        return { periodsPerYear: 365, label: 'días', dateIncrement: 1 };
-      case 'weekly':
-        return { periodsPerYear: 52, label: 'semanas', dateIncrement: 7 };
-      case 'biweekly':
-        return { periodsPerYear: 26, label: 'quincenas', dateIncrement: 14 };
-      case 'monthly':
-        return { periodsPerYear: 12, label: 'meses', dateIncrement: 30 };
-      case 'quarterly':
-        return { periodsPerYear: 4, label: 'trimestres', dateIncrement: 90 };
-      case 'yearly':
-        return { periodsPerYear: 1, label: 'años', dateIncrement: 365 };
-      default:
-        return { periodsPerYear: 12, label: 'meses', dateIncrement: 30 };
-    }
-  };
+  // Obtener frecuencia de pago y período.
+  //
+  // CORRECCIÓN (auditoría 2026-08-28): esta función devolvía un `dateIncrement` en DÍAS FIJOS
+  // (mensual = 30, trimestral = 90, anual = 365) que luego se sumaba con `setDate()`. Eso hace
+  // que un préstamo mensual que inicia el 15 de enero venza el 14-feb, el 16-mar, el 15-abr...
+  // las fechas se van desplazando y NO coinciden con las cuotas realmente guardadas en la BD
+  // (que usan meses de calendario). Ahora las fechas se calculan con `addPeriodsToDate`, que
+  // usa meses de calendario reales y recorta al último día del mes cuando hace falta.
+  const getFrequencyInfo = () => ({ label: getFrequencyLabel(frequency) });
+
+  /** Fecha de vencimiento de la cuota `installmentNumber` (1-indexada). */
+  const getInstallmentDate = (startDateObj: Date, installmentNumber: number): string =>
+    // La primera cuota vence UN período después del inicio (no el mismo día del desembolso).
+    formatDateLocalIso(addPeriodsToDate(startDateObj, installmentNumber, frequency));
 
   // Calcular tasa de interés ajustada para cuota fija
   const calculateAdjustedInterestRate = () => {
@@ -91,12 +93,17 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
       return 0;
     }
 
-    // Para interés simple mensual, calcular directamente
+    // Derivar la tasa a partir de la cuota fija (interés simple).
+    //
+    // CORRECCIÓN (auditoría 2026-08-28): el cálculo devolvía la tasa DEL PERÍODO pero el campo
+    // "Tasa de Interés (%)" del formulario es MENSUAL, y más abajo se vuelve a multiplicar por
+    // el factor de frecuencia. En un préstamo quincenal eso partía la tasa a la mitad dos veces,
+    // así que la tabla generada no daba la cuota fija que el usuario había pedido. Se convierte
+    // la tasa del período a tasa mensual dividiendo por el factor de frecuencia.
     const totalPayment = fixedPaymentAmount * term;
     const totalInterest = totalPayment - amount;
-    
-    // Calcular tasa de interés mensual
-    const monthlyRate = (totalInterest / amount) / term * 100;
+    const periodRateDerived = (totalInterest / amount) / term; // tasa por PERÍODO (tanto por uno)
+    const monthlyRate = (periodRateDerived / getFrequencyRateFactor(frequency)) * 100;
     return Math.max(0, Math.round(monthlyRate * 100) / 100);
   };
 
@@ -107,33 +114,11 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
       return;
     }
 
-    const { periodsPerYear, dateIncrement } = getFrequencyInfo();
     const adjustedInterestRate = calculateAdjustedInterestRate();
-    
-    // Convertir la tasa mensual a la frecuencia de pago correspondiente
-    let periodRate: number;
-    switch (frequency) {
-      case 'daily':
-        periodRate = adjustedInterestRate / 100 / 30; // Tasa diaria basada en mes de 30 días
-        break;
-      case 'weekly':
-        periodRate = adjustedInterestRate / 100 / 4; // Tasa semanal (mes/4)
-        break;
-      case 'biweekly':
-        periodRate = adjustedInterestRate / 100 / 2; // Tasa quincenal (mes/2)
-        break;
-      case 'monthly':
-      default:
-        periodRate = adjustedInterestRate / 100; // Tasa mensual directa
-        break;
-      case 'quarterly':
-        periodRate = adjustedInterestRate / 100 * 3; // Tasa trimestral (mes*3)
-        break;
-      case 'yearly':
-        periodRate = adjustedInterestRate / 100 * 12; // Tasa anual (mes*12)
-        break;
-    }
-    
+
+    // Convertir la tasa mensual a la frecuencia de pago correspondiente (fuente única de verdad)
+    const periodRate = (adjustedInterestRate / 100) * getFrequencyRateFactor(frequency);
+
     let periodPayment: number;
     
          if (fixedPaymentEnabled && fixedPaymentAmount && typeof fixedPaymentAmount === 'number') {
@@ -152,7 +137,10 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
 
     const rows: AmortizationRow[] = [];
     let remainingBalance = amount;
-    const startDateObj = new Date(startDate);
+    // CORRECCIÓN (auditoría 2026-08-28): `new Date('YYYY-MM-DD')` interpreta la cadena como
+    // medianoche UTC, no local, así que en zonas horarias negativas la fecha base era el día
+    // anterior. Se parsea explícitamente como fecha local.
+    const startDateObj = parseIsoDateLocal(startDate) || new Date();
 
     if (amortizationType === 'simple') {
       // Simple/Absoluto: interés fijo sobre capital original, capital dividido en partes iguales
@@ -165,12 +153,9 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
         const payment = Math.round((principal + interest) * 100) / 100;
         const newBalance = isLast ? 0 : Math.round((remainingBalance - principal) * 100) / 100;
 
-        const paymentDate = new Date(startDateObj);
-        paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
-
         rows.push({
           installment: i,
-          date: paymentDate.toISOString().split('T')[0],
+          date: getInstallmentDate(startDateObj, i),
           interest,
           principal,
           payment,
@@ -188,12 +173,9 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
         const payment = Math.round((principal + interest) * 100) / 100;
         const newBalance = isLast ? 0 : Math.round((remainingBalance - principal) * 100) / 100;
 
-        const paymentDate = new Date(startDateObj);
-        paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
-
         rows.push({
           installment: i,
-          date: paymentDate.toISOString().split('T')[0],
+          date: getInstallmentDate(startDateObj, i),
           interest,
           principal,
           payment,
@@ -213,12 +195,9 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
         const payment = Math.round((principal + interest) * 100) / 100;
         const newBalance = isLast ? 0 : Math.round((remainingBalance - principal) * 100) / 100;
 
-        const paymentDate = new Date(startDateObj);
-        paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
-
         rows.push({
           installment: i,
-          date: paymentDate.toISOString().split('T')[0],
+          date: getInstallmentDate(startDateObj, i),
           interest,
           principal,
           payment,
@@ -237,12 +216,9 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
         const payment = i === term ? interest + amount : interest;
         
         // Calcular fecha de pago según la frecuencia
-        const paymentDate = new Date(startDateObj);
-        paymentDate.setDate(paymentDate.getDate() + (dateIncrement * (i - 1)));
-
         rows.push({
           installment: i,
-          date: paymentDate.toISOString().split('T')[0],
+          date: getInstallmentDate(startDateObj, i),
           interest: Math.round(interest * 100) / 100,
           principal: Math.round(principal * 100) / 100,
           payment: Math.round(payment * 100) / 100,
@@ -257,31 +233,14 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
       // Plazo indefinido - Solo intereses, sin vencimiento
       const interestPerPayment = amount * periodRate;
       
-      // CORRECCIÓN: Calcular la primera fecha de pago correctamente
-      // Para préstamos indefinidos, la primera cuota debe ser un mes después de la fecha de inicio
-      const paymentDate = new Date(startDateObj);
-      
-      // Ajustar según la frecuencia de pago
-      switch (frequency) {
-        case 'daily':
-          paymentDate.setDate(startDateObj.getDate() + 1);
-          break;
-        case 'weekly':
-          paymentDate.setDate(startDateObj.getDate() + 7);
-          break;
-        case 'biweekly':
-          paymentDate.setDate(startDateObj.getDate() + 14);
-          break;
-        case 'monthly':
-        default:
-          // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
-          paymentDate.setFullYear(startDateObj.getFullYear(), startDateObj.getMonth() + 1, startDateObj.getDate());
-          break;
-      }
-
+      // La primera cuota vence un período después de la fecha de inicio.
+      // CORRECCIÓN (auditoría 2026-08-28): el `switch` anterior solo contemplaba diario,
+      // semanal, quincenal y mensual; las frecuencias TRIMESTRAL y ANUAL caían en el `default`
+      // mensual, así que un préstamo indefinido trimestral mostraba su primera cuota a 1 mes.
+      // Tampoco recortaba el día al último del mes (31-ene + 1 mes daba 03-mar).
       rows.push({
         installment: '1/X', // Mostrar 1/X para indicar que es indefinido
-        date: paymentDate.toISOString().split('T')[0],
+        date: getInstallmentDate(startDateObj, 1),
         interest: Math.round(interestPerPayment * 100) / 100,
         principal: 0,
         payment: Math.round(interestPerPayment * 100) / 100,
@@ -317,15 +276,14 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
     }
   }, [amortizationType]);
 
-  // Actualizar automáticamente la tasa de interés cuando cambie la cuota fija
-  useEffect(() => {
-    if (fixedPaymentEnabled && fixedPaymentAmount && typeof fixedPaymentAmount === 'number' && amount > 0 && term > 0) {
-      const newInterestRate = calculateAdjustedInterestRate();
-      if (newInterestRate !== interestRate) {
-        setInterestRate(newInterestRate);
-      }
-    }
-  }, [fixedPaymentAmount, fixedPaymentEnabled, amount, term]);
+  // CORRECCIÓN (auditoría 2026-08-28): aquí había un `useEffect` que SOBRESCRIBÍA de forma
+  // permanente la tasa escrita por el usuario (`setInterestRate(newInterestRate)`) con la tasa
+  // derivada de la cuota fija. Al desmarcar "Fijar Cuota" la tasa original ya no volvía: se había
+  // perdido, y el usuario terminaba simulando con una tasa que él nunca escribió.
+  //
+  // No hace falta tocar el estado: `calculateAdjustedInterestRate()` ya se usa directamente en el
+  // cálculo de la tabla, y la interfaz muestra la tasa derivada en la etiqueta "Tasa ajustada".
+  // Se elimina el efecto para que el campo del usuario quede intacto.
 
   // Filtrar y ordenar datos
   const filteredData = amortizationData.filter(row => {

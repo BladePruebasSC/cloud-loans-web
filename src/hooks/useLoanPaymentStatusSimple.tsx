@@ -123,8 +123,15 @@ export const useLoanPaymentStatusSimple = (loan: Loan | null) => {
         }
       }, 0);
       
-      const currentPaymentRemaining = Math.max(0, currentPaymentDue - currentPaymentPaid);
-      const isCurrentPaymentComplete = currentPaymentRemaining === 0;
+      // CORRECCIÓN (auditoría 2026-08-28): se comparaba `=== 0` con aritmética de punto
+      // flotante. Los montos de cuota se calculan dividiendo (capital/plazo, interés×tasa), así
+      // que una cuota de 1.666,67 pagada exactamente deja un residuo de ~0,0000000001 y
+      // `remaining === 0` daba `false`: la cuota quedaba marcada como "pago parcial" para
+      // siempre, el sistema seguía pidiendo el saldo y no avanzaba a la cuota siguiente.
+      // Se usa la misma tolerancia de 1 centavo que el resto de la aplicación.
+      const rawRemaining = currentPaymentDue - currentPaymentPaid;
+      const isCurrentPaymentComplete = rawRemaining < 0.01;
+      const currentPaymentRemaining = isCurrentPaymentComplete ? 0 : Math.max(0, rawRemaining);
       const hasPartialPayments = currentPayments.length > 0 && !isCurrentPaymentComplete;
 
       console.log('Payment Status Calculated:', {

@@ -18,6 +18,13 @@ import { toast } from 'sonner';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
+import {
+  addPeriodsToDate,
+  formatDateLocalIso,
+  getFirstDueDateIso,
+  getFrequencyRateFactor,
+  parseIsoDateLocal,
+} from '@/utils/frequencyUtils';
 import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { getFirstUnpaidDueDate } from '@/utils/nextPaymentDateFromInstallments';
@@ -2942,22 +2949,37 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // Crear las nuevas cuotas en la tabla installments
             try {
               const newInstallments = [];
-              const startDate = new Date(loan.first_payment_date || loan.start_date || loan.next_payment_date);
               const frequency = loan.payment_frequency || 'monthly';
+
+              // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): este bloque tomaba
+              // `loan.first_payment_date` como si fuera la fecha de la PRIMERA CUOTA y luego
+              // sumaba `i - 1` períodos. Pero al crear el préstamo, `LoanForm.onSubmit` guarda
+              // en `first_payment_date` la **fecha de inicio** elegida por el usuario (la misma
+              // que en `start_date`), NO la primera fecha de vencimiento — esa va en
+              // `next_payment_date`. Resultado: cada cuota agregada por una extensión de plazo
+              // quedaba UN PERÍODO ANTES de lo que le tocaba, solapándose con las cuotas
+              // existentes y apareciendo como vencida (con mora) desde el día en que se creaba.
+              // Se calcula la primera fecha de vencimiento a partir de `start_date` + 1 período,
+              // que es la convención que usa el resto del sistema.
+              const extStartIso = String(loan.start_date || loan.first_payment_date || '').split('T')[0];
+              const firstDueDate = extStartIso
+                ? parseIsoDateLocal(getFirstDueDateIso(extStartIso, frequency))
+                : parseIsoDateLocal(String(loan.next_payment_date || '').split('T')[0]);
+
+              if (!firstDueDate) {
+                throw new Error('No se pudo determinar la fecha de la primera cuota del préstamo');
+              }
 
               console.log('🔍 LoanUpdateForm: Fecha base para cuotas:', {
                 first_payment_date: loan.first_payment_date,
                 start_date: loan.start_date,
                 next_payment_date: loan.next_payment_date,
-                startDate: startDate.toISOString()
+                firstDueDate: formatDateLocalIso(firstDueDate)
               });
 
               // Calcular el monto de capital e interés para cada cuota nueva
               // La tasa es mensual; ajustar por frecuencia para quincenal/semanal/diario
-              const freqFactorExt = frequency === 'biweekly' ? 0.5
-                : frequency === 'weekly' ? 0.25
-                : frequency === 'daily' ? 1 / 30
-                : 1;
+              const freqFactorExt = getFrequencyRateFactor(frequency);
               const fixedInterestPerPayment = ((loan.amount * loan.interest_rate) / 100) * freqFactorExt;
               const principalPerPayment = calculatedValues.newPayment - fixedInterestPerPayment;
 
@@ -2968,36 +2990,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               });
 
               for (let i = loan.term_months + 1; i <= newTermMonths; i++) {
-                const dueDate = new Date(startDate);
-                const periodsToAdd = i - 1;
-
-                switch (frequency) {
-                  case 'daily':
-                    dueDate.setDate(dueDate.getDate() + periodsToAdd);
-                    break;
-                  case 'weekly':
-                    dueDate.setDate(dueDate.getDate() + periodsToAdd * 7);
-                    break;
-                  case 'biweekly':
-                    dueDate.setDate(dueDate.getDate() + periodsToAdd * 14);
-                    break;
-                  case 'monthly':
-                    dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
-                    break;
-                  case 'quarterly':
-                    dueDate.setMonth(dueDate.getMonth() + periodsToAdd * 3);
-                    break;
-                  case 'yearly':
-                    dueDate.setFullYear(dueDate.getFullYear() + periodsToAdd);
-                    break;
-                  default:
-                    dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
-                }
+                // La cuota `i` vence `i - 1` períodos después de la PRIMERA cuota.
+                const dueDate = addPeriodsToDate(firstDueDate, i - 1, frequency);
 
                 const installmentData = {
                   loan_id: loan.id,
                   installment_number: i,
-                  due_date: dueDate.toISOString().split('T')[0],
+                  due_date: formatDateLocalIso(dueDate),
                   total_amount: calculatedValues.newPayment,
                   principal_amount: principalPerPayment,
                   interest_amount: fixedInterestPerPayment,
@@ -3299,32 +3298,29 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // ver openEditLoanForm en LoansModule.tsx), pero se corrige de todos modos como red de
           // seguridad, y por si algún préstamo ya quedó con cuotas mal generadas por este bug.
           const editFrequency = data.edit_payment_frequency || loan.payment_frequency || 'monthly';
-          const [editStartYear, editStartMonth, editStartDay] = String(loan.start_date).split('T')[0].split('-').map(Number);
-          const startDate = new Date(editStartYear, editStartMonth - 1, editStartDay);
-          const newEndDate = new Date(startDate);
-          newEndDate.setMonth(newEndDate.getMonth() + data.edit_term_months);
-          const nextPaymentDate = new Date(startDate);
-          switch (editFrequency) {
-            case 'daily':
-              nextPaymentDate.setDate(nextPaymentDate.getDate() + 1);
-              break;
-            case 'weekly':
-              nextPaymentDate.setDate(nextPaymentDate.getDate() + 7);
-              break;
-            case 'biweekly':
-              nextPaymentDate.setDate(nextPaymentDate.getDate() + 14);
-              break;
-            case 'monthly':
-            default:
-              nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
-              break;
-          }
+          const startDate = parseIsoDateLocal(String(loan.start_date)) || getCurrentDateInSantoDomingo();
+
+          // CORRECCIÓN (auditoría 2026-08-28): `end_date` sumaba `edit_term_months` MESES sin
+          // importar la frecuencia, pero el plazo está expresado en PERÍODOS: un préstamo
+          // diario a 30 días quedaba con vencimiento a 30 meses.
+          const newEndDate = addPeriodsToDate(startDate, data.edit_term_months, editFrequency);
+          const nextPaymentDate = addPeriodsToDate(startDate, 1, editFrequency);
           const firstPaymentDate = new Date(nextPaymentDate);
-          
+
           // Calcular total_amount
           // Si el préstamo es pendiente, no modificar el monto (es un financiamiento de factura)
           const finalAmount = loan.status === 'pending' ? loan.amount : data.edit_amount;
-          const totalInterest = (finalAmount * data.edit_interest_rate * data.edit_term_months) / 100;
+
+          // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): el interés total se calculaba como
+          // `monto × tasa_mensual × plazo / 100`, tratando el plazo como si siempre fueran
+          // MESES. Como el plazo está en períodos de la frecuencia, un préstamo DIARIO de
+          // 30 días al 10% mensual quedaba con un interés total del 300% (10% × 30) en vez
+          // del 10%; uno quincenal de 12 quincenas, con 120% en vez de 60%. Ese
+          // `total_amount` inflado se guarda en el préstamo y es la base del
+          // `remaining_balance` que calcula el trigger de la BD, así que el cliente terminaba
+          // debiendo varias veces lo pactado. Se aplica el factor de frecuencia.
+          const editPeriodRate = (data.edit_interest_rate / 100) * getFrequencyRateFactor(editFrequency);
+          const totalInterest = finalAmount * editPeriodRate * data.edit_term_months;
           const totalAmount = finalAmount + totalInterest;
           
           loanUpdates = {
@@ -3334,9 +3330,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             monthly_payment: calculatedValues.newPayment,
             total_amount: totalAmount,
             remaining_balance: finalAmount,
-            end_date: newEndDate.toISOString().split('T')[0],
-            next_payment_date: nextPaymentDate.toISOString().split('T')[0],
-            first_payment_date: firstPaymentDate.toISOString().split('T')[0],
+            // Formateo local: `toISOString()` convierte a UTC y desplaza el día.
+            end_date: formatDateLocalIso(newEndDate),
+            next_payment_date: formatDateLocalIso(nextPaymentDate),
+            first_payment_date: formatDateLocalIso(firstPaymentDate),
             amortization_type: data.edit_amortization_type,
             payment_frequency: data.edit_payment_frequency || loan.payment_frequency || 'monthly',
             late_fee_enabled: data.edit_late_fee_enabled !== undefined ? data.edit_late_fee_enabled : (loan.late_fee_enabled || false),
@@ -3364,30 +3361,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           const paymentFrequency = data.edit_payment_frequency || loan.payment_frequency || 'monthly';
           
           for (let i = 1; i <= data.edit_term_months; i++) {
-            const dueDate = new Date(firstPaymentDate);
-            let periodsToAdd = i - 1;
-            
-            switch (paymentFrequency) {
-              case 'daily':
-                dueDate.setDate(dueDate.getDate() + periodsToAdd);
-                break;
-              case 'weekly':
-                dueDate.setDate(dueDate.getDate() + periodsToAdd * 7);
-                break;
-              case 'biweekly':
-                dueDate.setDate(dueDate.getDate() + periodsToAdd * 14);
-                break;
-              case 'monthly':
-                dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
-                break;
-              default:
-                dueDate.setMonth(dueDate.getMonth() + periodsToAdd);
-            }
-            
+            // La frecuencia mensual usaba `setMonth()` a secas (31-ene + 1 mes = 03-mar) y no
+            // contemplaba trimestral/anual. `addPeriodsToDate` recorta al último día del mes.
+            const dueDate = addPeriodsToDate(firstPaymentDate, i - 1, paymentFrequency);
+
             newInstallments.push({
               loan_id: loan.id,
               installment_number: i,
-              due_date: dueDate.toISOString().split('T')[0],
+              due_date: formatDateLocalIso(dueDate),
               total_amount: calculatedValues.newPayment,
               principal_amount: monthlyPrincipal,
               interest_amount: monthlyInterest,

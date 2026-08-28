@@ -12,7 +12,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useLoanPaymentStatusSimple } from '@/hooks/useLoanPaymentStatusSimple';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
-import { getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { getCurrentDateInSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { getLateFeePeriodDays } from '@/utils/frequencyUtils';
 import { toast } from 'sonner';
 import { 
   Search, 
@@ -60,9 +61,16 @@ interface Loan {
   grace_period_days?: number;
   max_late_fee?: number;
   late_fee_calculation_type?: 'daily' | 'monthly' | 'compound';
+  // Necesarios para calcular la mora igual que el resto del sistema (ver nota en la consulta)
+  term_months?: number;
+  payment_frequency?: string;
+  amortization_type?: string;
+  start_date?: string;
   client: {
     full_name: string;
     dni: string;
+    // El recibo de WhatsApp lee `client.phone`; faltaba en el tipo.
+    phone?: string;
   };
 }
 
@@ -207,6 +215,11 @@ export const QuickCollectionModule = () => {
     if (!user || !companyId) return;
 
     try {
+      // CORRECCIÓN (auditoría 2026-08-28): esta consulta no traía `term_months`,
+      // `payment_frequency`, `amortization_type` ni `start_date`. Por eso el cálculo de mora de
+      // este módulo terminó pasando valores fijos inventados ('monthly', plazo 4,
+      // next_payment_date como fecha de inicio). Sin estos campos era imposible que la mora
+      // coincidiera con la del detalle del préstamo o el estado de cuenta.
       const { data, error } = await supabase
         .from('loans')
         .select(`
@@ -221,6 +234,10 @@ export const QuickCollectionModule = () => {
           grace_period_days,
           max_late_fee,
           late_fee_calculation_type,
+          term_months,
+          payment_frequency,
+          amortization_type,
+          start_date,
           clients (
             full_name,
             dni
@@ -249,6 +266,18 @@ export const QuickCollectionModule = () => {
 
   const calculateLoanLateFee = async (loan: Loan) => {
     try {
+      // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): este módulo pasaba al motor de mora unos
+      // datos INVENTADOS en vez de los del préstamo:
+      //   - `term: 4` fijo (el plazo real no se usaba),
+      //   - `payment_frequency: 'monthly'` fijo (un préstamo diario o quincenal se calculaba
+      //      como si fuera mensual),
+      //   - `start_date: loan.next_payment_date` (¡la fecha del próximo pago usada como fecha
+      //      de inicio del préstamo!), lo que en préstamos indefinidos hace que la generación
+      //      dinámica de cuotas arranque desde una fecha equivocada y se pierdan períodos,
+      //   - y NO enviaba `amortization_type`, así que todo préstamo indefinido se calculaba
+      //      con la lógica de plazo fijo.
+      // Consecuencia: la mora mostrada en "Cobro Rápido" no coincidía con la del detalle del
+      // préstamo ni con la del estado de cuenta, y era la que se cobraba realmente al cliente.
       const loanData = {
         id: loan.id,
         remaining_balance: loan.remaining_balance,
@@ -259,13 +288,14 @@ export const QuickCollectionModule = () => {
         late_fee_calculation_type: loan.late_fee_calculation_type || 'daily',
         late_fee_enabled: loan.late_fee_enabled || false,
         amount: loan.amount,
-        term: 4,
-        payment_frequency: 'monthly',
+        term: (loan as any).term_months || 0,
+        payment_frequency: (loan as any).payment_frequency || 'monthly',
         interest_rate: loan.interest_rate,
         monthly_payment: loan.monthly_payment,
-        start_date: loan.next_payment_date
+        start_date: (loan as any).start_date || loan.next_payment_date,
+        amortization_type: (loan as any).amortization_type
       };
-      
+
       const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanData);
       setLateFeeAmount(breakdown.totalLateFee);
     } catch (error) {
@@ -478,9 +508,13 @@ export const QuickCollectionModule = () => {
 
       // Actualizar mora en cuotas si se pagó mora
       if (data.late_fee_amount && data.late_fee_amount > 0) {
+        // CORRECCIÓN (auditoría 2026-08-28): faltaban `interest_amount`, `total_amount` y
+        // `amount` en el select, pero el código de abajo los usa como base de mora en préstamos
+        // indefinidos (donde `principal_amount` es 0). Venían `undefined` → base 0 → mora 0 →
+        // el abono de mora se distribuía mal y `late_fee_paid` quedaba incorrecto.
         const { data: allInstallments } = await supabase
           .from('installments')
-          .select('installment_number, late_fee_paid, is_paid, due_date, principal_amount')
+          .select('installment_number, late_fee_paid, is_paid, due_date, principal_amount, interest_amount, total_amount, amount')
           .eq('loan_id', data.loan_id)
           .order('installment_number', { ascending: true });
         
@@ -515,10 +549,12 @@ export const QuickCollectionModule = () => {
               case 'daily':
                 totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * daysOverdue;
                 break;
-              case 'monthly':
-                const monthsOverdue = Math.ceil(daysOverdue / 30);
-                totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * monthsOverdue;
+              case 'monthly': {
+                // "/30" fijo: no coincidía con el prorrateo por período real del motor de mora.
+                const periodsOverdue = Math.ceil(daysOverdue / getLateFeePeriodDays(selectedLoan.payment_frequency));
+                totalLateFeeForThisInstallment = (baseForMora * selectedLoan.late_fee_rate / 100) * periodsOverdue;
                 break;
+              }
               case 'compound':
                 totalLateFeeForThisInstallment = baseForMora * (Math.pow(1 + selectedLoan.late_fee_rate / 100, daysOverdue) - 1);
                 break;
@@ -616,19 +652,24 @@ export const QuickCollectionModule = () => {
           late_fee_calculation_type: selectedLoan.late_fee_calculation_type || 'daily',
           late_fee_enabled: selectedLoan.late_fee_enabled || false,
           amount: selectedLoan.amount,
-          term: 4,
-          payment_frequency: 'monthly',
+          // Ver nota en `calculateLoanLateFee`: aquí también se pasaban plazo, frecuencia y
+          // fecha de inicio inventados, y el resultado se ESCRIBÍA en `loans.current_late_fee`,
+          // propagando la mora incorrecta a notificaciones, reportes y al listado de préstamos.
+          term: (selectedLoan as any).term_months || 0,
+          payment_frequency: (selectedLoan as any).payment_frequency || 'monthly',
           interest_rate: selectedLoan.interest_rate,
           monthly_payment: selectedLoan.monthly_payment,
-          start_date: selectedLoan.next_payment_date
+          start_date: (selectedLoan as any).start_date || selectedLoan.next_payment_date,
+          amortization_type: (selectedLoan as any).amortization_type
         };
-        
+
         const updatedBreakdown = await getLateFeeBreakdownFromInstallments(data.loan_id, loanData);
         await supabase
           .from('loans')
-          .update({ 
+          .update({
             current_late_fee: updatedBreakdown.totalLateFee,
-            last_late_fee_calculation: new Date().toISOString().split('T')[0]
+            // Fecha de Santo Domingo, no UTC: `toISOString()` adelanta un día por las noches.
+            last_late_fee_calculation: getCurrentDateStringForSantoDomingo()
           })
           .eq('id', data.loan_id);
       }

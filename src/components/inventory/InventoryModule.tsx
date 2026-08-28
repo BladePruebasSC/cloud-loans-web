@@ -878,7 +878,9 @@ const InventoryModule = () => {
             .from('products')
             .select('*')
               .in('id', productIdsFromSales)
-          : { data: null, error: null };
+          // Solo se desestructura `data`; incluir `error` aquí generaba un error de tipos
+          // (propiedad en exceso) sin aportar nada.
+          : { data: null };
 
         // Obtener todos los clientes necesarios en una sola consulta
         const { data: allClients } = clientIds.length > 0
@@ -886,7 +888,9 @@ const InventoryModule = () => {
               .from('clients')
               .select('id, full_name')
               .in('id', clientIds)
-          : { data: null, error: null };
+          // Solo se desestructura `data`; incluir `error` aquí generaba un error de tipos
+          // (propiedad en exceso) sin aportar nada.
+          : { data: null };
 
         // Crear mapas para acceso rápido
         const saleDetailsMap = new Map<string, SaleDetail[]>();
@@ -1467,7 +1471,9 @@ const InventoryModule = () => {
               .from('products')
               .select('id, name, itbis_rate')
               .in('id', productIds)
-          : { data: null, error: null };
+          // Solo se desestructura `data`; incluir `error` aquí generaba un error de tipos
+          // (propiedad en exceso) sin aportar nada.
+          : { data: null };
 
         const productsMap = new Map();
         if (productsData) {
@@ -1509,7 +1515,7 @@ const InventoryModule = () => {
             .from('clients')
             .select('id, full_name')
             .in('id', clientIds)
-        : { data: null, error: null };
+        : { data: null };
 
       // Crear mapas para acceso rápido
       const saleDetailsMap = new Map<string, any[]>();

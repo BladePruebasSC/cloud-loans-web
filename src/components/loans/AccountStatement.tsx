@@ -29,6 +29,7 @@ import { formatCurrency } from '@/lib/utils';
 import { formatInTimeZone } from 'date-fns-tz';
 import { addHours } from 'date-fns';
 import { formatDateStringForSantoDomingo, createDateInSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { getFrequencyRateFactor } from '@/utils/frequencyUtils';
 
 interface Payment {
   id: string;
@@ -74,6 +75,11 @@ interface Loan {
   next_payment_date: string;
   status: string;
   amortization_type?: string;
+  // CORRECCIÓN (auditoría 2026-08-28): faltaba `payment_frequency` aunque el componente ya lo
+  // leía en varios sitios (`loan.payment_frequency === 'biweekly' ? ...`). TypeScript lo
+  // reportaba como error en 12 líneas, pero el build de Vite no hace type-check así que pasaba
+  // inadvertido. Es el mismo campo que necesita la tabla de amortización para ajustar la tasa.
+  payment_frequency?: string;
   clients: {
     full_name: string;
     dni: string;
@@ -1033,6 +1039,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     const principal = Number(loanData.amount || 0);
     const amortizationType = String(loanData.amortization_type || 'simple').toLowerCase();
     const interestRate = Number(loanData.interest_rate || 0);
+
+    // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): las ramas francés/alemán/americano de esta
+    // función usaban `interestRate / 100` como tasa del período, es decir, la tasa MENSUAL sin
+    // ajustar por la frecuencia de pago. En un préstamo quincenal el estado de cuenta mostraba
+    // el DOBLE del interés real por cuota; en uno semanal, el cuádruple; en uno diario, 30×.
+    // Esos números no coincidían ni con la vista previa del formulario, ni con las cuotas
+    // guardadas en `installments`, ni con el recibo entregado al cliente.
+    const periodRate = (interestRate / 100) * getFrequencyRateFactor(loanData.payment_frequency);
     // Para préstamos indefinidos, NO usar installmentsData.length porque puede incluir duplicados
     // (ej: cargos + pagos de interés con mismo installment_number), lo que rompe el cálculo.
     const isIndefinite = amortizationType === 'indefinite';
@@ -1082,9 +1096,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica FRANCESA/INSOLUTO');
       // Amortización Francesa - Cuota fija, capital creciente, interés decreciente
       const monthlyPayment = loanData.monthly_payment;
-      const periodRate = interestRate / 100;
       let remainingBalance = principal;
-      
+
       for (let i = 1; i <= numberOfPayments; i++) {
         const interestPayment = remainingBalance * periodRate;
         const principalPayment = monthlyPayment - interestPayment;
@@ -1113,7 +1126,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       let remainingBalance = principal;
       
       for (let i = 1; i <= numberOfPayments; i++) {
-        const interestPayment = remainingBalance * (interestRate / 100);
+        const interestPayment = remainingBalance * periodRate;
         const principalPayment = fixedPrincipal;
         const monthlyPayment = principalPayment + interestPayment;
         remainingBalance -= principalPayment;
@@ -1134,7 +1147,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     } else if (amortizationType === 'american') {
       console.log('🔍 calculateAmortizationSchedule: Ejecutando lógica AMERICANA');
       // Amortización Americana - Solo intereses, capital al final
-      const interestPayment = principal * (interestRate / 100);
+      const interestPayment = principal * periodRate;
       
       for (let i = 1; i <= numberOfPayments; i++) {
         const principalPayment = i === numberOfPayments ? principal : 0;

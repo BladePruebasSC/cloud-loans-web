@@ -10,6 +10,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useLateFee } from '@/hooks/useLateFee';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
+import { getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { formatDateLocalIso, parseIsoDateLocal } from '@/utils/frequencyUtils';
 import { toast } from 'sonner';
 import { 
   FileText, 
@@ -125,9 +127,16 @@ export const LateFeeReports: React.FC = () => {
       console.log('🔍 LateFeeReports: Estados de préstamos:', data?.map(l => ({ id: l.id, next_payment_date: l.next_payment_date })));
 
       const reportData: LateFeeReport[] = await Promise.all((data || []).map(async (loan) => {
-        const today = new Date();
-        const nextPayment = new Date(loan.next_payment_date);
-        const daysOverdue = Math.max(0, Math.floor((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0));
+        // CORRECCIÓN (auditoría 2026-08-28): `new Date(loan.next_payment_date)` interpreta
+        // 'YYYY-MM-DD' como medianoche UTC mientras `new Date()` es hora local, así que la
+        // resta mezclaba dos referencias distintas y `daysOverdue` podía salir desfasado un
+        // día — justo en el umbral (`daysOverdue > 0`) eso decidía si se calculaba la mora o
+        // se reportaba 0. Se comparan fechas de calendario en la zona de Santo Domingo.
+        const today = getCurrentDateInSantoDomingo();
+        const nextPayment = parseIsoDateLocal(loan.next_payment_date);
+        const daysOverdue = nextPayment
+          ? Math.max(0, Math.floor((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0))
+          : 0;
 
         // Calcular la mora correctamente usando el mismo método que LateFeeInfo
         let calculatedLateFee = 0;
@@ -147,7 +156,10 @@ export const LateFeeReports: React.FC = () => {
               payment_frequency: loan.payment_frequency || 'monthly',
               monthly_payment: loan.monthly_payment || 0,
               interest_rate: loan.interest_rate || 0,
-              start_date: loan.start_date || new Date().toISOString().split('T')[0]
+              start_date: loan.start_date || formatDateLocalIso(today),
+              // Sin `amortization_type` los préstamos indefinidos se calculaban con la lógica
+              // de plazo fijo y este reporte mostraba una mora menor a la real.
+              amortization_type: (loan as any).amortization_type
             });
             calculatedLateFee = breakdown.totalLateFee || 0;
             console.log(`🔍 LateFeeReports: Préstamo ${loan.id} - Mora calculada: ${calculatedLateFee}, Mora BD: ${loan.current_late_fee}`);

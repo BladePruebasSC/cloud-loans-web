@@ -1,5 +1,12 @@
 // Utilidad para calcular mora usando cuotas de la tabla installments
 import { getCurrentDateInSantoDomingo } from './dateUtils';
+import {
+  addPeriodsToDate,
+  formatDateLocalIso,
+  getFirstDueDateIso,
+  getLateFeePeriodDays,
+  parseIsoDateLocal,
+} from './frequencyUtils';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface LoanData {
@@ -40,8 +47,19 @@ export const getLateFeeBreakdownFromInstallments = async (
   }>;
 }> => {
   try {
-    console.log('🔍 getLateFeeBreakdownFromInstallments: Fecha de cálculo:', calculationDate.toISOString().split('T')[0]);
-    console.log('🔍 getLateFeeBreakdownFromInstallments: Fecha actual del sistema:', new Date().toISOString().split('T')[0]);
+    // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): esta función NUNCA revisaba
+    // `loan.late_fee_enabled`. El campo estaba declarado en la interfaz `LoanData` y todas
+    // las pantallas se lo pasaban, pero el cálculo lo ignoraba por completo: un préstamo con
+    // la mora DESACTIVADA seguía acumulando y mostrando mora en el estado de cuenta, el
+    // detalle del préstamo, el formulario de cobro, el listado y las estadísticas. Solo
+    // `useLateFee.updateAllLateFees` se salvaba porque filtraba por SQL antes de llamar.
+    // Se trata `undefined` como "habilitado" para no romper a los llamadores que aún no
+    // envían el campo (AccountStatement); solo un `false` explícito desactiva la mora.
+    if (loan?.late_fee_enabled === false) {
+      return { totalLateFee: 0, breakdown: [] };
+    }
+
+    console.log('🔍 getLateFeeBreakdownFromInstallments: Fecha de cálculo:', formatDateLocalIso(calculationDate));
     // Obtener las cuotas de la tabla installments
     const { data: installments, error } = await supabase
       .from('installments')
@@ -63,6 +81,10 @@ export const getLateFeeBreakdownFromInstallments = async (
     // For indefinite loans: tracks late_fee_paid that wasn't consumed reducing DB installment mora.
     // Applied as a pool against dynamic installments so "Eliminar Mora" zeroes the Mora Actual widget.
     let lateFeePaidSurplusPool = 0;
+    // CORRECCIÓN (auditoría 2026-08-28): faltaba `isCharge` en este tipo, aunque el código
+    // más abajo lo escribe y lo lee (`breakdown.find(item => ... && !item.isCharge)`).
+    // TypeScript lo reportaba como error; el build de Vite no hace type-check, así que el
+    // fallo pasaba inadvertido.
     const breakdown: Array<{
       installment: number;
       dueDate: string;
@@ -70,6 +92,7 @@ export const getLateFeeBreakdownFromInstallments = async (
       principal: number;
       lateFee: number;
       isPaid: boolean;
+      isCharge?: boolean;
     }> = [];
     
     // Obtener todos los pagos del préstamo para verificar si hay pagos que cubren cuotas
@@ -100,11 +123,17 @@ export const getLateFeeBreakdownFromInstallments = async (
       for (const payment of sortedPayments) {
         if (payment.due_date && !assignedPaymentIds.has(payment.id)) {
           // Buscar la cuota que corresponde a este due_date
-          const matchingInstallment = installments.find(inst => {
-            const installmentDueDate = new Date(inst.due_date).toISOString().split('T')[0];
-            const paymentDueDate = new Date(payment.due_date).toISOString().split('T')[0];
-            return installmentDueDate === paymentDueDate;
-          });
+          // CORRECCIÓN (auditoría 2026-08-28): antes se comparaba con
+          // `new Date(x).toISOString().split('T')[0]`. Cuando la BD devuelve un timestamp sin
+          // zona ('2025-03-02T00:00:00'), JS lo interpreta como medianoche LOCAL y `toISOString`
+          // lo pasa a UTC: en cualquier equipo con zona horaria positiva el día retrocedía uno,
+          // y los pagos dejaban de emparejar con su cuota (la cuota quedaba "impaga" y generaba
+          // mora ya cobrada). Se comparan las fechas como texto, que es lo que hace el resto
+          // de la aplicación.
+          const paymentDueDate = String(payment.due_date).split('T')[0];
+          const matchingInstallment = installments.find(
+            inst => String(inst.due_date || '').split('T')[0] === paymentDueDate
+          );
           
           if (matchingInstallment) {
             assignedPaymentIds.add(payment.id);
@@ -114,25 +143,48 @@ export const getLateFeeBreakdownFromInstallments = async (
         }
       }
       
-      // SEGUNDO: Asignar pagos restantes (sin due_date o sin coincidencia) secuencialmente
+      // SEGUNDO: Asignar pagos restantes (sin due_date o sin coincidencia) en CASCADA.
       // IMPORTANTE: En préstamos indefinidos NO hacemos asignación secuencial, porque rompería el “pago parcial” (saltaría de cuota).
+      //
+      // CORRECCIÓN (auditoría 2026-08-28): la asignación anterior entregaba COMO MÁXIMO UN PAGO
+      // POR CUOTA (`unassignedIdx++` una sola vez por cuota). Si un cliente abonaba dos veces
+      // sobre la misma cuota —un pago parcial y luego el resto—, el segundo abono se asignaba a
+      // la cuota SIGUIENTE. Consecuencias: la cuota 1 seguía figurando como impaga y acumulando
+      // mora pese a estar saldada, y la cuota 2 aparecía "parcialmente pagada" con dinero que
+      // nunca fue suyo. El error se propagaba en cascada a todas las cuotas posteriores.
+      //
+      // Ahora se reparte en cascada: se van asignando pagos a la MISMA cuota hasta cubrir su
+      // monto esperado, y solo entonces se pasa a la siguiente. Se tiene en cuenta lo que ya
+      // aportó la asignación por `due_date` de la primera pasada.
       if (!isIndefinite) {
-        // Pre-filter: only payments not yet assigned in the first pass
         const unassignedPayments = sortedPayments.filter(p => !assignedPaymentIds.has(p.id));
-        // Pre-compute which installment numbers already have a payment from the first pass
-        const coveredInstNums = new Set(paymentToInstallmentMap.values());
+
+        // Cuánto quedó ya cubierto de cada cuota por la asignación por due_date
+        const coveredByInstallment = new Map<number, number>();
+        for (const [paymentId, instNum] of paymentToInstallmentMap.entries()) {
+          const p = payments.find(x => x.id === paymentId);
+          coveredByInstallment.set(instNum, (coveredByInstallment.get(instNum) || 0) + (p?.amount || 0));
+        }
 
         let unassignedIdx = 0;
-        for (let i = 0; i < installments.length && unassignedIdx < unassignedPayments.length; i++) {
-          const installment = installments[i];
-          // Skip installments already covered by a due_date-matched payment
-          if (coveredInstNums.has(installment.installment_number)) continue;
+        for (const installment of installments) {
+          if (unassignedIdx >= unassignedPayments.length) break;
 
-          const payment = unassignedPayments[unassignedIdx];
-          assignedPaymentIds.add(payment.id);
-          paymentToInstallmentMap.set(payment.id, installment.installment_number);
-          unassignedIdx++;
-          console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación secuencial - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount})`);
+          const expectedTotal = Number(
+            installment.total_amount ??
+            ((installment.principal_amount || 0) + (installment.interest_amount || 0))
+          );
+          let covered = coveredByInstallment.get(installment.installment_number) || 0;
+
+          // Seguir asignando pagos a ESTA cuota hasta cubrirla
+          while (unassignedIdx < unassignedPayments.length && covered + 0.01 < expectedTotal) {
+            const payment = unassignedPayments[unassignedIdx];
+            assignedPaymentIds.add(payment.id);
+            paymentToInstallmentMap.set(payment.id, installment.installment_number);
+            covered += payment.amount || 0;
+            unassignedIdx++;
+            console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación en cascada - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount}); cubierto ${covered}/${expectedTotal}`);
+          }
         }
       }
     }
@@ -235,22 +287,24 @@ export const getLateFeeBreakdownFromInstallments = async (
         // Calcular mora si hay días de atraso
         if (daysOverdue > 0) {
           // CORRECCIÓN: Para préstamos indefinidos, usar interest_amount o total_amount
-          // ya que principal_amount es 0
-          const isIndefinite = loan.amortization_type === 'indefinite';
-          const baseAmount = isIndefinite && installment.principal_amount === 0
+          // ya que principal_amount es 0.
+          // CORRECCIÓN (auditoría 2026-08-28): la comparación era `principal_amount === 0`
+          // (estricta). Postgres devuelve las columnas `numeric` como string o como `null`,
+          // así que `"0" === 0` y `null === 0` son ambos `false`: en préstamos indefinidos la
+          // condición nunca se cumplía y la mora se calculaba sobre `principal_amount` (que
+          // vale 0) → mora 0 en todas las cuotas regulares de un indefinido. Se normaliza
+          // a número antes de comparar.
+          const baseAmount = isIndefinite && Number(installment.principal_amount || 0) < 0.01
             ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
             : (installment.principal_amount || installment.total_amount || installment.amount || 0);
-          
+
           switch (loan.late_fee_calculation_type) {
             case 'daily':
               lateFee = (baseAmount * loan.late_fee_rate / 100) * daysOverdue;
               break;
             case 'monthly': {
               // Usar el largo del período según la frecuencia de pago, no siempre 30 días
-              const periodDays =
-                loan.payment_frequency === 'weekly' ? 7 :
-                loan.payment_frequency === 'biweekly' ? 14 :
-                loan.payment_frequency === 'daily' ? 1 : 30;
+              const periodDays = getLateFeePeriodDays(loan.payment_frequency);
               const periodsOverdue = Math.ceil(daysOverdue / periodDays);
               lateFee = (baseAmount * loan.late_fee_rate / 100) * periodsOverdue;
               break;
@@ -334,37 +388,19 @@ export const getLateFeeBreakdownFromInstallments = async (
         ? Math.max(...regularInstallmentsForSeq.map(i => i.installment_number))
         : 0;
       
-      // Calcular la primera fecha de pago desde start_date
-      const startDateStr = loan.start_date.split('T')[0];
-      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-      const startDate = new Date(startYear, startMonth - 1, startDay);
-      
-      const firstPaymentDate = new Date(startDate);
+      // Calcular la primera fecha de pago desde start_date.
+      // CORRECCIÓN (auditoría 2026-08-28): esta aritmética de fechas estaba duplicada
+      // (y con variantes distintas) en 8 archivos. Ahora se delega en `frequencyUtils`, que
+      // además soporta las frecuencias trimestral y anual — antes caían en el `default`
+      // mensual y toda la tabla de mora de esos préstamos salía con fechas erróneas.
       const frequency = loan.payment_frequency || 'monthly';
-      
-      switch (frequency) {
-        case 'daily':
-          firstPaymentDate.setDate(startDate.getDate() + 1);
-          break;
-        case 'weekly':
-          firstPaymentDate.setDate(startDate.getDate() + 7);
-          break;
-        case 'biweekly':
-          firstPaymentDate.setDate(startDate.getDate() + 14);
-          break;
-        case 'monthly':
-        default:
-          // Preservar el día del mes de start_date
-          const startDay = startDate.getDate();
-          const nextMonth = startDate.getMonth() + 1;
-          const nextYear = startDate.getFullYear();
-          // Verificar si el día existe en el mes siguiente
-          const lastDayOfNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-          const dayToUse = Math.min(startDay, lastDayOfNextMonth);
-          firstPaymentDate.setFullYear(nextYear, nextMonth, dayToUse);
-          break;
+      const startDateStr = loan.start_date.split('T')[0];
+      const firstPaymentDate = parseIsoDateLocal(getFirstDueDateIso(startDateStr, frequency));
+      if (!firstPaymentDate) {
+        console.warn('getLateFeeBreakdownFromInstallments: start_date inválido:', loan.start_date);
+        return { totalLateFee, breakdown };
       }
-      
+
       // Calcular cuántas cuotas deberían existir: SOLO las que ya vencieron o vencen HOY
       // (calculationDate). Se cuenta período por período (en vez de aproximar con "días/30"
       // o diferencia de meses) para que sea exacto en cualquier frecuencia y NUNCA incluya un
@@ -373,38 +409,11 @@ export const getLateFeeBreakdownFromInstallments = async (
       // diario/semanal/quincenal: contaba un período como vencido con solo que cambiara el mes,
       // sin fijarse si el día del mes de vencimiento ya había llegado o no (ej: cuota vence el
       // día 25 y hoy es el día 10 del mes siguiente → esa cuota aún no vence, pero se contaba).
-      const toIsoLocal = (d: Date) =>
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const calculationDateIso = toIsoLocal(calculationDate);
-
-      const addPeriodsToDate = (base: Date, periods: number): Date => {
-        const dt = new Date(base);
-        switch (frequency) {
-          case 'daily':
-            dt.setDate(dt.getDate() + periods);
-            break;
-          case 'weekly':
-            dt.setDate(dt.getDate() + (periods * 7));
-            break;
-          case 'biweekly':
-            dt.setDate(dt.getDate() + (periods * 14));
-            break;
-          case 'monthly':
-          default: {
-            const day = base.getDate();
-            const targetMonth = base.getMonth() + periods;
-            const targetYear = base.getFullYear();
-            const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-            dt.setFullYear(targetYear, targetMonth, Math.min(day, lastDayOfTargetMonth));
-            break;
-          }
-        }
-        return dt;
-      };
+      const calculationDateIso = formatDateLocalIso(calculationDate);
 
       let totalExpected = 0;
       for (let n = 0; n < 100000; n++) { // safety cap, nunca debería alcanzarse
-        const dueIso = toIsoLocal(addPeriodsToDate(firstPaymentDate, n));
+        const dueIso = formatDateLocalIso(addPeriodsToDate(firstPaymentDate, n, frequency));
         if (dueIso > calculationDateIso) break;
         totalExpected = n + 1;
       }
@@ -449,33 +458,9 @@ export const getLateFeeBreakdownFromInstallments = async (
       // Generar todas las cuotas desde (maxInstallmentNumber + 1) hasta totalExpected
       for (let installmentNum = maxInstallmentNumber + 1; installmentNum <= totalExpected; installmentNum++) {
         // Calcular la fecha de vencimiento de esta cuota
-        const installmentDate = new Date(firstPaymentDate);
         const periodsToAdd = installmentNum - 1;
-        
-        switch (frequency) {
-          case 'daily':
-            installmentDate.setDate(firstPaymentDate.getDate() + periodsToAdd);
-            break;
-          case 'weekly':
-            installmentDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 7));
-            break;
-          case 'biweekly':
-            installmentDate.setDate(firstPaymentDate.getDate() + (periodsToAdd * 14));
-            break;
-          case 'monthly':
-          default:
-            // Preservar el día del mes de firstPaymentDate
-            const paymentDay = firstPaymentDate.getDate();
-            const targetMonth = firstPaymentDate.getMonth() + periodsToAdd;
-            const targetYear = firstPaymentDate.getFullYear();
-            // Verificar si el día existe en el mes objetivo
-            const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-            const dayToUse = Math.min(paymentDay, lastDayOfTargetMonth);
-            installmentDate.setFullYear(targetYear, targetMonth, dayToUse);
-            break;
-        }
-        
-        const dueDateStr = `${installmentDate.getFullYear()}-${String(installmentDate.getMonth() + 1).padStart(2, '0')}-${String(installmentDate.getDate()).padStart(2, '0')}`;
+        const installmentDate = addPeriodsToDate(firstPaymentDate, periodsToAdd, frequency);
+        const dueDateStr = formatDateLocalIso(installmentDate);
 
         // Verificar si ya existe una CUOTA REGULAR con esta fecha en el breakdown.
         // CORRECCIÓN CRÍTICA (auditoría de cálculos): antes este `find` no excluía los cargos, así
@@ -507,10 +492,17 @@ export const getLateFeeBreakdownFromInstallments = async (
               case 'daily':
                 lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForInstallment;
                 break;
-              case 'monthly':
-                const monthsOverdue = Math.ceil(daysOverdueForInstallment / 30);
-                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * monthsOverdue;
+              case 'monthly': {
+                // CORRECCIÓN (auditoría 2026-08-28): aquí estaba fijo en "/30" mientras que la
+                // rama que procesa las cuotas guardadas en la BD (unas líneas más arriba) ya
+                // usaba el largo real del período según la frecuencia. En un mismo préstamo
+                // indefinido diario/semanal/quincenal, las cuotas de la BD y las generadas
+                // dinámicamente aplicaban DOS fórmulas de mora distintas: la mora de un
+                // préstamo diario con 30 días de atraso salía como 1 período en vez de 30.
+                const periodsOverdue = Math.ceil(daysOverdueForInstallment / getLateFeePeriodDays(loan.payment_frequency));
+                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * periodsOverdue;
                 break;
+              }
               case 'compound':
                 lateFeeForInstallment = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdueForInstallment) - 1);
                 break;
@@ -559,14 +551,25 @@ export const getLateFeeBreakdownFromInstallments = async (
         }
       }
     } else if (loan.next_payment_date) {
-      // Para préstamos no indefinidos, mantener la lógica original
-      const [nextYear, nextMonth, nextDay] = loan.next_payment_date.split('-').map(Number);
-      const nextPaymentDate = new Date(nextYear, nextMonth - 1, nextDay);
-      const daysSinceNextPayment = Math.floor((calculationDate.getTime() - nextPaymentDate.getTime()) / (1000 * 60 * 60 * 24));
-      
-      // Verificar si ya existe una cuota con esta fecha en el breakdown
-      const existingInstallment = breakdown.find(item => item.dueDate === loan.next_payment_date);
-      
+      // Para préstamos no indefinidos, mantener la lógica original.
+      // CORRECCIÓN (auditoría 2026-08-28): se parseaba `loan.next_payment_date` con
+      // `.split('-')` SIN quitar antes la parte horaria. Si la BD devolvía un timestamp
+      // ('2025-03-02T00:00:00'), el "día" quedaba en NaN → `new Date(y, m, NaN)` = Invalid Date
+      // → `daysSinceNextPayment` = NaN → la condición `> 0` era falsa y la cuota vencida
+      // simplemente NO se generaba: mora silenciosamente en 0.
+      const nextPaymentDateIso = String(loan.next_payment_date).split('T')[0];
+      const nextPaymentDate = parseIsoDateLocal(nextPaymentDateIso);
+      const daysSinceNextPayment = nextPaymentDate
+        ? Math.floor((calculationDate.getTime() - nextPaymentDate.getTime()) / (1000 * 60 * 60 * 24))
+        : 0;
+
+      // Verificar si ya existe una cuota con esta fecha en el breakdown.
+      // CORRECCIÓN (auditoría 2026-08-28): se comparaba contra `loan.next_payment_date` sin
+      // normalizar, mientras que las fechas del breakdown SÍ están normalizadas a 'YYYY-MM-DD'.
+      // Con un timestamp en la BD nunca coincidían y se generaba una cuota DUPLICADA que
+      // sumaba su mora otra vez al total.
+      const existingInstallment = breakdown.find(item => item.dueDate === nextPaymentDateIso);
+
       // Si no existe y la fecha está vencida, generar dinámicamente la cuota
       if (!existingInstallment && daysSinceNextPayment > 0) {
         // Ver nota arriba sobre excluir cargos al numerar períodos (mismo bug, aplicado aquí solo
@@ -600,11 +603,7 @@ export const getLateFeeBreakdownFromInstallments = async (
               lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForNext;
               break;
             case 'monthly': {
-              const periodDays2 =
-                loan.payment_frequency === 'weekly' ? 7 :
-                loan.payment_frequency === 'biweekly' ? 14 :
-                loan.payment_frequency === 'daily' ? 1 : 30;
-              const periodsOverdue2 = Math.ceil(daysOverdueForNext / periodDays2);
+              const periodsOverdue2 = Math.ceil(daysOverdueForNext / getLateFeePeriodDays(loan.payment_frequency));
               lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * periodsOverdue2;
               break;
             }
@@ -625,7 +624,7 @@ export const getLateFeeBreakdownFromInstallments = async (
         // Agregar la cuota generada dinámicamente al breakdown
         breakdown.push({
           installment: nextInstallmentNumber,
-          dueDate: loan.next_payment_date,
+          dueDate: nextPaymentDateIso, // normalizado, igual que el resto del breakdown
           daysOverdue: daysOverdueForNext,
           principal: isIndefinite ? 0 : baseAmount,
           lateFee: lateFeeForNext,

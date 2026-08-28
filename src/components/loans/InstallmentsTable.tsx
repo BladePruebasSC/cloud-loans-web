@@ -24,6 +24,11 @@ interface Installment {
   installment_number: number;
   due_date: string;
   amount: number;
+  // CORRECCIÓN (auditoría 2026-08-28): faltaba `total_amount`, que es la columna AUTORITATIVA
+  // del monto de la cuota en la tabla `installments` (el resto del sistema usa
+  // `total_amount ?? amount`). El componente ya la leía en varios sitios; sin declararla,
+  // TypeScript la marcaba como error y cualquier acceso quedaba sin verificación de tipos.
+  total_amount?: number;
   principal_amount: number;
   interest_amount: number;
   late_fee_paid: number;

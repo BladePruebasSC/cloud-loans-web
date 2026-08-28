@@ -18,6 +18,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer, Plus } from 'lucide-react';
 import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { addPeriodsToDate, formatDateLocalIso, getFrequencyRateFactor } from '@/utils/frequencyUtils';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 
@@ -848,49 +849,33 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
     const startDateStr = loan.start_date.split('T')[0]; // Obtener solo la parte de fecha
     const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
     const startDate = createDateInSantoDomingo(startYear, startMonth, startDay);
-    const firstPaymentDate = new Date(startDate);
-    
-    // Ajustar la primera fecha de cobro según la frecuencia
-    switch (loan.payment_frequency) {
-      case 'daily':
-        firstPaymentDate.setDate(startDate.getDate() + 1);
-        break;
-      case 'weekly':
-        firstPaymentDate.setDate(startDate.getDate() + 7);
-        break;
-      case 'biweekly':
-        firstPaymentDate.setDate(startDate.getDate() + 14);
-        break;
-      case 'monthly':
-      default:
-        firstPaymentDate.setMonth(startDate.getMonth() + 1);
-        break;
-    }
-    
-    // Extraer año, mes y día de firstPaymentDate para formatear correctamente
-    const baseYear = firstPaymentDate.getFullYear();
-    const baseMonth = firstPaymentDate.getMonth() + 1;
-    const baseDay = firstPaymentDate.getDate();
-    
+
+    // CORRECCIÓN (auditoría 2026-08-28): la frecuencia mensual usaba `setMonth(mes + 1)` a
+    // secas, que DESBORDA al mes siguiente cuando el día no existe (31-ene + 1 mes = 03-mar).
+    // El motor de mora y el avance de `next_payment_date` sí recortan al último día del mes
+    // (=> 28-feb), así que las cuotas guardadas quedaban en fechas que ningún otro cálculo
+    // reconocía. Además faltaban las frecuencias trimestral y anual.
+    const firstPaymentDate = addPeriodsToDate(startDate, 1, loan.payment_frequency);
+
     // Calcular cuotas según el tipo de amortización
     let principalPerPayment, interestPerPayment;
 
-    // La tasa guardada en interest_rate es mensual. Para frecuencias distintas a mensual
-    // se divide por el número de periodos por mes (quincenal=2, semanal=4, diario=30).
-    const freqFactor = loan.payment_frequency === 'biweekly' ? 0.5
-      : loan.payment_frequency === 'weekly' ? 0.25
-      : loan.payment_frequency === 'daily' ? 1 / 30
-      : 1;
+    // La tasa guardada en interest_rate es mensual; se ajusta al período de pago.
+    const freqFactor = getFrequencyRateFactor(loan.payment_frequency);
+    const periodRateForLoan = (loan.interest_rate / 100) * freqFactor;
 
     if (loan.amortization_type === 'french') {
-      // Amortización francesa - cuota fija, capital creciente, interés decreciente
-      const periodRate = loan.interest_rate / 100;
+      // Amortización francesa - cuota fija, capital creciente, interés decreciente.
+      // CORRECCIÓN (auditoría 2026-08-28): aquí se usaba `loan.interest_rate / 100` SIN el
+      // factor de frecuencia, mientras que el bucle de más abajo sí lo aplicaba. En préstamos
+      // quincenales/semanales/diarios la "primera cuota" se calculaba con la tasa mensual
+      // completa (hasta 30× la real).
       const totalPeriods = loan.term_months;
-      
-      if (periodRate > 0) {
-        const fixedPayment = loan.amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
+
+      if (periodRateForLoan > 0) {
+        const fixedPayment = loan.amount * (periodRateForLoan * Math.pow(1 + periodRateForLoan, totalPeriods)) / (Math.pow(1 + periodRateForLoan, totalPeriods) - 1);
         // Para la primera cuota
-        interestPerPayment = loan.amount * periodRate;
+        interestPerPayment = loan.amount * periodRateForLoan;
         principalPerPayment = fixedPayment - interestPerPayment;
       } else {
         principalPerPayment = loan.amount / totalPeriods;
@@ -901,21 +886,20 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
       interestPerPayment = (loan.amount * loan.interest_rate / 100) * freqFactor;
       principalPerPayment = loan.monthly_payment - interestPerPayment;
     }
-    
+
     // Generar cada cuota
     let remainingBalance = loan.amount;
     
     // Para préstamos con plazo indefinido, generar solo una cuota inicial
     if (loan.amortization_type === 'indefinite') {
       // Solo intereses, sin capital. Usar monthly_payment si ya fue calculado correctamente.
-      const periodRate = (loan.interest_rate / 100) * freqFactor;
       const interestPerPayment = (loan.monthly_payment && loan.monthly_payment > 0)
         ? loan.monthly_payment
-        : loan.amount * periodRate;
-      
+        : loan.amount * periodRateForLoan;
+
       // Formatear fecha correctamente usando la fecha local (no UTC) para evitar problemas de zona horaria
-      const formattedDate = `${baseYear}-${String(baseMonth).padStart(2, '0')}-${String(baseDay).padStart(2, '0')}`;
-      
+      const formattedDate = formatDateLocalIso(firstPaymentDate);
+
       installments.push({
         loan_id: loan.id,
         installment_number: 1, // Siempre 1 para indefinidos
@@ -927,56 +911,26 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
       });
     } else {
       // Para préstamos con plazo definido, generar todas las cuotas
-      for (let i = 1; i <= loan.term_months; i++) {
-        // Calcular la fecha de esta cuota basándose en firstPaymentDate
-        const installmentDate = new Date(firstPaymentDate);
-        const periodsToAdd = i - 1; // i-1 porque firstPaymentDate ya es la fecha de primera cuota
-        
-        // Ajustar fecha según la frecuencia de pago
-        switch (loan.payment_frequency) {
-          case 'daily':
-            installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 1));
-            break;
-          case 'weekly':
-            installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 7));
-            break;
-          case 'biweekly':
-            installmentDate.setDate(installmentDate.getDate() + (periodsToAdd * 14));
-            break;
-          case 'monthly':
-            installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
-            break;
-          case 'quarterly':
-            installmentDate.setMonth(installmentDate.getMonth() + (periodsToAdd * 3));
-            break;
-          case 'yearly':
-            installmentDate.setFullYear(installmentDate.getFullYear() + periodsToAdd);
-            break;
-          default:
-            installmentDate.setMonth(installmentDate.getMonth() + periodsToAdd);
-        }
-        
-        // Formatear fecha correctamente usando la fecha local (no UTC) para evitar problemas de zona horaria
-        const year = installmentDate.getFullYear();
-        const month = installmentDate.getMonth() + 1;
-        const day = installmentDate.getDate();
-        const formattedDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        
+      const totalPeriods = loan.term_months;
+
+      for (let i = 1; i <= totalPeriods; i++) {
+        // Calcular la fecha de esta cuota basándose en firstPaymentDate.
+        // (i-1 porque firstPaymentDate ya es la fecha de la primera cuota.)
+        const installmentDate = addPeriodsToDate(firstPaymentDate, i - 1, loan.payment_frequency);
+        const formattedDate = formatDateLocalIso(installmentDate);
+
         // Calcular cuota específica según el tipo de amortización
         let currentPrincipalAmount, currentInterestAmount, currentTotalAmount;
-        
+        const isLastPeriod = i === totalPeriods;
+
         if (loan.amortization_type === 'french') {
           // Amortización francesa - cuota fija, capital creciente, interés decreciente
-          // periodRate ajustado a la frecuencia real (la tasa guardada es mensual)
-          const periodRate = (loan.interest_rate / 100) * freqFactor;
-          const totalPeriods = loan.term_months;
-
-          if (periodRate > 0) {
+          if (periodRateForLoan > 0) {
             // Usar monthly_payment como cuota fija si ya se calculó correctamente en el preview
             const fixedPayment = (loan.monthly_payment && loan.monthly_payment > 0)
               ? loan.monthly_payment
-              : loan.amount * (periodRate * Math.pow(1 + periodRate, totalPeriods)) / (Math.pow(1 + periodRate, totalPeriods) - 1);
-            currentInterestAmount = remainingBalance * periodRate;
+              : loan.amount * (periodRateForLoan * Math.pow(1 + periodRateForLoan, totalPeriods)) / (Math.pow(1 + periodRateForLoan, totalPeriods) - 1);
+            currentInterestAmount = remainingBalance * periodRateForLoan;
             currentPrincipalAmount = fixedPayment - currentInterestAmount;
             currentTotalAmount = fixedPayment;
           } else {
@@ -984,13 +938,33 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
             currentInterestAmount = 0;
             currentTotalAmount = currentPrincipalAmount;
           }
+        } else if (loan.amortization_type === 'german') {
+          // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): el tipo ALEMÁN no estaba contemplado aquí
+          // y caía en el `else` de "amortización simple". La vista previa que ve el usuario al
+          // crear el préstamo mostraba correctamente una cuota DECRECIENTE (capital fijo +
+          // interés sobre saldo insoluto), pero lo que se GUARDABA en `installments` eran cuotas
+          // planas de interés simple. El cronograma real del préstamo no se parecía al que se
+          // le mostró y se le imprimió al cliente. Se implementa el alemán igual que la
+          // vista previa: capital fijo, interés sobre el saldo pendiente.
+          currentPrincipalAmount = loan.amount / totalPeriods;
+          currentInterestAmount = remainingBalance * periodRateForLoan;
+          currentTotalAmount = currentPrincipalAmount + currentInterestAmount;
+        } else if (loan.amortization_type === 'american') {
+          // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): igual que el alemán, el tipo AMERICANO
+          // (línea de crédito: solo intereses, capital completo al final) tampoco existía aquí
+          // y se guardaba como interés simple con capital repartido en todas las cuotas —
+          // exactamente lo contrario de lo que es una línea de crédito. Se implementa igual
+          // que la vista previa.
+          currentInterestAmount = loan.amount * periodRateForLoan;
+          currentPrincipalAmount = isLastPeriod ? loan.amount : 0;
+          currentTotalAmount = currentPrincipalAmount + currentInterestAmount;
         } else {
           // Amortización simple (por defecto)
           currentPrincipalAmount = principalPerPayment;
           currentInterestAmount = interestPerPayment;
           currentTotalAmount = loan.monthly_payment;
         }
-        
+
         installments.push({
           loan_id: loan.id,
           installment_number: i,
@@ -1005,7 +979,32 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
         remainingBalance -= currentPrincipalAmount;
       }
     }
-    
+
+    // CORRECCIÓN (auditoría 2026-08-28): los GASTOS DE CIERRE se mostraban al usuario sumados a
+    // la última cuota de la tabla de amortización (y así se imprimían en el contrato), pero NUNCA
+    // se guardaban en `installments`. El cliente nunca llegaba a deberlos: no aparecían en el
+    // saldo, ni en las cuotas, ni generaban mora — la empresa simplemente los perdía.
+    //
+    // Se persisten como CUOTA-CARGO (interest_amount = 0 y principal_amount = total_amount), que
+    // es la forma en que el sistema ya representa los cargos en todas partes
+    // (`isChargeInst` en loanBalanceBreakdown.ts, `add_charge` en LoanUpdateForm.tsx y el
+    // `SUM(cargos)` de la función SQL). Modelarlos como cargo —y no como capital— evita romper
+    // la conciliación de capital (`capitalPending = loan.amount - capitalPagado`), que se
+    // descuadraría si los gastos de cierre se sumaran al `principal_amount` de una cuota.
+    const closingCosts = Number(formData?.closing_costs || loan.closing_costs || 0);
+    if (closingCosts > 0.01 && installments.length > 0) {
+      const lastInstallment = installments[installments.length - 1];
+      installments.push({
+        loan_id: loan.id,
+        installment_number: installments.length + 1,
+        due_date: lastInstallment.due_date,
+        principal_amount: closingCosts,
+        interest_amount: 0,
+        total_amount: closingCosts,
+        is_paid: false
+      });
+    }
+
     // Insertar las cuotas en la base de datos
     const { error } = await supabase
       .from('installments')
@@ -1239,28 +1238,13 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     return createDateInSantoDomingo(year, month, day);
   };
 
-  // Función para calcular la primera fecha de pago basada en la frecuencia y fecha de inicio
+  // Función para calcular la primera fecha de pago basada en la frecuencia y fecha de inicio.
+  // CORRECCIÓN (auditoría 2026-08-28): `new Date(startDate)` parseaba 'YYYY-MM-DD' como
+  // medianoche UTC y `toISOString()` volvía a convertir a UTC, lo que desplazaba el día en
+  // varias zonas horarias. Además faltaban trimestral/anual y no se recortaba el día del mes.
   const calculateFirstPaymentDate = (frequency: string, startDate?: string) => {
-    const baseDate = startDate ? new Date(startDate) : new Date();
-    const firstPaymentDate = new Date(baseDate);
-    
-    switch (frequency) {
-      case 'daily':
-        firstPaymentDate.setDate(baseDate.getDate() + 1);
-        break;
-      case 'weekly':
-        firstPaymentDate.setDate(baseDate.getDate() + 7);
-        break;
-      case 'biweekly':
-        firstPaymentDate.setDate(baseDate.getDate() + 14);
-        break;
-      case 'monthly':
-      default:
-        firstPaymentDate.setMonth(baseDate.getMonth() + 1);
-        break;
-    }
-    
-    return firstPaymentDate.toISOString().split('T')[0];
+    const baseDate = startDate ? createLocalDate(startDate) : getCurrentDateInSantoDomingo();
+    return formatDateLocalIso(addPeriodsToDate(baseDate, 1, frequency));
   };
 
   const form = useForm<LoanFormData>({
@@ -1686,55 +1670,24 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
 
 
     // Función para obtener el siguiente día hábil considerando días excluidos
+    // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): esta función avanzaba la frecuencia QUINCENAL
+    // sumando **15** días, mientras que la primera cuota (más abajo en cada rama), las cuotas
+    // que realmente se guardan en `installments`, el motor de mora y el avance de
+    // `next_payment_date` suman **14**. Resultado: en todo préstamo quincenal la vista previa
+    // se desfasaba un día por cuota respecto al cronograma real (cuota 12 = 12 días de
+    // diferencia), y ese desfase hacía que las cuotas parecieran vencidas antes de tiempo.
+    // Se unifica en 14 días usando `addPeriodsToDate`, que además recorta el día al último del
+    // mes en las frecuencias mensuales y soporta trimestral/anual.
+    //
+    // El parámetro `originalDay` permitía "anclar" el día del mes; `addPeriodsToDate` ya lo hace
+    // implícitamente (siempre parte del día de la fecha base), así que se conserva la firma por
+    // compatibilidad con las llamadas existentes pero ya no cambia el resultado.
     const getNextBusinessDay = (currentDate: Date, frequency: string, originalDay?: number) => {
-      let nextDate = new Date(currentDate);
-      
-      // Primero calcular la fecha base según la frecuencia
-      switch (frequency) {
-        case 'daily':
-          nextDate.setDate(nextDate.getDate() + 1);
-          break;
-        case 'weekly':
-          nextDate.setDate(nextDate.getDate() + 7);
-          break;
-        case 'biweekly':
-          nextDate.setDate(nextDate.getDate() + 15);
-          break;
-        case 'monthly':
-        default:
-          // Para frecuencia mensual, usar el día original del mes si está disponible
-          if (originalDay !== undefined) {
-            // Usar el día original (ej: 18) en lugar del día actual
-            nextDate.setMonth(nextDate.getMonth() + 1);
-            nextDate.setDate(originalDay);
-            
-            // Si el día del mes no existe en el siguiente mes, usar el último día del mes
-            const nextMonthDay = nextDate.getDate();
-            if (nextMonthDay !== originalDay) {
-              // El día cambió, significa que no existe en el siguiente mes
-              // Volver al mes anterior y usar el último día
-              nextDate.setMonth(nextDate.getMonth() - 1);
-              nextDate.setDate(0); // Esto establece el último día del mes anterior
-              nextDate.setMonth(nextDate.getMonth() + 1);
-            }
-          } else {
-            // Fallback: mantener el mismo día del mes
-            const currentDay = nextDate.getDate();
-            nextDate.setMonth(nextDate.getMonth() + 1);
-            
-            // Si el día del mes no existe en el siguiente mes, usar el último día del mes
-            const nextMonthDay = nextDate.getDate();
-            if (nextMonthDay !== currentDay) {
-              // El día cambió, significa que no existe en el siguiente mes
-              // Volver al mes anterior y usar el último día
-              nextDate.setMonth(nextDate.getMonth() - 1);
-              nextDate.setDate(0); // Esto establece el último día del mes anterior
-              nextDate.setMonth(nextDate.getMonth() + 1);
-            }
-          }
-          break;
-      }
-      
+      const base = originalDay !== undefined
+        ? new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate())
+        : currentDate;
+      const nextDate = addPeriodsToDate(base, 1, frequency);
+
       // Aplicar ajuste de días excluidos usando la función existente
       return adjustDateForExcludedDays(nextDate);
     };
@@ -1819,27 +1772,10 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            
           if (i === 1) {
             // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            // La primera cuota vence un período después de la fecha de inicio.
+            // (Antes: `setMonth(mes + 1)` sin recortar el día — 31-ene daba 03-mar.)
             const startDate = createLocalDate(first_payment_date);
-            const firstPaymentDate = new Date(startDate);
-            
-            // Ajustar la primera fecha de cobro según la frecuencia
-            switch (payment_frequency) {
-              case 'daily':
-                firstPaymentDate.setDate(startDate.getDate() + 1);
-                break;
-              case 'weekly':
-                firstPaymentDate.setDate(startDate.getDate() + 7);
-                break;
-              case 'biweekly':
-                firstPaymentDate.setDate(startDate.getDate() + 14);
-                break;
-              case 'monthly':
-              default:
-                firstPaymentDate.setMonth(startDate.getMonth() + 1);
-                break;
-            }
-            
-            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+            paymentDate = adjustDateForExcludedDays(addPeriodsToDate(startDate, 1, payment_frequency));
           } else {
              // Usar la función para calcular el siguiente día hábil
              const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
@@ -1852,7 +1788,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            
            schedule.push({
              payment: i,
-             date: paymentDate.toISOString().split('T')[0],
+             date: formatDateLocalIso(paymentDate),
              interest: interestPerPayment,
              principal: principalPayment,
              totalPayment: totalPaymentWithClosingCosts,
@@ -1872,27 +1808,10 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            
           if (i === 1) {
             // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            // La primera cuota vence un período después de la fecha de inicio.
+            // (Antes: `setMonth(mes + 1)` sin recortar el día — 31-ene daba 03-mar.)
             const startDate = createLocalDate(first_payment_date);
-            const firstPaymentDate = new Date(startDate);
-            
-            // Ajustar la primera fecha de cobro según la frecuencia
-            switch (payment_frequency) {
-              case 'daily':
-                firstPaymentDate.setDate(startDate.getDate() + 1);
-                break;
-              case 'weekly':
-                firstPaymentDate.setDate(startDate.getDate() + 7);
-                break;
-              case 'biweekly':
-                firstPaymentDate.setDate(startDate.getDate() + 14);
-                break;
-              case 'monthly':
-              default:
-                firstPaymentDate.setMonth(startDate.getMonth() + 1);
-                break;
-            }
-            
-            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+            paymentDate = adjustDateForExcludedDays(addPeriodsToDate(startDate, 1, payment_frequency));
           } else {
              // Usar la función para calcular el siguiente día hábil
              const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
@@ -1904,7 +1823,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            
            schedule.push({
              payment: i,
-             date: paymentDate.toISOString().split('T')[0],
+             date: formatDateLocalIso(paymentDate),
              interest: interestPerPayment,
              principal: principalPerPayment,
              totalPayment: totalPaymentWithClosingCosts,
@@ -1932,27 +1851,10 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          
           if (i === 1) {
             // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            // La primera cuota vence un período después de la fecha de inicio.
+            // (Antes: `setMonth(mes + 1)` sin recortar el día — 31-ene daba 03-mar.)
             const startDate = createLocalDate(first_payment_date);
-            const firstPaymentDate = new Date(startDate);
-            
-            // Ajustar la primera fecha de cobro según la frecuencia
-            switch (payment_frequency) {
-              case 'daily':
-                firstPaymentDate.setDate(startDate.getDate() + 1);
-                break;
-              case 'weekly':
-                firstPaymentDate.setDate(startDate.getDate() + 7);
-                break;
-              case 'biweekly':
-                firstPaymentDate.setDate(startDate.getDate() + 14);
-                break;
-              case 'monthly':
-              default:
-                firstPaymentDate.setMonth(startDate.getMonth() + 1);
-                break;
-            }
-            
-            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+            paymentDate = adjustDateForExcludedDays(addPeriodsToDate(startDate, 1, payment_frequency));
           } else {
            // Usar la función para calcular el siguiente día hábil
            const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
@@ -1965,11 +1867,19 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const isLastPayment = i === totalPeriods;
          const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
          
-         totalPaid += totalPaymentWithClosingCosts;
+         // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
+         // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
+         // americano pero NO en simple ni indefinido (esas ramas calculan `capital + interés`).
+         // El mismo campo significaba cosas distintas según el tipo de amortización.
+         // Convenio unificado: `total_amount` = capital + interés. Los gastos de cierre son un
+         // CARGO aparte (así los modela ya `loanBalanceBreakdown.ts` y la función SQL
+         // `calculate_loan_remaining_balance`, que hace `total_amount + SUM(cargos)`), y se
+         // persisten como cuota-cargo en `generateOriginalInstallments`.
+         totalPaid += actualPayment;
          
          schedule.push({
            payment: i,
-           date: paymentDate.toISOString().split('T')[0],
+           date: formatDateLocalIso(paymentDate),
            interest: interestPayment,
            principal: principalPayment,
            totalPayment: totalPaymentWithClosingCosts,
@@ -1992,27 +1902,10 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          
           if (i === 1) {
             // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            // La primera cuota vence un período después de la fecha de inicio.
+            // (Antes: `setMonth(mes + 1)` sin recortar el día — 31-ene daba 03-mar.)
             const startDate = createLocalDate(first_payment_date);
-            const firstPaymentDate = new Date(startDate);
-            
-            // Ajustar la primera fecha de cobro según la frecuencia
-            switch (payment_frequency) {
-              case 'daily':
-                firstPaymentDate.setDate(startDate.getDate() + 1);
-                break;
-              case 'weekly':
-                firstPaymentDate.setDate(startDate.getDate() + 7);
-                break;
-              case 'biweekly':
-                firstPaymentDate.setDate(startDate.getDate() + 14);
-                break;
-              case 'monthly':
-              default:
-                firstPaymentDate.setMonth(startDate.getMonth() + 1);
-                break;
-            }
-            
-            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+            paymentDate = adjustDateForExcludedDays(addPeriodsToDate(startDate, 1, payment_frequency));
           } else {
            // Usar la función para calcular el siguiente día hábil
            const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
@@ -2023,11 +1916,19 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const actualPayment = principalPerPayment + interestPayment;
          const isLastPayment = i === totalPeriods;
          const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
-         totalPaid += totalPaymentWithClosingCosts;
+         // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
+         // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
+         // americano pero NO en simple ni indefinido (esas ramas calculan `capital + interés`).
+         // El mismo campo significaba cosas distintas según el tipo de amortización.
+         // Convenio unificado: `total_amount` = capital + interés. Los gastos de cierre son un
+         // CARGO aparte (así los modela ya `loanBalanceBreakdown.ts` y la función SQL
+         // `calculate_loan_remaining_balance`, que hace `total_amount + SUM(cargos)`), y se
+         // persisten como cuota-cargo en `generateOriginalInstallments`.
+         totalPaid += actualPayment;
          
          schedule.push({
            payment: i,
-           date: paymentDate.toISOString().split('T')[0],
+           date: formatDateLocalIso(paymentDate),
            interest: interestPayment,
            principal: principalPerPayment,
            totalPayment: totalPaymentWithClosingCosts,
@@ -2051,27 +1952,10 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          
           if (i === 1) {
             // Calcular la primera fecha de cobro basándose en la fecha de inicio + frecuencia
+            // La primera cuota vence un período después de la fecha de inicio.
+            // (Antes: `setMonth(mes + 1)` sin recortar el día — 31-ene daba 03-mar.)
             const startDate = createLocalDate(first_payment_date);
-            const firstPaymentDate = new Date(startDate);
-            
-            // Ajustar la primera fecha de cobro según la frecuencia
-            switch (payment_frequency) {
-              case 'daily':
-                firstPaymentDate.setDate(startDate.getDate() + 1);
-                break;
-              case 'weekly':
-                firstPaymentDate.setDate(startDate.getDate() + 7);
-                break;
-              case 'biweekly':
-                firstPaymentDate.setDate(startDate.getDate() + 14);
-                break;
-              case 'monthly':
-              default:
-                firstPaymentDate.setMonth(startDate.getMonth() + 1);
-                break;
-            }
-            
-            paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+            paymentDate = adjustDateForExcludedDays(addPeriodsToDate(startDate, 1, payment_frequency));
           } else {
            // Usar la función para calcular el siguiente día hábil
            const previousDate = schedule[i - 2] ? createLocalDate(schedule[i - 2].date) : createLocalDate(first_payment_date);
@@ -2082,11 +1966,19 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const principalPayment = i === totalPeriods ? amount : 0;
          const isLastPayment = i === totalPeriods;
          const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
-         totalPaid += totalPaymentWithClosingCosts;
+         // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
+         // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
+         // americano pero NO en simple ni indefinido (esas ramas calculan `capital + interés`).
+         // El mismo campo significaba cosas distintas según el tipo de amortización.
+         // Convenio unificado: `total_amount` = capital + interés. Los gastos de cierre son un
+         // CARGO aparte (así los modela ya `loanBalanceBreakdown.ts` y la función SQL
+         // `calculate_loan_remaining_balance`, que hace `total_amount + SUM(cargos)`), y se
+         // persisten como cuota-cargo en `generateOriginalInstallments`.
+         totalPaid += actualPayment;
          
          schedule.push({
            payment: i,
-           date: paymentDate.toISOString().split('T')[0],
+           date: formatDateLocalIso(paymentDate),
            interest: interestPerPayment,
            principal: principalPayment,
            totalPayment: totalPaymentWithClosingCosts,
@@ -2108,33 +2000,13 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       // CORRECCIÓN: Calcular la primera fecha de pago correctamente
       // Para préstamos indefinidos, la primera cuota debe ser un período después de la fecha de inicio
       const startDate = createLocalDate(first_payment_date);
-      const firstPaymentDate = new Date(startDate);
-      
-      // Ajustar la primera fecha de cobro según la frecuencia
-      switch (payment_frequency) {
-        case 'daily':
-          firstPaymentDate.setDate(startDate.getDate() + 1);
-          break;
-        case 'weekly':
-          firstPaymentDate.setDate(startDate.getDate() + 7);
-          break;
-        case 'biweekly':
-          firstPaymentDate.setDate(startDate.getDate() + 14);
-          break;
-        case 'monthly':
-        default:
-          // Usar setFullYear para preservar el día exacto y evitar problemas de zona horaria
-          firstPaymentDate.setFullYear(startDate.getFullYear(), startDate.getMonth() + 1, startDate.getDate());
-          break;
-      }
-      
-      const paymentDate = adjustDateForExcludedDays(firstPaymentDate);
+      const paymentDate = adjustDateForExcludedDays(addPeriodsToDate(startDate, 1, payment_frequency));
       
       // Para plazo indefinido, mostrar solo 1 período con "1/X"
       const totalPaymentWithClosingCosts = interestPerPayment + (closing_costs || 0);
       schedule.push({
         payment: '1/X', // Mostrar 1/X para indicar que es indefinido
-        date: paymentDate.toISOString().split('T')[0],
+        date: formatDateLocalIso(paymentDate),
         interest: interestPerPayment,
         principal: 0,
         totalPayment: totalPaymentWithClosingCosts,
@@ -2298,50 +2170,37 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     try {
       // Usar la fecha de inicio seleccionada por el usuario
       const startDate = createLocalDate(data.first_payment_date);
-      const endDate = new Date(startDate);
-      const effectiveTermMonths = isIndefinite ? 1 : (data.term_months || 1);
-      endDate.setMonth(endDate.getMonth() + effectiveTermMonths);
-      
+      const effectiveTerm = isIndefinite ? 1 : (data.term_months || 1);
+
+      // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): `end_date` se calculaba SIEMPRE como
+      // `start_date + term_months MESES`, ignorando la frecuencia de pago. Pero `term_months`
+      // está expresado en PERÍODOS de la frecuencia elegida, no en meses: un préstamo DIARIO a
+      // 30 días quedaba con fecha de vencimiento a 30 MESES (2 años y medio), y uno quincenal a
+      // 12 quincenas quedaba a 12 meses en vez de 6. Ese `end_date` erróneo se usa como fecha
+      // de finalización en contratos y reportes, y como respaldo en
+      // `calculate_loan_next_payment_date` (SQL). Ahora se avanza `effectiveTerm` PERÍODOS.
+      const endDate = addPeriodsToDate(startDate, effectiveTerm, data.payment_frequency);
+
       // Calcular la primera fecha de pago basándose en la fecha de inicio + frecuencia
-      const startDateForCalculation = createLocalDate(data.first_payment_date);
-      const firstPaymentDate = new Date(startDateForCalculation);
-      
-      // Ajustar la primera fecha de cobro según la frecuencia
-      switch (data.payment_frequency) {
-        case 'daily':
-          firstPaymentDate.setDate(startDateForCalculation.getDate() + 1);
-          break;
-        case 'weekly':
-          firstPaymentDate.setDate(startDateForCalculation.getDate() + 7);
-          break;
-        case 'biweekly':
-          firstPaymentDate.setDate(startDateForCalculation.getDate() + 14);
-          break;
-        case 'monthly':
-          // Preservar el día del mes al avanzar un mes
-          const originalDay = startDateForCalculation.getDate();
-          firstPaymentDate.setFullYear(startDateForCalculation.getFullYear(), startDateForCalculation.getMonth() + 1, originalDay);
-          break;
-        case 'quarterly':
-          firstPaymentDate.setMonth(startDateForCalculation.getMonth() + 3);
-          break;
-        case 'yearly':
-          firstPaymentDate.setFullYear(startDateForCalculation.getFullYear() + 1);
-          break;
-        default:
-          // Preservar el día del mes al avanzar un mes
-          const originalDayDefault = startDateForCalculation.getDate();
-          firstPaymentDate.setFullYear(startDateForCalculation.getFullYear(), startDateForCalculation.getMonth() + 1, originalDayDefault);
-      }
-      
+      const firstPaymentDate = addPeriodsToDate(startDate, 1, data.payment_frequency);
+
       // Formatear fechas correctamente para evitar problemas de zona horaria
-      const startDateFormatted = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
-      const firstPaymentDateFormatted = `${firstPaymentDate.getFullYear()}-${String(firstPaymentDate.getMonth() + 1).padStart(2, '0')}-${String(firstPaymentDate.getDate()).padStart(2, '0')}`;
-      
+      const startDateFormatted = formatDateLocalIso(startDate);
+      const firstPaymentDateFormatted = formatDateLocalIso(firstPaymentDate);
+
       console.log('🔍 LoanForm: Fecha de inicio seleccionada:', data.first_payment_date);
       console.log('🔍 LoanForm: Fecha de inicio que se enviará:', startDateFormatted);
       console.log('🔍 LoanForm: Fecha de primera cuota calculada:', firstPaymentDateFormatted);
       console.log('🔍 LoanForm: Frecuencia de pago:', data.payment_frequency);
+
+      // CORRECCIÓN (auditoría 2026-08-28): los montos se guardaban con `Math.round()`, es decir,
+      // REDONDEADOS A PESOS ENTEROS, mientras que las cuotas de `installments` se guardan con
+      // decimales. La suma de las cuotas no cuadraba con `total_amount` (hasta ~0,50 por cuota),
+      // y esa diferencia se arrastra al `remaining_balance` que calcula el trigger: un préstamo
+      // pagado por completo podía quedar con un saldo residual de unos pesos, sin poder cerrarse.
+      // Peor aún en `monthly_payment`: al redondear la cuota, `principal = monthly_payment −
+      // interés` heredaba el error en TODAS las cuotas. Se redondea a 2 decimales (céntimos).
+      const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
 
       const loanData = {
         client_id: data.client_id,
@@ -2352,11 +2211,11 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
         purpose: data.comments || null,
         collateral: data.guarantor_required ? 'Garantía requerida' : null,
         loan_officer_id: companyId,
-        monthly_payment: Math.round(calculatedValues.monthlyPayment),
-        total_amount: Math.round(calculatedValues.totalAmount),
-        remaining_balance: Math.round(calculatedValues.totalAmount),
+        monthly_payment: round2(calculatedValues.monthlyPayment),
+        total_amount: round2(calculatedValues.totalAmount),
+        remaining_balance: round2(calculatedValues.totalAmount),
         start_date: startDateFormatted, // Fecha de creación del préstamo (formateada como local)
-        end_date: `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`,
+        end_date: formatDateLocalIso(endDate),
         next_payment_date: firstPaymentDateFormatted, // Fecha de la primera cuota (calculada según frecuencia, formateada como local)
         first_payment_date: data.first_payment_date, // Fecha de inicio del préstamo (lo que seleccionó el usuario)
         status: data.loan_started ? 'active' : 'pending',
@@ -2366,7 +2225,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
         notes: data.notes || null,
         // Campos de información adicional
         excluded_days: excludedDays,
-        closing_costs: Math.round(data.closing_costs || 0),
+        closing_costs: round2(data.closing_costs || 0),
         portfolio_id: data.portfolio === 'none' || data.portfolio === '' ? null : data.portfolio,
         amortization_type: data.amortization_type,
         payment_frequency: data.payment_frequency,
@@ -2376,11 +2235,11 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
         late_fee_enabled: data.late_fee_enabled,
         late_fee_rate: data.late_fee_rate,
         grace_period_days: data.grace_period_days,
-        max_late_fee: Math.round(data.max_late_fee || 0),
+        max_late_fee: round2(data.max_late_fee || 0),
         late_fee_calculation_type: data.late_fee_calculation_type,
         add_expense_enabled: data.add_expense,
         fixed_payment_enabled: data.fixed_payment_enabled,
-        fixed_payment_amount: Math.round(data.fixed_payment_amount || 0),
+        fixed_payment_amount: round2(data.fixed_payment_amount || 0),
       };
 
       console.log('Loan data to insert/update:', loanData);
