@@ -412,6 +412,30 @@ su rango (8/8 comprobaciones). Se verificó además que los **plazo fijo** con c
 tienen ruta equivalente (7/7): sus cuotas existen como filas y el panel bucketiza por fechas
 reales de la BD; la generación por número solo existía en la rama indefinida.
 
+### 45. Los cargos desalineaban `next_payment_date` y "pagaban" bloques de períodos vencidos
+`installmentLateFeeCalculator.ts` + `LoanDetailsView.tsx`
+
+El defecto #44 (generación por número) era solo la mitad. La otra mitad: el estado de cada cuota
+de interés se decidía con el atajo **"`due_date` < `next_payment_date` ⇒ pagada"**. Esa fecha la
+calcula un trigger como `primera_cuota + FLOOR(interés_pagado / cuota)` períodos, y **los pagos de
+cargos desalinean ese contador**: basta cobrar un par de cargos para que la fecha salte varios
+períodos adelante y todo lo anterior quede marcado como pagado. Esos períodos vencidos
+desaparecían del desglose y la reconciliación del panel volcaba su importe entero al rango
+**"Al día"**.
+
+→ Se elimina el atajo. Ahora se construye la **rejilla real de períodos** (primera cuota → primero
+que aún no vence) y los pagos de interés se reparten sobre ella en cascada cronológica (igual que
+`loanBalanceBreakdown.ts`), ignorando `next_payment_date`. Cada período reporta su **interés
+restante**, así los abonos parciales también se reflejan. Como la rejilla incluye el período en
+curso, el desglose cubre exactamente lo mismo que "Interés pend. hoy" y **la reconciliación queda
+en 0**; además se acotó a un período, para que un desajuste futuro se avise por consola en lugar
+de disfrazarse de "Al día".
+
+**Reproducido con los datos reales del usuario** (indefinido quincenal, 3 cargos cobrados, 9
+períodos): antes `Al día 6.000 / 1-30 2.000 / 31-60 1.000` (idéntico a su captura); después
+`2.000 / 2.000 / 2.000 / 2.000 / 1.000` — y el resultado ya **no depende** de `next_payment_date`
+(mismo desglose con la fecha correcta y con la desalineada). 24 comprobaciones en 3 escenarios.
+
 ### 41. El historial del préstamo no decía a qué se aplicó cada pago
 `LoanHistoryView.tsx` — cada pago muestra ahora **"Aplicado a: Cuota #N/T · vence dd mmm"** o
 **"Cargo #N "descripción" · monto · fecha"**, con el mismo criterio de asignación que el resto

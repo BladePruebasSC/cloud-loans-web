@@ -1410,10 +1410,24 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       // (frágil: cualquier cambio futuro los vuelve a desalinear), se reconcilia el total aquí: si
       // falta algo para llegar al monto real de "Interés pend. hoy", esa diferencia SIEMPRE es
       // interés que aún no vence, así que se coloca en el rango "Al día".
+      // ACTUALIZACIÓN (2026-08-29): el desglose ya cubre TODOS los períodos (vencidos + el que
+      // está en curso), así que este ajuste normalmente vale 0. Se conserva como red de
+      // seguridad, pero ACOTADO a un período: antes, cualquier importe que faltara —por ejemplo
+      // varios períodos vencidos que el motor no generaba— se volcaba entero al rango "Al día",
+      // convirtiendo un fallo de cálculo en un dato erróneo con apariencia de correcto. Ahora,
+      // si falta más de un período, se avisa por consola en vez de disimularlo en "Al día".
       const interestSummedSoFar = Object.values(interestRanges).reduce((sum, val) => sum + val, 0);
       const interestShortfall = round2(interestPending - interestSummedSoFar);
       if (interestShortfall > 0.01) {
-        interestRanges['current'] = round2(interestRanges['current'] + interestShortfall);
+        const onePeriod = round2(Number(loan?.monthly_payment || 0));
+        const cap = onePeriod > 0.01 ? onePeriod * 1.5 : interestShortfall;
+        if (interestShortfall > cap) {
+          console.warn(
+            `⚠️ Balance de interés por antigüedad: faltan RD$${interestShortfall} respecto a "Interés pend. hoy" ` +
+            `(más de un período). No se asignan a "Al día" para no ocultar el desajuste.`
+          );
+        }
+        interestRanges['current'] = round2(interestRanges['current'] + Math.min(interestShortfall, cap));
       }
     } else {
       // Non-indefinite loans: iterate DB installments; use breakdown paid status when available

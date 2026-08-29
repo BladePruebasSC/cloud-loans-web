@@ -147,6 +147,74 @@ export const getLateFeeBreakdownFromInstallments = async (
       }
     }
 
+    // ------------------------------------------------------------------------
+    // INDEFINIDOS: rejilla de períodos y asignación real de pagos (2026-08-29)
+    // ------------------------------------------------------------------------
+    // Antes, el estado de las cuotas de interés se decidía con el atajo
+    // "due_date < next_payment_date ⇒ pagada". `next_payment_date` lo calcula un trigger
+    // como `primera_cuota + FLOOR(interés_pagado / cuota)` períodos, y los pagos de CARGOS
+    // desalinean ese conteo: basta un cargo cobrado para que la fecha salte varios períodos
+    // hacia adelante y TODO lo anterior quede marcado como pagado. Esos períodos vencidos
+    // desaparecían del desglose y el panel "Balance de interés por antigüedad" volcaba su
+    // importe al rango "Al día" (vía la reconciliación con "Interés pend. hoy").
+    //
+    // Ahora se construye la rejilla real de períodos (desde la primera cuota hasta el primero
+    // que aún no vence) y se reparten los pagos de interés sobre ella en orden cronológico,
+    // igual que hace loanBalanceBreakdown.ts. Determinista y sin depender de columnas derivadas.
+    const indefinitePeriods = (() => {
+      if (!isIndefinite || !loan.start_date) return null;
+      const frequency = loan.payment_frequency || 'monthly';
+      const first = parseIsoDateLocal(getFirstDueDateIso(String(loan.start_date).split('T')[0], frequency));
+      if (!first) return null;
+      const todayIso = formatDateLocalIso(calculationDate);
+      const dates: string[] = [];
+      for (let n = 0; n < 100000; n++) { // tope de seguridad
+        const iso = formatDateLocalIso(addPeriodsToDate(first, n, frequency));
+        dates.push(iso);
+        if (iso > todayIso) break; // incluye el primer período que aún no vence
+      }
+      const nonCharges = installments.filter(i => !isChargeRow(i));
+      const lastNonCharge = nonCharges[nonCharges.length - 1];
+      const base = Number(
+        lastNonCharge?.interest_amount || lastNonCharge?.total_amount || lastNonCharge?.amount || loan.monthly_payment || 0
+      );
+      return { frequency, first, dates, base };
+    })();
+
+    /** Interés efectivamente pagado de cada período (0..base). */
+    const paidPerPeriod = new Map<string, number>();
+    if (indefinitePeriods && indefinitePeriods.base > 0.01) {
+      const base = indefinitePeriods.base;
+      const gridDates = new Set(indefinitePeriods.dates);
+      let pool = 0; // pagos de interés cuyo due_date no cae en ningún período (fechas "clamp", etc.)
+      for (const p of payments || []) {
+        if (isChargePayment(p)) continue; // los abonos a cargos no son interés
+        const interestField = Number(p.interest_amount || 0);
+        const amt = Number(p.amount || 0);
+        const value = interestField > 0.01
+          ? interestField
+          : (amt > 0.01 && amt <= base * 1.25 ? amt : 0);
+        if (value <= 0.01) continue;
+        const due = dateOnly(p.due_date);
+        if (due && gridDates.has(due)) paidPerPeriod.set(due, (paidPerPeriod.get(due) || 0) + value);
+        else pool += value;
+      }
+      // Cascada cronológica: cada período se cubre hasta `base`; el excedente pasa al siguiente.
+      let carry = pool;
+      for (const d of indefinitePeriods.dates) {
+        let paid = paidPerPeriod.get(d) || 0;
+        if (paid > base) {
+          carry += paid - base;
+          paid = base;
+        } else if (carry > 0.01 && paid < base) {
+          const take = Math.min(carry, base - paid);
+          paid += take;
+          carry -= take;
+        }
+        paidPerPeriod.set(d, Math.round(paid * 100) / 100);
+      }
+    }
+
     // Asignar pagos a cuotas: primero por due_date, luego secuencialmente (NO secuencial en indefinidos)
     const paymentToInstallmentMap = new Map<string, number>();
     const assignedPaymentIds = new Set<string>();
@@ -247,9 +315,17 @@ export const getLateFeeBreakdownFromInstallments = async (
       // Incluso si installment.is_paid es true en la BD, puede que no esté completamente pagada.
       // Los CARGOS usan su propia asignación acumulada (chargePaidById); las cuotas regulares,
       // el mapa pago→cuota.
+      // En indefinidos, si la fila cae en la rejilla de períodos usamos la asignación real
+      // de pagos de ese período (determinista, no depende de next_payment_date).
+      const periodPaid = (isIndefinite && !thisRowIsCharge && paidPerPeriod.size > 0)
+        ? paidPerPeriod.get(dateOnly(installment.due_date))
+        : undefined;
+
       let totalPaidForInstallment = 0;
       if (thisRowIsCharge) {
         totalPaidForInstallment = chargePaidById.get(installment.id) || 0;
+      } else if (periodPaid !== undefined) {
+        totalPaidForInstallment = periodPaid;
       } else if (paymentToInstallmentMap.size > 0) {
         for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
           if (installmentNum === installment.installment_number) {
@@ -299,22 +375,8 @@ export const getLateFeeBreakdownFromInstallments = async (
       // con fecha < next_payment_date se marcaban como pagados de golpe: el "Balance de
       // capital por antigüedad" caía (ej. de 7,500 a 2,500 tras abonar 1,000) y la mora de
       // esos cargos desaparecía.
-      if (isIndefinite && !thisRowIsCharge && loan.next_payment_date && hasAnyPayments) {
-        const instDue = String(installment.due_date || '').split('T')[0];
-        const nextPay = loan.next_payment_date.split('T')[0];
-        if (instDue < nextPay) {
-          lateFeePaidSurplusPool += installment.late_fee_paid || 0;
-          breakdown.push({
-            installment: installment.installment_number,
-            dueDate: instDue,
-            daysOverdue: 0,
-            principal: 0,
-            lateFee: 0,
-            isPaid: true
-          });
-          continue;
-        }
-      }
+      // (El atajo por `next_payment_date` se eliminó: ver la nota de la rejilla de períodos
+      //  más arriba. El estado de cada cuota de interés lo decide la asignación de pagos.)
 
       if (isActuallyPaid) {
         // Si está pagada, mostrar 0 días y 0 mora
@@ -419,7 +481,8 @@ export const getLateFeeBreakdownFromInstallments = async (
         principal: isCharge
           ? Math.round(Math.max(0, (installmentTotalAmount || 0) - totalPaidForInstallment) * 100) / 100
           : isIndefinite
-            ? (installment.interest_amount || installment.total_amount || 0)
+            // Interés RESTANTE del período: así un pago parcial se refleja en la antigüedad.
+            ? Math.round(Math.max(0, (Number(installment.interest_amount || installment.total_amount || 0)) - totalPaidForInstallment) * 100) / 100
             : installment.principal_amount,
         lateFee: isActuallyPaid ? 0 : lateFee,
         isPaid: isActuallyPaid,
@@ -442,79 +505,22 @@ export const getLateFeeBreakdownFromInstallments = async (
       // cuya fecha no tenga ya una cuota regular en el desglose; el número es el ordinal del
       // período (1, 2, 3…), independiente de los installment_number de la BD.
 
-      // Calcular la primera fecha de pago desde start_date.
-      // CORRECCIÓN (auditoría 2026-08-28): esta aritmética de fechas estaba duplicada
-      // (y con variantes distintas) en 8 archivos. Ahora se delega en `frequencyUtils`, que
-      // además soporta las frecuencias trimestral y anual — antes caían en el `default`
-      // mensual y toda la tabla de mora de esos préstamos salía con fechas erróneas.
-      const frequency = loan.payment_frequency || 'monthly';
-      const startDateStr = loan.start_date.split('T')[0];
-      const firstPaymentDate = parseIsoDateLocal(getFirstDueDateIso(startDateStr, frequency));
-      if (!firstPaymentDate) {
+      // La rejilla de períodos y el reparto de pagos ya se calcularon arriba (indefinitePeriods
+      // / paidPerPeriod). Incluye el primer período que aún NO vence, de modo que el desglose
+      // cubra exactamente lo mismo que "Interés pend. hoy" y el panel de antigüedad no tenga
+      // que inventar nada: cada importe cae en su rango real.
+      if (!indefinitePeriods) {
         console.warn('getLateFeeBreakdownFromInstallments: start_date inválido:', loan.start_date);
         return { totalLateFee, breakdown };
       }
+      const baseAmount = indefinitePeriods.base;
 
-      // Calcular cuántas cuotas deberían existir: SOLO las que ya vencieron o vencen HOY
-      // (calculationDate). Se cuenta período por período (en vez de aproximar con "días/30"
-      // o diferencia de meses) para que sea exacto en cualquier frecuencia y NUNCA incluya un
-      // período cuya fecha de vencimiento todavía no ha llegado. La aproximación anterior por
-      // diferencia de meses (para 'monthly') tenía el mismo problema que "días/30" tenía para
-      // diario/semanal/quincenal: contaba un período como vencido con solo que cambiara el mes,
-      // sin fijarse si el día del mes de vencimiento ya había llegado o no (ej: cuota vence el
-      // día 25 y hoy es el día 10 del mes siguiente → esa cuota aún no vence, pero se contaba).
-      const calculationDateIso = formatDateLocalIso(calculationDate);
+      console.log(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - baseAmount=${baseAmount}, períodos=${indefinitePeriods.dates.length}`);
 
-      let totalExpected = 0;
-      for (let n = 0; n < 100000; n++) { // safety cap, nunca debería alcanzarse
-        const dueIso = formatDateLocalIso(addPeriodsToDate(firstPaymentDate, n, frequency));
-        if (dueIso > calculationDateIso) break;
-        totalExpected = n + 1;
-      }
-      totalExpected = Math.max(1, totalExpected);
-      
-      // Calcular el monto base para la mora (interés por cuota para indefinidos)
-      const isIndefinite = loan.amortization_type === 'indefinite';
-      let baseAmount = 0;
-      
-      if (isIndefinite) {
-        // Skip CARGO installments (interest_amount≈0, principal_amount>0) when determining
-        // the per-period interest base. CARGOs are one-off charges, not recurring interest cuotas.
-        const nonCharges = installments.filter(inst =>
-          !(Math.abs(inst.interest_amount || 0) < 0.01 && (inst.principal_amount || 0) > 0.01)
-        );
-        const lastNonCharge = nonCharges[nonCharges.length - 1];
-        baseAmount = lastNonCharge?.interest_amount ||
-          lastNonCharge?.total_amount ||
-          lastNonCharge?.amount ||
-          loan.monthly_payment || 0;
-      } else {
-        const lastInstallment = installments[installments.length - 1];
-        baseAmount = lastInstallment?.principal_amount || lastInstallment?.total_amount || lastInstallment?.amount || 0;
-      }
-      
-      // CORRECCIÓN: Calcular cuántas cuotas se han pagado basándose en los pagos
-      // para saber cuáles cuotas generadas dinámicamente están pagadas
-      let paidInstallmentsCount = 0;
-      if (payments && payments.length > 0 && isIndefinite && baseAmount > 0) {
-        // Para préstamos indefinidos, calcular cuántas cuotas de interés se han pagado
-        const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
-        paidInstallmentsCount = Math.floor(totalInterestPaid / baseAmount);
-        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuotas pagadas calculadas desde pagos:`, {
-          totalInterestPaid,
-          baseAmount,
-          paidInstallmentsCount
-        });
-      }
-      
-      console.log(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - baseAmount=${baseAmount}, totalExpected=${totalExpected}, paidCount=${paidInstallmentsCount}`);
-
-      // Recorrer TODOS los períodos (1..totalExpected) y generar los que falten por FECHA
-      for (let installmentNum = 1; installmentNum <= totalExpected; installmentNum++) {
-        // Calcular la fecha de vencimiento de este período
-        const periodsToAdd = installmentNum - 1;
-        const installmentDate = addPeriodsToDate(firstPaymentDate, periodsToAdd, frequency);
-        const dueDateStr = formatDateLocalIso(installmentDate);
+      for (let idx = 0; idx < indefinitePeriods.dates.length; idx++) {
+        const installmentNum = idx + 1;
+        const dueDateStr = indefinitePeriods.dates[idx];
+        const installmentDate = parseIsoDateLocal(dueDateStr)!;
 
         // Verificar si ya existe una CUOTA REGULAR con esta fecha en el breakdown.
         // CORRECCIÓN CRÍTICA (auditoría de cálculos): antes este `find` no excluía los cargos, así
@@ -527,15 +533,12 @@ export const getLateFeeBreakdownFromInstallments = async (
         const existingInstallment = breakdown.find(item => item.dueDate === dueDateStr && !item.isCharge);
 
         if (!existingInstallment) {
-          // CORRECCIÓN: Verificar si esta cuota está pagada.
-          // Primero: si la fecha < next_payment_date, está pagada (fuente de verdad: payments table)
-          // Segundo: fallback con paidInstallmentsCount (para cuando next_payment_date no cubre el período)
-          const nextPayStr = loan.next_payment_date?.split('T')[0] || '';
-          const isPaid = isIndefinite && (
-            (hasAnyPayments && nextPayStr && dueDateStr < nextPayStr) ||
-            installmentNum <= paidInstallmentsCount
-          );
-          
+          // Estado del período según los pagos realmente asignados (ver rejilla arriba).
+          // `remainingInterest` permite que un pago PARCIAL se refleje en la antigüedad.
+          const periodPaidHere = paidPerPeriod.get(dueDateStr) || 0;
+          const remainingInterest = Math.round(Math.max(0, baseAmount - periodPaidHere) * 100) / 100;
+          const isPaid = remainingInterest <= 0.01;
+
           const daysSinceDue = Math.floor((calculationDate.getTime() - installmentDate.getTime()) / (1000 * 60 * 60 * 24));
           const daysOverdueForInstallment = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
           
@@ -546,6 +549,8 @@ export const getLateFeeBreakdownFromInstallments = async (
               case 'daily':
                 lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForInstallment;
                 break;
+              // (baseAmount = interés íntegro del período: la mora se calcula sobre la obligación
+              //  original, no sobre el saldo tras un abono parcial.)
               case 'monthly': {
                 // CORRECCIÓN (auditoría 2026-08-28): aquí estaba fijo en "/30" mientras que la
                 // rama que procesa las cuotas guardadas en la BD (unas líneas más arriba) ya
@@ -583,9 +588,9 @@ export const getLateFeeBreakdownFromInstallments = async (
             installment: installmentNum,
             dueDate: dueDateStr,
             daysOverdue: isPaid ? 0 : daysOverdueForInstallment,
-            // baseAmount for indefinite = per-period interest; for non-indefinite = principal per cuota.
-            // Both cases: store in principal so aging balance can consume it uniformly.
-            principal: baseAmount,
+            // Interés RESTANTE del período (base − pagado), para que el balance por antigüedad
+            // refleje los abonos parciales y su total coincida con "Interés pend. hoy".
+            principal: remainingInterest,
             lateFee: isPaid ? 0 : lateFeeForInstallment,
             isPaid: isPaid
           });
