@@ -430,24 +430,18 @@ export const getLateFeeBreakdownFromInstallments = async (
     // CORRECCIÓN: Para préstamos indefinidos, generar dinámicamente todas las cuotas vencidas
     // desde la primera no pagada hasta hoy
     if (loan.amortization_type === 'indefinite' && loan.start_date && loan.next_payment_date) {
-      // CORRECCIÓN CRÍTICA (auditoría de cálculos): `maxInstallmentNumber` se usa más abajo para
-      // saber "cuántos períodos de interés ya existen" y a partir de ahí generar los que faltan
-      // hasta hoy. Un CARGO se numera con `installment_number = max(actual) + 1` (ver add_charge
-      // en LoanUpdateForm.tsx/PaymentForm.tsx) SIN importar su fecha — puede caer a mitad del
-      // préstamo pero de todos modos "roba" el siguiente número de la secuencia. Si se incluye a
-      // los cargos en este cálculo, `maxInstallmentNumber` queda inflado por cada cargo agregado,
-      // y la generación dinámica de cuotas de interés empieza a contar desde un número más alto
-      // del que le corresponde: se salta un período completo de interés/mora y, peor, TODAS las
-      // fechas de las cuotas generadas después quedan corridas un período entero (por eso "cuando
-      // llega a un cargo deja de seguir bien" el interés o el balance). Se excluyen los cargos:
-      // solo las cuotas regulares (con interés) cuentan como "períodos" para esta numeración.
-      const isChargeInstallmentForSeq = (inst: any) =>
-        Math.abs(inst.interest_amount || 0) < 0.01 && (inst.principal_amount || 0) > 0.01;
-      const regularInstallmentsForSeq = installments.filter(i => !isChargeInstallmentForSeq(i));
-      const maxInstallmentNumber = regularInstallmentsForSeq.length > 0
-        ? Math.max(...regularInstallmentsForSeq.map(i => i.installment_number))
-        : 0;
-      
+      // CORRECCIÓN CRÍTICA (2026-08-29): la generación dinámica es POR FECHA, nunca por número
+      // de cuota. Antes se generaba desde `max(installment_number regular) + 1` calculando la
+      // fecha como `primera_cuota + (N−1) períodos`. Pero los CARGOS roban números de la
+      // secuencia (`installment_number = max(TODOS) + 1` en add_charge), así que los números de
+      // las cuotas regulares quedan con huecos y desalineados de sus períodos reales: los
+      // períodos cuyos números se llevó un cargo NUNCA se generaban. Su interés desaparecía del
+      // desglose y el panel "Balance de interés por antigüedad" lo volcaba al rango "Al día"
+      // (vía la reconciliación con "Interés pend. hoy"), aunque la cuota estuviera vencida.
+      // Ahora se recorre CADA período desde la primera cuota hasta hoy y se genera todo período
+      // cuya fecha no tenga ya una cuota regular en el desglose; el número es el ordinal del
+      // período (1, 2, 3…), independiente de los installment_number de la BD.
+
       // Calcular la primera fecha de pago desde start_date.
       // CORRECCIÓN (auditoría 2026-08-28): esta aritmética de fechas estaba duplicada
       // (y con variantes distintas) en 8 archivos. Ahora se delega en `frequencyUtils`, que
@@ -513,11 +507,11 @@ export const getLateFeeBreakdownFromInstallments = async (
         });
       }
       
-      console.log(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - baseAmount=${baseAmount}, maxInst=${maxInstallmentNumber}, totalExpected=${totalExpected}, paidCount=${paidInstallmentsCount}`);
+      console.log(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - baseAmount=${baseAmount}, totalExpected=${totalExpected}, paidCount=${paidInstallmentsCount}`);
 
-      // Generar todas las cuotas desde (maxInstallmentNumber + 1) hasta totalExpected
-      for (let installmentNum = maxInstallmentNumber + 1; installmentNum <= totalExpected; installmentNum++) {
-        // Calcular la fecha de vencimiento de esta cuota
+      // Recorrer TODOS los períodos (1..totalExpected) y generar los que falten por FECHA
+      for (let installmentNum = 1; installmentNum <= totalExpected; installmentNum++) {
+        // Calcular la fecha de vencimiento de este período
         const periodsToAdd = installmentNum - 1;
         const installmentDate = addPeriodsToDate(firstPaymentDate, periodsToAdd, frequency);
         const dueDateStr = formatDateLocalIso(installmentDate);

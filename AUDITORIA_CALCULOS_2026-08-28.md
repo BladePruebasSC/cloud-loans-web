@@ -395,6 +395,23 @@ Migración `20260829000002` — en plpgsql, `array_texto || 'literal'` sin tipo 
 elija la sobrecarga *array || array* y parsee el texto como array. Todos los appends pasan a
 `array_append()`. (Corregido también en el archivo original para instalaciones nuevas.)
 
+### 44. Cargos "robaban" períodos del interés por antigüedad en indefinidos
+`installmentLateFeeCalculator.ts` — la generación dinámica de períodos partía de
+`max(installment_number regular) + 1` y calculaba la fecha **desde el número**
+(`primera_cuota + (N−1) períodos`). Pero los cargos roban números de la secuencia
+(`installment_number = max(TODOS) + 1`), así que los períodos cuyos números se llevó un cargo
+**nunca se generaban**: su interés desaparecía del desglose y el panel "Balance de interés por
+antigüedad" lo volcaba al rango **"Al día"** vía la reconciliación, aunque la cuota estuviera
+vencida. → La generación ahora recorre **cada período por FECHA** (1..hoy) y crea los que falten,
+sin depender de los números.
+
+**Reproducido y verificado con arnés real** (motor completo con stub de Supabase): indefinido
+quincenal con 2 cargos que robaron los números #2/#3 — antes faltaban los períodos 20-jun y
+04-jul y RD$2.000 caían en "Al día"; después, los 7 períodos impagos existen y cada uno cae en
+su rango (8/8 comprobaciones). Se verificó además que los **plazo fijo** con cargo intermedio no
+tienen ruta equivalente (7/7): sus cuotas existen como filas y el panel bucketiza por fechas
+reales de la BD; la generación por número solo existía en la rama indefinida.
+
 ### 41. El historial del préstamo no decía a qué se aplicó cada pago
 `LoanHistoryView.tsx` — cada pago muestra ahora **"Aplicado a: Cuota #N/T · vence dd mmm"** o
 **"Cargo #N "descripción" · monto · fecha"**, con el mismo criterio de asignación que el resto
