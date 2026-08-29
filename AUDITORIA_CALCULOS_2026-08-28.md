@@ -373,6 +373,28 @@ pagada. Un abono parcial no movía el panel hasta que la cuota quedara saldada p
 pend. hoy" (primero interés, luego capital), separa los pagos a cargos de los pagos a cuotas, y
 descuenta también los abonos a cargos.
 
+### 42. El primer pago de un indefinido "pagaba" todos los cargos anteriores a la próxima cuota
+`installmentLateFeeCalculator.ts` (motor compartido por antigüedad, mora, detalle y estado de cuenta)
+
+Tres defectos encadenados alrededor de los CARGOS:
+1. **El atajo por `next_payment_date`** ("todo lo anterior a la próxima cuota está pagado") se
+   aplicaba también a los cargos. Sin pagos no se activa, pero al registrar el **primer pago**
+   del préstamo, todo cargo con fecha anterior a la próxima cuota se marcaba pagado de golpe:
+   el balance por antigüedad caía (7.500 → 2.500 tras abonar 1.000) y la mora de esos cargos
+   desaparecía. `next_payment_date` solo rastrea cuotas de interés → el atajo ahora excluye cargos.
+2. **Cargo y cuota con la misma fecha**: el pago se asignaba a la primera fila con ese
+   `due_date` (podía ser la cuota regular). Ahora los pagos sin interés cuya fecha coincide con
+   un cargo se reparten acumulativamente entre los cargos de esa fecha (mismo criterio que
+   `loanBalanceBreakdown`) y no tocan la cuota regular.
+3. **Abono parcial a un cargo**: el desglose reportaba el monto completo del cargo. Ahora
+   reporta el **restante** (total − abonos), así el balance por antigüedad cuadra con
+   "Cargos pendientes" (ej. 4.000 + 1.500 + 1.000 = 6.500).
+
+### 43. `legal_evaluate_eligibility` fallaba con "malformed array literal"
+Migración `20260829000002` — en plpgsql, `array_texto || 'literal'` sin tipo hace que Postgres
+elija la sobrecarga *array || array* y parsee el texto como array. Todos los appends pasan a
+`array_append()`. (Corregido también en el archivo original para instalaciones nuevas.)
+
 ### 41. El historial del préstamo no decía a qué se aplicó cada pago
 `LoanHistoryView.tsx` — cada pago muestra ahora **"Aplicado a: Cuota #N/T · vence dd mmm"** o
 **"Cargo #N "descripción" · monto · fecha"**, con el mismo criterio de asignación que el resto

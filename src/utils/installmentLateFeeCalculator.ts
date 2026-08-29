@@ -109,6 +109,44 @@ export const getLateFeeBreakdownFromInstallments = async (
     const amortizationType = String(loan.amortization_type || '').toLowerCase();
     const isIndefinite = amortizationType === 'indefinite';
 
+    // ------------------------------------------------------------------------
+    // CARGOS: asignación de pagos propia (corrección 2026-08-28)
+    // ------------------------------------------------------------------------
+    // Un cargo es una obligación independiente que puede compartir fecha con una cuota
+    // regular. Antes, los pagos a cargos entraban al mismo mapa pago→cuota que el resto y
+    // podían quedar asignados a la cuota regular de esa fecha (el `find` devolvía la primera
+    // fila con ese due_date); además un abono PARCIAL a un cargo no reducía su monto en el
+    // desglose. Ahora los pagos SIN interés cuya fecha coincide con un cargo se reparten
+    // acumulativamente entre los cargos de esa fecha (mismo criterio que loanBalanceBreakdown
+    // y el estado de cuenta), y el desglose reporta el monto RESTANTE del cargo.
+    const isChargeRow = (inst: any) =>
+      Math.abs(Number(inst?.interest_amount || 0)) < 0.01 && Number(inst?.principal_amount || 0) > 0.01;
+    const dateOnly = (d: any) => String(d || '').split('T')[0];
+    const chargeRowsSorted = installments
+      .filter(isChargeRow)
+      .sort((a, b) => dateOnly(a.due_date).localeCompare(dateOnly(b.due_date)) || (a.installment_number || 0) - (b.installment_number || 0));
+    const chargeDueDates = new Set(chargeRowsSorted.map(c => dateOnly(c.due_date)));
+    const isChargePayment = (p: any) =>
+      !!p?.due_date && chargeDueDates.has(dateOnly(p.due_date)) && Math.abs(Number(p.interest_amount || 0)) < 0.01;
+
+    const chargePaidById = new Map<string, number>();
+    {
+      const paidByChargeDue = new Map<string, number>();
+      for (const p of payments || []) {
+        if (!isChargePayment(p)) continue;
+        const due = dateOnly(p.due_date);
+        paidByChargeDue.set(due, (paidByChargeDue.get(due) || 0) + (Number(p.principal_amount) || Number(p.amount) || 0));
+      }
+      for (const ch of chargeRowsSorted) {
+        const due = dateOnly(ch.due_date);
+        const total = Number(ch.total_amount ?? ch.amount ?? ch.principal_amount ?? 0);
+        const available = paidByChargeDue.get(due) || 0;
+        const applied = Math.min(available, total);
+        chargePaidById.set(ch.id, applied);
+        paidByChargeDue.set(due, available - applied);
+      }
+    }
+
     // Asignar pagos a cuotas: primero por due_date, luego secuencialmente (NO secuencial en indefinidos)
     const paymentToInstallmentMap = new Map<string, number>();
     const assignedPaymentIds = new Set<string>();
@@ -131,8 +169,14 @@ export const getLateFeeBreakdownFromInstallments = async (
           // mora ya cobrada). Se comparan las fechas como texto, que es lo que hace el resto
           // de la aplicación.
           const paymentDueDate = String(payment.due_date).split('T')[0];
+          // Los pagos a CARGOS ya fueron repartidos arriba (chargePaidById): no deben entrar
+          // al mapa pago→cuota ni "pagar" la cuota regular que comparte fecha con el cargo.
+          if (isChargePayment(payment)) {
+            assignedPaymentIds.add(payment.id);
+            continue;
+          }
           const matchingInstallment = installments.find(
-            inst => String(inst.due_date || '').split('T')[0] === paymentDueDate
+            inst => !isChargeRow(inst) && String(inst.due_date || '').split('T')[0] === paymentDueDate
           );
           
           if (matchingInstallment) {
@@ -197,10 +241,16 @@ export const getLateFeeBreakdownFromInstallments = async (
       let daysOverdue = 0;
       let lateFee = 0;
       
+      const thisRowIsCharge = isChargeRow(installment);
+
       // SIEMPRE calcular el total pagado para verificar si realmente está pagada completamente
-      // Incluso si installment.is_paid es true en la BD, puede que no esté completamente pagada
+      // Incluso si installment.is_paid es true en la BD, puede que no esté completamente pagada.
+      // Los CARGOS usan su propia asignación acumulada (chargePaidById); las cuotas regulares,
+      // el mapa pago→cuota.
       let totalPaidForInstallment = 0;
-      if (paymentToInstallmentMap.size > 0) {
+      if (thisRowIsCharge) {
+        totalPaidForInstallment = chargePaidById.get(installment.id) || 0;
+      } else if (paymentToInstallmentMap.size > 0) {
         for (const [paymentId, installmentNum] of paymentToInstallmentMap.entries()) {
           if (installmentNum === installment.installment_number) {
             const assignedPayment = payments?.find(p => p.id === paymentId);
@@ -210,12 +260,13 @@ export const getLateFeeBreakdownFromInstallments = async (
           }
         }
       }
-      
+
       // Obtener el monto total de la cuota
       const installmentTotalAmount = installment.total_amount || (installment.principal_amount || 0) + (installment.interest_amount || 0);
       // En indefinidos, el monto “histórico” pagado puede ser mayor que el total_amount actual (p.ej. tras abono a capital).
       // Para evitar casos como “pagado 75 vs total 25”, tomamos el esperado como el máximo entre ambos.
-      const effectiveInstallmentTotalAmount = isIndefinite
+      // Los cargos NO usan este ajuste: un cargo se considera pagado solo cuando los pagos lo cubren.
+      const effectiveInstallmentTotalAmount = (isIndefinite && !thisRowIsCharge)
         ? Math.max(installmentTotalAmount || 0, totalPaidForInstallment || 0)
         : installmentTotalAmount;
       
@@ -241,7 +292,14 @@ export const getLateFeeBreakdownFromInstallments = async (
 
       // Para préstamos indefinidos con pagos: confiar en next_payment_date como fuente de verdad.
       // Sin pagos, no podemos asumir que ninguna cuota está pagada por fecha.
-      if (isIndefinite && loan.next_payment_date && hasAnyPayments) {
+      //
+      // CORRECCIÓN (2026-08-28): este atajo NUNCA debe aplicar a CARGOS. `next_payment_date`
+      // solo rastrea las cuotas de interés; un cargo con fecha anterior a la próxima cuota
+      // sigue debiéndose. Antes, al registrar el PRIMER pago del préstamo, todos los cargos
+      // con fecha < next_payment_date se marcaban como pagados de golpe: el "Balance de
+      // capital por antigüedad" caía (ej. de 7,500 a 2,500 tras abonar 1,000) y la mora de
+      // esos cargos desaparecía.
+      if (isIndefinite && !thisRowIsCharge && loan.next_payment_date && hasAnyPayments) {
         const instDue = String(installment.due_date || '').split('T')[0];
         const nextPay = loan.next_payment_date.split('T')[0];
         if (instDue < nextPay) {
@@ -345,8 +403,7 @@ export const getLateFeeBreakdownFromInstallments = async (
       }
       
       // Detect CARGO (charge): interest = 0, principal = total, no interest component
-      const isCharge = Math.abs(installment.interest_amount || 0) < 0.01 &&
-        (installment.principal_amount || 0) > 0.01;
+      const isCharge = thisRowIsCharge;
 
       // SIEMPRE agregar la cuota al desglose (pagada o pendiente)
       // Normalize dueDate to YYYY-MM-DD to avoid timestamp mismatch issues
@@ -357,10 +414,13 @@ export const getLateFeeBreakdownFromInstallments = async (
         daysOverdue,
         // For regular indefinite cuotas (not CARGOs): principal_amount is 0, but interest_amount
         // is the per-period payment. Store the interest amount so aging balance can display it.
-        // CARGOs (isCharge=true) keep their principal_amount (the charge amount).
-        principal: (isIndefinite && !isCharge)
-          ? (installment.interest_amount || installment.total_amount || 0)
-          : installment.principal_amount,
+        // CARGOs: monto RESTANTE del cargo (total − abonos), para que un pago parcial se refleje
+        // en el balance por antigüedad y cuadre con "Cargos pendientes".
+        principal: isCharge
+          ? Math.round(Math.max(0, (installmentTotalAmount || 0) - totalPaidForInstallment) * 100) / 100
+          : isIndefinite
+            ? (installment.interest_amount || installment.total_amount || 0)
+            : installment.principal_amount,
         lateFee: isActuallyPaid ? 0 : lateFee,
         isPaid: isActuallyPaid,
         isCharge

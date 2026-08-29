@@ -268,34 +268,37 @@ BEGIN
   SELECT id INTO v_case FROM public.legal_cases WHERE loan_id = p_loan_id AND status NOT IN ('resolved','closed') LIMIT 1;
 
   -- Bloqueos
-  IF l.status NOT IN ('active','overdue') THEN blockers := blockers || format('El préstamo está en estado "%s"', l.status); END IF;
-  IF v_case IS NOT NULL THEN blockers := blockers || 'Ya existe un caso legal activo para este préstamo'; END IF;
+  -- Nota: SIEMPRE array_append(), nunca `array || 'literal'`: con un literal sin tipo Postgres
+  -- elige la sobrecarga array||array e intenta parsear el texto como array ("malformed array literal").
+  IF l.status NOT IN ('active','overdue') THEN blockers := array_append(blockers, format('El préstamo está en estado "%s"', l.status)); END IF;
+  IF v_case IS NOT NULL THEN blockers := array_append(blockers, 'Ya existe un caso legal activo para este préstamo'); END IF;
   IF v_days < (s->>'min_days_overdue')::int THEN
-    blockers := blockers || format('%s días de mora (mínimo configurado: %s)', v_days, s->>'min_days_overdue');
-  ELSE reasons := reasons || format('%s días de mora', v_days); END IF;
+    blockers := array_append(blockers, format('%s días de mora (mínimo configurado: %s)', v_days, s->>'min_days_overdue'));
+  ELSE reasons := array_append(reasons, format('%s días de mora', v_days)); END IF;
   IF l.remaining_balance < (s->>'min_amount')::numeric THEN
-    blockers := blockers || format('Saldo RD$%s por debajo del mínimo configurado (RD$%s)', l.remaining_balance, s->>'min_amount');
-  ELSE reasons := reasons || format('Saldo pendiente RD$%s', l.remaining_balance); END IF;
+    blockers := array_append(blockers, format('Saldo RD$%s por debajo del mínimo configurado (RD$%s)', l.remaining_balance, s->>'min_amount'));
+  ELSE reasons := array_append(reasons, format('Saldo pendiente RD$%s', l.remaining_balance)); END IF;
   IF v_contacts < (s->>'min_contacts')::int THEN
-    blockers := blockers || format('%s gestiones de cobro registradas (mínimo: %s)', v_contacts, s->>'min_contacts');
-  ELSE reasons := reasons || format('%s gestiones de cobro registradas', v_contacts); END IF;
+    blockers := array_append(blockers, format('%s gestiones de cobro registradas (mínimo: %s)', v_contacts, s->>'min_contacts'));
+  ELSE reasons := array_append(reasons, format('%s gestiones de cobro registradas', v_contacts)); END IF;
   IF v_broken < (s->>'min_broken_promises')::int THEN
-    blockers := blockers || format('%s promesas incumplidas (mínimo: %s)', v_broken, s->>'min_broken_promises');
-  ELSE IF v_broken > 0 THEN reasons := reasons || format('%s promesas de pago incumplidas', v_broken); END IF; END IF;
-  IF v_pending_promises > 0 THEN review := review || format('Hay %s promesa(s) de pago vigente(s)', v_pending_promises); END IF;
+    blockers := array_append(blockers, format('%s promesas incumplidas (mínimo: %s)', v_broken, s->>'min_broken_promises'));
+  ELSE IF v_broken > 0 THEN reasons := array_append(reasons, format('%s promesas de pago incumplidas', v_broken)); END IF; END IF;
+  IF v_pending_promises > 0 THEN review := array_append(review, format('Hay %s promesa(s) de pago vigente(s)', v_pending_promises)); END IF;
 
   -- Contexto (no bloquea)
-  IF v_overdue_count > 0 THEN reasons := reasons || format('%s cuotas vencidas por RD$%s', v_overdue_count, round(v_overdue_amount,2)); END IF;
-  IF v_agreements > 0 THEN reasons := reasons || format('%s acuerdo(s) de pago anteriores', v_agreements); END IF;
-  IF v_guarantees > 0 THEN reasons := reasons || format('%s garantía(s) registrada(s)', v_guarantees); END IF;
-  IF COALESCE(l.current_late_fee,0) > 0 THEN reasons := reasons || format('Mora acumulada RD$%s', l.current_late_fee); END IF;
-  IF v_score IS NOT NULL THEN reasons := reasons || format('Score CRM %s', v_score); END IF;
+  IF v_overdue_count > 0 THEN reasons := array_append(reasons, format('%s cuotas vencidas por RD$%s', v_overdue_count, round(v_overdue_amount,2))); END IF;
+  IF v_agreements > 0 THEN reasons := array_append(reasons, format('%s acuerdo(s) de pago anteriores', v_agreements)); END IF;
+  IF v_guarantees > 0 THEN reasons := array_append(reasons, format('%s garantía(s) registrada(s)', v_guarantees)); END IF;
+  IF COALESCE(l.current_late_fee,0) > 0 THEN reasons := array_append(reasons, format('Mora acumulada RD$%s', l.current_late_fee)); END IF;
+  IF v_score IS NOT NULL THEN reasons := array_append(reasons, format('Score CRM %s', v_score)); END IF;
 
   -- Documentación / datos (pendiente de revisión, no bloqueo duro)
-  IF (s->'required_documents') ? 'contract' AND NOT v_has_contract THEN review := review || 'Falta el contrato en Documentos'; ELSIF v_has_contract THEN reasons := reasons || 'Contrato disponible'; END IF;
-  IF (s->'required_documents') ? 'identification' AND NOT v_has_id THEN review := review || 'Falta la identificación del cliente'; END IF;
-  IF (s->'required_documents') ? 'contact_data' AND COALESCE(cl.phone,'') = '' THEN review := review || 'El cliente no tiene teléfono registrado'; END IF;
-  IF (s->'required_documents') ? 'address' AND COALESCE(cl.address,'') = '' THEN review := review || 'El cliente no tiene dirección registrada'; END IF;
+  IF (s->'required_documents') ? 'contract' AND NOT v_has_contract THEN review := array_append(review, 'Falta el contrato en Documentos');
+  ELSIF v_has_contract THEN reasons := array_append(reasons, 'Contrato disponible'); END IF;
+  IF (s->'required_documents') ? 'identification' AND NOT v_has_id THEN review := array_append(review, 'Falta la identificación del cliente'); END IF;
+  IF (s->'required_documents') ? 'contact_data' AND COALESCE(cl.phone,'') = '' THEN review := array_append(review, 'El cliente no tiene teléfono registrado'); END IF;
+  IF (s->'required_documents') ? 'address' AND COALESCE(cl.address,'') = '' THEN review := array_append(review, 'El cliente no tiene dirección registrada'); END IF;
 
   v_status := CASE WHEN array_length(blockers,1) > 0 THEN 'not_eligible'
                    WHEN array_length(review,1) > 0 THEN 'pending_review'
