@@ -67,6 +67,7 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
 
   const menuItems = [
     { name: 'Inicio', path: '/', icon: Home },
+    { name: 'Dashboard', path: '/dashboard', icon: BarChart3 },
     {
       name: 'Clientes',
       icon: Users,

@@ -5,7 +5,7 @@
 // 20260829000001); estas funciones solo interpretan lo que la BD devuelve para
 // mostrarlo, y traducen los códigos de error LEGAL_* a mensajes para el usuario.
 
-import { parseIsoDateLocal } from './frequencyUtils';
+import { daysBetweenIso, parseIsoDateLocal } from './frequencyUtils';
 
 export type CollectionStage =
   | 'al_dia' | 'cuota_vencida' | 'mora' | 'cobranza_preventiva' | 'cobranza_administrativa'
@@ -136,13 +136,9 @@ export const EVENT_TYPE_LABEL: Record<string, string> = {
 // Fechas y semáforos
 // ---------------------------------------------------------------------------
 
-/** Días entre dos fechas ISO (b − a). null si alguna es inválida. */
-export const daysBetweenIso = (aIso: string | null | undefined, bIso: string | null | undefined): number | null => {
-  const a = parseIsoDateLocal(aIso || '');
-  const b = parseIsoDateLocal(bIso || '');
-  if (!a || !b) return null;
-  return Math.round((b.getTime() - a.getTime()) / 86400000);
-};
+// `daysBetweenIso` se movió a frequencyUtils (la usan mora, CRM, legal y métricas de
+// cartera). Se reexporta aquí para no cambiar los imports existentes del módulo legal.
+export { daysBetweenIso };
 
 export type DeadlineLevel = 'green' | 'yellow' | 'red' | 'none';
 

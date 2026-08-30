@@ -182,6 +182,7 @@ function App() {
       <Route path="/reportes" element={<Index />} />
       <Route path="/mapa" element={<Index />} />
       <Route path="/cobro-rapido" element={<Index />} />
+      <Route path="/dashboard" element={<Index />} />
       <Route path="/crm" element={<Index />} />
       <Route path="/cobranza" element={<Index />} />
       <Route path="/cobranza/casos" element={<Index />} />

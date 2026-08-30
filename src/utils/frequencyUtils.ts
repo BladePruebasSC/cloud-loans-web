@@ -141,6 +141,18 @@ export const formatDateLocalIso = (date: Date): string => {
   return `${y}-${m}-${d}`;
 };
 
+/**
+ * Días de calendario entre dos fechas ISO (b − a). `null` si alguna es inválida.
+ * Vive aquí (y no en un módulo concreto) porque la usan cálculos de mora, CRM,
+ * cobranza legal y las métricas de cartera.
+ */
+export const daysBetweenIso = (aIso: string | null | undefined, bIso: string | null | undefined): number | null => {
+  const a = parseIsoDateLocal(aIso || '');
+  const b = parseIsoDateLocal(bIso || '');
+  if (!a || !b) return null;
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+};
+
 /** Igual que `addPeriodsToDate` pero trabajando con cadenas 'YYYY-MM-DD'. */
 export const addPeriodsToIsoDate = (
   isoDate: string,

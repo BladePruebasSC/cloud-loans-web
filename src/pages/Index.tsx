@@ -3,7 +3,11 @@ import { useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
-import Dashboard from '@/pages/Dashboard';
+// INICIO (operativo) y DASHBOARD (analítico) están separados: la portada resuelve
+// "qué debo hacer hoy" y el dashboard "cómo va el negocio". Ambos leen los mismos
+// datos vía `usePortfolioData`, así que nunca muestran cifras distintas.
+import { HomeModule } from '@/components/home/HomeModule';
+import { AnalyticsDashboard } from '@/components/dashboard/AnalyticsDashboard';
 import { LoansModule } from '@/components/loans/LoansModule';
 import { ClientsModule } from '@/components/clients/ClientsModule';
 import ClientForm from '@/components/clients/ClientForm';
@@ -95,8 +99,11 @@ const Index = () => {
 
     switch (path) {
       case '/':
-        return <Dashboard />;
-      
+        return <HomeModule />;
+
+      case '/dashboard':
+        return <AnalyticsDashboard />;
+
       case '/prestamos':
         if (!hasPermission('loans.view')) {
           return <RestrictedAccess module="loans" />;
@@ -216,7 +223,7 @@ const Index = () => {
         return <RegistrationCodesModule />;
       
       default:
-        return <Dashboard />;
+        return <HomeModule />;
     }
   };
 
