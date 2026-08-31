@@ -26,7 +26,7 @@ import { AlertTriangle, Loader2, Wallet } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import {
-  allocateAmountToInstallments, computeInstallmentDues, type DueRow,
+  allocateAmountToInstallments, autoExtendSelection, computeInstallmentDues, type DueRow,
 } from '@/utils/installmentDues';
 
 interface Props {
@@ -54,7 +54,14 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<DueRow[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // La selección tiene tres piezas para que escribir un monto pueda arrastrar cuotas SIN pelearse
+  // con lo que el empleado marca a mano:
+  //   manualIds   — lo que marcó el empleado.
+  //   autoIds     — lo que añade el monto escrito al desbordar la selección.
+  //   excludedIds — lo que el empleado desmarcó: nunca se vuelve a añadir solo.
+  const [manualIds, setManualIds] = useState<string[]>([]);
+  const [autoIds, setAutoIds] = useState<string[]>([]);
+  const [excludedIds, setExcludedIds] = useState<string[]>([]);
   const [amount, setAmount] = useState<number>(0);
   const [amountTouched, setAmountTouched] = useState(false);
   const [method, setMethod] = useState('cash');
@@ -81,7 +88,9 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
       const dues = computeInstallmentDues(installments || [], payments || [])
         .filter(r => r.pending > 0.005);
       setRows(dues);
-      setSelectedIds([]);
+      setManualIds([]);
+      setAutoIds([]);
+      setExcludedIds([]);
     } catch (error) {
       console.error('Error cargando cuotas para pago avanzado:', error);
       toast.error('No se pudieron cargar las cuotas del préstamo');
@@ -93,13 +102,20 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
 
   useEffect(() => { load(); }, [load]);
 
+  const selectedIds = useMemo(() => new Set([...manualIds, ...autoIds]), [manualIds, autoIds]);
+
   const selectedRows = useMemo(
-    () => rows.filter(r => selectedIds.includes(r.id)),
+    () => rows.filter(r => selectedIds.has(r.id)),
     [rows, selectedIds],
   );
   const selectedPending = useMemo(
     () => round2(selectedRows.reduce((s, r) => s + r.pending, 0)),
     [selectedRows],
+  );
+  /** Tope real: no se puede cobrar más que esto. */
+  const totalPending = useMemo(
+    () => round2(rows.reduce((s, r) => s + r.pending, 0)),
+    [rows],
   );
 
   // Mientras el empleado no escriba un monto propio, el campo sigue a la selección.
@@ -107,18 +123,49 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
     if (!amountTouched) setAmount(selectedPending);
   }, [selectedPending, amountTouched]);
 
+  // Al escribir un monto MAYOR a lo pendiente de lo marcado a mano, se arrastran solas las cuotas
+  // siguientes hasta cubrirlo: la última recibe el sobrante como abono parcial. Es el caso de
+  // "la cuota es 10,000 y el cliente trae 12,000": se salda la cuota y 2,000 van a la siguiente.
+  // Solo actúa cuando el empleado escribió el monto; marcando casillas la selección manda.
+  useEffect(() => {
+    const next = amountTouched ? autoExtendSelection(rows, manualIds, excludedIds, amount) : [];
+    // Se conserva la referencia anterior cuando el resultado no cambia: sin esto, cada render
+    // crearía un array nuevo y el efecto se reactivaría en bucle.
+    setAutoIds(prev =>
+      (prev.length === next.length && prev.every((v, i) => v === next[i])) ? prev : next
+    );
+  }, [amountTouched, amount, manualIds, excludedIds, rows]);
+
   const allocation = useMemo(
     () => allocateAmountToInstallments(selectedRows, amount),
     [selectedRows, amount],
   );
 
   const toggle = (id: string) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    if (selectedIds.has(id)) {
+      // Desmarcar gana sobre el arrastre automático: si no se registrara la exclusión, el efecto
+      // volvería a añadirla en el acto y la casilla no se podría desmarcar.
+      setManualIds(prev => prev.filter(x => x !== id));
+      setAutoIds(prev => prev.filter(x => x !== id));
+      setExcludedIds(prev => prev.includes(id) ? prev : [...prev, id]);
+    } else {
+      setManualIds(prev => prev.includes(id) ? prev : [...prev, id]);
+      setExcludedIds(prev => prev.filter(x => x !== id));
+    }
+  };
+
+  const clearSelection = () => {
+    setManualIds([]);
+    setAutoIds([]);
+    setExcludedIds([]);
+    setAmountTouched(false);
   };
 
   /** Marca las N cuotas más antiguas. */
   const selectOldest = (n: number) => {
-    setSelectedIds(rows.slice(0, n).map(r => r.id));
+    setManualIds(rows.slice(0, n).map(r => r.id));
+    setAutoIds([]);
+    setExcludedIds([]);
     setAmountTouched(false);
   };
 
@@ -129,8 +176,8 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
     }
     if (allocation.leftover > 0.005) {
       toast.error(
-        `El monto supera en ${formatCurrency(allocation.leftover)} lo pendiente de las cuotas seleccionadas. ` +
-        'Selecciona más cuotas o reduce el monto.'
+        `Sobran ${formatCurrency(allocation.leftover)}: no quedan más cuotas donde aplicarlos. ` +
+        'Baja el monto — no se puede cobrar más de lo que se debe.'
       );
       return;
     }
@@ -250,8 +297,10 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
           <div className="text-sm text-blue-900">
             <p className="font-semibold">Pago avanzado{clientName ? ` — ${clientName}` : ''}</p>
             <p className="text-xs text-blue-800">
-              Marca las cuotas o cargos a los que quieres abonar y escribe el monto total que
-              entrega el cliente. Abajo verás a qué cuota va cada peso antes de guardar.
+              Escribe el monto total que entrega el cliente y las cuotas se marcan solas, de la más
+              antigua en adelante: lo que sobre de una cuota se abona a la siguiente como pago
+              parcial. También puedes marcarlas tú a mano. Abajo ves a qué cuota va cada peso antes
+              de guardar.
             </p>
           </div>
         </div>
@@ -270,8 +319,8 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
             Todas ({rows.length})
           </Button>
         )}
-        {selectedIds.length > 0 && (
-          <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedIds([]); setAmountTouched(false); }}>
+        {selectedIds.size > 0 && (
+          <Button type="button" variant="ghost" size="sm" onClick={clearSelection}>
             Limpiar
           </Button>
         )}
@@ -293,7 +342,8 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
           </thead>
           <tbody>
             {rows.map(row => {
-              const checked = selectedIds.includes(row.id);
+              const checked = selectedIds.has(row.id);
+              const auto = autoIds.includes(row.id);
               const alloc = allocatedFor(row.id);
               const overdue = row.dueDate < today;
               return (
@@ -331,6 +381,9 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
                         <div className={`text-[10px] ${alloc.settles ? 'text-green-700' : 'text-amber-700'}`}>
                           {alloc.settles ? 'queda saldada' : 'abono parcial'}
                         </div>
+                        {auto && (
+                          <div className="text-[10px] text-gray-500">añadida por el monto</div>
+                        )}
                       </div>
                     ) : <span className="text-gray-300">—</span>}
                   </td>
@@ -357,14 +410,15 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
               placeholder="0.00"
             />
             <p className="mt-1 text-xs text-gray-500">
-              Pendiente de lo seleccionado: <strong>{formatCurrency(selectedPending)}</strong>.
+              Escribe cualquier monto: las cuotas se marcan solas hasta cubrirlo.
+              {' '}Pendiente total del préstamo: <strong>{formatCurrency(totalPending)}</strong>.
               {amountTouched && (
                 <button
                   type="button"
                   className="ml-2 text-blue-600 underline"
-                  onClick={() => { setAmountTouched(false); setAmount(selectedPending); }}
+                  onClick={clearSelection}
                 >
-                  usar ese monto
+                  reiniciar
                 </button>
               )}
             </p>
@@ -430,9 +484,10 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
             <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
-                El monto supera en <strong>{formatCurrency(allocation.leftover)}</strong> lo pendiente de
-                las cuotas seleccionadas. Marca más cuotas o baja el monto: los excedentes no se
-                arrastran automáticamente a la cuota siguiente.
+                Sobran <strong>{formatCurrency(allocation.leftover)}</strong>: no quedan más cuotas
+                donde aplicarlos{excludedIds.length > 0 ? ' entre las que no has desmarcado' : ''}.
+                Baja el monto{excludedIds.length > 0 ? ' o vuelve a marcar alguna cuota' : ''} — no
+                se puede cobrar más de lo que se debe.
               </div>
             </div>
           )}

@@ -93,14 +93,32 @@ Un interruptor **"Pago avanzado"** en el formulario de pagos abre un panel donde
 
 1. Ve todas las cuotas y cargos pendientes, con total, pagado y pendiente de cada uno, y marca
    los vencidos.
-2. Marca las que quiere cobrar (con atajos: *la más antigua*, *2 más antiguas*, *todas*).
-3. Escribe el monto total que entrega el cliente — puede ser mayor al de una sola cuota.
-4. Ve **en la misma tabla** cuánto va a cada cuota y si queda saldada o con abono parcial, antes de
+2. **Escribe el monto total que entrega el cliente y las cuotas se marcan solas**, de la más
+   antigua en adelante, hasta cubrirlo. También puede marcarlas a mano (con atajos: *la más
+   antigua*, *2 más antiguas*, *todas*).
+3. Ve **en la misma tabla** cuánto va a cada cuota y si queda saldada o con abono parcial, antes de
    guardar.
 
-El reparto es cronológico: satura cada cuota antes de pasar a la siguiente. Si el monto supera lo
-pendiente de lo seleccionado, se avisa y no se deja guardar — los excedentes no se arrastran solos a
-la cuota siguiente (comportamiento ya existente del sistema, ahora explícito en pantalla).
+### El monto manda: arrastre automático
+
+Si la cuota es RD$10,000 y el cliente trae RD$12,000, basta con escribir 12,000: la cuota se marca
+y se salda, y la **siguiente se marca sola** y recibe los RD$2,000 como abono parcial. No hay que
+seleccionar nada a mano.
+
+Reglas del arrastre (`autoExtendSelection`):
+
+- Se arrastra **hacia adelante** de la última cuota marcada a mano. Si el empleado marca la #2 y
+  escribe un monto que la desborda, el sobrante va a la #3 — nunca vuelve atrás a la #1.
+- Si no hay nada marcado, empieza por la **más antigua**.
+- Lo que el empleado **desmarca** no se vuelve a añadir solo: el arrastre lo salta y sigue con la
+  siguiente. Sin esta regla la casilla no se podría desmarcar (el arrastre la repondría en el acto).
+- Las cuotas añadidas por el monto se señalan en la tabla con *"añadida por el monto"*.
+- El arrastre solo actúa cuando el empleado **escribe** un monto. Marcando casillas manda la
+  selección, y el monto la sigue.
+
+El reparto sigue siendo cronológico: satura cada cuota antes de pasar a la siguiente. Si el monto
+supera **todo** lo pendiente del préstamo, se avisa y no se deja guardar: no se puede cobrar más de
+lo que se debe.
 
 **Se registra un pago por cuota**, cada uno con su `due_date`. Es la forma que el resto del sistema
 espera (mora, antigüedad e informes agrupan por `due_date`) y hace que el historial diga a qué
@@ -144,7 +162,7 @@ se pierde lo ya escrito al alternar.
 
 ```
 78 pruebas de loanRescheduling   ✓
-39 pruebas de installmentDues    ✓
+61 pruebas de installmentDues    ✓  (incluye el arrastre automático)
 64 pruebas de portfolioMetrics   ✓  (sin regresiones)
 npx tsc --noEmit                 ✓  0 errores
 npx eslint (archivos nuevos)     ✓  0 avisos
@@ -160,6 +178,12 @@ cuotas.
 Las de reparto de pagos cubren pendiente por cuota, pagos parciales, cargos y cuotas de la misma
 fecha (que no deben mezclarse), cascada entre cargos, monto mayor que lo pendiente, orden
 cronológico frente a orden por número, y redondeo de centavos.
+
+Las del arrastre automático incluyen el caso pedido (cuota de 10,000 y monto de 12,000 → se salda
+la primera y 2,000 parciales a la segunda), monto exacto que no debe arrastrar, arrastre hacia
+adelante de lo marcado a mano, cuotas desmarcadas que el arrastre debe saltar, cargos con abonos
+previos, y la **idempotencia** del arrastre — reaplicarlo sobre su propio resultado no añade nada,
+que es lo que evita un bucle infinito en el efecto de React.
 
 ---
 

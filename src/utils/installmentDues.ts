@@ -133,6 +133,46 @@ export const computeInstallmentDues = (
   return rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.installmentNumber - b.installmentNumber);
 };
 
+/**
+ * Cuotas que hay que añadir a la selección para cubrir `amount`.
+ *
+ * Cuando el empleado escribe un monto mayor a lo pendiente de lo que marcó, el sobrante debe
+ * caer en las cuotas SIGUIENTES — "la cuota es 10,000, el cliente trae 12,000: se salda la cuota
+ * y 2,000 van a la siguiente como abono parcial". Devuelve solo lo que hay que añadir.
+ *
+ * - `rows` debe venir en orden cronológico (`computeInstallmentDues` ya lo hace).
+ * - Se arrastra hacia ADELANTE de la última cuota marcada a mano; si no hay ninguna, desde la
+ *   más antigua.
+ * - Nunca se añade algo que el empleado desmarcó (`excludedIds`), o la casilla no se podría
+ *   desmarcar: volvería a añadirse en el acto.
+ */
+export const autoExtendSelection = (
+  rows: DueRow[],
+  manualIds: string[],
+  excludedIds: string[],
+  amount: number,
+): string[] => {
+  const manualSet = new Set(manualIds);
+  const excludedSet = new Set(excludedIds);
+
+  const basePending = round2(
+    rows.filter(r => manualSet.has(r.id)).reduce((s, r) => s + r.pending, 0)
+  );
+  let need = round2((Number(amount) || 0) - basePending);
+  if (need <= 0.005) return [];
+
+  const lastManualIndex = rows.reduce((last, r, i) => (manualSet.has(r.id) ? i : last), -1);
+
+  const added: string[] = [];
+  for (let i = lastManualIndex + 1; i < rows.length && need > 0.005; i++) {
+    const r = rows[i];
+    if (manualSet.has(r.id) || excludedSet.has(r.id)) continue;
+    added.push(r.id);
+    need = round2(need - r.pending);
+  }
+  return added;
+};
+
 export interface Allocation {
   row: DueRow;
   /** Cuánto de este pago va a esta cuota */
