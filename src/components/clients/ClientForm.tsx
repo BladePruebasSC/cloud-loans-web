@@ -1,4 +1,27 @@
-import React, { useEffect, useState, FormEvent, useRef } from 'react';
+// ============================================================================
+// ALTA Y EDICIÓN DE CLIENTES
+// ============================================================================
+// Antes era una sola página con 7 tarjetas y ~50 campos seguidos, sin distinguir lo
+// obligatorio de lo opcional: había que bajar por todo el formulario para descubrir qué
+// faltaba, y los errores llegaban de golpe como un toast al final.
+//
+// Ahora es un asistente de 5 pasos con validación por paso y errores junto al campo. Cambios
+// de fondo, no solo de aspecto:
+//
+//  · UBICACIÓN EN CASCADA: Provincia → Municipio → Distrito Municipal. Antes "Municipio" y
+//    "Sector" eran texto libre con el marcador "SELECCIONAR PROVINCIA" — la cascada estaba
+//    prevista pero nunca se construyó, así que cada empleado escribía el municipio a su
+//    manera y los informes por zona no cuadraban.
+//  · TELÉFONO OBLIGATORIO: antes bastaba con teléfono O WhatsApp. Un cliente sin teléfono
+//    principal es incobrable.
+//  · AVISO DE CÉDULA DUPLICADA: al salir del campo se comprueba si ya existe un cliente con
+//    esa cédula en la empresa, con enlace para abrirlo. Evita el alta duplicada.
+//  · SE ELIMINAN LOS CAMPOS DUPLICADOS "Ciudad" y "Barrio / Sector": eran los mismos datos
+//    que Municipio y Sector en otra tarjeta, y se llenaban por separado. `city` y
+//    `neighborhood` se siguen guardando (los usan el mapa, los informes y las cartas de
+//    intimación), pero ahora se derivan de la cascada en vez de pedirse dos veces.
+
+import React, { useEffect, useMemo, useRef, useState, FormEvent } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,216 +29,219 @@ import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Loader2, UserPlus, Camera, Upload, X } from 'lucide-react';
+import {
+  AlertTriangle, ArrowLeft, ArrowRight, Briefcase, Camera, Check, Loader2, MapPin,
+  MoreHorizontal, Phone, Upload, User, UserPlus, X,
+} from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import {
+  MUNICIPAL_SEAT, PROVINCE_NAMES, getDistricts, getMunicipalities,
+  normalizeStoredTerritory,
+} from '@/data/dominicanRepublic';
 
-// Lista de provincias de República Dominicana
-const PROVINCES = [
-  'Distrito Nacional',
-  'Santo Domingo',
-  'Santiago',
-  'La Altagracia',
-  'San Cristóbal',
-  'La Vega',
-  'Puerto Plata',
-  'Duarte',
-  'Espaillat',
-  'San Pedro de Macorís',
-  'La Romana',
-  'Azua',
-  'San Juan',
-  'Peravia',
-  'Barahona',
-  'Valverde',
-  'Monte Plata',
-  'Hato Mayor',
-  'San José de Ocoa',
-  'Dajabón',
-  'Bahoruco',
-  'El Seibo',
-  'Hermanas Mirabal',
-  'Independencia',
-  'María Trinidad Sánchez',
-  'Monseñor Nouel',
-  'Monte Cristi',
-  'Pedernales',
-  'Samaná',
-  'Sánchez Ramírez',
-  'Santiago Rodríguez',
-  'Elías Piña'
-];
-
-// Lista de bancos dominicanos
 const DOMINICAN_BANKS = [
-  'Banco Popular Dominicano',
-  'Banco de Reservas',
-  'Banco BHD León',
-  'Banco del Progreso',
-  'Banco Santa Cruz',
-  'Banco López de Haro',
-  'Banco Vimenca',
-  'Banco Ademi',
-  'Banco Caribe',
-  'Banco Promerica',
-  'Banco BDI',
-  'Banco Múltiple Activo',
-  'Banco Unión',
-  'Banco Peravia',
-  'Banco de Ahorro y Crédito',
-  'Otro'
+  'Banco Popular Dominicano', 'Banco de Reservas', 'Banco BHD León', 'Banco del Progreso',
+  'Banco Santa Cruz', 'Banco López de Haro', 'Banco Vimenca', 'Banco Ademi', 'Banco Caribe',
+  'Banco Promerica', 'Banco BDI', 'Banco Múltiple Activo', 'Banco Unión', 'Banco Peravia',
+  'Banco de Ahorro y Crédito', 'Otro',
 ];
 
-// Clasificaciones por color
 const COLOR_CLASSIFICATIONS = [
-  'Sin color asignado',
-  'Rojo',
-  'Verde',
-  'Azul',
-  'Amarillo',
-  'Naranja',
-  'Morado',
-  'Rosa',
-  'Gris'
+  'Sin color asignado', 'Rojo', 'Verde', 'Azul', 'Amarillo', 'Naranja', 'Morado', 'Rosa', 'Gris',
 ];
+
+const MARITAL_STATUSES = ['Soltero(a)', 'Casado(a)', 'Unión libre', 'Divorciado(a)', 'Viudo(a)'];
+
+const EMPLOYMENT_STATUSES = [
+  'Empleado privado', 'Empleado público', 'Independiente / Cuenta propia', 'Comerciante',
+  'Pensionado / Jubilado', 'Desempleado', 'Estudiante', 'Otro',
+];
+
+/** Valor centinela del selector de distrito para escribir uno que no esté en el catálogo. */
+const DISTRICT_OTHER = '__otro__';
 
 type ClientFormState = {
-  // Datos personales
-  first_name: string;
-  last_name: string;
-  nickname: string;
-  dni: string;
-  nationality: string;
-  birth_date: string;
-  gender: string;
-  marital_status: string;
-  photo_url: string;
-  
-  // Datos básicos
-  occupation: string;
-  monthly_income: string;
-  housing: string;
-  dependents: string;
-  employment_status: string;
-  rnc: string;
-  
-  // Datos de contacto
-  whatsapp: string;
-  phone: string;
-  phone_secondary: string;
-  email: string;
-  
-  // Direcciones
-  address: string;
-  province: string;
-  municipality: string;
-  sector: string;
-  collection_route: string;
-  workplace_name: string;
-  workplace_address: string;
-  
-  // Datos bancarios
-  card_number: string;
-  bank_user: string;
-  bank_code: string;
-  bank_token_identifier: string;
-  bank_name: string;
-  
-  // Otros
-  recommended_by: string;
-  color_classification: string;
-  visible_in_loan_data: string;
-  custom_field_1: string;
-  custom_field_2: string;
-  attachment_url: string;
-  
-  // Campos existentes
-  city: string;
-  neighborhood: string;
-  credit_score: string;
-  status: 'active' | 'inactive' | 'blacklisted';
+  first_name: string; last_name: string; nickname: string; dni: string;
+  nationality: string; birth_date: string; gender: string; marital_status: string; photo_url: string;
+  occupation: string; monthly_income: string; housing: string; dependents: string;
+  employment_status: string; rnc: string;
+  whatsapp: string; phone: string; phone_secondary: string; email: string;
+  address: string; province: string; municipality: string; municipal_district: string;
+  sector: string; collection_route: string; workplace_name: string; workplace_address: string;
+  card_number: string; bank_user: string; bank_code: string; bank_token_identifier: string; bank_name: string;
+  recommended_by: string; color_classification: string; visible_in_loan_data: string;
+  custom_field_1: string; custom_field_2: string; attachment_url: string;
+  credit_score: string; status: 'active' | 'inactive' | 'blacklisted';
 };
 
 const defaultFormState: ClientFormState = {
-  first_name: '',
-  last_name: '',
-  nickname: '',
-  dni: '',
-  nationality: 'Dominicano',
-  birth_date: '',
-  gender: '',
-  marital_status: '',
-  photo_url: '',
-  occupation: '',
-  monthly_income: '',
-  housing: '',
-  dependents: '',
-  employment_status: '',
-  rnc: '',
-  whatsapp: '',
-  phone: '',
-  phone_secondary: '',
-  email: '',
-  address: '',
-  province: '',
-  municipality: '',
-  sector: '',
-  collection_route: '',
-  workplace_name: '',
-  workplace_address: '',
-  card_number: '',
-  bank_user: '',
-  bank_code: '',
-  bank_token_identifier: '',
-  bank_name: '',
-  recommended_by: '',
-  color_classification: 'Sin color asignado',
-  visible_in_loan_data: 'SI',
-  custom_field_1: '',
-  custom_field_2: '',
-  attachment_url: '',
-  city: '',
-  neighborhood: '',
-  credit_score: '',
-  status: 'active'
+  first_name: '', last_name: '', nickname: '', dni: '',
+  nationality: 'Dominicano', birth_date: '', gender: '', marital_status: '', photo_url: '',
+  occupation: '', monthly_income: '', housing: '', dependents: '', employment_status: '', rnc: '',
+  whatsapp: '', phone: '', phone_secondary: '', email: '',
+  address: '', province: '', municipality: '', municipal_district: '',
+  sector: '', collection_route: '', workplace_name: '', workplace_address: '',
+  card_number: '', bank_user: '', bank_code: '', bank_token_identifier: '', bank_name: '',
+  recommended_by: '', color_classification: 'Sin color asignado', visible_in_loan_data: 'SI',
+  custom_field_1: '', custom_field_2: '', attachment_url: '',
+  credit_score: '', status: 'active',
 };
 
-// Función para formatear cédula dominicana: 000-0000000-0
+// ---------------------------------------------------------------------------
+// Formato
+// ---------------------------------------------------------------------------
+
+/** Cédula dominicana: 000-0000000-0 */
 const formatDni = (value: string): string => {
-  const numbers = value.replace(/\D/g, '');
-  const limited = numbers.slice(0, 11);
-  
-  if (limited.length <= 3) {
-    return limited;
-  } else if (limited.length <= 10) {
-    return `${limited.slice(0, 3)}-${limited.slice(3)}`;
-  } else {
-    return `${limited.slice(0, 3)}-${limited.slice(3, 10)}-${limited.slice(10)}`;
-  }
+  const d = value.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 10) return `${d.slice(0, 3)}-${d.slice(3)}`;
+  return `${d.slice(0, 3)}-${d.slice(3, 10)}-${d.slice(10)}`;
 };
 
-// Función para formatear teléfono
+/** Teléfono: (000) 000-0000 */
 const formatPhone = (value: string): string => {
-  const numbers = value.replace(/\D/g, '');
-  if (numbers.length === 0) return '';
-  
-  if (numbers.length <= 3) {
-    return `(${numbers}`;
-  } else if (numbers.length <= 6) {
-    return `(${numbers.slice(0, 3)}) ${numbers.slice(3)}`;
-  } else {
-    return `(${numbers.slice(0, 3)}) ${numbers.slice(3, 6)}-${numbers.slice(6, 10)}`;
-  }
+  const d = value.replace(/\D/g, '').slice(0, 10);
+  if (d.length === 0) return '';
+  if (d.length <= 3) return `(${d}`;
+  if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 };
+
+const digits = (v: string) => String(v || '').replace(/\D/g, '');
+
+/** Convierte un teléfono guardado (+18091234567) al formato que muestra el campo. */
+const phoneFromStored = (v?: string | null): string => {
+  let d = digits(String(v ?? ''));
+  if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
+  return formatPhone(d);
+};
+
+/** Normaliza para guardar: 10 dígitos con prefijo +1, o null si está vacío. */
+const phoneToStored = (v: string): string | null => {
+  let d = digits(v);
+  if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
+  d = d.slice(0, 10);
+  return d ? `+1${d}` : null;
+};
+
+// ---------------------------------------------------------------------------
+// Pasos
+// ---------------------------------------------------------------------------
+
+type StepId = 'identidad' | 'contacto' | 'ubicacion' | 'trabajo' | 'extras';
+
+const STEPS: { id: StepId; label: string; short: string; icon: React.ElementType }[] = [
+  { id: 'identidad', label: 'Identidad', short: 'Quién es', icon: User },
+  { id: 'contacto', label: 'Contacto', short: 'Cómo localizarlo', icon: Phone },
+  { id: 'ubicacion', label: 'Ubicación', short: 'Dónde vive', icon: MapPin },
+  { id: 'trabajo', label: 'Trabajo e ingresos', short: 'De qué vive', icon: Briefcase },
+  { id: 'extras', label: 'Otros datos', short: 'Opcional', icon: MoreHorizontal },
+];
+
+type Errors = Partial<Record<keyof ClientFormState, string>>;
+
+/** Validación de un paso. Devuelve los errores; vacío = paso completo. */
+const validateStep = (step: StepId, d: ClientFormState): Errors => {
+  const e: Errors = {};
+
+  if (step === 'identidad') {
+    if (!d.first_name.trim()) e.first_name = 'El nombre es obligatorio';
+    if (!d.last_name.trim()) e.last_name = 'El apellido es obligatorio';
+    const dni = digits(d.dni);
+    if (!dni) e.dni = 'La cédula es obligatoria';
+    else if (dni.length !== 11) e.dni = `La cédula debe tener 11 dígitos (llevas ${dni.length})`;
+    if (d.birth_date) {
+      const born = new Date(`${d.birth_date}T00:00:00`);
+      if (Number.isNaN(born.getTime())) e.birth_date = 'Fecha inválida';
+      else if (born > new Date()) e.birth_date = 'La fecha no puede ser futura';
+      else {
+        const age = Math.floor((Date.now() - born.getTime()) / (365.25 * 24 * 3600 * 1000));
+        if (age < 18) e.birth_date = `El cliente tendría ${age} años: debe ser mayor de edad`;
+        if (age > 110) e.birth_date = 'Revisa la fecha: la edad no es plausible';
+      }
+    }
+  }
+
+  if (step === 'contacto') {
+    // CAMBIO: el teléfono principal pasa a ser obligatorio (antes bastaba con WhatsApp).
+    const phone = digits(d.phone);
+    if (!phone) e.phone = 'El teléfono principal es obligatorio';
+    else if (phone.length !== 10) e.phone = `El teléfono debe tener 10 dígitos (llevas ${phone.length})`;
+
+    const wa = digits(d.whatsapp);
+    if (wa && wa.length !== 10) e.whatsapp = 'El WhatsApp debe tener 10 dígitos';
+
+    const alt = digits(d.phone_secondary);
+    if (alt && alt.length !== 10) e.phone_secondary = 'El teléfono alterno debe tener 10 dígitos';
+
+    if (d.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(d.email.trim())) {
+      e.email = 'Correo inválido';
+    }
+  }
+
+  if (step === 'ubicacion') {
+    if (!d.province) e.province = 'La provincia es obligatoria';
+    if (!d.municipality) e.municipality = 'El municipio es obligatorio';
+  }
+
+  return e;
+};
+
+const STEP_ORDER: StepId[] = STEPS.map(s => s.id);
+
+/**
+ * Fila de `clients` tal como la lee este formulario.
+ *
+ * Se declara aquí porque `integrations/supabase/types.ts` está generado desde un esquema
+ * anterior y no incluye las columnas añadidas después (`province`, `municipality`, `sector`,
+ * `first_name`, `municipal_district`…). Todo opcional: un cliente antiguo puede no tenerlas.
+ */
+type ClientRow = Partial<Record<
+  | 'full_name' | 'first_name' | 'last_name' | 'nickname' | 'dni' | 'nationality' | 'birth_date'
+  | 'gender' | 'marital_status' | 'photo_url' | 'occupation' | 'employment_status' | 'rnc'
+  | 'whatsapp' | 'phone' | 'phone_secondary' | 'email' | 'address' | 'province' | 'municipality'
+  | 'municipal_district' | 'sector' | 'city' | 'neighborhood' | 'collection_route'
+  | 'workplace_name' | 'workplace_address' | 'card_number' | 'bank_user' | 'bank_code'
+  | 'bank_token_identifier' | 'bank_name' | 'recommended_by' | 'color_classification'
+  | 'custom_field_1' | 'custom_field_2' | 'attachment_url' | 'status',
+  string | null
+>> & {
+  monthly_income?: number | null; housing?: number | null; dependents?: number | null;
+  credit_score?: number | null; visible_in_loan_data?: boolean | null;
+};
+
+/** Valores admitidos por una columna de `clients` al guardar. */
+type ClientPayload = Record<string, string | number | boolean | null>;
+
+/**
+ * Etiqueta + control + error/ayuda.
+ *
+ * Vive FUERA del componente a propósito: definido dentro, React lo vería como un tipo de
+ * componente distinto en cada render, desmontaría el subárbol y el campo perdería el foco
+ * en cada tecla.
+ */
+const Field = ({ label, required, error, hint, children }: {
+  label: string; required?: boolean; error?: string; hint?: string; children: React.ReactNode;
+}) => (
+  <div className="space-y-1.5">
+    <Label className={error ? 'text-red-600' : undefined}>
+      {label}{required && <span className="ml-0.5 text-red-500">*</span>}
+    </Label>
+    {children}
+    {error
+      ? <p className="text-xs font-medium text-red-600">{error}</p>
+      : hint ? <p className="text-xs text-gray-500">{hint}</p> : null}
+  </div>
+);
 
 const ClientForm = () => {
   const navigate = useNavigate();
@@ -224,30 +250,36 @@ const ClientForm = () => {
   const { companyId, user, profile } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
-  const [photoPreview, setPhotoPreview] = useState<string>('');
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [uploadingAttachment, setUploadingAttachment] = useState(false);
 
   const isEditing = location.pathname.startsWith('/clientes/editar');
   const [formData, setFormData] = useState<ClientFormState>(defaultFormState);
   const [loading, setLoading] = useState(isEditing);
   const [saving, setSaving] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState('');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
 
+  const [step, setStep] = useState<StepId>('identidad');
+  /** Pasos que el empleado ya intentó pasar: solo entonces se muestran sus errores. */
+  const [visited, setVisited] = useState<Set<StepId>>(new Set());
+  const [districtIsCustom, setDistrictIsCustom] = useState(false);
+  const [waSameAsPhone, setWaSameAsPhone] = useState(false);
+  const [duplicate, setDuplicate] = useState<{ id: string; full_name: string } | null>(null);
+  const [checkingDni, setCheckingDni] = useState(false);
+
+  // -------------------------------------------------------------------------
+  // Carga
+  // -------------------------------------------------------------------------
   useEffect(() => {
-    if (isEditing && params.id) {
-      fetchClient(params.id);
-    }
+    if (isEditing && params.id) fetchClient(params.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, params.id]);
 
   const fetchClient = async (clientId: string) => {
     try {
       setLoading(true);
       const { data, error } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('id', clientId)
-        .maybeSingle();
-
+        .from('clients').select('*').eq('id', clientId).maybeSingle();
       if (error) throw error;
       if (!data) {
         toast.error('Cliente no encontrado');
@@ -255,60 +287,72 @@ const ClientForm = () => {
         return;
       }
 
-      // Separar full_name en first_name y last_name si existe
-      const fullName = data.full_name || '';
-      const nameParts = fullName.split(' ');
-      const firstName = nameParts[0] || '';
-      const lastName = nameParts.slice(1).join(' ') || '';
+      const d = data as ClientRow;
+      const fullName = d.full_name || '';
+      const parts = fullName.split(' ');
 
-      const loadedData: ClientFormState = {
-        first_name: data.first_name || firstName,
-        last_name: data.last_name || lastName,
-        nickname: data.nickname || '',
-        dni: data.dni ? formatDni(data.dni) : '',
-        nationality: data.nationality || 'Dominicano',
-        birth_date: data.birth_date || '',
-        gender: data.gender || '',
-        marital_status: data.marital_status || '',
-        photo_url: data.photo_url || '',
-        occupation: data.occupation || '',
-        monthly_income: data.monthly_income ? String(data.monthly_income) : '',
-        housing: data.housing ? String(data.housing) : '',
-        dependents: data.dependents ? String(data.dependents) : '',
-        employment_status: data.employment_status || '',
-        rnc: data.rnc || '',
-        whatsapp: data.whatsapp || '',
-        phone: data.phone || '',
-        phone_secondary: data.phone_secondary || '',
-        email: data.email || '',
-        address: data.address || '',
-        province: data.province || '',
-        municipality: data.municipality || '',
-        sector: data.sector || '',
-        collection_route: data.collection_route || '',
-        workplace_name: data.workplace_name || '',
-        workplace_address: data.workplace_address || '',
-        card_number: data.card_number || '',
-        bank_user: data.bank_user || '',
-        bank_code: data.bank_code || '',
-        bank_token_identifier: data.bank_token_identifier || '',
-        bank_name: data.bank_name || '',
-        recommended_by: data.recommended_by || '',
-        color_classification: data.color_classification || 'Sin color asignado',
-        visible_in_loan_data: data.visible_in_loan_data === false ? 'NO' : 'SI',
-        custom_field_1: data.custom_field_1 || '',
-        custom_field_2: data.custom_field_2 || '',
-        attachment_url: data.attachment_url || '',
-        city: data.city || '',
-        neighborhood: data.neighborhood || '',
-        credit_score: data.credit_score ? String(data.credit_score) : '',
-        status: (data.status as ClientFormState['status']) || 'active'
-      };
-      
-      setFormData(loadedData);
-      if (loadedData.photo_url) {
-        setPhotoPreview(loadedData.photo_url);
+      // Datos antiguos: el municipio pudo guardarse solo en `city`, y el sector en
+      // `neighborhood`. Se recuperan y se ajustan a la grafía del catálogo.
+      const territory = normalizeStoredTerritory({
+        province: d.province || '',
+        municipality: d.municipality || d.city || '',
+        district: d.municipal_district || '',
+      });
+
+      const phone = phoneFromStored(d.phone);
+      const whatsapp = phoneFromStored(d.whatsapp);
+
+      setFormData({
+        first_name: d.first_name || parts[0] || '',
+        last_name: d.last_name || parts.slice(1).join(' ') || '',
+        nickname: d.nickname || '',
+        dni: d.dni ? formatDni(d.dni) : '',
+        nationality: d.nationality || 'Dominicano',
+        birth_date: d.birth_date || '',
+        gender: d.gender || '',
+        marital_status: d.marital_status || '',
+        photo_url: d.photo_url || '',
+        occupation: d.occupation || '',
+        monthly_income: d.monthly_income ? String(d.monthly_income) : '',
+        housing: d.housing ? String(d.housing) : '',
+        dependents: d.dependents !== null && d.dependents !== undefined ? String(d.dependents) : '',
+        employment_status: d.employment_status || '',
+        rnc: d.rnc || '',
+        whatsapp,
+        phone,
+        phone_secondary: phoneFromStored(d.phone_secondary),
+        email: d.email || '',
+        address: d.address || '',
+        province: territory.province,
+        municipality: territory.municipality,
+        municipal_district: territory.district,
+        sector: d.sector || d.neighborhood || '',
+        collection_route: d.collection_route || '',
+        workplace_name: d.workplace_name || '',
+        workplace_address: d.workplace_address || '',
+        card_number: d.card_number || '',
+        bank_user: d.bank_user || '',
+        bank_code: d.bank_code || '',
+        bank_token_identifier: d.bank_token_identifier || '',
+        bank_name: d.bank_name || '',
+        recommended_by: d.recommended_by || '',
+        color_classification: d.color_classification || 'Sin color asignado',
+        visible_in_loan_data: d.visible_in_loan_data === false ? 'NO' : 'SI',
+        custom_field_1: d.custom_field_1 || '',
+        custom_field_2: d.custom_field_2 || '',
+        attachment_url: d.attachment_url || '',
+        credit_score: d.credit_score !== null && d.credit_score !== undefined ? String(d.credit_score) : '',
+        status: (d.status as ClientFormState['status']) || 'active',
+      });
+
+      if (whatsapp && whatsapp === phone) setWaSameAsPhone(true);
+
+      // El distrito guardado no está en el catálogo → el selector arranca en "Otro".
+      const known = getDistricts(territory.province, territory.municipality);
+      if (territory.district && territory.district !== MUNICIPAL_SEAT && !known.includes(territory.district)) {
+        setDistrictIsCustom(true);
       }
+      if (d.photo_url) setPhotoPreview(d.photo_url);
     } catch (error) {
       console.error('Error cargando cliente', error);
       toast.error('No se pudo cargar la información del cliente');
@@ -318,58 +362,88 @@ const ClientForm = () => {
     }
   };
 
+  // -------------------------------------------------------------------------
+  // Cambios
+  // -------------------------------------------------------------------------
   const handleChange = (field: keyof ClientFormState, value: string) => {
-    let formattedValue = value;
-    
-    if (field === 'dni') {
-      formattedValue = formatDni(value);
-    } else if (field === 'phone' || field === 'whatsapp' || field === 'phone_secondary') {
-      formattedValue = formatPhone(value);
-    }
-    
-    setFormData((prev) => ({
-      ...prev,
-      [field]: formattedValue
-    }));
+    let v = value;
+    if (field === 'dni') v = formatDni(value);
+    else if (field === 'phone' || field === 'whatsapp' || field === 'phone_secondary') v = formatPhone(value);
+
+    setFormData(prev => {
+      const next = { ...prev, [field]: v };
+      // Con "WhatsApp = teléfono" activo, el WhatsApp sigue al principal.
+      if (field === 'phone' && waSameAsPhone) next.whatsapp = v;
+      return next;
+    });
+
+    if (field === 'dni') setDuplicate(null);
   };
 
+  /** Cambiar provincia invalida municipio y distrito; cambiar municipio invalida distrito. */
+  const handleProvinceChange = (province: string) => {
+    setFormData(prev => ({ ...prev, province, municipality: '', municipal_district: '' }));
+    setDistrictIsCustom(false);
+  };
+
+  const handleMunicipalityChange = (municipality: string) => {
+    setFormData(prev => ({ ...prev, municipality, municipal_district: '' }));
+    setDistrictIsCustom(false);
+  };
+
+  const handleDistrictChange = (value: string) => {
+    if (value === DISTRICT_OTHER) {
+      setDistrictIsCustom(true);
+      setFormData(prev => ({ ...prev, municipal_district: '' }));
+      return;
+    }
+    setDistrictIsCustom(false);
+    setFormData(prev => ({ ...prev, municipal_district: value }));
+  };
+
+  const toggleWaSameAsPhone = (checked: boolean) => {
+    setWaSameAsPhone(checked);
+    if (checked) setFormData(prev => ({ ...prev, whatsapp: prev.phone }));
+  };
+
+  /** Avisa (sin bloquear) si ya existe un cliente con esa cédula en la empresa. */
+  const checkDuplicateDni = async () => {
+    const dni = digits(formData.dni);
+    if (dni.length !== 11 || !companyId) return;
+    setCheckingDni(true);
+    try {
+      const { data } = await supabase
+        .from('clients')
+        .select('id, full_name')
+        .eq('user_id', companyId)
+        .eq('dni', dni)
+        .limit(1);
+      const hit = (data || [])[0];
+      setDuplicate(hit && hit.id !== params.id ? hit : null);
+    } catch (error) {
+      console.error('Error verificando cédula duplicada', error);
+    } finally {
+      setCheckingDni(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Subidas
+  // -------------------------------------------------------------------------
   const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      toast.error('Por favor selecciona una imagen');
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('La imagen debe ser menor a 5MB');
-      return;
-    }
+    if (!file.type.startsWith('image/')) { toast.error('Por favor selecciona una imagen'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('La imagen debe ser menor a 5MB'); return; }
 
     setUploadingPhoto(true);
     try {
-      if (!user?.id) {
-        throw new Error('Usuario no autenticado');
-      }
-
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}.${fileExt}`;
-      // Usar el formato que requieren las políticas: user-{uid}/client-photos/...
-      const filePath = `user-${user.id}/client-photos/${fileName}`;
-
-      // Subir a Supabase Storage (bucket 'documents')
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(filePath, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      // Obtener URL pública
-      const { data: { publicUrl } } = supabase.storage
-        .from('documents')
-        .getPublicUrl(filePath);
-
+      if (!user?.id) throw new Error('Usuario no autenticado');
+      const ext = file.name.split('.').pop();
+      const filePath = `user-${user.id}/client-photos/${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from('documents').upload(filePath, file, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(filePath);
       setFormData(prev => ({ ...prev, photo_url: publicUrl }));
       setPhotoPreview(publicUrl);
       toast.success('Foto subida exitosamente');
@@ -384,29 +458,13 @@ const ClientForm = () => {
   const handleAttachmentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
     setUploadingAttachment(true);
     try {
-      if (!user?.id) {
-        throw new Error('Usuario no autenticado');
-      }
-
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}_${file.name}`;
-      // Usar el formato que requieren las políticas: user-{uid}/client-attachments/...
-      const filePath = `user-${user.id}/client-attachments/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(filePath, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      // Obtener URL pública
-      const { data: { publicUrl } } = supabase.storage
-        .from('documents')
-        .getPublicUrl(filePath);
-
+      if (!user?.id) throw new Error('Usuario no autenticado');
+      const filePath = `user-${user.id}/client-attachments/${Date.now()}_${file.name}`;
+      const { error } = await supabase.storage.from('documents').upload(filePath, file, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(filePath);
       setFormData(prev => ({ ...prev, attachment_url: publicUrl }));
       toast.success('Archivo adjunto subido exitosamente');
     } catch (error) {
@@ -417,55 +475,78 @@ const ClientForm = () => {
     }
   };
 
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
+  // -------------------------------------------------------------------------
+  // Validación
+  // -------------------------------------------------------------------------
+  const errorsByStep = useMemo(() => {
+    const map = {} as Record<StepId, Errors>;
+    for (const s of STEP_ORDER) map[s] = validateStep(s, formData);
+    return map;
+  }, [formData]);
+
+  const allErrors = useMemo(
+    () => Object.assign({}, ...STEP_ORDER.map(s => errorsByStep[s])) as Errors,
+    [errorsByStep],
+  );
+  const isComplete = Object.keys(allErrors).length === 0;
+
+  /** Los errores de un paso solo se muestran cuando ya se pasó por él. */
+  const visibleErrors = (s: StepId): Errors => (visited.has(s) ? errorsByStep[s] : {});
+  const err = (field: keyof ClientFormState): string | undefined => visibleErrors(step)[field];
+
+  const markVisited = (s: StepId) => setVisited(prev => new Set(prev).add(s));
+
+  const goTo = (target: StepId) => {
+    markVisited(step);
+    setStep(target);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const goNext = () => {
+    markVisited(step);
+    const idx = STEP_ORDER.indexOf(step);
+    if (Object.keys(errorsByStep[step]).length > 0) {
+      toast.error('Revisa los campos marcados antes de continuar');
+      return;
+    }
+    if (idx < STEP_ORDER.length - 1) goTo(STEP_ORDER[idx + 1]);
+  };
+
+  const goBack = () => {
+    const idx = STEP_ORDER.indexOf(step);
+    if (idx > 0) goTo(STEP_ORDER[idx - 1]);
+  };
+
+  // -------------------------------------------------------------------------
+  // Guardar
+  // -------------------------------------------------------------------------
+  const handleSubmit = async (event?: FormEvent) => {
+    event?.preventDefault();
 
     if (!companyId || !user?.id) {
       toast.error('No se pudo identificar la empresa');
       return;
     }
 
-    // Validaciones
-    if (!formData.first_name || !formData.last_name) {
-      toast.error('Nombre y apellido son obligatorios');
+    setVisited(new Set(STEP_ORDER));
+    if (!isComplete) {
+      const firstBad = STEP_ORDER.find(s => Object.keys(errorsByStep[s]).length > 0)!;
+      setStep(firstBad);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      toast.error(`Faltan datos en "${STEPS.find(s => s.id === firstBad)!.label}"`);
       return;
     }
 
-    if (!formData.dni) {
-      toast.error('La cédula es obligatoria');
-      return;
-    }
-
-    if (!formData.phone && !formData.whatsapp) {
-      toast.error('Al menos un teléfono (principal o WhatsApp) es obligatorio');
-      return;
-    }
-
-    // Limpiar formato de DNI
-    const cleanDni = formData.dni.replace(/\D/g, '');
-    
-    // Limpiar teléfonos
-    const cleanPhone = formData.phone.replace(/\D/g, '');
-    const cleanWhatsapp = formData.whatsapp.replace(/\D/g, '');
-    const cleanPhoneSecondary = formData.phone_secondary.replace(/\D/g, '');
-    
-    // Formatear teléfono principal con +1
-    let formattedPhone = cleanPhone;
-    if (formattedPhone.startsWith('1') && formattedPhone.length > 10) {
-      formattedPhone = formattedPhone.slice(1);
-    }
-    formattedPhone = formattedPhone.slice(0, 10);
-    const finalPhone = formattedPhone ? `+1${formattedPhone}` : formData.phone.trim();
-
-    // Construir full_name desde first_name y last_name
     const fullName = `${formData.first_name.trim()} ${formData.last_name.trim()}`.trim();
+    const municipality = formData.municipality.trim() || null;
+    const sector = formData.sector.trim() || null;
 
-    const payload: any = {
+    const payload: ClientPayload = {
       full_name: fullName,
       first_name: formData.first_name.trim(),
       last_name: formData.last_name.trim(),
       nickname: formData.nickname.trim() || null,
-      dni: cleanDni || formData.dni.trim(),
+      dni: digits(formData.dni),
       nationality: formData.nationality || 'Dominicano',
       birth_date: formData.birth_date || null,
       gender: formData.gender || null,
@@ -477,14 +558,15 @@ const ClientForm = () => {
       dependents: formData.dependents ? Number(formData.dependents) : null,
       employment_status: formData.employment_status.trim() || null,
       rnc: formData.rnc.trim() || null,
-      whatsapp: cleanWhatsapp ? `+1${cleanWhatsapp.slice(0, 10)}` : null,
-      phone: finalPhone || formData.phone.trim(),
-      phone_secondary: cleanPhoneSecondary ? `+1${cleanPhoneSecondary.slice(0, 10)}` : null,
+      whatsapp: phoneToStored(formData.whatsapp),
+      phone: phoneToStored(formData.phone),
+      phone_secondary: phoneToStored(formData.phone_secondary),
       email: formData.email.trim() || null,
       address: formData.address.trim() || null,
       province: formData.province || null,
-      municipality: formData.municipality || null,
-      sector: formData.sector || null,
+      municipality,
+      municipal_district: formData.municipal_district.trim() || null,
+      sector,
       collection_route: formData.collection_route || null,
       workplace_name: formData.workplace_name.trim() || null,
       workplace_address: formData.workplace_address.trim() || null,
@@ -499,23 +581,21 @@ const ClientForm = () => {
       custom_field_1: formData.custom_field_1.trim() || null,
       custom_field_2: formData.custom_field_2.trim() || null,
       attachment_url: formData.attachment_url || null,
-      city: formData.city.trim() || null,
-      neighborhood: formData.neighborhood.trim() || null,
+      // `city` y `neighborhood` se derivan de la cascada: el mapa, los informes y las cartas
+      // de intimación los siguen leyendo, pero ya no se piden dos veces al empleado.
+      city: municipality,
+      neighborhood: sector,
       credit_score: formData.credit_score ? Number(formData.credit_score) : null,
       status: formData.status,
       user_id: companyId,
       created_by: user.id,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
 
     setSaving(true);
-
     try {
       if (isEditing && params.id) {
-        const { error } = await supabase
-          .from('clients')
-          .update(payload)
-          .eq('id', params.id);
+        const { error } = await supabase.from('clients').update(payload).eq('id', params.id);
         if (error) throw error;
         toast.success('Cliente actualizado correctamente');
       } else {
@@ -526,625 +606,649 @@ const ClientForm = () => {
         toast.success('Cliente creado correctamente');
       }
       navigate('/clientes');
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error guardando cliente', error);
-      toast.error(error.message || 'No se pudo guardar el cliente');
+      toast.error(error instanceof Error ? error.message : 'No se pudo guardar el cliente');
     } finally {
       setSaving(false);
     }
   };
 
+  // -------------------------------------------------------------------------
+  // Opciones de la cascada
+  // -------------------------------------------------------------------------
+  // Si un valor guardado no está en el catálogo (datos antiguos escritos a mano), se añade
+  // como opción para no perderlo al abrir la ficha.
+  const provinceOptions = useMemo(() => {
+    const list = [...PROVINCE_NAMES];
+    if (formData.province && !list.includes(formData.province)) list.unshift(formData.province);
+    return list;
+  }, [formData.province]);
+
+  const municipalityOptions = useMemo(() => {
+    const list = getMunicipalities(formData.province);
+    if (formData.municipality && !list.includes(formData.municipality)) return [formData.municipality, ...list];
+    return list;
+  }, [formData.province, formData.municipality]);
+
+  const districtOptions = useMemo(
+    () => getDistricts(formData.province, formData.municipality),
+    [formData.province, formData.municipality],
+  );
+
+  const districtSelectValue = districtIsCustom
+    ? DISTRICT_OTHER
+    : (formData.municipal_district || undefined);
+
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center">
+      <div className="flex items-center justify-center p-6">
         <div className="flex items-center gap-2 text-gray-600">
           <Loader2 className="h-5 w-5 animate-spin" />
-          Cargando información del cliente...
+          Cargando información del cliente…
         </div>
       </div>
     );
   }
 
+  const stepIndex = STEP_ORDER.indexOf(step);
+  const isLastStep = stepIndex === STEP_ORDER.length - 1;
+
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col sm:flex-row justify-between gap-4">
+    <div className="mx-auto max-w-5xl p-4 pb-28 sm:p-6">
+      {/* Cabecera */}
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm text-gray-500 uppercase tracking-wide">
+          <p className="text-xs uppercase tracking-wide text-gray-500">
             {isEditing ? 'Edición' : 'Registro'}
           </p>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+          <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl">
             {isEditing ? 'Editar cliente' : 'Nuevo cliente'}
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Completa todos los datos del cliente para una gestión completa.
-          </p>
+          {(formData.first_name || formData.dni) && (
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+              <span className="font-medium">
+                {`${formData.first_name} ${formData.last_name}`.trim() || 'Sin nombre'}
+              </span>
+              {formData.dni && <Badge variant="outline">{formData.dni}</Badge>}
+              {formData.phone && <Badge variant="outline">{formData.phone}</Badge>}
+            </p>
+          )}
         </div>
-        <div className="flex flex-col sm:flex-row gap-2 sm:items-start">
-          <Button variant="outline" onClick={() => navigate('/clientes')} disabled={saving}>
-            Cancelar
-          </Button>
-          <Button onClick={handleSubmit} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            <UserPlus className="h-4 w-4 mr-2" />
-            {isEditing ? 'Guardar cambios' : 'Crear cliente'}
-          </Button>
+        <Button variant="outline" onClick={() => navigate('/clientes')} disabled={saving}>
+          Cancelar
+        </Button>
+      </div>
+
+      {/* Pasos */}
+      <div className="mb-5 overflow-x-auto">
+        <div className="flex min-w-max items-center gap-1">
+          {STEPS.map((s, i) => {
+            const Icon = s.icon;
+            const active = s.id === step;
+            const stepErrors = Object.keys(errorsByStep[s.id]).length;
+            const done = stepErrors === 0 && (visited.has(s.id) || i < stepIndex);
+            const failing = visited.has(s.id) && stepErrors > 0;
+            return (
+              <React.Fragment key={s.id}>
+                {i > 0 && <div className="h-px w-4 shrink-0 bg-gray-300 sm:w-8" />}
+                <button
+                  type="button"
+                  onClick={() => goTo(s.id)}
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${
+                    active
+                      ? 'border-blue-500 bg-blue-50'
+                      : failing
+                        ? 'border-red-200 bg-red-50 hover:bg-red-100'
+                        : 'border-gray-200 bg-white hover:bg-gray-50'
+                  }`}
+                >
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                    failing ? 'bg-red-500 text-white'
+                      : done ? 'bg-green-500 text-white'
+                        : active ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {failing ? <AlertTriangle className="h-3.5 w-3.5" />
+                      : done ? <Check className="h-3.5 w-3.5" /> : i + 1}
+                  </span>
+                  <span className="hidden sm:block">
+                    <span className={`block text-sm font-medium ${active ? 'text-blue-900' : 'text-gray-700'}`}>
+                      {s.label}
+                    </span>
+                    <span className="block text-[11px] text-gray-500">{s.short}</span>
+                  </span>
+                  <Icon className="h-4 w-4 text-gray-400 sm:hidden" />
+                </button>
+              </React.Fragment>
+            );
+          })}
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Foto del cliente */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex flex-col items-center gap-4">
-              <div className="relative">
-                {photoPreview ? (
-                  <div className="relative">
-                    <img
-                      src={photoPreview}
-                      alt="Foto del cliente"
-                      className="w-32 h-32 rounded-full object-cover border-4 border-gray-200"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPhotoPreview('');
-                        setFormData(prev => ({ ...prev, photo_url: '' }));
-                      }}
-                      className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-32 h-32 rounded-full border-4 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-blue-500 transition-colors"
-                  >
-                    <Camera className="h-8 w-8 text-gray-400" />
-                  </div>
-                )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoUpload}
-                  className="hidden"
-                />
-              </div>
-              <div className="text-center">
-                <p className="text-sm text-gray-600 mb-2">Selecciona una imagen</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadingPhoto}
-                >
-                  {uploadingPhoto ? (
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* ---------------------------------------------------------------- */}
+        {/* PASO 1 — IDENTIDAD                                                */}
+        {/* ---------------------------------------------------------------- */}
+        {step === 'identidad' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>¿Quién es el cliente?</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+                <div className="relative">
+                  {photoPreview ? (
                     <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Subiendo...
+                      <img src={photoPreview} alt="Foto del cliente"
+                        className="h-24 w-24 rounded-full border object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => { setPhotoPreview(''); setFormData(p => ({ ...p, photo_url: '' })); }}
+                        className="absolute -right-1 -top-1 rounded-full bg-red-500 p-1 text-white hover:bg-red-600"
+                        aria-label="Quitar foto"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
                     </>
                   ) : (
-                    <>
-                      <Upload className="h-4 w-4 mr-2" />
-                      Subir foto
-                    </>
+                    <div className="flex h-24 w-24 items-center justify-center rounded-full border-2 border-dashed border-gray-300 bg-gray-50">
+                      <Camera className="h-8 w-8 text-gray-400" />
+                    </div>
                   )}
-                </Button>
+                </div>
+                <div>
+                  <input ref={fileInputRef} type="file" accept="image/*"
+                    onChange={handlePhotoUpload} className="hidden" />
+                  <Button type="button" variant="outline" size="sm"
+                    onClick={() => fileInputRef.current?.click()} disabled={uploadingPhoto}>
+                    {uploadingPhoto
+                      ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Subiendo…</>
+                      : <><Camera className="mr-2 h-4 w-4" />{photoPreview ? 'Cambiar foto' : 'Subir foto'}</>}
+                  </Button>
+                  <p className="mt-1 text-xs text-gray-500">Opcional. Máximo 5 MB.</p>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Datos personales */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Datos personales</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Nombres *</Label>
-                <Input
-                  value={formData.first_name}
-                  onChange={(e) => handleChange('first_name', e.target.value)}
-                  placeholder="Nombre del cliente"
-                  required
-                />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Nombres" required error={err('first_name')}>
+                  <Input value={formData.first_name} autoFocus
+                    onChange={(e) => handleChange('first_name', e.target.value)}
+                    placeholder="Juan Carlos" />
+                </Field>
+                <Field label="Apellidos" required error={err('last_name')}>
+                  <Input value={formData.last_name}
+                    onChange={(e) => handleChange('last_name', e.target.value)}
+                    placeholder="Pérez Santana" />
+                </Field>
               </div>
-              <div>
-                <Label>Apellidos *</Label>
-                <Input
-                  value={formData.last_name}
-                  onChange={(e) => handleChange('last_name', e.target.value)}
-                  placeholder="Apellido del cliente"
-                  required
-                />
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field
+                  label="Cédula" required error={err('dni')}
+                  hint={checkingDni ? 'Verificando…' : '11 dígitos'}
+                >
+                  <Input value={formData.dni} inputMode="numeric"
+                    onChange={(e) => handleChange('dni', e.target.value)}
+                    onBlur={checkDuplicateDni}
+                    placeholder="000-0000000-0" />
+                </Field>
+                <Field label="Apodo" hint="Como lo conocen en el barrio">
+                  <Input value={formData.nickname}
+                    onChange={(e) => handleChange('nickname', e.target.value)}
+                    placeholder="Juancho" />
+                </Field>
               </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Apodo</Label>
-                <Input
-                  value={formData.nickname}
-                  onChange={(e) => handleChange('nickname', e.target.value)}
-                  placeholder="Apodo del cliente"
-                />
+
+              {duplicate && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    Ya existe un cliente con esta cédula: <strong>{duplicate.full_name}</strong>.
+                    <button
+                      type="button"
+                      className="ml-2 underline"
+                      onClick={() => navigate(`/clientes/editar/${duplicate.id}`)}
+                    >
+                      Abrir ese cliente
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <Field label="Nacionalidad">
+                  <Select value={formData.nationality || undefined}
+                    onValueChange={(v) => handleChange('nationality', v)}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                    <SelectContent>
+                      {['Dominicano', 'Haitiano', 'Estadounidense', 'Español', 'Venezolano', 'Otro'].map(n => (
+                        <SelectItem key={n} value={n}>{n}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Fecha de nacimiento" error={err('birth_date')} hint="Opcional">
+                  <Input type="date" value={formData.birth_date}
+                    max={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => handleChange('birth_date', e.target.value)} />
+                </Field>
+                <Field label="Estado civil">
+                  <Select value={formData.marital_status || undefined}
+                    onValueChange={(v) => handleChange('marital_status', v)}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                    <SelectContent>
+                      {MARITAL_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </Field>
               </div>
-              <div>
-                <Label>Doc. Identidad *</Label>
-                <Input
-                  value={formData.dni}
-                  onChange={(e) => handleChange('dni', e.target.value)}
-                  placeholder="000-0000000-0"
-                  required
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <Label>Nacionalidad</Label>
-                <Select value={formData.nationality || undefined} onValueChange={(value) => handleChange('nationality', value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar nacionalidad" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Dominicano">Dominicano</SelectItem>
-                    <SelectItem value="Haitiano">Haitiano</SelectItem>
-                    <SelectItem value="Estadounidense">Estadounidense</SelectItem>
-                    <SelectItem value="Español">Español</SelectItem>
-                    <SelectItem value="Otro">Otro</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Fecha Nacimiento *</Label>
-                <Input
-                  type="date"
-                  value={formData.birth_date}
-                  onChange={(e) => handleChange('birth_date', e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <Label>Sexo</Label>
-                <RadioGroup value={formData.gender} onValueChange={(value) => handleChange('gender', value)}>
-                  <div className="flex gap-4">
+
+              <Field label="Sexo">
+                <RadioGroup value={formData.gender} onValueChange={(v) => handleChange('gender', v)}>
+                  <div className="flex gap-6">
                     <div className="flex items-center space-x-2">
                       <RadioGroupItem value="MASCULINO" id="gender-m" />
-                      <Label htmlFor="gender-m" className="cursor-pointer">MASCULINO</Label>
+                      <Label htmlFor="gender-m" className="cursor-pointer font-normal">Masculino</Label>
                     </div>
                     <div className="flex items-center space-x-2">
                       <RadioGroupItem value="FEMENINO" id="gender-f" />
-                      <Label htmlFor="gender-f" className="cursor-pointer">FEMENINO</Label>
+                      <Label htmlFor="gender-f" className="cursor-pointer font-normal">Femenino</Label>
                     </div>
                   </div>
                 </RadioGroup>
-              </div>
-            </div>
-            <div>
-              <Label>Estado Civil</Label>
-              <Input
-                value={formData.marital_status}
-                onChange={(e) => handleChange('marital_status', e.target.value)}
-                placeholder="Estado civil del cliente"
-              />
-            </div>
-          </CardContent>
-        </Card>
+              </Field>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Datos básicos */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Datos básicos</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Ocupación</Label>
-                <Input
-                  value={formData.occupation}
-                  onChange={(e) => handleChange('occupation', e.target.value)}
-                  placeholder="Ocupación del cliente"
-                />
+        {/* ---------------------------------------------------------------- */}
+        {/* PASO 2 — CONTACTO                                                 */}
+        {/* ---------------------------------------------------------------- */}
+        {step === 'contacto' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>¿Cómo localizarlo?</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Teléfono principal" required error={err('phone')}
+                  hint="Es el número al que se llama para cobrar">
+                  <Input type="tel" inputMode="numeric" value={formData.phone} autoFocus
+                    onChange={(e) => handleChange('phone', e.target.value)}
+                    placeholder="(809) 000-0000" />
+                </Field>
+                <Field label="WhatsApp" error={err('whatsapp')}>
+                  <Input type="tel" inputMode="numeric" value={formData.whatsapp}
+                    disabled={waSameAsPhone}
+                    onChange={(e) => handleChange('whatsapp', e.target.value)}
+                    placeholder="(809) 000-0000" />
+                  <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-gray-600">
+                    <Checkbox checked={waSameAsPhone}
+                      onCheckedChange={(c) => toggleWaSameAsPhone(c === true)} />
+                    Es el mismo que el teléfono principal
+                  </label>
+                </Field>
               </div>
-              <div>
-                <Label>Ingresos (DOP)</Label>
-                <NumberInput
-                  min="0"
-                  value={formData.monthly_income}
-                  onChange={(e) => handleChange('monthly_income', e.target.value)}
-                  placeholder="0"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <Label>Vivienda (DOP)</Label>
-                <NumberInput
-                  min="0"
-                  value={formData.housing}
-                  onChange={(e) => handleChange('housing', e.target.value)}
-                  placeholder="0"
-                />
-              </div>
-              <div>
-                <Label>Dependientes</Label>
-                <NumberInput
-                  min="0"
-                  value={formData.dependents}
-                  onChange={(e) => handleChange('dependents', e.target.value)}
-                  placeholder="0"
-                />
-              </div>
-              <div>
-                <Label>RNC</Label>
-                <Input
-                  value={formData.rnc}
-                  onChange={(e) => handleChange('rnc', e.target.value)}
-                  placeholder="000000000"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Situación Laboral</Label>
-              <Input
-                value={formData.employment_status}
-                onChange={(e) => handleChange('employment_status', e.target.value)}
-                placeholder="Situación laboral del cliente"
-              />
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Datos de contacto */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Datos de contacto</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>WhatsApp *</Label>
-                <Input
-                  type="tel"
-                  value={formData.whatsapp}
-                  onChange={(e) => handleChange('whatsapp', e.target.value)}
-                  placeholder="(000) 000-0000"
-                  required
-                />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Teléfono alterno" error={err('phone_secondary')}
+                  hint="De un familiar o del trabajo">
+                  <Input type="tel" inputMode="numeric" value={formData.phone_secondary}
+                    onChange={(e) => handleChange('phone_secondary', e.target.value)}
+                    placeholder="(809) 000-0000" />
+                </Field>
+                <Field label="Correo electrónico" error={err('email')}>
+                  <Input type="email" value={formData.email}
+                    onChange={(e) => handleChange('email', e.target.value)}
+                    placeholder="cliente@correo.com" />
+                </Field>
               </div>
-              <div>
-                <Label>Tel. Principal *</Label>
-                <Input
-                  type="tel"
-                  value={formData.phone}
-                  onChange={(e) => handleChange('phone', e.target.value)}
-                  placeholder="(000) 000-0000"
-                  required
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Tel. Otro</Label>
-                <Input
-                  type="tel"
-                  value={formData.phone_secondary}
-                  onChange={(e) => handleChange('phone_secondary', e.target.value)}
-                  placeholder="(000) 000-0000"
-                />
-              </div>
-              <div>
-                <Label>Correo Electrónico</Label>
-                <Input
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => handleChange('email', e.target.value)}
-                  placeholder="email@gmail.com"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
-        {/* Direcciones */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Direcciones</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label>Dirección</Label>
-              <Textarea
-                value={formData.address}
-                onChange={(e) => handleChange('address', e.target.value)}
-                placeholder="Dirección del cliente"
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <Label>Provincia</Label>
-                <Select value={formData.province || undefined} onValueChange={(value) => handleChange('province', value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="SELECCIONAR" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PROVINCES.map(province => (
-                      <SelectItem key={province} value={province}>{province}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Municipio</Label>
-                <Input
-                  value={formData.municipality}
-                  onChange={(e) => handleChange('municipality', e.target.value)}
-                  placeholder="SELECCIONAR PROVINCIA"
-                />
-              </div>
-              <div>
-                <Label>Sector</Label>
-                <Input
-                  value={formData.sector}
-                  onChange={(e) => handleChange('sector', e.target.value)}
-                  placeholder="SELECCIONAR MUNICIPIO"
-                />
-              </div>
-              <div>
-                <Label>Ruta de Cobro / Entrega</Label>
-                <Select value={formData.collection_route || undefined} onValueChange={(value) => handleChange('collection_route', value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="RUTA PRINCIPAL" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="RUTA PRINCIPAL">RUTA PRINCIPAL</SelectItem>
-                    <SelectItem value="RUTA SECUNDARIA">RUTA SECUNDARIA</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Lugar de trabajo</Label>
-                <Input
-                  value={formData.workplace_name}
-                  onChange={(e) => handleChange('workplace_name', e.target.value)}
-                  placeholder="Lugar de trabajo del cliente"
-                />
-              </div>
-              <div>
-                <Label>Dirección de trabajo</Label>
-                <Input
-                  value={formData.workplace_address}
-                  onChange={(e) => handleChange('workplace_address', e.target.value)}
-                  placeholder="Dirección de trabajo del cliente"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* ---------------------------------------------------------------- */}
+        {/* PASO 3 — UBICACIÓN (cascada)                                      */}
+        {/* ---------------------------------------------------------------- */}
+        {step === 'ubicacion' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>¿Dónde vive?</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <Field label="Provincia" required error={err('province')}>
+                  <Select value={formData.province || undefined} onValueChange={handleProvinceChange}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar provincia" /></SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {provinceOptions.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </Field>
 
-        {/* Datos bancarios (opcional) */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Datos bancarios (opcional)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Número de Tarjeta</Label>
-                <Input
-                  value={formData.card_number}
-                  onChange={(e) => handleChange('card_number', e.target.value)}
-                  placeholder="0000000000000"
-                  maxLength={19}
-                />
-              </div>
-              <div>
-                <Label>Usuario</Label>
-                <Input
-                  value={formData.bank_user}
-                  onChange={(e) => handleChange('bank_user', e.target.value)}
-                  placeholder="Usuario del internet banking"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Código</Label>
-                <Input
-                  type="password"
-                  value={formData.bank_code}
-                  onChange={(e) => handleChange('bank_code', e.target.value)}
-                  placeholder="Clave de internet banking"
-                />
-              </div>
-              <div>
-                <Label>Identificador del Token o Tarjeta de Claves</Label>
-                <Input
-                  value={formData.bank_token_identifier}
-                  onChange={(e) => handleChange('bank_token_identifier', e.target.value)}
-                  placeholder="Serial/IMEI/identificador"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Banco</Label>
-              <Select value={formData.bank_name || undefined} onValueChange={(value) => handleChange('bank_name', value)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Seleccionar banco" />
-                </SelectTrigger>
-                <SelectContent>
-                  {DOMINICAN_BANKS.map(bank => (
-                    <SelectItem key={bank} value={bank}>{bank}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Otros */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Otros</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Recomendado por</Label>
-                <Input
-                  value={formData.recommended_by}
-                  onChange={(e) => handleChange('recommended_by', e.target.value)}
-                  placeholder="RECOMENDADO POR"
-                />
-              </div>
-              <div>
-                <Label>Clasificación por color</Label>
-                <Select value={formData.color_classification || undefined} onValueChange={(value) => handleChange('color_classification', value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sin color asignado" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {COLOR_CLASSIFICATIONS.map(color => (
-                      <SelectItem key={color} value={color}>{color}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>CREADO POR</Label>
-                <Input
-                  value={profile?.full_name || user?.email || ''}
-                  disabled
-                  className="bg-gray-100"
-                />
-              </div>
-              <div>
-                <Label>Visible en datapréstamo</Label>
-                <RadioGroup value={formData.visible_in_loan_data} onValueChange={(value) => handleChange('visible_in_loan_data', value)}>
-                  <div className="flex gap-4">
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="SI" id="visible-yes" />
-                      <Label htmlFor="visible-yes" className="cursor-pointer">SI</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="NO" id="visible-no" />
-                      <Label htmlFor="visible-no" className="cursor-pointer">NO</Label>
-                    </div>
-                  </div>
-                </RadioGroup>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>Campo personalizado 1</Label>
-                <Input
-                  value={formData.custom_field_1}
-                  onChange={(e) => handleChange('custom_field_1', e.target.value)}
-                  placeholder="Campo personalizado 1"
-                />
-              </div>
-              <div>
-                <Label>Campo personalizado 2</Label>
-                <Input
-                  value={formData.custom_field_2}
-                  onChange={(e) => handleChange('custom_field_2', e.target.value)}
-                  placeholder="Campo personalizado 2"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>SUBIR ADJUNTO</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  ref={attachmentInputRef}
-                  type="file"
-                  onChange={handleAttachmentUpload}
-                  className="hidden"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => attachmentInputRef.current?.click()}
-                  disabled={uploadingAttachment}
+                <Field
+                  label="Municipio" required error={err('municipality')}
+                  hint={!formData.province ? 'Elige primero la provincia' : undefined}
                 >
-                  {uploadingAttachment ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Subiendo...
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="h-4 w-4 mr-2" />
-                      Seleccionar archivo
-                    </>
-                  )}
-                </Button>
-                {formData.attachment_url && (
-                  <span className="text-sm text-green-600">✓ Archivo subido</span>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+                  <Select
+                    value={formData.municipality || undefined}
+                    onValueChange={handleMunicipalityChange}
+                    disabled={!formData.province}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={formData.province ? 'Seleccionar municipio' : '—'} />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {municipalityOptions.map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </Field>
 
-        {/* Campos adicionales existentes */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Información adicional</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <Label>Ciudad</Label>
-                <Input
-                  value={formData.city}
-                  onChange={(e) => handleChange('city', e.target.value)}
-                  placeholder="Santo Domingo"
-                />
+                <Field
+                  label="Distrito municipal"
+                  hint={!formData.municipality ? 'Elige primero el municipio' : 'Opcional'}
+                >
+                  <Select
+                    value={districtSelectValue}
+                    onValueChange={handleDistrictChange}
+                    disabled={!formData.municipality}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={formData.municipality ? 'Seleccionar' : '—'} />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      <SelectItem value={MUNICIPAL_SEAT}>{MUNICIPAL_SEAT}</SelectItem>
+                      {districtOptions.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                      <SelectItem value={DISTRICT_OTHER}>Otro (escribirlo)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {districtIsCustom && (
+                    <Input
+                      className="mt-2"
+                      value={formData.municipal_district}
+                      onChange={(e) => handleChange('municipal_district', e.target.value)}
+                      placeholder="Nombre del distrito municipal"
+                    />
+                  )}
+                </Field>
               </div>
-              <div>
-                <Label>Barrio / Sector</Label>
-                <Input
-                  value={formData.neighborhood}
-                  onChange={(e) => handleChange('neighborhood', e.target.value)}
-                  placeholder="Ensanche, residencial..."
-                />
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Sector / Barrio" hint="Ej.: Los Prados, Villa Juana">
+                  <Input value={formData.sector}
+                    onChange={(e) => handleChange('sector', e.target.value)}
+                    placeholder="Sector donde vive" />
+                </Field>
+                <Field label="Ruta de cobro / entrega">
+                  <Select value={formData.collection_route || undefined}
+                    onValueChange={(v) => handleChange('collection_route', v)}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar ruta" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="RUTA PRINCIPAL">Ruta principal</SelectItem>
+                      <SelectItem value="RUTA SECUNDARIA">Ruta secundaria</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
               </div>
-              <div>
-                <Label>Score crediticio</Label>
-                <NumberInput
-                  min="0"
-                  max="1000"
-                  value={formData.credit_score}
-                  onChange={(e) => handleChange('credit_score', e.target.value)}
-                  placeholder="700"
-                />
+
+              <Field label="Dirección" hint="Calle, número, referencias para llegar">
+                <Textarea rows={3} value={formData.address}
+                  onChange={(e) => handleChange('address', e.target.value)}
+                  placeholder="Calle Duarte #45, frente al colmado La Esperanza" />
+              </Field>
+
+              {formData.municipality && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+                  <span className="text-xs uppercase tracking-wide text-gray-500">Ubicación</span>
+                  <p className="font-medium">
+                    {[formData.sector, formData.municipal_district === MUNICIPAL_SEAT ? null : formData.municipal_district,
+                      formData.municipality, formData.province].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ---------------------------------------------------------------- */}
+        {/* PASO 4 — TRABAJO E INGRESOS                                       */}
+        {/* ---------------------------------------------------------------- */}
+        {step === 'trabajo' && (
+          <Card>
+            <CardHeader>
+              <CardTitle>¿De qué vive?</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Ocupación">
+                  <Input value={formData.occupation} autoFocus
+                    onChange={(e) => handleChange('occupation', e.target.value)}
+                    placeholder="Chofer, comerciante, enfermera…" />
+                </Field>
+                <Field label="Situación laboral">
+                  <Select value={formData.employment_status || undefined}
+                    onValueChange={(v) => handleChange('employment_status', v)}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                    <SelectContent>
+                      {EMPLOYMENT_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </Field>
               </div>
-            </div>
-            <div>
-              <Label>Estado</Label>
-              <Select value={formData.status} onValueChange={(value) => handleChange('status', value as ClientFormState['status'])}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecciona un estado" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Activo</SelectItem>
-                  <SelectItem value="inactive">Inactivo</SelectItem>
-                  <SelectItem value="blacklisted">Bloqueado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Lugar de trabajo">
+                  <Input value={formData.workplace_name}
+                    onChange={(e) => handleChange('workplace_name', e.target.value)}
+                    placeholder="Nombre de la empresa o negocio" />
+                </Field>
+                <Field label="Dirección del trabajo">
+                  <Input value={formData.workplace_address}
+                    onChange={(e) => handleChange('workplace_address', e.target.value)}
+                    placeholder="Dónde queda" />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                <Field label="Ingreso mensual (RD$)">
+                  <NumberInput min="0" value={formData.monthly_income}
+                    onChange={(e) => handleChange('monthly_income', e.target.value)} placeholder="0" />
+                </Field>
+                <Field label="Gasto de vivienda (RD$)">
+                  <NumberInput min="0" value={formData.housing}
+                    onChange={(e) => handleChange('housing', e.target.value)} placeholder="0" />
+                </Field>
+                <Field label="Dependientes">
+                  <NumberInput min="0" value={formData.dependents}
+                    onChange={(e) => handleChange('dependents', e.target.value)} placeholder="0" />
+                </Field>
+                <Field label="RNC" hint="Si tiene negocio">
+                  <Input value={formData.rnc}
+                    onChange={(e) => handleChange('rnc', e.target.value)} placeholder="000000000" />
+                </Field>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ---------------------------------------------------------------- */}
+        {/* PASO 5 — OTROS DATOS                                              */}
+        {/* ---------------------------------------------------------------- */}
+        {step === 'extras' && (
+          <div className="space-y-5">
+            <Card>
+              <CardHeader>
+                <CardTitle>Clasificación y referencia</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <Field label="Recomendado por">
+                    <Input value={formData.recommended_by}
+                      onChange={(e) => handleChange('recommended_by', e.target.value)}
+                      placeholder="Quién lo refirió" />
+                  </Field>
+                  <Field label="Clasificación por color">
+                    <Select value={formData.color_classification || undefined}
+                      onValueChange={(v) => handleChange('color_classification', v)}>
+                      <SelectTrigger><SelectValue placeholder="Sin color asignado" /></SelectTrigger>
+                      <SelectContent>
+                        {COLOR_CLASSIFICATIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Estado del cliente">
+                    <Select value={formData.status}
+                      onValueChange={(v) => handleChange('status', v as ClientFormState['status'])}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="active">Activo</SelectItem>
+                        <SelectItem value="inactive">Inactivo</SelectItem>
+                        <SelectItem value="blacklisted">Bloqueado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <Field
+                    label="Score crediticio"
+                    hint="El CRM lo recalcula con el comportamiento de pago"
+                  >
+                    <NumberInput min="0" max="1000" value={formData.credit_score}
+                      onChange={(e) => handleChange('credit_score', e.target.value)} placeholder="—" />
+                  </Field>
+                  <Field label="Visible en datos del préstamo">
+                    <RadioGroup value={formData.visible_in_loan_data}
+                      onValueChange={(v) => handleChange('visible_in_loan_data', v)}>
+                      <div className="flex gap-6 pt-2">
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="SI" id="visible-yes" />
+                          <Label htmlFor="visible-yes" className="cursor-pointer font-normal">Sí</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="NO" id="visible-no" />
+                          <Label htmlFor="visible-no" className="cursor-pointer font-normal">No</Label>
+                        </div>
+                      </div>
+                    </RadioGroup>
+                  </Field>
+                  <Field label="Creado por">
+                    <Input value={profile?.full_name || user?.email || ''} disabled className="bg-gray-100" />
+                  </Field>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Datos bancarios</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <Field label="Banco">
+                    <Select value={formData.bank_name || undefined}
+                      onValueChange={(v) => handleChange('bank_name', v)}>
+                      <SelectTrigger><SelectValue placeholder="Seleccionar banco" /></SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {DOMINICAN_BANKS.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field label="Número de tarjeta / cuenta">
+                    <Input value={formData.card_number} maxLength={19}
+                      onChange={(e) => handleChange('card_number', e.target.value)}
+                      placeholder="0000000000000" />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <Field label="Usuario">
+                    <Input value={formData.bank_user}
+                      onChange={(e) => handleChange('bank_user', e.target.value)}
+                      placeholder="Usuario del internet banking" />
+                  </Field>
+                  <Field label="Código">
+                    <Input type="password" value={formData.bank_code}
+                      onChange={(e) => handleChange('bank_code', e.target.value)}
+                      placeholder="Clave" />
+                  </Field>
+                  <Field label="Identificador del token">
+                    <Input value={formData.bank_token_identifier}
+                      onChange={(e) => handleChange('bank_token_identifier', e.target.value)}
+                      placeholder="Serial / IMEI" />
+                  </Field>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Campos propios y adjuntos</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <Field label="Campo personalizado 1">
+                    <Input value={formData.custom_field_1}
+                      onChange={(e) => handleChange('custom_field_1', e.target.value)} />
+                  </Field>
+                  <Field label="Campo personalizado 2">
+                    <Input value={formData.custom_field_2}
+                      onChange={(e) => handleChange('custom_field_2', e.target.value)} />
+                  </Field>
+                </div>
+                <Field label="Documento adjunto">
+                  <div className="flex items-center gap-2">
+                    <input ref={attachmentInputRef} type="file"
+                      onChange={handleAttachmentUpload} className="hidden" />
+                    <Button type="button" variant="outline"
+                      onClick={() => attachmentInputRef.current?.click()} disabled={uploadingAttachment}>
+                      {uploadingAttachment
+                        ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Subiendo…</>
+                        : <><Upload className="mr-2 h-4 w-4" />Seleccionar archivo</>}
+                    </Button>
+                    {formData.attachment_url && (
+                      <span className="text-sm text-green-600">✓ Archivo subido</span>
+                    )}
+                  </div>
+                </Field>
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </form>
+
+      {/* Barra de acciones fija */}
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 p-3">
+          <Button type="button" variant="outline" onClick={goBack} disabled={stepIndex === 0 || saving}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Atrás
+          </Button>
+
+          <div className="hidden text-xs text-gray-500 sm:block">
+            Paso {stepIndex + 1} de {STEPS.length}
+            {!isComplete && (
+              <span className="ml-2 text-amber-700">
+                · faltan {Object.keys(allErrors).length} {Object.keys(allErrors).length === 1 ? 'dato' : 'datos'}
+              </span>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            {!isLastStep && (
+              <Button type="button" variant="outline" onClick={goNext} disabled={saving}>
+                Siguiente
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            )}
+            <Button type="button" onClick={() => handleSubmit()} disabled={saving}>
+              {saving
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <UserPlus className="mr-2 h-4 w-4" />}
+              {isEditing ? 'Guardar cambios' : 'Crear cliente'}
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
