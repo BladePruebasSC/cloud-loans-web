@@ -9,7 +9,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
@@ -21,10 +21,12 @@ import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@
 import {
   addPeriodsToDate,
   formatDateLocalIso,
-  getFirstDueDateIso,
+  getFrequencyLabel,
   getFrequencyRateFactor,
   parseIsoDateLocal,
 } from '@/utils/frequencyUtils';
+import { computeExtendedSchedule } from '@/utils/loanRescheduling';
+import { formatCurrency } from '@/lib/utils';
 import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { getFirstUnpaidDueDate } from '@/utils/nextPaymentDateFromInstallments';
@@ -55,7 +57,9 @@ const updateSchema = z.object({
   update_type: z.enum(['add_charge', 'pay_charges', 'term_extension', 'settle_loan', 'delete_loan', 'remove_late_fee', 'payment_agreement', 'edit_loan', 'capital_payment']),
   amount: z.number().min(0.01, 'El monto debe ser mayor a 0').optional(),
   late_fee_amount: z.number().min(0.01, 'El monto de mora debe ser mayor a 0').optional(),
-  additional_months: z.number().min(0, 'Los meses adicionales deben ser mayor o igual a 0').optional(),
+  // Nota: el nombre del campo se conserva por compatibilidad con el historial ya guardado,
+  // pero su unidad son CUOTAS de la frecuencia del préstamo, no meses.
+  additional_months: z.number().min(0, 'Las cuotas adicionales deben ser mayor o igual a 0').optional(),
   adjustment_reason: z.string().optional(),
   payment_method: z.string().optional(),
   reference_number: z.string().optional(),
@@ -1280,6 +1284,29 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
   const watchedValues = form.watch(['update_type', 'amount', 'additional_months', 'late_fee_amount', 'edit_amount', 'edit_interest_rate', 'edit_term_months', 'edit_amortization_type', 'settle_capital', 'settle_interest', 'settle_late_fee', 'capital_payment_amount', 'keep_installments', 'is_penalty', 'penalty_percentage']);
 
+  // CORRECCIÓN (2026-08-31): la extensión de plazo tenía tres cálculos distintos para lo mismo
+  // — el de la vista previa, el que se guardaba en `loans` y el que generaba las cuotas — y los
+  // tres discrepaban. Ahora los tres pasan por `computeExtendedSchedule`, que es una función
+  // pura: con las mismas entradas no puede dar resultados distintos.
+  const buildExtensionSchedule = useCallback((additionalCount: number) => {
+    if ((loan.amortization_type || '').toLowerCase() === 'indefinite') return null;
+    return computeExtendedSchedule({
+      amount: Number(loan.amount) || 0,
+      interestRate: Number(loan.interest_rate) || 0,
+      frequency: loan.payment_frequency || 'monthly',
+      amortizationType: loan.amortization_type || 'simple',
+      installments,
+      additionalCount,
+      fallbackDueDate: String(loan.next_payment_date || '').split('T')[0],
+    });
+  }, [loan.amount, loan.interest_rate, loan.payment_frequency, loan.amortization_type, loan.next_payment_date, installments]);
+
+  /** Vista previa de la extensión con el número de cuotas escrito ahora mismo. */
+  const extensionPreview = useMemo(() => {
+    if (form.watch('update_type') !== 'term_extension') return null;
+    return buildExtensionSchedule(Number(form.watch('additional_months')) || 0);
+  }, [watchedValues, buildExtensionSchedule]);
+
   useEffect(() => {
     const updateType = form.watch('update_type');
     if (updateType !== 'payment_agreement') {
@@ -1421,44 +1448,33 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // No aplica para indefinidos.
           break;
         }
-        if (additionalMonths) {
-          // Contar solo cuotas regulares PENDIENTES (excluyendo cargos y cuotas pagadas)
-          const regularPendingInstallments = installments.filter(inst => {
-            // Verificar si es un cargo (interés = 0 o casi 0, y principal ≈ total)
-            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-            // Solo contar cuotas regulares que no estén pagadas
-            return !isCharge && !inst.is_paid;
-          });
-          
-          const currentRemainingMonths = regularPendingInstallments.length;
-          const newTotalMonths = currentRemainingMonths + additionalMonths;
-          const newTotalPayments = loan.term_months + additionalMonths;
-          
-          // Fórmula correcta: (Monto Original × Tasa × Plazo + Monto Original) ÷ Plazo
-          const totalInterest = (loan.amount * loan.interest_rate * newTotalPayments) / 100;
-          const totalAmount = totalInterest + loan.amount;
-          newPayment = totalAmount / newTotalPayments;
-          
-          // Calcular nuevo balance basado en cuotas pendientes (sin incluir cargos en el cálculo)
-          // Balance = Capital pendiente de cuotas regulares + cargos no pagados
-          const totalPrincipalPending = regularPendingInstallments.reduce((sum, inst) => 
-            sum + (inst.principal_amount || 0), 0);
-          const unpaidCharges = installments.filter(inst => {
-            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-            return isCharge && !inst.is_paid;
-          });
-          const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
-          
-          // El nuevo balance considera el capital pendiente + las cuotas adicionales (sin incluir cargos en la extensión)
-          const additionalBalance = newPayment * additionalMonths;
-          newBalance = totalPrincipalPending + additionalBalance + unpaidChargesAmount;
-          
-          // Calcular nueva fecha de fin
-          const currentEndDate = new Date(loan.next_payment_date);
-          currentEndDate.setMonth(currentEndDate.getMonth() + newTotalMonths);
-          newEndDate = currentEndDate.toISOString().split('T')[0];
+        {
+          // Se calcula también con 0 cuotas adicionales: eso re-amortiza el tramo pendiente sin
+          // cambiar el plazo, que es la forma de reparar un préstamo extendido con la fórmula
+          // vieja (cuotas de importes distintos). Antes este bloque estaba dentro de
+          // `if (additionalMonths)` y la vista previa se quedaba con el balance sin recalcular.
+          //
+          // CORRECCIÓN (2026-08-31): antes se calculaba aquí con
+          // `(monto × tasa × (term_months + adicionales)) / 100`, que:
+          //   · ignoraba la frecuencia (en un quincenal cobraba el doble de interés),
+          //   · usaba `term_months` mientras la vista previa mostraba "cuotas pendientes",
+          //   · sumaba el balance mezclando capital pendiente con cuotas completas.
+          // Ahora el reparto lo hace `computeExtendedSchedule`, la misma función que usa el
+          // guardado, así que la vista previa y el resultado coinciden siempre.
+          const schedule = buildExtensionSchedule(additionalMonths);
+          if (schedule) {
+            newPayment = schedule.representativePayment;
+            newEndDate = schedule.newEndDate;
+
+            // Cargos pendientes: la extensión no los toca, pero sí siguen en el balance.
+            const unpaidChargesAmount = installments.reduce((sum, inst) => {
+              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 &&
+                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
+              return isCharge && !inst.is_paid ? sum + (inst.total_amount || 0) : sum;
+            }, 0);
+
+            newBalance = schedule.totalPendingAmount + unpaidChargesAmount;
+          }
         }
         break;
         
@@ -2931,107 +2947,94 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         case 'term_extension':
           {
             const additionalMonths = data.additional_months || 0;
-            const newTermMonths = loan.term_months + additionalMonths;
 
-            console.log('🔍 LoanUpdateForm: Iniciando extensión de plazo:', {
+            // CORRECCIÓN (2026-08-31): antes solo se INSERTABAN las cuotas nuevas, calculadas con
+            // una cuota distinta a la del resto del préstamo. El capital quedaba sobre-repartido
+            // (p. ej. 6 × 1,666.67 + 2 × 2,000 = 14,000 en un préstamo de 10,000) y `total_amount`
+            // ni siquiera se actualizaba, así que la BD, la vista previa y la tabla de
+            // amortización mostraban tres cifras distintas.
+            // Ahora se re-amortiza todo el tramo PENDIENTE: las cuotas existentes se actualizan y
+            // las nuevas se insertan, todas con el mismo reparto. Las pagadas no se tocan.
+            const schedule = buildExtensionSchedule(additionalMonths);
+            if (!schedule) {
+              toast.error('La extensión de plazo no aplica a este préstamo');
+              setLoading(false);
+              return;
+            }
+
+            console.log('🔍 LoanUpdateForm: Extensión de plazo:', {
               additionalMonths,
-              currentTermMonths: loan.term_months,
-              newTermMonths,
-              newPayment: calculatedValues.newPayment
+              pendientesAntes: schedule.pendingCountBefore,
+              pendientesDespues: schedule.pendingCountAfter,
+              capitalPendiente: schedule.outstandingCapital,
+              cuota: schedule.representativePayment,
+              nuevoTotal: schedule.newTotalAmount,
+              nuevoPlazo: schedule.newTermPeriods,
             });
 
             loanUpdates = {
-              term_months: newTermMonths,
-              monthly_payment: calculatedValues.newPayment,
-              end_date: calculatedValues.newEndDate,
+              term_months: schedule.newTermPeriods,
+              monthly_payment: schedule.representativePayment,
+              total_amount: schedule.newTotalAmount,
+              end_date: schedule.newEndDate,
             };
 
-            // Crear las nuevas cuotas en la tabla installments
             try {
-              const newInstallments = [];
-              const frequency = loan.payment_frequency || 'monthly';
-
-              // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): este bloque tomaba
-              // `loan.first_payment_date` como si fuera la fecha de la PRIMERA CUOTA y luego
-              // sumaba `i - 1` períodos. Pero al crear el préstamo, `LoanForm.onSubmit` guarda
-              // en `first_payment_date` la **fecha de inicio** elegida por el usuario (la misma
-              // que en `start_date`), NO la primera fecha de vencimiento — esa va en
-              // `next_payment_date`. Resultado: cada cuota agregada por una extensión de plazo
-              // quedaba UN PERÍODO ANTES de lo que le tocaba, solapándose con las cuotas
-              // existentes y apareciendo como vencida (con mora) desde el día en que se creaba.
-              // Se calcula la primera fecha de vencimiento a partir de `start_date` + 1 período,
-              // que es la convención que usa el resto del sistema.
-              const extStartIso = String(loan.start_date || loan.first_payment_date || '').split('T')[0];
-              const firstDueDate = extStartIso
-                ? parseIsoDateLocal(getFirstDueDateIso(extStartIso, frequency))
-                : parseIsoDateLocal(String(loan.next_payment_date || '').split('T')[0]);
-
-              if (!firstDueDate) {
-                throw new Error('No se pudo determinar la fecha de la primera cuota del préstamo');
+              // 1) Actualizar las cuotas pendientes que ya existían, con el nuevo reparto.
+              //    Su número y su fecha NO cambian (renumerarlas rompería `paid_installments` y
+              //    el historial); solo cambia cómo se reparte capital e interés.
+              for (const row of schedule.updatedRows) {
+                if (!row.id) continue;
+                const { error: updErr } = await supabase
+                  .from('installments')
+                  .update({
+                    principal_amount: row.principal,
+                    interest_amount: row.interest,
+                    total_amount: row.total,
+                  })
+                  .eq('id', row.id);
+                if (updErr) throw updErr;
               }
 
-              console.log('🔍 LoanUpdateForm: Fecha base para cuotas:', {
-                first_payment_date: loan.first_payment_date,
-                start_date: loan.start_date,
-                next_payment_date: loan.next_payment_date,
-                firstDueDate: formatDateLocalIso(firstDueDate)
-              });
-
-              // Calcular el monto de capital e interés para cada cuota nueva
-              // La tasa es mensual; ajustar por frecuencia para quincenal/semanal/diario
-              const freqFactorExt = getFrequencyRateFactor(frequency);
-              const fixedInterestPerPayment = ((loan.amount * loan.interest_rate) / 100) * freqFactorExt;
-              const principalPerPayment = calculatedValues.newPayment - fixedInterestPerPayment;
-
-              console.log('🔍 LoanUpdateForm: Distribución por cuota:', {
-                totalPayment: calculatedValues.newPayment,
-                interest: fixedInterestPerPayment,
-                principal: principalPerPayment
-              });
-
-              for (let i = loan.term_months + 1; i <= newTermMonths; i++) {
-                // La cuota `i` vence `i - 1` períodos después de la PRIMERA cuota.
-                const dueDate = addPeriodsToDate(firstDueDate, i - 1, frequency);
-
-                const installmentData = {
-                  loan_id: loan.id,
-                  installment_number: i,
-                  due_date: formatDateLocalIso(dueDate),
-                  total_amount: calculatedValues.newPayment,
-                  principal_amount: principalPerPayment,
-                  interest_amount: fixedInterestPerPayment,
-                  is_paid: false,
-                  late_fee_paid: 0
-                };
-
-                newInstallments.push(installmentData);
-                
-                console.log(`🔍 LoanUpdateForm: Cuota ${i} programada:`, installmentData);
-              }
+              // 2) Insertar las cuotas nuevas.
+              const newInstallments = schedule.newRows.map(row => ({
+                loan_id: loan.id,
+                installment_number: row.installmentNumber,
+                due_date: row.dueDate,
+                total_amount: row.total,
+                principal_amount: row.principal,
+                interest_amount: row.interest,
+                is_paid: false,
+                late_fee_paid: 0,
+              }));
 
               if (newInstallments.length > 0) {
-                console.log(`🔍 LoanUpdateForm: Insertando ${newInstallments.length} cuotas nuevas...`);
-                
-                const { data: insertedData, error: installmentsError } = await supabase
+                const { error: installmentsError } = await supabase
                   .from('installments')
-                  .insert(newInstallments)
-                  .select();
-
-                if (installmentsError) {
-                  console.error('❌ Error creando nuevas cuotas:', installmentsError);
-                  toast.error('Error creando nuevas cuotas');
-                } else {
-                  console.log(`✅ ${newInstallments.length} nuevas cuotas creadas exitosamente:`, insertedData);
-                  toast.success(`${newInstallments.length} cuotas adicionales agregadas al préstamo`);
-                }
+                  .insert(newInstallments);
+                if (installmentsError) throw installmentsError;
               }
+
+              const resumen = schedule.uniformPayment
+                ? `${schedule.pendingCountAfter} cuotas pendientes de ${formatCurrency(schedule.representativePayment)}.`
+                : `${schedule.pendingCountAfter} cuotas pendientes (cuota decreciente desde ${formatCurrency(schedule.representativePayment)}).`;
+              toast.success(
+                schedule.additionalCount > 0
+                  ? `${schedule.additionalCount} ${schedule.additionalCount === 1 ? 'cuota agregada' : 'cuotas agregadas'}. ${resumen}`
+                  : `Cuotas recalculadas sin cambiar el plazo. ${resumen}`
+              );
+
+              await fetchInstallments();
+              window.dispatchEvent(new CustomEvent('installmentsUpdated', { detail: { loanId: loan.id } }));
             } catch (error) {
               console.error('❌ Error en extensión de plazo:', error);
-              toast.error('Error procesando extensión de plazo');
+              toast.error('Error procesando la extensión de plazo');
+              setLoading(false);
+              return;
             }
           }
           break;
-          
+
         case 'settle_loan':
           {
             // Obtener valores de los 3 campos separados
@@ -4434,31 +4437,27 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         // Agregar term_months para extensiones de plazo
         if (updateType === 'term_extension') {
           oldValueObj.term_months = actualTermMonths;
-          newValueObj.term_months = (actualTermMonths || 0) + (data.additional_months || 0);
+          newValueObj.term_months = buildExtensionSchedule(data.additional_months || 0)?.newTermPeriods
+            ?? (actualTermMonths || 0) + (data.additional_months || 0);
         }
-        
+
         let description = `${updateType}: ${data.adjustment_reason}`;
-        
+
         if (updateType === 'term_extension') {
-          const additionalMonths = data.additional_months || 0;
-          const paymentFrequency = loan.payment_frequency || 'monthly';
-          
-          // Agregar información sobre el período agregado según la frecuencia
-          let periodInfo = '';
-          if (paymentFrequency === 'daily') {
-            const days = additionalMonths * 30; // Aproximación
-            periodInfo = `${days} días`;
-          } else if (paymentFrequency === 'weekly') {
-            const weeks = additionalMonths * 4; // Aproximación
-            periodInfo = `${weeks} semanas`;
-          } else if (paymentFrequency === 'biweekly') {
-            const quincenas = additionalMonths * 2; // Aproximación
-            periodInfo = `${quincenas} quincenas`;
-          } else {
-            periodInfo = `${additionalMonths} mes${additionalMonths !== 1 ? 'es' : ''}`;
+          // CORRECCIÓN (2026-08-31): este texto multiplicaba el número por 30/4/2 porque el
+          // campo se interpretaba como MESES y había que convertirlo a períodos. Ahora el campo
+          // ya son CUOTAS de la frecuencia del préstamo, así que la conversión sobraba y además
+          // era aproximada ("30 días" por mes). Se nombra la frecuencia y ya.
+          const schedule = buildExtensionSchedule(data.additional_months || 0);
+          const added = schedule?.additionalCount ?? (data.additional_months || 0);
+          const freqLabel = getFrequencyLabel(loan.payment_frequency, added !== 1);
+
+          description = `Extensión de Plazo: ${data.adjustment_reason}. ` +
+            `Se ${added === 1 ? 'agregó 1 cuota' : `agregaron ${added} cuotas`} (${added} ${freqLabel}).`;
+          if (schedule) {
+            description += ` ${schedule.pendingCountAfter} cuotas pendientes de ` +
+              `RD$${schedule.representativePayment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`;
           }
-          
-          description = `Extensión de Plazo: ${data.adjustment_reason}. ${periodInfo} agregados.`;
           if (data.notes) {
             description += ` Notas: ${data.notes}`;
           }
@@ -5634,7 +5633,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         name="additional_months"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Meses Adicionales</FormLabel>
+                            {/* CORRECCIÓN (2026-08-31): decía "Meses Adicionales", pero el plazo
+                                del préstamo está en PERÍODOS de su frecuencia. En un préstamo
+                                quincenal, escribir 2 agrega 2 quincenas, no 2 meses. */}
+                            <FormLabel>Cuotas Adicionales</FormLabel>
                             <FormControl>
                               <Input
                                 type="text"
@@ -5650,6 +5652,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                 className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             </FormControl>
+                            <FormDescription>
+                              Cada cuota que agregues equivale a <strong>1 {getFrequencyLabel(loan.payment_frequency, false)}</strong>,
+                              que es la frecuencia de pago de este préstamo.
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -6202,57 +6208,110 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
 
 
-                    {form.watch('update_type') === 'term_extension' && (
+                    {/* CORRECCIÓN (2026-08-31): esta vista previa contaba las cuotas pendientes
+                        mientras el cálculo del importe usaba `term_months` (que incluye las ya
+                        pagadas). Ahora todo sale de `extensionPreview`, el mismo objeto que se
+                        guarda, y se muestra el reparto real cuota por cuota. */}
+                    {form.watch('update_type') === 'term_extension' && extensionPreview && (
                       <>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Cuotas Restantes:</span>
-                          <span className="font-semibold">
-                            {(() => {
-                              // Contar solo cuotas regulares pendientes (sin cargos)
-                              const regularPending = installments.filter(inst => {
-                                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                return !isCharge && !inst.is_paid;
-                              });
-                              return regularPending.length;
-                            })()} cuotas
-                          </span>
+                          <span className="text-gray-600">Cuotas Pendientes:</span>
+                          <span className="font-semibold">{extensionPreview.pendingCountBefore} cuotas</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Cuotas Adicionales:</span>
-                          <span className="font-semibold text-blue-600">+{form.watch('additional_months')} cuotas</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Nuevo Total:</span>
-                          <span className="font-bold text-purple-600">
-                            {(() => {
-                              const regularPending = installments.filter(inst => {
-                                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                                return !isCharge && !inst.is_paid;
-                              });
-                              return regularPending.length + (form.watch('additional_months') || 0);
-                            })()} cuotas
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Nueva Cuota Mensual:</span>
-                          <span className="font-bold text-green-600">RD${calculatedValues.newPayment.toLocaleString()}</span>
-                        </div>
-                        {calculatedValues.newEndDate && (
+                        {extensionPreview.paidCount > 0 && (
                           <div className="flex justify-between">
-                            <span className="text-gray-600">Nueva Fecha Fin:</span>
-                            <span className="font-semibold">{new Date(calculatedValues.newEndDate).toLocaleDateString()}</span>
+                            <span className="text-gray-600">Cuotas Pagadas (no se tocan):</span>
+                            <span className="font-semibold text-gray-500">{extensionPreview.paidCount} cuotas</span>
                           </div>
                         )}
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2">
-                          <div className="text-sm text-blue-800">
-                            <strong>📋 Se crearán {form.watch('additional_months')} cuotas nuevas</strong>
-                            <p className="mt-1 text-xs">
-                              Las nuevas cuotas se agregarán a la tabla de desglose después de guardar
-                            </p>
-                          </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Cuotas Adicionales:</span>
+                          <span className="font-semibold text-blue-600">
+                            +{extensionPreview.additionalCount} {extensionPreview.additionalCount === 1 ? 'cuota' : 'cuotas'}
+                            {' '}<span className="text-xs font-normal text-gray-500">
+                              ({extensionPreview.additionalCount} {getFrequencyLabel(loan.payment_frequency, extensionPreview.additionalCount !== 1)})
+                            </span>
+                          </span>
                         </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Nuevo Total Pendiente:</span>
+                          <span className="font-bold text-purple-600">{extensionPreview.pendingCountAfter} cuotas</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Capital a Repartir:</span>
+                          <span className="font-semibold">{formatCurrency(extensionPreview.outstandingCapital)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">
+                            {extensionPreview.uniformPayment ? 'Nueva Cuota (todas):' : 'Primera Cuota:'}
+                          </span>
+                          <span className="font-bold text-green-600">{formatCurrency(extensionPreview.representativePayment)}</span>
+                        </div>
+                        {extensionPreview.newEndDate && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Nueva Fecha Fin:</span>
+                            <span className="font-semibold">{formatDateStringForSantoDomingo(extensionPreview.newEndDate)}</span>
+                          </div>
+                        )}
+
+                        {extensionPreview.rows.length > 0 && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2 space-y-2">
+                            <div className="text-sm text-blue-900 font-semibold">Cómo se reparten las cuotas</div>
+                            <p className="text-xs text-blue-800">{extensionPreview.description}</p>
+                            <p className="text-xs text-blue-800">
+                              {extensionPreview.additionalCount > 0 ? (
+                                <>
+                                  Se <strong>recalculan las {extensionPreview.pendingCountBefore} cuotas pendientes</strong> y se
+                                  crean <strong>{extensionPreview.additionalCount} nuevas</strong>, para que todas queden con el
+                                  mismo reparto. Las {extensionPreview.paidCount} cuotas ya pagadas no se modifican.
+                                </>
+                              ) : (
+                                <>
+                                  Con <strong>0 cuotas adicionales</strong> no se alarga el plazo: solo se
+                                  <strong> vuelve a repartir</strong> el capital pendiente entre las
+                                  {' '}{extensionPreview.pendingCountBefore} cuotas que quedan. Sirve para corregir un préstamo
+                                  cuyas cuotas quedaron con importes distintos entre sí.
+                                </>
+                              )}
+                            </p>
+
+                            <div className="max-h-44 overflow-y-auto rounded border border-blue-200 bg-white">
+                              <table className="w-full text-xs">
+                                <thead className="sticky top-0 bg-blue-100 text-blue-900">
+                                  <tr>
+                                    <th className="px-2 py-1 text-left font-semibold">#</th>
+                                    <th className="px-2 py-1 text-left font-semibold">Vence</th>
+                                    <th className="px-2 py-1 text-right font-semibold">Capital</th>
+                                    <th className="px-2 py-1 text-right font-semibold">Interés</th>
+                                    <th className="px-2 py-1 text-right font-semibold">Cuota</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {extensionPreview.rows.map((row) => (
+                                    <tr key={`${row.installmentNumber}-${row.dueDate}`} className={row.isNew ? 'bg-green-50' : ''}>
+                                      <td className="px-2 py-1">
+                                        {row.installmentNumber}
+                                        {row.isNew && <span className="ml-1 text-[10px] font-semibold text-green-700">NUEVA</span>}
+                                      </td>
+                                      <td className="px-2 py-1">{formatDateStringForSantoDomingo(row.dueDate)}</td>
+                                      <td className="px-2 py-1 text-right">{formatCurrency(row.principal)}</td>
+                                      <td className="px-2 py-1 text-right">{formatCurrency(row.interest)}</td>
+                                      <td className="px-2 py-1 text-right font-semibold">{formatCurrency(row.total)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot className="border-t border-blue-200 bg-blue-50 font-semibold text-blue-900">
+                                  <tr>
+                                    <td className="px-2 py-1" colSpan={2}>Total pendiente</td>
+                                    <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.outstandingCapital)}</td>
+                                    <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalPendingInterest)}</td>
+                                    <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalPendingAmount)}</td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>

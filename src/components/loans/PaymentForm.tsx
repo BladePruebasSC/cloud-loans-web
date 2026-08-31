@@ -39,6 +39,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { generateLoanPaymentReceipt, openWhatsApp } from '@/utils/whatsappReceipt';
 import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { AdvancedPaymentPanel } from './AdvancedPaymentPanel';
 
 const paymentSchema = z.object({
   loan_id: z.string().min(1, 'Debe seleccionar un préstamo'),
@@ -124,6 +127,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [showPrintFormatModal, setShowPrintFormatModal] = useState(false);
   const [lastPaymentData, setLastPaymentData] = useState<any>(null);
   const [isClosingPrintModal, setIsClosingPrintModal] = useState(false);
+  // Pago avanzado: elegir a qué cuotas abonar y pagar varias de una sola vez.
+  const [advancedMode, setAdvancedMode] = useState(false);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus, isReady: paymentStatusReady } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
@@ -3169,6 +3174,44 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     )}
                   </div>
 
+                  {/* Interruptor de pago avanzado (varias cuotas de una sola vez) */}
+                  {selectedLoan && (
+                    <div className="flex items-start justify-between gap-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <div>
+                        <Label htmlFor="advanced-payment-mode" className="cursor-pointer font-medium">
+                          Pago avanzado
+                        </Label>
+                        <p className="text-xs text-gray-600">
+                          Elige a qué cuotas abonar y paga varias de una sola vez. Útil cuando el
+                          cliente trae un monto mayor al de una cuota.
+                        </p>
+                      </div>
+                      <Switch
+                        id="advanced-payment-mode"
+                        checked={advancedMode}
+                        onCheckedChange={setAdvancedMode}
+                      />
+                    </div>
+                  )}
+
+                  {selectedLoan && advancedMode && (
+                    <AdvancedPaymentPanel
+                      loanId={selectedLoan.id}
+                      clientName={selectedLoan.client?.full_name}
+                      onCancel={() => setAdvancedMode(false)}
+                      onSuccess={() => {
+                        setAdvancedMode(false);
+                        fetchNextPaymentInfo();
+                        refetchPaymentStatus?.();
+                        onPaymentSuccess?.();
+                      }}
+                    />
+                  )}
+
+                  {/* En modo avanzado se oculta el flujo normal (que siempre cobra la cuota más
+                      antigua), pero se mantiene montado para no perder lo ya escrito. */}
+                  <div className={advancedMode ? 'hidden' : 'space-y-6'}>
+
                   {/* Mostrar distribución del pago en tiempo real */}
         {selectedLoan && paymentAmount > 0 && paymentDistribution && (
           <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
@@ -3424,6 +3467,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                       {loading ? 'Registrando...' : 'Registrar Pago'}
                     </Button>
                   </div>
+
+                  </div>{/* fin del flujo normal */}
                 </form>
               </Form>
             </CardContent>
