@@ -1485,15 +1485,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           if (schedule) {
             newPayment = schedule.representativePayment;
             newEndDate = schedule.newEndDate;
-
-            // Cargos pendientes: la extensión no los toca, pero sí siguen en el balance.
-            const unpaidChargesAmount = installments.reduce((sum, inst) => {
-              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 &&
-                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-              return isCharge && !inst.is_paid ? sum + (inst.total_amount || 0) : sum;
-            }, 0);
-
-            newBalance = schedule.totalPendingAmount + unpaidChargesAmount;
+            // El balance sale de `newRemainingBalance`, que replica la fórmula de la base
+            // (total + cargos − pagos). Antes se sumaba aquí a mano y no descontaba los pagos,
+            // así que la vista previa y el préstamo guardado podían no coincidir.
+            newBalance = schedule.newRemainingBalance;
           }
         }
         break;
@@ -2996,6 +2991,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               term_months: schedule.newTermPeriods,
               monthly_payment: schedule.representativePayment,
               total_amount: schedule.newTotalAmount,
+              // CORRECCIÓN (2026-09-01): hay que escribir el balance a mano.
+              // Las cuotas se guardan ANTES que el préstamo, y sus triggers recalculan el
+              // balance con el `total_amount` todavía viejo. Como no existe ningún trigger
+              // sobre `loans`, al actualizar `total_amount` después nadie volvía a calcularlo:
+              // el préstamo se quedaba con el balance anterior a la extensión.
+              remaining_balance: schedule.newRemainingBalance,
               end_date: schedule.newEndDate,
             };
 

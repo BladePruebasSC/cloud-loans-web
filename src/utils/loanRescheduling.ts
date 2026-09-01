@@ -88,6 +88,14 @@ export interface ExtendedSchedule {
   cappedCount: number;
   /** `loans.total_amount` resultante (capital + interés, sin cargos) */
   newTotalAmount: number;
+  /**
+   * `loans.remaining_balance` resultante.
+   *
+   * Se calcula con la MISMA fórmula que `calculate_loan_remaining_balance` en la base
+   * (`total_amount + cargos − pagos`), para que la vista previa, lo que se guarda y lo que
+   * recalcula Postgres digan siempre lo mismo.
+   */
+  newRemainingBalance: number;
   /** `loans.term_months` resultante (pagadas + pendientes) */
   newTermPeriods: number;
   newEndDate: string;
@@ -369,6 +377,30 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
   const totalPendingInterest = round2(rows.reduce((s, r) => s + r.interest, 0));
   const paidTotal = round2(paid.reduce((s, i) => s + Number(i.total_amount ?? i.amount ?? 0), 0));
 
+  const newTotalAmount = round2(paidTotal + totalPendingAmount);
+
+  // ----- Balance resultante -----
+  // Se replica la fórmula de `calculate_loan_remaining_balance` (plazo fijo):
+  //     remaining = total_amount + TODOS los cargos − TODOS los pagos
+  //
+  // Hacía falta porque la extensión escribe primero las CUOTAS —y sus triggers recalculan el
+  // balance con el `total_amount` todavía viejo— y solo después actualiza `loans`. Como no hay
+  // ningún trigger sobre `loans`, el balance se quedaba congelado en el valor anterior: la
+  // vista previa decía 9,000 y el préstamo se quedaba en 8,000.
+  const allCharges = round2(
+    (input.installments || [])
+      .filter(i => isChargeInstallment(i))
+      .reduce((s, i) => s + Number(i.total_amount ?? i.amount ?? 0), 0)
+  );
+  const allPayments = round2(
+    (input.payments || []).reduce((s, p) => {
+      const gross = Number(p.amount ?? 0);
+      if (Number.isFinite(gross) && gross > 0) return s + gross;
+      return s + (Number(p.principal_amount) || 0) + (Number(p.interest_amount) || 0);
+    }, 0)
+  );
+  const newRemainingBalance = round2(Math.max(0, newTotalAmount + allCharges - allPayments));
+
   const representativePayment = rows.length ? rows[0].total : 0;
   const newEndDate = dates.length ? dates[dates.length - 1] : lastKnownDue;
 
@@ -398,7 +430,8 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
     totalAlreadyPaid: round2(rows.reduce((s, r) => s + r.alreadyPaid, 0)),
     totalToCollect: round2(rows.reduce((s, r) => s + r.pendingAfter, 0)),
     cappedCount: rows.filter(r => r.cappedByPayment).length,
-    newTotalAmount: round2(paidTotal + totalPendingAmount),
+    newTotalAmount,
+    newRemainingBalance,
     newTermPeriods: paid.length + pendingCountAfter,
     newEndDate,
     description,
