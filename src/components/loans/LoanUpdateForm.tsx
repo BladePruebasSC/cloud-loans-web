@@ -17,7 +17,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
-import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
+import {
+  getCurrentDateInSantoDomingo, getCurrentDateStringForSantoDomingo, formatDateStringForSantoDomingo,
+} from '@/utils/dateUtils';
 import {
   addPeriodsToDate,
   formatDateLocalIso,
@@ -26,6 +28,7 @@ import {
   parseIsoDateLocal,
 } from '@/utils/frequencyUtils';
 import { computeExtendedSchedule } from '@/utils/loanRescheduling';
+import type { RawPayment } from '@/utils/installmentDues';
 import { formatCurrency } from '@/lib/utils';
 import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
@@ -216,6 +219,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     principalAmount: 0
   });
   const [installments, setInstallments] = useState<any[]>([]);
+  /** Pagos del préstamo: la extensión los necesita para ver las cuotas abonadas a medias. */
+  const [loanPayments, setLoanPayments] = useState<RawPayment[]>([]);
+  /** Abonos DIRECTOS a capital: estos sí reducen el capital a repartir. */
+  const [totalCapitalPaid, setTotalCapitalPaid] = useState(0);
   const [settleBreakdown, setSettleBreakdown] = useState({
     capitalPending: 0,
     interestPending: 0,
@@ -319,14 +326,24 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const fetchInstallments = useCallback(async () => {
     if (!loan?.id) return;
     try {
-      const { data, error } = await supabase
-        .from('installments')
-        .select('*')
-        .eq('loan_id', loan.id)
-        .order('installment_number', { ascending: true });
+      // Se traen también los pagos y los abonos a capital: sin ellos la extensión de plazo
+      // no puede saber qué cuotas están ABONADAS A MEDIAS ni cuánto capital ya se pagó por
+      // fuera de las cuotas.
+      const [{ data, error }, { data: payRows }, { data: capitalRows }] = await Promise.all([
+        supabase.from('installments').select('*')
+          .eq('loan_id', loan.id).order('installment_number', { ascending: true }),
+        supabase.from('payments')
+          .select('amount, principal_amount, interest_amount, due_date')
+          .eq('loan_id', loan.id),
+        supabase.from('capital_payments').select('amount').eq('loan_id', loan.id),
+      ]);
 
       if (error) throw error;
       setInstallments(data || []);
+      setLoanPayments((payRows || []) as RawPayment[]);
+      setTotalCapitalPaid(
+        (capitalRows || []).reduce((sum, cp) => sum + (Number(cp.amount) || 0), 0)
+      );
     } catch (error) {
       console.error('Error obteniendo cuotas:', error);
     }
@@ -1296,10 +1313,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       frequency: loan.payment_frequency || 'monthly',
       amortizationType: loan.amortization_type || 'simple',
       installments,
+      payments: loanPayments,
+      capitalPayments: totalCapitalPaid,
       additionalCount,
       fallbackDueDate: String(loan.next_payment_date || '').split('T')[0],
     });
-  }, [loan.amount, loan.interest_rate, loan.payment_frequency, loan.amortization_type, loan.next_payment_date, installments]);
+  }, [loan.amount, loan.interest_rate, loan.payment_frequency, loan.amortization_type,
+      loan.next_payment_date, installments, loanPayments, totalCapitalPaid]);
 
   /** Vista previa de la extensión con el número de cuotas escrito ahora mismo. */
   const extensionPreview = useMemo(() => {
@@ -2991,6 +3011,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                     principal_amount: row.principal,
                     interest_amount: row.interest,
                     total_amount: row.total,
+                    // Si el abono que ya tenía la cuota cubre su nuevo importe, queda saldada.
+                    // Sin esto seguiría figurando como pendiente pese a estar cobrada.
+                    ...(row.pendingAfter <= 0.005 && row.alreadyPaid > 0
+                      ? { is_paid: true, paid_date: getCurrentDateStringForSantoDomingo() }
+                      : {}),
                   })
                   .eq('id', row.id);
                 if (updErr) throw updErr;
@@ -6247,6 +6272,22 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           </span>
                           <span className="font-bold text-green-600">{formatCurrency(extensionPreview.representativePayment)}</span>
                         </div>
+                        {extensionPreview.totalAlreadyPaid > 0 && (
+                          <>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Ya abonado a estas cuotas:</span>
+                              <span className="font-semibold text-green-700">
+                                {formatCurrency(extensionPreview.totalAlreadyPaid)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Queda por cobrar:</span>
+                              <span className="font-bold text-blue-700">
+                                {formatCurrency(extensionPreview.totalToCollect)}
+                              </span>
+                            </div>
+                          </>
+                        )}
                         {extensionPreview.newEndDate && (
                           <div className="flex justify-between">
                             <span className="text-gray-600">Nueva Fecha Fin:</span>
@@ -6275,6 +6316,21 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               )}
                             </p>
 
+                            {extensionPreview.totalAlreadyPaid > 0 && (
+                              <p className="rounded border border-green-200 bg-green-50 p-2 text-xs text-green-900">
+                                Hay <strong>{formatCurrency(extensionPreview.totalAlreadyPaid)}</strong> ya abonados a
+                                cuotas que siguen pendientes. Se descuentan de lo que queda por cobrar (columna
+                                <em> Queda</em>), no del capital a repartir: el abono sigue acreditado en su cuota y
+                                restarlo también lo contaría dos veces.
+                                {extensionPreview.cappedCount > 0 && (
+                                  <> {extensionPreview.cappedCount === 1 ? 'Una cuota quedó' : `${extensionPreview.cappedCount} cuotas quedaron`}
+                                    {' '}<strong>fijada{extensionPreview.cappedCount === 1 ? '' : 's'}</strong> en lo ya
+                                    abonado, porque el reparto la{extensionPreview.cappedCount === 1 ? '' : 's'} habría
+                                    dejado por debajo.</>
+                                )}
+                              </p>
+                            )}
+
                             <div className="max-h-44 overflow-y-auto rounded border border-blue-200 bg-white">
                               <table className="w-full text-xs">
                                 <thead className="sticky top-0 bg-blue-100 text-blue-900">
@@ -6284,6 +6340,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     <th className="px-2 py-1 text-right font-semibold">Capital</th>
                                     <th className="px-2 py-1 text-right font-semibold">Interés</th>
                                     <th className="px-2 py-1 text-right font-semibold">Cuota</th>
+                                    <th className="px-2 py-1 text-right font-semibold">Abonado</th>
+                                    <th className="px-2 py-1 text-right font-semibold">Queda</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -6296,16 +6354,31 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                       <td className="px-2 py-1">{formatDateStringForSantoDomingo(row.dueDate)}</td>
                                       <td className="px-2 py-1 text-right">{formatCurrency(row.principal)}</td>
                                       <td className="px-2 py-1 text-right">{formatCurrency(row.interest)}</td>
-                                      <td className="px-2 py-1 text-right font-semibold">{formatCurrency(row.total)}</td>
+                                      <td className="px-2 py-1 text-right font-semibold">
+                                        {formatCurrency(row.total)}
+                                        {row.cappedByPayment && (
+                                          <span className="ml-1 text-[10px] font-normal text-amber-700">fijada</span>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1 text-right text-green-700">
+                                        {row.alreadyPaid > 0 ? formatCurrency(row.alreadyPaid) : '—'}
+                                      </td>
+                                      <td className="px-2 py-1 text-right font-semibold">
+                                        {row.pendingAfter > 0 ? formatCurrency(row.pendingAfter) : 'saldada'}
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>
                                 <tfoot className="border-t border-blue-200 bg-blue-50 font-semibold text-blue-900">
                                   <tr>
-                                    <td className="px-2 py-1" colSpan={2}>Total pendiente</td>
+                                    <td className="px-2 py-1" colSpan={2}>Total</td>
                                     <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.outstandingCapital)}</td>
                                     <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalPendingInterest)}</td>
                                     <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalPendingAmount)}</td>
+                                    <td className="px-2 py-1 text-right text-green-700">
+                                      {extensionPreview.totalAlreadyPaid > 0 ? formatCurrency(extensionPreview.totalAlreadyPaid) : '—'}
+                                    </td>
+                                    <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalToCollect)}</td>
                                   </tr>
                                 </tfoot>
                               </table>
