@@ -42,6 +42,8 @@ import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { AdvancedPaymentPanel } from './AdvancedPaymentPanel';
+import { PaymentReceiptDialog } from './PaymentReceiptDialog';
+import type { AdvancedReceiptData } from '@/utils/advancedPaymentReceipt';
 
 const paymentSchema = z.object({
   loan_id: z.string().min(1, 'Debe seleccionar un préstamo'),
@@ -129,6 +131,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [isClosingPrintModal, setIsClosingPrintModal] = useState(false);
   // Pago avanzado: elegir a qué cuotas abonar y pagar varias de una sola vez.
   const [advancedMode, setAdvancedMode] = useState(false);
+  // El recibo del pago avanzado se guarda AQUÍ, no en el panel: al terminar el pago el panel
+  // se desmonta (se sale del modo avanzado) y con él se iría el diálogo antes de imprimir.
+  const [advancedReceipt, setAdvancedReceipt] = useState<AdvancedReceiptData | null>(null);
   const { user, companyId } = useAuth();
   const { paymentStatus, refetch: refetchPaymentStatus, isReady: paymentStatusReady } = useLoanPaymentStatusSimple(selectedLoan);
   const { calculateLateFee } = useLateFee();
@@ -3199,11 +3204,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                       loanId={selectedLoan.id}
                       clientName={selectedLoan.client?.full_name}
                       onCancel={() => setAdvancedMode(false)}
-                      onSuccess={() => {
+                      onRegistered={(receipt) => {
+                        // Solo se guarda el recibo y se refrescan los datos. Cerrar el flujo
+                        // (que desmonta este formulario) espera a que el recibo se cierre.
+                        setAdvancedReceipt(receipt);
                         setAdvancedMode(false);
                         fetchNextPaymentInfo();
                         refetchPaymentStatus?.();
-                        onPaymentSuccess?.();
                       }}
                     />
                   )}
@@ -3473,6 +3480,16 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               </Form>
             </CardContent>
           </Card>
+
+          {/* Recibo del pago avanzado. Vive fuera del panel para que sobreviva a que este
+              se desmonte al terminar el pago. Al cerrarlo se da el flujo por terminado. */}
+          <PaymentReceiptDialog
+            receipt={advancedReceipt}
+            onClose={() => {
+              setAdvancedReceipt(null);
+              onPaymentSuccess?.();
+            }}
+          />
         </div>
 
         {selectedLoan && (

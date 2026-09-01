@@ -22,24 +22,26 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
-import { AlertTriangle, Check, Loader2, Printer, Wallet } from 'lucide-react';
+import { AlertTriangle, Loader2, Wallet } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import {
   allocateAmountToInstallments, autoExtendSelection, computeInstallmentDues, type DueRow,
 } from '@/utils/installmentDues';
-import {
-  printAdvancedPaymentReceipt, type AdvancedReceiptData, type ReceiptCompany, type ReceiptFormat,
-} from '@/utils/advancedPaymentReceipt';
+import type { AdvancedReceiptData, ReceiptCompany } from '@/utils/advancedPaymentReceipt';
 
 interface Props {
   loanId: string;
   clientName?: string;
-  /** Se llama tras registrar los pagos correctamente. */
-  onSuccess: () => void;
+  /**
+   * Se llama al terminar de registrar, con el recibo listo para imprimir.
+   *
+   * El recibo NO se muestra desde aquí: este panel lo desmonta cualquier padre en cuanto el
+   * pago termina (`PaymentForm` sale del modo avanzado, `LoanDetailsView` cierra el
+   * formulario), y con él se iría el diálogo antes de poder imprimir. Quien recibe esto lo
+   * muestra y decide cuándo dar el pago por cerrado.
+   */
+  onRegistered: (receipt: AdvancedReceiptData) => void;
   onCancel: () => void;
 }
 
@@ -51,15 +53,9 @@ const PAYMENT_METHODS = [
   { value: 'other', label: 'Otro' },
 ];
 
-const RECEIPT_FORMATS: { value: ReceiptFormat; label: string }[] = [
-  { value: 'POS58', label: 'Ticket 58mm' },
-  { value: 'POS80', label: 'Ticket 80mm' },
-  { value: 'LETTER', label: 'Carta' },
-];
-
 const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
 
-export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }: Props) => {
+export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCancel }: Props) => {
   const { user, companyId } = useAuth();
   const today = useMemo(() => getCurrentDateStringForSantoDomingo(), []);
 
@@ -88,8 +84,6 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
     client: { full_name: string | null; dni: string | null; phone: string | null } | null;
   } | null>(null);
 
-  /** Recibo del último pago. Mientras exista, el diálogo de impresión está abierto. */
-  const [receipt, setReceipt] = useState<AdvancedReceiptData | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -226,20 +220,6 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
     setAmountTouched(false);
   };
 
-  const handlePrint = (format: ReceiptFormat) => {
-    if (!receipt) return;
-    const opened = printAdvancedPaymentReceipt(receipt, format);
-    if (!opened) {
-      toast.error('El navegador bloqueó la ventana del recibo. Permite las ventanas emergentes de este sitio.');
-    }
-  };
-
-  /** Cierra el recibo y con él el panel: hasta aquí llega la operación. */
-  const finishAfterReceipt = () => {
-    setReceipt(null);
-    onSuccess();
-  };
-
   const handleSubmit = async () => {
     if (allocation.allocations.length === 0) {
       toast.error('Selecciona al menos una cuota y escribe un monto mayor a 0');
@@ -331,7 +311,7 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
 
       // Se arma el recibo ANTES de recargar: `allocation` se recalcula al refrescar las
       // cuotas y se perdería el detalle de lo que se acaba de cobrar.
-      setReceipt({
+      const receipt: AdvancedReceiptData = {
         receiptNumber: (crypto.randomUUID?.() ?? String(Date.now())).slice(0, 8).toUpperCase(),
         company: companySettings,
         client: {
@@ -361,13 +341,15 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
         totalInterest: round2(allocation.allocations.reduce((s, a) => s + a.interest, 0)),
         balanceAfter: loanAfter ? Number(loanAfter.remaining_balance ?? 0) : null,
         stillPending: allocation.shortfall,
-      });
+      };
 
       window.dispatchEvent(new CustomEvent('installmentsUpdated', {
         detail: { loanId, source: 'AdvancedPaymentPanel' },
       }));
-      // `onSuccess` (que cierra el panel) se llama al cerrar el diálogo del recibo, no aquí:
-      // si no, el recibo desaparecería antes de poder imprimirlo.
+
+      // El recibo se entrega hacia arriba y allí se muestra: sobrevive a que este panel se
+      // desmonte, que es justo lo que pasa al terminar el pago.
+      onRegistered(receipt);
     } catch (error) {
       console.error('Error registrando el pago avanzado:', error);
       toast.error(error instanceof Error ? error.message : 'No se pudo registrar el pago');
@@ -617,71 +599,6 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
         </Button>
       </div>
 
-      {/* Recibo: se abre al terminar y no deja cerrar el panel hasta decidir si se imprime */}
-      <Dialog open={!!receipt} onOpenChange={(open) => { if (!open) finishAfterReceipt(); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Check className="h-5 w-5 text-green-600" />
-              Pago registrado
-            </DialogTitle>
-            <DialogDescription>
-              {receipt && (
-                <>
-                  Se aplicaron <strong>{formatCurrency(receipt.totalApplied)}</strong> a{' '}
-                  {receipt.allocations.length}{' '}
-                  {receipt.allocations.length === 1 ? 'cuota' : 'cuotas'}. Imprime el recibo con
-                  el desglose de cuánto se abonó a cada una.
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          {receipt && (
-            <div className="max-h-48 overflow-y-auto rounded border text-xs">
-              <table className="w-full">
-                <thead className="bg-gray-50 text-gray-600">
-                  <tr>
-                    <th className="px-2 py-1 text-left font-medium">Concepto</th>
-                    <th className="px-2 py-1 text-right font-medium">Abonado</th>
-                    <th className="px-2 py-1 text-right font-medium">Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {receipt.allocations.map(a => (
-                    <tr key={`${a.installmentNumber}-${a.dueDate}`} className="border-t">
-                      <td className="px-2 py-1">
-                        {a.isCharge ? 'Cargo' : 'Cuota'} #{a.installmentNumber}
-                        <span className="ml-1 text-gray-400">{formatDateStringForSantoDomingo(a.dueDate)}</span>
-                      </td>
-                      <td className="px-2 py-1 text-right font-semibold">{formatCurrency(a.applied)}</td>
-                      <td className={`px-2 py-1 text-right ${a.settles ? 'text-green-700' : 'text-amber-700'}`}>
-                        {a.settles ? 'Saldada' : `queda ${formatCurrency(a.pendingAfter)}`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-gray-600">Formato del recibo</p>
-            <div className="grid grid-cols-3 gap-2">
-              {RECEIPT_FORMATS.map(f => (
-                <Button key={f.value} type="button" variant="outline" size="sm"
-                  onClick={() => handlePrint(f.value)}>
-                  <Printer className="mr-1.5 h-3.5 w-3.5" />
-                  {f.label}
-                </Button>
-              ))}
-            </div>
-            <Button type="button" variant="ghost" className="w-full" onClick={finishAfterReceipt}>
-              Continuar sin imprimir
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
