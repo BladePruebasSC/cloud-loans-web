@@ -20,6 +20,7 @@ import {
   getFrequencyLabel,
   getFrequencyRateFactor,
   parseIsoDateLocal,
+  toAnnualRate,
 } from '@/utils/frequencyUtils';
 
 interface AmortizationRow {
@@ -387,7 +388,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
           <body>
             <div class="header">
               <h1>Tabla de Amortización</h1>
-              <p>Monto: $${amount.toLocaleString()} | Tasa: ${calculateAdjustedInterestRate().toFixed(2)}% | Plazo: ${term} {getFrequencyInfo().label} | Tipo: ${amortizationType === 'simple' ? 'Simple' : amortizationType === 'german' ? 'Alemán' : amortizationType === 'american' ? 'Americano' : 'Indefinido'}</p>
+              <p>Monto: $${amount.toLocaleString()} | Tasa: ${toAnnualRate(calculateAdjustedInterestRate()).toFixed(2)}% anual (${calculateAdjustedInterestRate().toFixed(2)}% mensual) | Plazo: ${term} {getFrequencyInfo().label} | Tipo: ${amortizationType === 'simple' ? 'Simple' : amortizationType === 'german' ? 'Alemán' : amortizationType === 'american' ? 'Americano' : 'Indefinido'}</p>
               ${fixedPaymentEnabled ? `<p>Cuota Fija: $${fixedPaymentAmount}</p>` : ''}
             </div>
             <table>
@@ -491,10 +492,19 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                 placeholder="0"
                 className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
-              <p className="text-xs text-gray-500 mt-1">Tasa mensual</p>
+              {/* La tasa que se escribe y se guarda es MENSUAL (convención del sistema), pero
+                  la equivalencia ANUAL se muestra siempre: es la única cifra comparable entre
+                  préstamos de distinta frecuencia, y es la que se pide al fijar la cuota. */}
+              <p className="text-xs text-gray-500 mt-1">
+                Tasa mensual
+                {interestRate > 0 && (
+                  <> · <span className="font-medium">{toAnnualRate(interestRate).toFixed(2)}% anual</span></>
+                )}
+              </p>
               {fixedPaymentEnabled && (
                 <p className="text-xs text-blue-600 mt-1">
-                  Tasa ajustada: {adjustedInterestRate.toFixed(2)}%
+                  Tasa ajustada: <strong>{toAnnualRate(adjustedInterestRate).toFixed(2)}% anual</strong>
+                  {' '}<span className="text-gray-500">({adjustedInterestRate.toFixed(2)}% mensual)</span>
                 </p>
               )}
             </div>

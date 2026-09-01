@@ -85,6 +85,23 @@ export const getLateFeePeriodDays = (frequency?: string | null): number =>
   FREQUENCIES[normalizeFrequency(frequency)].lateFeePeriodDays;
 
 /** Etiqueta legible del período ("meses", "quincenas", ...). */
+/**
+ * Tasa MENSUAL (en %) → tasa ANUAL (en %).
+ *
+ * Se multiplica por 12, sin componer, que es la convención lineal con la que el sistema
+ * convierte entre períodos (ver `getFrequencyRateFactor`). Componer aquí y no allí daría dos
+ * cifras distintas para el mismo préstamo.
+ *
+ * La tasa que se escribe y se guarda sigue siendo mensual; esto es solo para MOSTRARLA, que es
+ * como se compara entre préstamos de distinta frecuencia.
+ */
+export const toAnnualRate = (monthlyRate?: number | null): number =>
+  Math.round((Number(monthlyRate) || 0) * 12 * 100) / 100;
+
+/** Tasa ANUAL (en %) → tasa mensual (en %), la inversa de `toAnnualRate`. */
+export const fromAnnualRate = (annualRate?: number | null): number =>
+  Math.round(((Number(annualRate) || 0) / 12) * 100) / 100;
+
 export const getFrequencyLabel = (frequency?: string | null, plural = true): string => {
   const info = FREQUENCIES[normalizeFrequency(frequency)];
   return plural ? info.labelPlural : info.label;

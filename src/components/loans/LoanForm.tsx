@@ -992,7 +992,14 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
     // `SUM(cargos)` de la función SQL). Modelarlos como cargo —y no como capital— evita romper
     // la conciliación de capital (`capitalPending = loan.amount - capitalPagado`), que se
     // descuadraría si los gastos de cierre se sumaran al `principal_amount` de una cuota.
-    const closingCosts = Number(formData?.closing_costs || loan.closing_costs || 0);
+    // FINANCIADOS: ya están dentro de `loan.amount` y repartidos en las cuotas, así que NO se
+    // añade el cargo — se cobrarían dos veces.
+    const closingCostsFinanced = Boolean(
+      formData?.closing_costs_financed ?? (loan as { closing_costs_financed?: boolean }).closing_costs_financed
+    );
+    const closingCosts = closingCostsFinanced
+      ? 0
+      : Number(formData?.closing_costs || loan.closing_costs || 0);
     if (closingCosts > 0.01 && installments.length > 0) {
       const lastInstallment = installments[installments.length - 1];
       installments.push({
@@ -1041,6 +1048,12 @@ const loanSchema = z.object({
   payment_frequency: z.string().default('monthly'),
   first_payment_date: z.string().min(1, 'Debe seleccionar la fecha del primer pago'),
   closing_costs: z.number().min(0).default(0),
+  /**
+   * Financiar los gastos de cierre: se suman al CAPITAL del préstamo y las cuotas se
+   * recalculan sobre el total (10,000 + 1,500 → préstamo de 11,500). Sin marcar, siguen
+   * cobrándose aparte como un cargo al final, que es el comportamiento de siempre.
+   */
+  closing_costs_financed: z.boolean().default(false),
   portfolio: z.string().default(''),
   comments: z.string().default(''),
   guarantor_required: z.boolean().default(false),
@@ -1121,6 +1134,7 @@ interface LoanFormProps {
     payment_frequency?: string;
     first_payment_date?: string;
     closing_costs?: number;
+    closing_costs_financed?: boolean;
     portfolio?: string;
     fixed_payment_enabled?: boolean;
     fixed_payment_amount?: number;
@@ -1259,6 +1273,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       payment_frequency: 'monthly',
       first_payment_date: getCurrentDateString(),
       closing_costs: 0,
+      closing_costs_financed: false,
       minimum_payment_percentage: 100,
       minimum_payment_type: 'interest',
       fixed_payment_enabled: false,
@@ -1414,6 +1429,9 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       }
       if (initialData.closing_costs !== undefined) {
         form.setValue('closing_costs', initialData.closing_costs);
+      }
+      if (initialData.closing_costs_financed !== undefined) {
+        form.setValue('closing_costs_financed', initialData.closing_costs_financed);
       }
       if (initialData.portfolio !== undefined) {
         form.setValue('portfolio', initialData.portfolio);
@@ -1632,11 +1650,22 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
 
   const calculateAmortization = () => {
     const formValues = form.getValues();
-    const { amount, interest_rate, term_months, amortization_type, payment_frequency, first_payment_date, fixed_payment_enabled, fixed_payment_amount, closing_costs } = formValues;
-    
+    const { amount: requestedAmount, interest_rate, term_months, amortization_type, payment_frequency, first_payment_date, fixed_payment_enabled, fixed_payment_amount, closing_costs, closing_costs_financed } = formValues;
+
+    // GASTOS DE CIERRE FINANCIADOS: se suman al capital y TODO el cronograma se calcula sobre
+    // el total. El cliente recibe `requestedAmount` pero debe (y paga interés sobre) `amount`.
+    // Se sombrea `amount` a propósito para que todo el cálculo de abajo lo use sin tocarlo.
+    const amount = closing_costs_financed
+      ? Math.round((Number(requestedAmount || 0) + Number(closing_costs || 0)) * 100) / 100
+      : requestedAmount;
+
+    // Financiados, los gastos de cierre ya están dentro del capital: no se vuelven a sumar
+    // como cargo a la última cuota, o se cobrarían dos veces.
+    const closingCostsAsCharge = closing_costs_financed ? 0 : (closing_costs || 0);
+
     // Extraer el día original del mes de la primera fecha de pago
     const originalDay = parseInt(first_payment_date.split('-')[2]);
-    
+
     if (!amount || !interest_rate) {
       toast.error('Complete todos los campos requeridos para calcular');
       return;
@@ -1785,7 +1814,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            
            const principalPayment = fixed_payment_amount - interestPerPayment;
            const isLastPayment = i === totalPeriods;
-           const totalPaymentWithClosingCosts = isLastPayment ? fixed_payment_amount + (closing_costs || 0) : fixed_payment_amount;
+           const totalPaymentWithClosingCosts = isLastPayment ? fixed_payment_amount + closingCostsAsCharge :fixed_payment_amount;
            
            schedule.push({
              payment: i,
@@ -1820,7 +1849,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            }
            
            const isLastPayment = i === totalPeriods;
-           const totalPaymentWithClosingCosts = isLastPayment ? monthlyPayment + (closing_costs || 0) : monthlyPayment;
+           const totalPaymentWithClosingCosts = isLastPayment ? monthlyPayment + closingCostsAsCharge :monthlyPayment;
            
            schedule.push({
              payment: i,
@@ -1866,7 +1895,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const principalPayment = monthlyPayment - interestPayment;
          const actualPayment = monthlyPayment;
          const isLastPayment = i === totalPeriods;
-         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge :actualPayment;
          
          // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
          // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
@@ -1916,7 +1945,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const interestPayment = remainingBalance * periodRate;
          const actualPayment = principalPerPayment + interestPayment;
          const isLastPayment = i === totalPeriods;
-         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge :actualPayment;
          // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
          // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
          // americano pero NO en simple ni indefinido (esas ramas calculan `capital + interés`).
@@ -1966,7 +1995,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const actualPayment = i === totalPeriods ? interestPerPayment + amount : interestPerPayment;
          const principalPayment = i === totalPeriods ? amount : 0;
          const isLastPayment = i === totalPeriods;
-         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + (closing_costs || 0) : actualPayment;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge :actualPayment;
          // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
          // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
          // americano pero NO en simple ni indefinido (esas ramas calculan `capital + interés`).
@@ -2203,9 +2232,17 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       // interés` heredaba el error en TODAS las cuotas. Se redondea a 2 decimales (céntimos).
       const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
 
+      // Con los gastos de cierre financiados, el CAPITAL del préstamo los incluye: es sobre
+      // ese total sobre el que corre el interés y se reparten las cuotas. Lo que el cliente
+      // recibe en mano sigue siendo `data.amount`, y se puede reconstruir restando
+      // `closing_costs` (que se guarda igualmente).
+      const financedAmount = data.closing_costs_financed
+        ? round2(Number(data.amount || 0) + Number(data.closing_costs || 0))
+        : data.amount;
+
       const loanData = {
         client_id: data.client_id,
-        amount: data.amount,
+        amount: financedAmount,
         interest_rate: data.interest_rate,
         term_months: data.amortization_type === 'indefinite' ? 1 : data.term_months, // Para indefinidos usar 1
         loan_type: data.loan_type,
@@ -2227,6 +2264,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
         // Campos de información adicional
         excluded_days: excludedDays,
         closing_costs: round2(data.closing_costs || 0),
+        closing_costs_financed: data.closing_costs_financed,
         portfolio_id: data.portfolio === 'none' || data.portfolio === '' ? null : data.portfolio,
         amortization_type: data.amortization_type,
         payment_frequency: data.payment_frequency,
@@ -3007,6 +3045,43 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                           </FormItem>
                         )}
                       />
+
+                      <FormField
+                        control={form.control}
+                        name="closing_costs_financed"
+                        render={({ field }) => (
+                          <FormItem className="mt-2">
+                            <label className="flex cursor-pointer items-start gap-2 text-sm">
+                              <Checkbox
+                                checked={field.value}
+                                onCheckedChange={(c) => field.onChange(c === true)}
+                                className="mt-0.5"
+                              />
+                              <span>
+                                Incluirlos en el monto del préstamo
+                                <span className="block text-xs text-gray-500">
+                                  Se suman al capital y las cuotas se recalculan sobre el total.
+                                  Sin marcar, se cobran aparte como un cargo al final.
+                                </span>
+                              </span>
+                            </label>
+                          </FormItem>
+                        )}
+                      />
+
+                      {form.watch('closing_costs_financed') && (form.watch('closing_costs') || 0) > 0 && (
+                        <div className="mt-2 rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-900">
+                          El cliente recibe{' '}
+                          <strong>{formatCurrency(Number(form.watch('amount') || 0))}</strong> y el préstamo
+                          queda en{' '}
+                          <strong>
+                            {formatCurrency(
+                              Number(form.watch('amount') || 0) + Number(form.watch('closing_costs') || 0)
+                            )}
+                          </strong>
+                          . El interés se calcula sobre ese total.
+                        </div>
+                      )}
                     </div>
 
                     <div>

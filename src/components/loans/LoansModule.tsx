@@ -1614,7 +1614,12 @@ export const LoansModule = () => {
     setEditingLoanId(loan.id);
     setInitialLoanData({
       client_id: loan.client_id,
-      amount: loan.amount,
+      // Con los gastos de cierre FINANCIADOS, `loan.amount` ya los incluye. El formulario pide
+      // el monto que recibe el cliente y vuelve a sumarlos al calcular, así que hay que
+      // devolver el importe desembolsado o se contarían dos veces al editar.
+      amount: loan.closing_costs_financed
+        ? Math.max(0, Math.round((Number(loan.amount || 0) - Number(loan.closing_costs || 0)) * 100) / 100)
+        : loan.amount,
       purpose: loan.purpose,
       interest_rate: loan.interest_rate,
       term_months: loan.term_months,
@@ -1623,6 +1628,7 @@ export const LoansModule = () => {
       payment_frequency: loan.payment_frequency,
       first_payment_date: (loan.first_payment_date || loan.start_date || '').split('T')[0],
       closing_costs: loan.closing_costs,
+      closing_costs_financed: loan.closing_costs_financed ?? false,
       portfolio: loan.portfolio_id || '',
       fixed_payment_enabled: loan.fixed_payment_enabled,
       fixed_payment_amount: loan.fixed_payment_amount,
