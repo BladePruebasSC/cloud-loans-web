@@ -39,6 +39,7 @@ import {
   Calendar, 
   Calculator,
   AlertCircle,
+  AlertTriangle,
   CheckCircle,
   Clock,
   CreditCard,
@@ -1315,6 +1316,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       installments,
       payments: loanPayments,
       capitalPayments: totalCapitalPaid,
+      // Regla de la empresa: la extensión es un recálculo nuevo y no arrastra los abonos
+      // hechos a cuotas sin terminar de pagar. Los pagos se siguen pasando solo para poder
+      // AVISAR en pantalla de cuánto se está descartando.
+      ignorePriorPartialPayments: true,
       additionalCount,
       fallbackDueDate: String(loan.next_payment_date || '').split('T')[0],
     });
@@ -6274,20 +6279,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           <span className="font-bold text-green-600">{formatCurrency(extensionPreview.representativePayment)}</span>
                         </div>
                         {extensionPreview.totalAlreadyPaid > 0 && (
-                          <>
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Ya abonado a estas cuotas:</span>
-                              <span className="font-semibold text-green-700">
-                                {formatCurrency(extensionPreview.totalAlreadyPaid)}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-600">Queda por cobrar:</span>
-                              <span className="font-bold text-blue-700">
-                                {formatCurrency(extensionPreview.totalToCollect)}
-                              </span>
-                            </div>
-                          </>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Abonos que se descartan:</span>
+                            <span className="font-semibold text-amber-700">
+                              −{formatCurrency(extensionPreview.totalAlreadyPaid)}
+                            </span>
+                          </div>
                         )}
                         {extensionPreview.newEndDate && (
                           <div className="flex justify-between">
@@ -6318,18 +6315,24 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                             </p>
 
                             {extensionPreview.totalAlreadyPaid > 0 && (
-                              <p className="rounded border border-green-200 bg-green-50 p-2 text-xs text-green-900">
-                                Hay <strong>{formatCurrency(extensionPreview.totalAlreadyPaid)}</strong> ya abonados a
-                                cuotas que siguen pendientes. Se descuentan de lo que queda por cobrar (columna
-                                <em> Queda</em>), no del capital a repartir: el abono sigue acreditado en su cuota y
-                                restarlo también lo contaría dos veces.
-                                {extensionPreview.cappedCount > 0 && (
-                                  <> {extensionPreview.cappedCount === 1 ? 'Una cuota quedó' : `${extensionPreview.cappedCount} cuotas quedaron`}
-                                    {' '}<strong>fijada{extensionPreview.cappedCount === 1 ? '' : 's'}</strong> en lo ya
-                                    abonado, porque el reparto la{extensionPreview.cappedCount === 1 ? '' : 's'} habría
-                                    dejado por debajo.</>
-                                )}
-                              </p>
+                              <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+                                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                                <div>
+                                  <p className="font-semibold">
+                                    Se descartarán {formatCurrency(extensionPreview.totalAlreadyPaid)} ya abonados
+                                  </p>
+                                  <p className="mt-1">
+                                    La extensión recalcula desde cero: las cuotas de abajo deben su importe
+                                    <strong> íntegro</strong> y el nuevo balance <strong>no descuenta</strong> esos
+                                    abonos. El cliente volverá a deber ese dinero.
+                                  </p>
+                                  <p className="mt-1">
+                                    Los pagos siguen registrados en el historial, así que el desglose de cuotas y el
+                                    formulario de pago los seguirán mostrando como abonados: ahí verás una cifra
+                                    menor que en este balance.
+                                  </p>
+                                </div>
+                              </div>
                             )}
 
                             <div className="max-h-44 overflow-y-auto rounded border border-blue-200 bg-white">
@@ -6341,8 +6344,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     <th className="px-2 py-1 text-right font-semibold">Capital</th>
                                     <th className="px-2 py-1 text-right font-semibold">Interés</th>
                                     <th className="px-2 py-1 text-right font-semibold">Cuota</th>
-                                    <th className="px-2 py-1 text-right font-semibold">Abonado</th>
-                                    <th className="px-2 py-1 text-right font-semibold">Queda</th>
+                                    <th className="px-2 py-1 text-right font-semibold">Abonado (se descarta)</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -6361,11 +6363,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                           <span className="ml-1 text-[10px] font-normal text-amber-700">fijada</span>
                                         )}
                                       </td>
-                                      <td className="px-2 py-1 text-right text-green-700">
+                                      <td className="px-2 py-1 text-right text-amber-700 line-through">
                                         {row.alreadyPaid > 0 ? formatCurrency(row.alreadyPaid) : '—'}
-                                      </td>
-                                      <td className="px-2 py-1 text-right font-semibold">
-                                        {row.pendingAfter > 0 ? formatCurrency(row.pendingAfter) : 'saldada'}
                                       </td>
                                     </tr>
                                   ))}
@@ -6376,10 +6375,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.outstandingCapital)}</td>
                                     <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalPendingInterest)}</td>
                                     <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalPendingAmount)}</td>
-                                    <td className="px-2 py-1 text-right text-green-700">
+                                    <td className="px-2 py-1 text-right text-amber-700 line-through">
                                       {extensionPreview.totalAlreadyPaid > 0 ? formatCurrency(extensionPreview.totalAlreadyPaid) : '—'}
                                     </td>
-                                    <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalToCollect)}</td>
                                   </tr>
                                 </tfoot>
                               </table>

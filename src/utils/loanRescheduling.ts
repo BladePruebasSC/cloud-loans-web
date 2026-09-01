@@ -126,6 +126,21 @@ export interface RescheduleInput {
    * la extensión deja la cuota por debajo de lo abonado, ese dinero desaparece.
    */
   payments?: RawPayment[];
+  /**
+   * REGLA DE NEGOCIO (decidida por la empresa, 2026-09-01): la extensión de plazo es un
+   * RECÁLCULO NUEVO y no arrastra los abonos hechos a cuotas que no estaban terminadas de
+   * pagar. Con esto activado:
+   *   · las cuotas nuevas deben su importe ÍNTEGRO, sin descontar lo ya abonado;
+   *   · el balance resultante NO resta esos pagos.
+   *
+   * CONSECUENCIA, que la empresa aceptó de forma explícita: el cliente vuelve a deber lo que
+   * ya había abonado a esas cuotas. El importe se sigue calculando y devolviendo en
+   * `alreadyPaid` para poder AVISARLO en pantalla antes de guardar.
+   *
+   * Los abonos DIRECTOS a capital (`capitalPayments`) no entran en esta regla: reducen el
+   * principal por definición y se siguen restando.
+   */
+  ignorePriorPartialPayments?: boolean;
   /** Cuántas cuotas se agregan */
   additionalCount: number;
   /**
@@ -220,6 +235,7 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
   // señal es ciega — TODAS las cuotas la cumplen — así que ahí se desactiva: confundir un cargo
   // con una cuota reparte de más, pero confundir todas las cuotas con cargos dejaría el préstamo
   // sin cuotas que reprogramar, que es un error mucho peor.
+  const ignorePriorPayments = input.ignorePriorPartialPayments === true;
   const canDetectCharges = periodRate > 0;
   const regular = (input.installments || []).filter(i => !(canDetectCharges && isChargeInstallment(i)));
   const paid = regular.filter(i => !!i.is_paid);
@@ -305,8 +321,10 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
       uniform = dist.uniform;
 
       // ¿Alguna libre queda por debajo de lo ya abonado?
+      // Con `ignorePriorPartialPayments` no se comprueba: los abonos no cuentan, así que no
+      // hay suelo que respetar.
       let newlyPinned = false;
-      for (let k = 0; k < freeIdx.length; k++) {
+      for (let k = 0; k < freeIdx.length && !ignorePriorPayments; k++) {
         const slot = freeIdx[k];
         const already = alreadyPaidAt(slot);
         const candidate = dist.rows[k];
@@ -340,8 +358,12 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
             interest: source.interest,
             total: source.total,
             isNew: i >= pending.length,
+            // `alreadyPaid` se informa SIEMPRE (para avisar en pantalla), pero solo se
+            // descuenta cuando la regla de la empresa lo permite.
             alreadyPaid: already,
-            pendingAfter: round2(Math.max(0, source.total - already)),
+            pendingAfter: ignorePriorPayments
+              ? source.total
+              : round2(Math.max(0, source.total - already)),
             cappedByPayment: !!pinned[i],
           });
         }
@@ -392,7 +414,9 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
       .filter(i => isChargeInstallment(i))
       .reduce((s, i) => s + Number(i.total_amount ?? i.amount ?? 0), 0)
   );
-  const allPayments = round2(
+  // Con la regla de "recálculo nuevo" los pagos anteriores NO se restan: el balance es el
+  // total del contrato nuevo más los cargos, sin más.
+  const allPayments = ignorePriorPayments ? 0 : round2(
     (input.payments || []).reduce((s, p) => {
       const gross = Number(p.amount ?? 0);
       if (Number.isFinite(gross) && gross > 0) return s + gross;
