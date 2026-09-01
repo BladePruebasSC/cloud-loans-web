@@ -22,12 +22,18 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertTriangle, Loader2, Wallet } from 'lucide-react';
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import { AlertTriangle, Check, Loader2, Printer, Wallet } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import {
   allocateAmountToInstallments, autoExtendSelection, computeInstallmentDues, type DueRow,
 } from '@/utils/installmentDues';
+import {
+  printAdvancedPaymentReceipt, type AdvancedReceiptData, type ReceiptCompany, type ReceiptFormat,
+} from '@/utils/advancedPaymentReceipt';
 
 interface Props {
   loanId: string;
@@ -43,6 +49,12 @@ const PAYMENT_METHODS = [
   { value: 'check', label: 'Cheque' },
   { value: 'card', label: 'Tarjeta' },
   { value: 'other', label: 'Otro' },
+];
+
+const RECEIPT_FORMATS: { value: ReceiptFormat; label: string }[] = [
+  { value: 'POS58', label: 'Ticket 58mm' },
+  { value: 'POS80', label: 'Ticket 80mm' },
+  { value: 'LETTER', label: 'Carta' },
 ];
 
 const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
@@ -68,10 +80,26 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
 
+  // Datos de cabecera del recibo (empresa y cliente). Se cargan junto con las cuotas para
+  // tenerlos listos en el momento de imprimir.
+  const [companySettings, setCompanySettings] = useState<ReceiptCompany | null>(null);
+  const [loanInfo, setLoanInfo] = useState<{
+    amount: number | null; interest_rate: number | null;
+    client: { full_name: string | null; dni: string | null; phone: string | null } | null;
+  } | null>(null);
+
+  /** Recibo del último pago. Mientras exista, el diálogo de impresión está abierto. */
+  const [receipt, setReceipt] = useState<AdvancedReceiptData | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: installments, error: iErr }, { data: payments, error: pErr }] = await Promise.all([
+      const [
+        { data: installments, error: iErr },
+        { data: payments, error: pErr },
+        { data: loanRow },
+        { data: settings },
+      ] = await Promise.all([
         supabase
           .from('installments')
           .select('id, installment_number, due_date, total_amount, principal_amount, interest_amount, paid_amount, is_paid')
@@ -81,9 +109,38 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
           .from('payments')
           .select('amount, principal_amount, interest_amount, due_date')
           .eq('loan_id', loanId),
+        supabase
+          .from('loans')
+          .select('amount, interest_rate, client:client_id(full_name, dni, phone)')
+          .eq('id', loanId)
+          .maybeSingle(),
+        companyId
+          ? supabase.from('company_settings')
+              .select('company_name, address, phone, tax_id')
+              .eq('user_id', companyId).maybeSingle()
+          : Promise.resolve({ data: null }),
       ]);
       if (iErr) throw iErr;
       if (pErr) throw pErr;
+
+      if (loanRow) {
+        // `client:client_id(...)` devuelve un objeto, pero según la relación puede llegar
+        // como arreglo de uno: se normaliza para no depender de ese detalle.
+        const rawClient = (loanRow as { client?: unknown }).client;
+        const client = Array.isArray(rawClient) ? rawClient[0] : rawClient;
+        setLoanInfo({
+          amount: Number(loanRow.amount ?? 0) || null,
+          interest_rate: Number(loanRow.interest_rate ?? 0) || null,
+          client: client
+            ? {
+                full_name: (client as { full_name?: string }).full_name ?? null,
+                dni: (client as { dni?: string }).dni ?? null,
+                phone: (client as { phone?: string }).phone ?? null,
+              }
+            : null,
+        });
+      }
+      setCompanySettings((settings ?? null) as ReceiptCompany | null);
 
       const dues = computeInstallmentDues(installments || [], payments || [])
         .filter(r => r.pending > 0.005);
@@ -98,7 +155,7 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
     } finally {
       setLoading(false);
     }
-  }, [loanId]);
+  }, [loanId, companyId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -167,6 +224,20 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
     setAutoIds([]);
     setExcludedIds([]);
     setAmountTouched(false);
+  };
+
+  const handlePrint = (format: ReceiptFormat) => {
+    if (!receipt) return;
+    const opened = printAdvancedPaymentReceipt(receipt, format);
+    if (!opened) {
+      toast.error('El navegador bloqueó la ventana del recibo. Permite las ventanas emergentes de este sitio.');
+    }
+  };
+
+  /** Cierra el recibo y con él el panel: hasta aquí llega la operación. */
+  const finishAfterReceipt = () => {
+    setReceipt(null);
+    onSuccess();
   };
 
   const handleSubmit = async () => {
@@ -258,10 +329,45 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
         (partial > 0 ? ` y ${partial} con abono parcial` : '')
       );
 
+      // Se arma el recibo ANTES de recargar: `allocation` se recalcula al refrescar las
+      // cuotas y se perdería el detalle de lo que se acaba de cobrar.
+      setReceipt({
+        receiptNumber: (crypto.randomUUID?.() ?? String(Date.now())).slice(0, 8).toUpperCase(),
+        company: companySettings,
+        client: {
+          full_name: loanInfo?.client?.full_name ?? clientName ?? null,
+          dni: loanInfo?.client?.dni ?? null,
+          phone: loanInfo?.client?.phone ?? null,
+        },
+        loan: { amount: loanInfo?.amount ?? null, interest_rate: loanInfo?.interest_rate ?? null },
+        paymentDate: today,
+        paymentMethodLabel: PAYMENT_METHODS.find(m => m.value === method)?.label ?? method,
+        reference: reference || null,
+        notes: notes || null,
+        allocations: allocation.allocations.map(a => ({
+          installmentNumber: a.row.installmentNumber,
+          isCharge: a.row.isCharge,
+          dueDate: a.row.dueDate,
+          total: a.row.total,
+          previouslyPaid: a.row.paid,
+          applied: a.applied,
+          principal: a.principal,
+          interest: a.interest,
+          settles: a.settles,
+          pendingAfter: round2(Math.max(0, a.row.pending - a.applied)),
+        })),
+        totalApplied: allocation.applied,
+        totalPrincipal: round2(allocation.allocations.reduce((s, a) => s + a.principal, 0)),
+        totalInterest: round2(allocation.allocations.reduce((s, a) => s + a.interest, 0)),
+        balanceAfter: loanAfter ? Number(loanAfter.remaining_balance ?? 0) : null,
+        stillPending: allocation.shortfall,
+      });
+
       window.dispatchEvent(new CustomEvent('installmentsUpdated', {
         detail: { loanId, source: 'AdvancedPaymentPanel' },
       }));
-      onSuccess();
+      // `onSuccess` (que cierra el panel) se llama al cerrar el diálogo del recibo, no aquí:
+      // si no, el recibo desaparecería antes de poder imprimirlo.
     } catch (error) {
       console.error('Error registrando el pago avanzado:', error);
       toast.error(error instanceof Error ? error.message : 'No se pudo registrar el pago');
@@ -510,6 +616,72 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onSuccess, onCancel }
           Registrar {formatCurrency(allocation.applied)}
         </Button>
       </div>
+
+      {/* Recibo: se abre al terminar y no deja cerrar el panel hasta decidir si se imprime */}
+      <Dialog open={!!receipt} onOpenChange={(open) => { if (!open) finishAfterReceipt(); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Check className="h-5 w-5 text-green-600" />
+              Pago registrado
+            </DialogTitle>
+            <DialogDescription>
+              {receipt && (
+                <>
+                  Se aplicaron <strong>{formatCurrency(receipt.totalApplied)}</strong> a{' '}
+                  {receipt.allocations.length}{' '}
+                  {receipt.allocations.length === 1 ? 'cuota' : 'cuotas'}. Imprime el recibo con
+                  el desglose de cuánto se abonó a cada una.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {receipt && (
+            <div className="max-h-48 overflow-y-auto rounded border text-xs">
+              <table className="w-full">
+                <thead className="bg-gray-50 text-gray-600">
+                  <tr>
+                    <th className="px-2 py-1 text-left font-medium">Concepto</th>
+                    <th className="px-2 py-1 text-right font-medium">Abonado</th>
+                    <th className="px-2 py-1 text-right font-medium">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {receipt.allocations.map(a => (
+                    <tr key={`${a.installmentNumber}-${a.dueDate}`} className="border-t">
+                      <td className="px-2 py-1">
+                        {a.isCharge ? 'Cargo' : 'Cuota'} #{a.installmentNumber}
+                        <span className="ml-1 text-gray-400">{formatDateStringForSantoDomingo(a.dueDate)}</span>
+                      </td>
+                      <td className="px-2 py-1 text-right font-semibold">{formatCurrency(a.applied)}</td>
+                      <td className={`px-2 py-1 text-right ${a.settles ? 'text-green-700' : 'text-amber-700'}`}>
+                        {a.settles ? 'Saldada' : `queda ${formatCurrency(a.pendingAfter)}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-gray-600">Formato del recibo</p>
+            <div className="grid grid-cols-3 gap-2">
+              {RECEIPT_FORMATS.map(f => (
+                <Button key={f.value} type="button" variant="outline" size="sm"
+                  onClick={() => handlePrint(f.value)}>
+                  <Printer className="mr-1.5 h-3.5 w-3.5" />
+                  {f.label}
+                </Button>
+              ))}
+            </div>
+            <Button type="button" variant="ghost" className="w-full" onClick={finishAfterReceipt}>
+              Continuar sin imprimir
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
