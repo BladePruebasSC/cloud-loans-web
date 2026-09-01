@@ -87,15 +87,18 @@ export interface ExtendedSchedule {
   /** Cuántas cuotas quedaron fijadas en lo ya abonado (ver `cappedByPayment`) */
   cappedCount: number;
   /**
-   * Fechas de vencimiento cuyos pagos deben DEJAR DE APLICARSE al préstamo.
+   * Fechas de vencimiento cuyos pagos hay que ELIMINAR al aplicar la extensión.
    *
-   * Solo con `ignorePriorPartialPayments`. No basta con ignorarlos en este cálculo: los pagos
-   * siguen en `payments` atados a su fecha de vencimiento, y todo lo que reparte pagos por
-   * fecha (la tabla de amortización, el estado de cuenta, el pago avanzado, la ruta de cobro y
-   * el balance que recalcula Postgres) los seguiría contando. Quien guarde la extensión tiene
-   * que anularlos de verdad.
+   * Solo con `ignorePriorPartialPayments`, y solo de cuotas PENDIENTES: las cuotas ya saldadas
+   * y sus pagos no se tocan nunca.
+   *
+   * No basta con ignorarlos en este cálculo. Los pagos viven en `payments` atados a su fecha de
+   * vencimiento, así que la tabla de amortización, el estado de cuenta, el pago avanzado, la
+   * ruta de cobro y el balance que recalcula Postgres los seguirían contando: el balance diría
+   * una cifra y la cuota aparecería como "Parcial · Falta …". Para que el préstamo quede
+   * realmente como uno nuevo, esos pagos tienen que desaparecer.
    */
-  supersededDueDates: string[];
+  discardedPaymentDueDates: string[];
   /** `loans.total_amount` resultante (capital + interés, sin cargos) */
   newTotalAmount: number;
   /**
@@ -472,7 +475,7 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
     totalAlreadyPaid: round2(rows.reduce((s, r) => s + r.alreadyPaid, 0)),
     totalToCollect: round2(rows.reduce((s, r) => s + r.pendingAfter, 0)),
     cappedCount: rows.filter(r => r.cappedByPayment).length,
-    supersededDueDates: ignorePriorPayments
+    discardedPaymentDueDates: ignorePriorPayments
       ? [...new Set(rows.filter(r => !r.isNew && r.alreadyPaid > 0.005).map(r => r.dueDate))]
       : [],
     newTotalAmount,

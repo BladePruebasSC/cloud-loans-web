@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -224,6 +224,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [loanPayments, setLoanPayments] = useState<RawPayment[]>([]);
   /** Abonos DIRECTOS a capital: estos sí reducen el capital a repartir. */
   const [totalCapitalPaid, setTotalCapitalPaid] = useState(0);
+  /**
+   * Pagos eliminados por la última extensión de plazo, para dejar constancia en el historial
+   * del préstamo. Es una ref y no estado porque se escribe y se lee dentro del mismo guardado.
+   */
+  const discardedPaymentsRef = useRef<{ amount: number; due_date: string }[]>([]);
   const [settleBreakdown, setSettleBreakdown] = useState({
     capitalPending: 0,
     interestPending: 0,
@@ -3027,37 +3032,43 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 if (updErr) throw updErr;
               }
 
-              // 1.b) Anular los abonos hechos a esas cuotas.
+              // 1.b) ELIMINAR los abonos hechos a cuotas que no estaban terminadas de pagar.
               //
-              // La regla de la empresa es que la extensión no los arrastra. No basta con
-              // ignorarlos aquí: siguen en `payments` atados a su fecha de vencimiento, y la
-              // tabla de amortización, el estado de cuenta, el pago avanzado, la ruta de cobro
-              // y el balance que recalcula Postgres los seguirían contando — el balance diría
-              // una cifra y las cuotas otra.
+              // Regla de la empresa: la extensión rehace el préstamo con las cuotas pendientes
+              // como si fuera nuevo, y olvida todo lo anterior salvo las cuotas YA PAGADAS.
               //
-              // Se desvinculan de la cuota (`due_date` a NULL) conservando a cuál estaban
-              // aplicados en `original_due_date`. La fila NO se borra: el dinero se recibió y
-              // debe seguir contando como ingreso en los informes, que agrupan por
-              // `payment_date`.
-              // Se recorre fecha por fecha para poder guardar en `original_due_date` a qué
-              // cuota estaba aplicado cada pago. Es idempotente: los ya anulados tienen
-              // `due_date` en NULL y no vuelven a coincidir.
-              const supersededAt = new Date().toISOString();
-              for (const dueDate of schedule.supersededDueDates) {
-                const { error: supersedeError } = await supabase
+              // No basta con ignorarlos en el cálculo: los pagos viven en `payments` atados a su
+              // fecha de vencimiento, así que la tabla de amortización, el estado de cuenta, el
+              // pago avanzado y el balance que recalcula Postgres los seguirían contando, y la
+              // cuota seguiría saliendo como "Parcial · Falta …".
+              //
+              // Solo se borran los de cuotas PENDIENTES: los de cuotas saldadas no se tocan.
+              // Antes de borrarlos se anota qué se elimina, para que quede rastro en el
+              // historial del préstamo.
+              let discardedPayments: { amount: number; due_date: string }[] = [];
+              if (schedule.discardedPaymentDueDates.length > 0) {
+                const { data: toDelete, error: readError } = await supabase
                   .from('payments')
-                  .update({
-                    superseded_at: supersededAt,
-                    superseded_reason:
-                      `Extensión de plazo (+${schedule.additionalCount} cuotas): recálculo del cronograma`,
-                    original_due_date: dueDate,
-                    due_date: null,
-                  })
+                  .select('id, amount, due_date')
                   .eq('loan_id', loan.id)
-                  .eq('due_date', dueDate)
-                  .is('superseded_at', null);
-                if (supersedeError) throw supersedeError;
+                  .in('due_date', schedule.discardedPaymentDueDates);
+                if (readError) throw readError;
+
+                discardedPayments = (toDelete || []).map(p => ({
+                  amount: Number(p.amount) || 0,
+                  due_date: String(p.due_date || '').split('T')[0],
+                }));
+
+                if (discardedPayments.length > 0) {
+                  const { error: deleteError } = await supabase
+                    .from('payments')
+                    .delete()
+                    .eq('loan_id', loan.id)
+                    .in('due_date', schedule.discardedPaymentDueDates);
+                  if (deleteError) throw deleteError;
+                }
               }
+              discardedPaymentsRef.current = discardedPayments;
 
               // 2) Insertar las cuotas nuevas.
               const newInstallments = schedule.newRows.map(row => ({
@@ -3078,9 +3089,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 if (installmentsError) throw installmentsError;
               }
 
-              const resumen = schedule.uniformPayment
-                ? `${schedule.pendingCountAfter} cuotas pendientes de ${formatCurrency(schedule.representativePayment)}.`
-                : `${schedule.pendingCountAfter} cuotas pendientes (cuota decreciente desde ${formatCurrency(schedule.representativePayment)}).`;
+              const descartado = discardedPayments.reduce((s, p) => s + p.amount, 0);
+              const resumen =
+                (schedule.uniformPayment
+                  ? `${schedule.pendingCountAfter} cuotas pendientes de ${formatCurrency(schedule.representativePayment)}.`
+                  : `${schedule.pendingCountAfter} cuotas pendientes (cuota decreciente desde ${formatCurrency(schedule.representativePayment)}).`)
+                + (descartado > 0
+                  ? ` Se eliminaron ${formatCurrency(descartado)} en abonos a cuotas sin terminar de pagar.`
+                  : '');
               toast.success(
                 schedule.additionalCount > 0
                   ? `${schedule.additionalCount} ${schedule.additionalCount === 1 ? 'cuota agregada' : 'cuotas agregadas'}. ${resumen}`
@@ -4520,6 +4536,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           if (schedule) {
             description += ` ${schedule.pendingCountAfter} cuotas pendientes de ` +
               `RD$${schedule.representativePayment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`;
+          }
+          // Rastro de los abonos eliminados: el pago desaparece de `payments`, así que este es
+          // el único sitio donde queda constancia de cuánto se descartó y de qué cuotas.
+          const borrados = discardedPaymentsRef.current;
+          if (borrados.length > 0) {
+            const totalBorrado = borrados.reduce((s, p) => s + p.amount, 0);
+            description += ` ELIMINADOS ${borrados.length} abono(s) por ` +
+              `RD$${totalBorrado.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ` +
+              `en cuotas sin terminar de pagar (${borrados.map(p => p.due_date).join(', ')}).`;
+            newValueObj.discarded_payments = borrados.length;
+            newValueObj.discarded_amount = totalBorrado;
           }
           if (data.notes) {
             description += ` Notas: ${data.notes}`;
@@ -6312,7 +6339,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                         </div>
                         {extensionPreview.totalAlreadyPaid > 0 && (
                           <div className="flex justify-between">
-                            <span className="text-gray-600">Abonos que se descartan:</span>
+                            <span className="text-gray-600">Abonos que se eliminan:</span>
                             <span className="font-semibold text-amber-700">
                               −{formatCurrency(extensionPreview.totalAlreadyPaid)}
                             </span>
@@ -6351,18 +6378,17 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                                 <div>
                                   <p className="font-semibold">
-                                    Se descartarán {formatCurrency(extensionPreview.totalAlreadyPaid)} ya abonados
+                                    Se ELIMINARÁN {formatCurrency(extensionPreview.totalAlreadyPaid)} en abonos
                                   </p>
                                   <p className="mt-1">
-                                    La extensión recalcula desde cero: las cuotas de abajo deben su importe
-                                    <strong> íntegro</strong> y el nuevo balance <strong>no descuenta</strong> esos
-                                    abonos. El cliente volverá a deber ese dinero.
+                                    La extensión rehace el préstamo con las cuotas pendientes como si fuera nuevo. Los
+                                    abonos a cuotas que <strong>no están terminadas de pagar</strong> se
+                                    <strong> borran</strong>: el cliente volverá a deber ese dinero y los pagos
+                                    desaparecerán del historial.
                                   </p>
                                   <p className="mt-1">
-                                    Esos pagos <strong>dejarán de aplicarse</strong> a sus cuotas en todo el sistema
-                                    (tabla de amortización, estado de cuenta y balance). Se conservan en el historial
-                                    del préstamo y siguen contando como ingreso; queda registrado a qué cuota estaban
-                                    aplicados y por qué se anularon.
+                                    Las cuotas ya <strong>pagadas por completo</strong> y sus pagos no se tocan.
+                                    Queda constancia de lo eliminado en el historial del préstamo.
                                   </p>
                                 </div>
                               </div>
@@ -6377,7 +6403,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     <th className="px-2 py-1 text-right font-semibold">Capital</th>
                                     <th className="px-2 py-1 text-right font-semibold">Interés</th>
                                     <th className="px-2 py-1 text-right font-semibold">Cuota</th>
-                                    <th className="px-2 py-1 text-right font-semibold">Abonado (se descarta)</th>
+                                    <th className="px-2 py-1 text-right font-semibold">Abonado (se elimina)</th>
                                   </tr>
                                 </thead>
                                 <tbody>
