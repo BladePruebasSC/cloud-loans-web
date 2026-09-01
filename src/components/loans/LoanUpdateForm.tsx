@@ -334,7 +334,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         supabase.from('installments').select('*')
           .eq('loan_id', loan.id).order('installment_number', { ascending: true }),
         supabase.from('payments')
-          .select('amount, principal_amount, interest_amount, due_date')
+          .select('amount, principal_amount, interest_amount, due_date, superseded_at')
           .eq('loan_id', loan.id),
         supabase.from('capital_payments').select('amount').eq('loan_id', loan.id),
       ]);
@@ -3025,6 +3025,38 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   })
                   .eq('id', row.id);
                 if (updErr) throw updErr;
+              }
+
+              // 1.b) Anular los abonos hechos a esas cuotas.
+              //
+              // La regla de la empresa es que la extensión no los arrastra. No basta con
+              // ignorarlos aquí: siguen en `payments` atados a su fecha de vencimiento, y la
+              // tabla de amortización, el estado de cuenta, el pago avanzado, la ruta de cobro
+              // y el balance que recalcula Postgres los seguirían contando — el balance diría
+              // una cifra y las cuotas otra.
+              //
+              // Se desvinculan de la cuota (`due_date` a NULL) conservando a cuál estaban
+              // aplicados en `original_due_date`. La fila NO se borra: el dinero se recibió y
+              // debe seguir contando como ingreso en los informes, que agrupan por
+              // `payment_date`.
+              // Se recorre fecha por fecha para poder guardar en `original_due_date` a qué
+              // cuota estaba aplicado cada pago. Es idempotente: los ya anulados tienen
+              // `due_date` en NULL y no vuelven a coincidir.
+              const supersededAt = new Date().toISOString();
+              for (const dueDate of schedule.supersededDueDates) {
+                const { error: supersedeError } = await supabase
+                  .from('payments')
+                  .update({
+                    superseded_at: supersededAt,
+                    superseded_reason:
+                      `Extensión de plazo (+${schedule.additionalCount} cuotas): recálculo del cronograma`,
+                    original_due_date: dueDate,
+                    due_date: null,
+                  })
+                  .eq('loan_id', loan.id)
+                  .eq('due_date', dueDate)
+                  .is('superseded_at', null);
+                if (supersedeError) throw supersedeError;
               }
 
               // 2) Insertar las cuotas nuevas.
@@ -6327,9 +6359,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                     abonos. El cliente volverá a deber ese dinero.
                                   </p>
                                   <p className="mt-1">
-                                    Los pagos siguen registrados en el historial, así que el desglose de cuotas y el
-                                    formulario de pago los seguirán mostrando como abonados: ahí verás una cifra
-                                    menor que en este balance.
+                                    Esos pagos <strong>dejarán de aplicarse</strong> a sus cuotas en todo el sistema
+                                    (tabla de amortización, estado de cuenta y balance). Se conservan en el historial
+                                    del préstamo y siguen contando como ingreso; queda registrado a qué cuota estaban
+                                    aplicados y por qué se anularon.
                                   </p>
                                 </div>
                               </div>

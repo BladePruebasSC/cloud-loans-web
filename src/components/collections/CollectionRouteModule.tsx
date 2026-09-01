@@ -109,7 +109,7 @@ export const CollectionRouteModule = () => {
             .select('id, loan_id, installment_number, due_date, total_amount, principal_amount, interest_amount, paid_amount, is_paid')
             .in('loan_id', chunk),
           supabase.from('payments')
-            .select('loan_id, amount, principal_amount, interest_amount, due_date')
+            .select('loan_id, amount, principal_amount, interest_amount, due_date, superseded_at')
             .in('loan_id', chunk),
         ])));
 

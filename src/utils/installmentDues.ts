@@ -30,6 +30,14 @@ export interface RawPayment {
   principal_amount?: number | null;
   interest_amount?: number | null;
   due_date?: string | null;
+  /**
+   * Pago anulado por una extensión de plazo: ya no se aplica a ninguna cuota.
+   *
+   * Al anularlo se le pone `due_date` en NULL, así que este campo es redundante para el
+   * reparto; se comprueba igualmente para que la intención quede explícita y por si alguna
+   * consulta trae la fecha original.
+   */
+  superseded_at?: string | null;
 }
 
 export interface DueRow {
@@ -84,6 +92,7 @@ export const computeInstallmentDues = (
   // Pagos disponibles por (fecha, tipo). Un pago sin interés se considera de cargo.
   const pool = new Map<string, number>();
   for (const p of payments || []) {
+    if (p.superseded_at) continue; // anulado por una extensión de plazo
     const due = dateOnly(p.due_date);
     if (!due) continue;
     const principal = Number(p.principal_amount ?? p.amount ?? 0) || 0;

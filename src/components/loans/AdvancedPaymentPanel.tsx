@@ -99,9 +99,11 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
           .select('id, installment_number, due_date, total_amount, principal_amount, interest_amount, paid_amount, is_paid')
           .eq('loan_id', loanId)
           .order('due_date', { ascending: true }),
+        // `superseded_at` excluye los pagos anulados por una extensión de plazo: ya no se
+        // aplican a ninguna cuota.
         supabase
           .from('payments')
-          .select('amount, principal_amount, interest_amount, due_date')
+          .select('amount, principal_amount, interest_amount, due_date, superseded_at')
           .eq('loan_id', loanId),
         supabase
           .from('loans')

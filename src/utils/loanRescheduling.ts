@@ -86,6 +86,16 @@ export interface ExtendedSchedule {
   totalToCollect: number;
   /** Cuántas cuotas quedaron fijadas en lo ya abonado (ver `cappedByPayment`) */
   cappedCount: number;
+  /**
+   * Fechas de vencimiento cuyos pagos deben DEJAR DE APLICARSE al préstamo.
+   *
+   * Solo con `ignorePriorPartialPayments`. No basta con ignorarlos en este cálculo: los pagos
+   * siguen en `payments` atados a su fecha de vencimiento, y todo lo que reparte pagos por
+   * fecha (la tabla de amortización, el estado de cuenta, el pago avanzado, la ruta de cobro y
+   * el balance que recalcula Postgres) los seguiría contando. Quien guarde la extensión tiene
+   * que anularlos de verdad.
+   */
+  supersededDueDates: string[];
   /** `loans.total_amount` resultante (capital + interés, sin cargos) */
   newTotalAmount: number;
   /**
@@ -400,6 +410,7 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
   const paidTotal = round2(paid.reduce((s, i) => s + Number(i.total_amount ?? i.amount ?? 0), 0));
 
   const newTotalAmount = round2(paidTotal + totalPendingAmount);
+  const totalAlreadyPaidOnPending = round2(rows.reduce((s, r) => s + r.alreadyPaid, 0));
 
   // ----- Balance resultante -----
   // Se replica la fórmula de `calculate_loan_remaining_balance` (plazo fijo):
@@ -414,15 +425,22 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
       .filter(i => isChargeInstallment(i))
       .reduce((s, i) => s + Number(i.total_amount ?? i.amount ?? 0), 0)
   );
-  // Con la regla de "recálculo nuevo" los pagos anteriores NO se restan: el balance es el
-  // total del contrato nuevo más los cargos, sin más.
-  const allPayments = ignorePriorPayments ? 0 : round2(
+  // Los pagos ya ANULADOS por una extensión anterior no cuentan, igual que en
+  // `calculate_loan_remaining_balance` (que filtra `superseded_at IS NULL`).
+  const totalPaymentsMade = round2(
     (input.payments || []).reduce((s, p) => {
+      if (p.superseded_at) return s;
       const gross = Number(p.amount ?? 0);
       if (Number.isFinite(gross) && gross > 0) return s + gross;
       return s + (Number(p.principal_amount) || 0) + (Number(p.interest_amount) || 0);
     }, 0)
   );
+
+  // Con la regla de "recálculo nuevo" se descartan SOLO los abonos hechos a cuotas que siguen
+  // pendientes (los que la extensión anula). Los pagos de cuotas ya saldadas se siguen
+  // restando: esas cuotas son historia cerrada y su importe ya está dentro de `newTotalAmount`.
+  const supersededPayments = ignorePriorPayments ? totalAlreadyPaidOnPending : 0;
+  const allPayments = round2(Math.max(0, totalPaymentsMade - supersededPayments));
   const newRemainingBalance = round2(Math.max(0, newTotalAmount + allCharges - allPayments));
 
   const representativePayment = rows.length ? rows[0].total : 0;
@@ -454,6 +472,9 @@ export const computeExtendedSchedule = (input: RescheduleInput): ExtendedSchedul
     totalAlreadyPaid: round2(rows.reduce((s, r) => s + r.alreadyPaid, 0)),
     totalToCollect: round2(rows.reduce((s, r) => s + r.pendingAfter, 0)),
     cappedCount: rows.filter(r => r.cappedByPayment).length,
+    supersededDueDates: ignorePriorPayments
+      ? [...new Set(rows.filter(r => !r.isNew && r.alreadyPaid > 0.005).map(r => r.dueDate))]
+      : [],
     newTotalAmount,
     newRemainingBalance,
     newTermPeriods: paid.length + pendingCountAfter,
