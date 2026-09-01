@@ -25,7 +25,8 @@ import {
   Zap,
   Database,
   Target,
-  Gavel
+  Gavel,
+  Route
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -84,6 +85,12 @@ export const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
       name: 'Cobro Rápido',
       icon: Zap,
       path: '/cobro-rapido',
+      permission: 'loans.view',
+    },
+    {
+      name: 'Ruta de Cobro',
+      icon: Route,
+      path: '/ruta-cobro',
       permission: 'loans.view',
     },
     {

@@ -184,6 +184,7 @@ function App() {
       <Route path="/cobro-rapido" element={<Index />} />
       <Route path="/dashboard" element={<Index />} />
       <Route path="/crm" element={<Index />} />
+      <Route path="/ruta-cobro" element={<Index />} />
       <Route path="/cobranza" element={<Index />} />
       <Route path="/cobranza/casos" element={<Index />} />
       <Route path="/cobranza/casos/:id" element={<Index />} />

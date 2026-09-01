@@ -27,6 +27,7 @@ import RegistrationCodeModal from '@/components/RegistrationCodeModal';
 import { PawnShopModule } from '@/components/pawnshop/PawnShopModule';
 import PointOfSaleModule from '@/components/pos/PointOfSaleModule';
 import { QuickCollectionModule } from '@/components/collections/QuickCollectionModule';
+import { CollectionRouteModule } from '@/components/collections/CollectionRouteModule';
 import { CRMModule } from '@/components/crm/CRMModule';
 import { LegalModule } from '@/components/legal/LegalModule';
 import { BackupExportModule } from '@/components/backup/BackupExportModule';
@@ -178,6 +179,14 @@ const Index = () => {
           return <RestrictedAccess module="loans" />;
         }
         return <QuickCollectionModule />;
+
+      case '/ruta-cobro':
+        // Se pide `loans.view`: quien puede ver la cartera puede ver a quién le toca cobrar.
+        // El botón de cobrar dentro de cada parada sí exige además `pagos.crear`.
+        if (!hasPermission('loans.view')) {
+          return <RestrictedAccess module="loans" />;
+        }
+        return <CollectionRouteModule />;
 
       case '/crm':
         // Los dueños siempre entran; los empleados necesitan el permiso crm.view

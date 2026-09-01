@@ -37,7 +37,7 @@ import {
 } from '@/components/ui/select';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Briefcase, Camera, Check, Loader2, MapPin,
-  MoreHorizontal, Phone, Upload, User, UserPlus, X,
+  MoreHorizontal, Phone, ShieldCheck, Unlock, Upload, User, UserPlus, X,
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -46,6 +46,12 @@ import {
   MUNICIPAL_SEAT, PROVINCE_NAMES, getDistricts, getMunicipalities,
   normalizeStoredTerritory,
 } from '@/data/dominicanRepublic';
+import {
+  DOCUMENT_TYPES, formatDocument, documentToStored, getDocumentTypeInfo, supportsJceLookup,
+  validateDocument, type DocumentType,
+} from '@/utils/dominicanId';
+import { useJceLookup } from '@/hooks/useJceLookup';
+import { LocationPicker } from './LocationPicker';
 
 const DOMINICAN_BANKS = [
   'Banco Popular Dominicano', 'Banco de Reservas', 'Banco BHD León', 'Banco del Progreso',
@@ -69,6 +75,8 @@ const EMPLOYMENT_STATUSES = [
 const DISTRICT_OTHER = '__otro__';
 
 type ClientFormState = {
+  /** Qué documento presenta. El NÚMERO va en `dni` (así se llama la columna). */
+  document_type: DocumentType;
   first_name: string; last_name: string; nickname: string; dni: string;
   nationality: string; birth_date: string; gender: string; marital_status: string; photo_url: string;
   occupation: string; monthly_income: string; housing: string; dependents: string;
@@ -83,6 +91,7 @@ type ClientFormState = {
 };
 
 const defaultFormState: ClientFormState = {
+  document_type: 'cedula',
   first_name: '', last_name: '', nickname: '', dni: '',
   nationality: 'Dominicano', birth_date: '', gender: '', marital_status: '', photo_url: '',
   occupation: '', monthly_income: '', housing: '', dependents: '', employment_status: '', rnc: '',
@@ -99,13 +108,8 @@ const defaultFormState: ClientFormState = {
 // Formato
 // ---------------------------------------------------------------------------
 
-/** Cédula dominicana: 000-0000000-0 */
-const formatDni = (value: string): string => {
-  const d = value.replace(/\D/g, '').slice(0, 11);
-  if (d.length <= 3) return d;
-  if (d.length <= 10) return `${d.slice(0, 3)}-${d.slice(3)}`;
-  return `${d.slice(0, 3)}-${d.slice(3, 10)}-${d.slice(10)}`;
-};
+// El formato del documento lo resuelve `formatDocument` según el tipo (cédula con máscara,
+// pasaporte/DNI/ID en mayúsculas), en `utils/dominicanId.ts`.
 
 /** Teléfono: (000) 000-0000 */
 const formatPhone = (value: string): string => {
@@ -156,9 +160,9 @@ const validateStep = (step: StepId, d: ClientFormState): Errors => {
   if (step === 'identidad') {
     if (!d.first_name.trim()) e.first_name = 'El nombre es obligatorio';
     if (!d.last_name.trim()) e.last_name = 'El apellido es obligatorio';
-    const dni = digits(d.dni);
-    if (!dni) e.dni = 'La cédula es obligatoria';
-    else if (dni.length !== 11) e.dni = `La cédula debe tener 11 dígitos (llevas ${dni.length})`;
+    // La validación depende del tipo: la cédula lleva dígito verificador, el resto no.
+    const docError = validateDocument(d.document_type, d.dni);
+    if (docError) e.dni = docError;
     if (d.birth_date) {
       const born = new Date(`${d.birth_date}T00:00:00`);
       if (Number.isNaN(born.getTime())) e.birth_date = 'Fecha inválida';
@@ -212,11 +216,13 @@ type ClientRow = Partial<Record<
   | 'municipal_district' | 'sector' | 'city' | 'neighborhood' | 'collection_route'
   | 'workplace_name' | 'workplace_address' | 'card_number' | 'bank_user' | 'bank_code'
   | 'bank_token_identifier' | 'bank_name' | 'recommended_by' | 'color_classification'
-  | 'custom_field_1' | 'custom_field_2' | 'attachment_url' | 'status',
+  | 'custom_field_1' | 'custom_field_2' | 'attachment_url' | 'status'
+  | 'document_type' | 'location_note',
   string | null
 >> & {
   monthly_income?: number | null; housing?: number | null; dependents?: number | null;
   credit_score?: number | null; visible_in_loan_data?: boolean | null;
+  jce_verified?: boolean | null; latitude?: number | null; longitude?: number | null;
 };
 
 /** Valores admitidos por una columna de `clients` al guardar. */
@@ -267,6 +273,20 @@ const ClientForm = () => {
   const [duplicate, setDuplicate] = useState<{ id: string; full_name: string } | null>(null);
   const [checkingDni, setCheckingDni] = useState(false);
 
+  // Consulta a la JCE. `verified` bloquea los campos que confirmó el registro civil.
+  const { lookup: jceLookup, loading: jceLoading, error: jceError, clearError: clearJceError } = useJceLookup();
+  const [jceConsent, setJceConsent] = useState(false);
+  const [jceVerified, setJceVerified] = useState(false);
+  const [jcePhoto, setJcePhoto] = useState<string | null>(null);
+  const [jceCity, setJceCity] = useState<string | null>(null);
+
+  // Ubicación GPS de la vivienda (para la ruta de cobro)
+  // Se llama `homeLocation` y no `location` porque ese nombre ya lo ocupa `useLocation()`
+  // del router unas líneas más arriba.
+  const [homeLocation, setHomeLocation] = useState<{
+    latitude: number | null; longitude: number | null; note: string;
+  }>({ latitude: null, longitude: null, note: '' });
+
   // -------------------------------------------------------------------------
   // Carga
   // -------------------------------------------------------------------------
@@ -302,11 +322,16 @@ const ClientForm = () => {
       const phone = phoneFromStored(d.phone);
       const whatsapp = phoneFromStored(d.whatsapp);
 
+      const documentType = (DOCUMENT_TYPES.some(t => t.value === d.document_type)
+        ? d.document_type
+        : 'cedula') as DocumentType;
+
       setFormData({
+        document_type: documentType,
         first_name: d.first_name || parts[0] || '',
         last_name: d.last_name || parts.slice(1).join(' ') || '',
         nickname: d.nickname || '',
-        dni: d.dni ? formatDni(d.dni) : '',
+        dni: d.dni ? formatDocument(documentType, d.dni) : '',
         nationality: d.nationality || 'Dominicano',
         birth_date: d.birth_date || '',
         gender: d.gender || '',
@@ -347,6 +372,13 @@ const ClientForm = () => {
 
       if (whatsapp && whatsapp === phone) setWaSameAsPhone(true);
 
+      setJceVerified(d.jce_verified === true);
+      setHomeLocation({
+        latitude: d.latitude !== null && d.latitude !== undefined ? Number(d.latitude) : null,
+        longitude: d.longitude !== null && d.longitude !== undefined ? Number(d.longitude) : null,
+        note: d.location_note || '',
+      });
+
       // El distrito guardado no está en el catálogo → el selector arranca en "Otro".
       const known = getDistricts(territory.province, territory.municipality);
       if (territory.district && territory.district !== MUNICIPAL_SEAT && !known.includes(territory.district)) {
@@ -366,18 +398,83 @@ const ClientForm = () => {
   // Cambios
   // -------------------------------------------------------------------------
   const handleChange = (field: keyof ClientFormState, value: string) => {
-    let v = value;
-    if (field === 'dni') v = formatDni(value);
-    else if (field === 'phone' || field === 'whatsapp' || field === 'phone_secondary') v = formatPhone(value);
-
     setFormData(prev => {
-      const next = { ...prev, [field]: v };
+      let v = value;
+      if (field === 'dni') v = formatDocument(prev.document_type, value);
+      else if (field === 'phone' || field === 'whatsapp' || field === 'phone_secondary') v = formatPhone(value);
+
+      const next = { ...prev, [field]: v } as ClientFormState;
       // Con "WhatsApp = teléfono" activo, el WhatsApp sigue al principal.
       if (field === 'phone' && waSameAsPhone) next.whatsapp = v;
       return next;
     });
 
-    if (field === 'dni') setDuplicate(null);
+    if (field === 'dni') {
+      setDuplicate(null);
+      // Cambiar el número invalida la verificación anterior: los campos vuelven a editarse.
+      if (jceVerified) { setJceVerified(false); setJcePhoto(null); setJceCity(null); }
+      clearJceError();
+    }
+  };
+
+  /**
+   * Cambiar el tipo de documento reformatea el número y anula la verificación: la cédula
+   * lleva máscara y dígito verificador, un pasaporte no.
+   */
+  const handleDocumentTypeChange = (value: string) => {
+    const type = value as DocumentType;
+    setFormData(prev => ({ ...prev, document_type: type, dni: formatDocument(type, prev.dni) }));
+    setDuplicate(null);
+    setJceVerified(false);
+    setJcePhoto(null);
+    setJceCity(null);
+    setJceConsent(false);
+    clearJceError();
+  };
+
+  /** Consulta la JCE y rellena lo que confirma el registro civil. */
+  const runJceLookup = async () => {
+    const result = await jceLookup(formData.dni, jceConsent);
+    if (!result) return;
+
+    setFormData(prev => {
+      const next: ClientFormState = {
+        ...prev,
+        first_name: result.firstName || prev.first_name,
+        last_name: result.lastName || prev.last_name,
+        birth_date: result.birthDate || prev.birth_date,
+        gender: result.gender || prev.gender,
+        nationality: result.nationality || prev.nationality,
+        // El estado civil se autoselecciona solo si la JCE devolvió uno reconocible.
+        marital_status: result.maritalStatus || prev.marital_status,
+      };
+
+      // La ciudad de la JCE es la del REGISTRO, no necesariamente donde vive hoy. Solo se
+      // usa para precargar la cascada, y únicamente si el empleado no había puesto ya otra
+      // cosa: lo que se guarda es el domicilio ACTUAL y él manda.
+      if (result.province && !prev.province) {
+        next.province = result.province;
+        next.municipality = result.municipality;
+        next.municipal_district = '';
+      }
+      return next;
+    });
+
+    setJceVerified(true);
+    setJcePhoto(result.photoUrl);
+    setJceCity(result.city);
+    setDuplicate(null);
+    toast.success(
+      result.cached
+        ? 'Datos verificados (desde la caché de consultas previas)'
+        : 'Datos verificados con la JCE'
+    );
+  };
+
+  /** Permite corregir a mano si el reparto nombre/apellido no salió bien. */
+  const unlockJceFields = () => {
+    setJceVerified(false);
+    toast.info('Campos desbloqueados. El cliente quedará como no verificado.');
   };
 
   /** Cambiar provincia invalida municipio y distrito; cambiar municipio invalida distrito. */
@@ -406,10 +503,12 @@ const ClientForm = () => {
     if (checked) setFormData(prev => ({ ...prev, whatsapp: prev.phone }));
   };
 
-  /** Avisa (sin bloquear) si ya existe un cliente con esa cédula en la empresa. */
+  /** Avisa (sin bloquear) si ya existe un cliente con ese documento en la empresa. */
   const checkDuplicateDni = async () => {
-    const dni = digits(formData.dni);
-    if (dni.length !== 11 || !companyId) return;
+    // Solo se busca cuando el número es válido para su tipo; si no, no hay nada que comparar.
+    if (validateDocument(formData.document_type, formData.dni)) return;
+    const dni = documentToStored(formData.document_type, formData.dni);
+    if (!dni || !companyId) return;
     setCheckingDni(true);
     try {
       const { data } = await supabase
@@ -546,7 +645,10 @@ const ClientForm = () => {
       first_name: formData.first_name.trim(),
       last_name: formData.last_name.trim(),
       nickname: formData.nickname.trim() || null,
-      dni: digits(formData.dni),
+      document_type: formData.document_type,
+      dni: documentToStored(formData.document_type, formData.dni),
+      jce_verified: jceVerified,
+      jce_verified_at: jceVerified ? new Date().toISOString() : null,
       nationality: formData.nationality || 'Dominicano',
       birth_date: formData.birth_date || null,
       gender: formData.gender || null,
@@ -585,6 +687,11 @@ const ClientForm = () => {
       // de intimación los siguen leyendo, pero ya no se piden dos veces al empleado.
       city: municipality,
       neighborhood: sector,
+      // Ubicación de la vivienda, para la ruta de cobro
+      latitude: homeLocation.latitude,
+      longitude: homeLocation.longitude,
+      location_note: homeLocation.note.trim() || null,
+      location_updated_at: homeLocation.latitude !== null ? new Date().toISOString() : null,
       credit_score: formData.credit_score ? Number(formData.credit_score) : null,
       status: formData.status,
       user_id: companyId,
@@ -639,6 +746,9 @@ const ClientForm = () => {
   const districtSelectValue = districtIsCustom
     ? DISTRICT_OTHER
     : (formData.municipal_district || undefined);
+
+  const docInfo = getDocumentTypeInfo(formData.document_type);
+  const canUseJce = supportsJceLookup(formData.document_type);
 
   if (loading) {
     return (
@@ -769,33 +879,126 @@ const ClientForm = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Field label="Nombres" required error={err('first_name')}>
-                  <Input value={formData.first_name} autoFocus
-                    onChange={(e) => handleChange('first_name', e.target.value)}
-                    placeholder="Juan Carlos" />
+              {/* El documento va PRIMERO: de su tipo dependen la máscara, la validación y
+                  si se puede consultar la JCE. */}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <Field label="Tipo de documento" required>
+                  <Select value={formData.document_type} onValueChange={handleDocumentTypeChange}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {DOCUMENT_TYPES.map(t => (
+                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
-                <Field label="Apellidos" required error={err('last_name')}>
-                  <Input value={formData.last_name}
-                    onChange={(e) => handleChange('last_name', e.target.value)}
-                    placeholder="Pérez Santana" />
-                </Field>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <Field
-                  label="Cédula" required error={err('dni')}
-                  hint={checkingDni ? 'Verificando…' : '11 dígitos'}
+                  label="Número de documento" required error={err('dni')}
+                  hint={checkingDni ? 'Verificando…' : docInfo.hint}
                 >
-                  <Input value={formData.dni} inputMode="numeric"
+                  <Input
+                    value={formData.dni}
+                    autoFocus
+                    inputMode={formData.document_type === 'cedula' ? 'numeric' : 'text'}
                     onChange={(e) => handleChange('dni', e.target.value)}
                     onBlur={checkDuplicateDni}
-                    placeholder="000-0000000-0" />
+                    placeholder={docInfo.placeholder}
+                  />
                 </Field>
                 <Field label="Apodo" hint="Como lo conocen en el barrio">
                   <Input value={formData.nickname}
                     onChange={(e) => handleChange('nickname', e.target.value)}
                     placeholder="Juancho" />
+                </Field>
+              </div>
+
+              {/* Verificación con la JCE — solo para cédula */}
+              {canUseJce && (
+                <div className={`rounded-lg border p-3 ${jceVerified ? 'border-green-300 bg-green-50' : 'border-blue-200 bg-blue-50'}`}>
+                  {jceVerified ? (
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        {jcePhoto && (
+                          <img src={jcePhoto} alt="Foto de la JCE"
+                            className="h-16 w-16 rounded border border-green-300 object-cover" />
+                        )}
+                        <div className="text-sm text-green-900">
+                          <p className="flex items-center gap-1.5 font-semibold">
+                            <ShieldCheck className="h-4 w-4" /> Verificado con la JCE
+                          </p>
+                          <p className="text-xs">
+                            Nombre, apellido, sexo y fecha de nacimiento quedan bloqueados porque
+                            los confirma el registro civil.
+                            {jceCity && <> Ciudad de registro: <strong>{jceCity}</strong>.</>}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        {jcePhoto && !photoPreview && (
+                          <Button type="button" variant="outline" size="sm"
+                            onClick={() => { setPhotoPreview(jcePhoto); setFormData(p => ({ ...p, photo_url: jcePhoto })); }}>
+                            Usar esta foto
+                          </Button>
+                        )}
+                        <Button type="button" variant="ghost" size="sm" onClick={unlockJceFields}>
+                          <Unlock className="mr-1 h-3.5 w-3.5" /> Corregir a mano
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-blue-900">
+                        Verificar la cédula con la JCE
+                      </p>
+                      <p className="text-xs text-blue-800">
+                        Rellena nombre, apellido, sexo, fecha de nacimiento y estado civil desde el
+                        registro civil, y evita errores de digitación.
+                      </p>
+                      <label className="flex cursor-pointer items-start gap-2 text-xs text-blue-900">
+                        <Checkbox checked={jceConsent}
+                          onCheckedChange={(c) => setJceConsent(c === true)} className="mt-0.5" />
+                        <span>
+                          El titular <strong>autoriza</strong> consultar sus datos en bases externas
+                          (Ley 172-13 de Protección de Datos Personales). Cada consulta queda
+                          registrada con el usuario que la hizo.
+                        </span>
+                      </label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button" size="sm"
+                          onClick={runJceLookup}
+                          disabled={!jceConsent || jceLoading || !!validateDocument('cedula', formData.dni)}
+                        >
+                          {jceLoading
+                            ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Consultando…</>
+                            : <><ShieldCheck className="mr-2 h-4 w-4" />Verificar cédula</>}
+                        </Button>
+                        {!jceConsent && (
+                          <span className="text-xs text-blue-700">Marca la autorización para continuar.</span>
+                        )}
+                      </div>
+                      {jceError && (
+                        <p className="flex items-start gap-1.5 text-xs font-medium text-red-700">
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{jceError}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label="Nombres" required error={err('first_name')}
+                  hint={jceVerified ? 'Confirmado por la JCE' : undefined}>
+                  <Input value={formData.first_name} disabled={jceVerified}
+                    onChange={(e) => handleChange('first_name', e.target.value)}
+                    placeholder="Juan Carlos" />
+                </Field>
+                <Field label="Apellidos" required error={err('last_name')}
+                  hint={jceVerified ? 'Confirmado por la JCE' : undefined}>
+                  <Input value={formData.last_name} disabled={jceVerified}
+                    onChange={(e) => handleChange('last_name', e.target.value)}
+                    placeholder="Pérez Santana" />
                 </Field>
               </div>
 
@@ -827,12 +1030,14 @@ const ClientForm = () => {
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Fecha de nacimiento" error={err('birth_date')} hint="Opcional">
-                  <Input type="date" value={formData.birth_date}
+                <Field label="Fecha de nacimiento" error={err('birth_date')}
+                  hint={jceVerified ? 'Confirmada por la JCE' : 'Opcional'}>
+                  <Input type="date" value={formData.birth_date} disabled={jceVerified}
                     max={new Date().toISOString().split('T')[0]}
                     onChange={(e) => handleChange('birth_date', e.target.value)} />
                 </Field>
-                <Field label="Estado civil">
+                <Field label="Estado civil"
+                  hint={jceVerified && formData.marital_status ? 'Traído de la JCE — puedes cambiarlo' : undefined}>
                   <Select value={formData.marital_status || undefined}
                     onValueChange={(v) => handleChange('marital_status', v)}>
                     <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
@@ -843,8 +1048,9 @@ const ClientForm = () => {
                 </Field>
               </div>
 
-              <Field label="Sexo">
-                <RadioGroup value={formData.gender} onValueChange={(v) => handleChange('gender', v)}>
+              <Field label="Sexo" hint={jceVerified ? 'Confirmado por la JCE' : undefined}>
+                <RadioGroup value={formData.gender} disabled={jceVerified}
+                  onValueChange={(v) => handleChange('gender', v)}>
                   <div className="flex gap-6">
                     <div className="flex items-center space-x-2">
                       <RadioGroupItem value="MASCULINO" id="gender-m" />
@@ -996,6 +1202,17 @@ const ClientForm = () => {
                   onChange={(e) => handleChange('address', e.target.value)}
                   placeholder="Calle Duarte #45, frente al colmado La Esperanza" />
               </Field>
+
+              <div className="border-t pt-4">
+                <LocationPicker
+                  latitude={homeLocation.latitude}
+                  longitude={homeLocation.longitude}
+                  note={homeLocation.note}
+                  onChange={setHomeLocation}
+                  addressHint={[formData.address, formData.sector, formData.municipality, formData.province]
+                    .filter(Boolean).join(', ')}
+                />
+              </div>
 
               {formData.municipality && (
                 <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">

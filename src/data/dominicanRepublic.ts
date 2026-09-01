@@ -411,6 +411,74 @@ export const inferProvinceFromMunicipality = (municipality?: string | null): str
   return hits.length === 1 ? hits[0].name : null;
 };
 
+// ----------------------------------------------------------------------------
+// Ciudad que devuelve la JCE → municipio del catálogo
+// ----------------------------------------------------------------------------
+// La JCE devuelve la ciudad en mayúsculas y sin acentos ("HIGUEY", "BANICA"). Eso ya lo
+// resuelve `sameName`. Aquí solo están los nombres que NO coinciden con ningún municipio:
+// grafías alternativas y nombres cortos de uso oficial.
+const JCE_CITY_ALIASES: Record<string, string> = {
+  'santo domingo': 'Santo Domingo de Guzmán',
+  'distrito nacional': 'Santo Domingo de Guzmán',
+  'guerra': 'San Antonio de Guerra',
+  'neyba': 'Neiba',
+  'el seybo': 'El Seibo',
+  'seybo': 'El Seibo',
+  'elias pina': 'Comendador',
+  'salvaleon de higuey': 'Higüey',
+  'higuey': 'Higüey',
+  'san felipe de puerto plata': 'Puerto Plata',
+  'santiago de los caballeros': 'Santiago',
+  'concepcion de la vega': 'La Vega',
+  'san fernando de monte cristi': 'Monte Cristi',
+  'montecristi': 'Monte Cristi',
+  'santa barbara de samana': 'Samaná',
+  'salcedo': 'Salcedo',
+  'sabaneta': 'San Ignacio de Sabaneta',
+  'navarrete': 'Bisonó',
+  'villa bisono': 'Bisonó',
+  'valverde': 'Mao',
+  'valverde mao': 'Mao',
+  'azua de compostela': 'Azua de Compostela',
+  'bani': 'Baní',
+  'san juan': 'San Juan de la Maguana',
+  'hato mayor': 'Hato Mayor del Rey',
+  'nagua': 'Nagua',
+  'bonao': 'Bonao',
+  'cotui': 'Cotuí',
+};
+
+export interface JceLocation {
+  /** Municipio del catálogo, o '' si no se reconoció */
+  municipality: string;
+  /** Provincia del catálogo, o '' si no se pudo determinar */
+  province: string;
+}
+
+/**
+ * Traduce la ciudad que devuelve la JCE a (provincia, municipio) del catálogo, para
+ * precargar los selectores en cascada.
+ *
+ * OJO con el significado: la JCE devuelve la ciudad del REGISTRO de la persona, que no tiene
+ * por qué ser donde vive hoy. Por eso el formulario la usa solo como valor inicial y deja
+ * cambiar provincia y municipio libremente: lo que se guarda es el domicilio ACTUAL.
+ *
+ * Devuelve campos vacíos cuando el nombre no se reconoce o es ambiguo, en vez de adivinar.
+ */
+export const resolveJceCity = (city?: string | null): JceLocation => {
+  const raw = normalizeName(city);
+  if (!raw) return { municipality: '', province: '' };
+
+  const aliased = JCE_CITY_ALIASES[raw];
+  const candidate = aliased ?? String(city ?? '').trim();
+
+  const province = inferProvinceFromMunicipality(candidate);
+  if (!province) return { municipality: '', province: '' };
+
+  const municipality = findMunicipality(province, candidate)?.name ?? '';
+  return { municipality, province: municipality ? province : '' };
+};
+
 export interface TerritorySelection {
   province: string;
   municipality: string;
