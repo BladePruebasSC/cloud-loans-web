@@ -13,9 +13,11 @@ describe("amortizationTotals", () => {
 const r2 = (v) => Math.round(v * 100) / 100;
 
 /**
- * Construye el cronograma 'simple' como lo hace LoanForm:
- * interes plano sobre el capital, capital repartido en partes iguales, y los gastos de cierre
- * sumados a la ULTIMA cuota solo cuando NO se financian.
+ * Construye el cronograma 'simple' como lo hace LoanForm.
+ *
+ * Los gastos de cierre NO financiados se suman a la ULTIMA cuota, y van INTEGROS a capital:
+ * se guardan como cuota-cargo con `principal_amount = total_amount` e `interest_amount = 0`.
+ * Financiados, ya estan dentro del capital y no se suman aparte.
  */
 const buildSimple = ({ amount, rate, periods, monthsEquivalent, closing = 0, financed = false }) => {
   const capital = financed ? r2(amount + closing) : amount;
@@ -25,11 +27,14 @@ const buildSimple = ({ amount, rate, periods, monthsEquivalent, closing = 0, fin
   const paymentPer = interestPer + principalPer;
   const closingAsCharge = financed ? 0 : closing;
 
-  return Array.from({ length: periods }, (_, i) => ({
-    interest: interestPer,
-    principal: principalPer,
-    totalPayment: i === periods - 1 ? paymentPer + closingAsCharge : paymentPer,
-  }));
+  return Array.from({ length: periods }, (_, i) => {
+    const isLast = i === periods - 1;
+    return {
+      interest: interestPer,
+      principal: isLast ? principalPer + closingAsCharge : principalPer,
+      totalPayment: isLast ? paymentPer + closingAsCharge : paymentPer,
+    };
+  });
 };
 
   it("IMAGEN 1: 10,000 al 20% mensual, 6 cuotas, sin gastos de cierre", () => {
@@ -56,11 +61,19 @@ const buildSimple = ({ amount, rate, periods, monthsEquivalent, closing = 0, fin
   
     ok('la ultima cuota lleva el cierre: 5,666.67', r2(rows[5].totalPayment) === 5666.67, String(r2(rows[5].totalPayment)));
     ok('las demas siguen en 3,666.67', r2(rows[0].totalPayment) === 3666.67);
-  
+
+    // El cargo es 100% capital: tambien aparece en la columna CAPITAL de la ultima cuota.
+    ok('capital de la ultima: 1,666.67 + 2,000', r2(rows[5].principal) === 3666.67, String(r2(rows[5].principal)));
+    ok('las demas siguen en 1,666.67', r2(rows[0].principal) === 1666.67);
+    ok('el interes de la ultima NO cambia', r2(rows[5].interest) === 2000, String(r2(rows[5].interest)));
+
     ok('TOTAL interes 12,000 (el cierre no es interes)', t.interest === 12000, String(t.interest));
-    ok('TOTAL capital 10,000 (el cierre no es capital)', t.principal === 10000, String(t.principal));
-    // ANTES: seguia diciendo 22,000 aunque la columna sumara 24,000.
+    // ANTES mostraba 10,000: el cargo salia en "a pagar" pero no en capital, y la fila de
+    // TOTALES no cuadraba consigo misma (12,000 + 10,000 != 24,000).
+    ok('TOTAL capital 12,000 (el cierre es capital)', t.principal === 12000, String(t.principal));
     ok('TOTAL a pagar 24,000', t.payment === 24000, String(t.payment));
+    ok('AHORA interes + capital = a pagar', r2(t.interest + t.principal) === t.payment,
+      `${r2(t.interest + t.principal)} vs ${t.payment}`);
     ok('el total suma la columna en crudo', t.payment === r2(rows.reduce((s, x) => s + x.totalPayment, 0)));
   }
   
@@ -93,9 +106,12 @@ const buildSimple = ({ amount, rate, periods, monthsEquivalent, closing = 0, fin
     const fin = sumAmortizationTotals(buildSimple({ amount: 10000, rate: 20, periods: 6, monthsEquivalent: 6, closing: 2000, financed: true }));
   
     ok('con cierre aparte se paga 2,000 mas', r2(aparte.payment - sin.payment) === 2000);
-    ok('el cierre aparte NO toca capital ni interes',
-      aparte.principal === sin.principal && aparte.interest === sin.interest);
-    ok('financiado sube el capital', fin.principal > aparte.principal);
+    // El cierre aparte SI es capital (el cargo lleva principal = total), pero NO genera interes.
+    ok('el cierre aparte suma al capital', r2(aparte.principal - sin.principal) === 2000,
+      String(r2(aparte.principal - sin.principal)));
+    ok('el cierre aparte NO genera interes', aparte.interest === sin.interest);
+    ok('financiado y aparte dan el mismo capital', fin.principal === aparte.principal,
+      `${fin.principal} vs ${aparte.principal}`);
     ok('financiado sube el interes', fin.interest > aparte.interest);
     ok('financiado cuesta mas que aparte', fin.payment > aparte.payment,
       `${fin.payment} vs ${aparte.payment}`);

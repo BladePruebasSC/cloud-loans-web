@@ -1834,13 +1834,17 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            
            const principalPayment = fixed_payment_amount - interestPerPayment;
            const isLastPayment = i === totalPeriods;
-           const totalPaymentWithClosingCosts = isLastPayment ? fixed_payment_amount + closingCostsAsCharge :fixed_payment_amount;
-           
+           const totalPaymentWithClosingCosts = isLastPayment ? fixed_payment_amount + closingCostsAsCharge : fixed_payment_amount;
+           // Los gastos de cierre no financiados van ÍNTEGROS a capital: se guardan como
+           // cuota-cargo con `principal_amount = total_amount` e `interest_amount = 0`.
+           // El saldo restante sigue usando el capital REAL del préstamo.
+           const principalWithClosingCosts = isLastPayment ? principalPayment + closingCostsAsCharge : principalPayment;
+
            schedule.push({
              payment: i,
              date: formatDateLocalIso(paymentDate),
              interest: interestPerPayment,
-             principal: principalPayment,
+             principal: principalWithClosingCosts,
              totalPayment: totalPaymentWithClosingCosts,
              remainingBalance: Math.max(0, remainingBalance - principalPayment)
            });
@@ -1869,13 +1873,15 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            }
            
            const isLastPayment = i === totalPeriods;
-           const totalPaymentWithClosingCosts = isLastPayment ? monthlyPayment + closingCostsAsCharge :monthlyPayment;
-           
+           const totalPaymentWithClosingCosts = isLastPayment ? monthlyPayment + closingCostsAsCharge : monthlyPayment;
+           // Los gastos de cierre no financiados van ÍNTEGROS a capital (ver nota arriba).
+           const principalWithClosingCosts = isLastPayment ? principalPerPayment + closingCostsAsCharge : principalPerPayment;
+
            schedule.push({
              payment: i,
              date: formatDateLocalIso(paymentDate),
              interest: interestPerPayment,
-             principal: principalPerPayment,
+             principal: principalWithClosingCosts,
              totalPayment: totalPaymentWithClosingCosts,
              remainingBalance: Math.max(0, remainingBalance - principalPerPayment)
            });
@@ -1915,7 +1921,9 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const principalPayment = monthlyPayment - interestPayment;
          const actualPayment = monthlyPayment;
          const isLastPayment = i === totalPeriods;
-         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge :actualPayment;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge : actualPayment;
+         // Los gastos de cierre no financiados van ÍNTEGROS a capital (ver nota arriba).
+         const principalWithClosingCosts = isLastPayment ? principalPayment + closingCostsAsCharge : principalPayment;
          
          // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
          // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
@@ -1931,7 +1939,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            payment: i,
            date: formatDateLocalIso(paymentDate),
            interest: interestPayment,
-           principal: principalPayment,
+           principal: principalWithClosingCosts,
            totalPayment: totalPaymentWithClosingCosts,
            remainingBalance: Math.max(0, remainingBalance - principalPayment)
          });
@@ -1965,7 +1973,9 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const interestPayment = remainingBalance * periodRate;
          const actualPayment = principalPerPayment + interestPayment;
          const isLastPayment = i === totalPeriods;
-         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge :actualPayment;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge : actualPayment;
+         // Los gastos de cierre no financiados van ÍNTEGROS a capital (ver nota arriba).
+         const principalWithClosingCosts = isLastPayment ? principalPerPayment + closingCostsAsCharge : principalPerPayment;
          // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
          // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
          // americano pero NO en simple ni indefinido (esas ramas calculan `capital + interés`).
@@ -1980,7 +1990,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            payment: i,
            date: formatDateLocalIso(paymentDate),
            interest: interestPayment,
-           principal: principalPerPayment,
+           principal: principalWithClosingCosts,
            totalPayment: totalPaymentWithClosingCosts,
            remainingBalance: Math.max(0, remainingBalance - principalPerPayment)
          });
@@ -2015,7 +2025,9 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
          const actualPayment = i === totalPeriods ? interestPerPayment + amount : interestPerPayment;
          const principalPayment = i === totalPeriods ? amount : 0;
          const isLastPayment = i === totalPeriods;
-         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge :actualPayment;
+         const totalPaymentWithClosingCosts = isLastPayment ? actualPayment + closingCostsAsCharge : actualPayment;
+         // Los gastos de cierre no financiados van ÍNTEGROS a capital (ver nota arriba).
+         const principalWithClosingCosts = isLastPayment ? principalPayment + closingCostsAsCharge : principalPayment;
          // CORRECCIÓN (auditoría 2026-08-28): antes se acumulaba `totalPaymentWithClosingCosts`,
          // así que `total_amount` del préstamo INCLUÍA los gastos de cierre en francés/alemán/
          // americano pero NO en simple ni indefinido (esas ramas calculan `capital + interés`).
@@ -2030,7 +2042,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
            payment: i,
            date: formatDateLocalIso(paymentDate),
            interest: interestPerPayment,
-           principal: principalPayment,
+           principal: principalWithClosingCosts,
            totalPayment: totalPaymentWithClosingCosts,
            remainingBalance: i === totalPeriods ? 0 : remainingBalance
          });
