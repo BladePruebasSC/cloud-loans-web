@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { sumAmortizationTotals } from '@/utils/amortizationTotals';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -1171,6 +1172,25 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
   const [loading, setLoading] = useState(false);
   const [showAmortizationTable, setShowAmortizationTable] = useState(false);
   const [amortizationSchedule, setAmortizationSchedule] = useState<AmortizationRow[]>([]);
+
+  /**
+   * Totales de la tabla de amortización, SUMANDO LAS FILAS QUE SE MUESTRAN.
+   *
+   * CORRECCIÓN (2026-09-01): la fila de TOTALES no sumaba sus propias columnas, sino valores
+   * calculados aparte, y por eso contradecía a la tabla que tenía encima:
+   *   · el capital usaba `form.getValues('amount')`, el monto ESCRITO. Con los gastos de
+   *     cierre financiados el capital repartido es mayor (10,000 → 12,000) y el total seguía
+   *     diciendo 10,000 aunque la columna sumara 12,000.
+   *   · "A pagar" usaba `calculatedValues.totalAmount`, que deliberadamente excluye los gastos
+   *     de cierre (`loans.total_amount` es capital + interés, sin cargos). Con 2,000 de cierre
+   *     la última cuota mostraba 5,666.67 pero el total seguía en 22,000 en vez de 24,000.
+   *
+   * Sumando las filas, el pie no puede volver a contradecir a la tabla.
+   */
+  const scheduleTotals = useMemo(
+    () => sumAmortizationTotals(amortizationSchedule),
+    [amortizationSchedule],
+  );
   const [calculatedValues, setCalculatedValues] = useState({
     monthlyPayment: 0,
     totalAmount: 0,
@@ -2531,9 +2551,9 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                 ${form.getValues('amortization_type') !== 'indefinite' ? `
                 <tr class="totals">
                   <td colspan="2">TOTALES</td>
-                  <td>${formatCurrencyNumber(calculatedValues.totalInterest)}</td>
-                  <td>${formatCurrencyNumber(form.getValues('amount'))}</td>
-                  <td>${formatCurrencyNumber(calculatedValues.totalAmount)}</td>
+                  <td>${formatCurrencyNumber(scheduleTotals.interest)}</td>
+                  <td>${formatCurrencyNumber(scheduleTotals.principal)}</td>
+                  <td>${formatCurrencyNumber(scheduleTotals.payment)}</td>
                   <td>RD$0.00</td>
                 </tr>
                 ` : ''}
@@ -3623,9 +3643,9 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                       {form.getValues('amortization_type') !== 'indefinite' && (
                         <tr className="bg-blue-50 font-bold">
                           <td className="p-1 sm:p-2 border" colSpan={2}>TOTALES</td>
-                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(calculatedValues.totalInterest)}</td>
-                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(form.getValues('amount'))}</td>
-                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(calculatedValues.totalAmount)}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(scheduleTotals.interest)}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(scheduleTotals.principal)}</td>
+                          <td className="p-1 sm:p-2 text-right border">{formatCurrency(scheduleTotals.payment)}</td>
                           <td className="p-1 sm:p-2 text-right border">RD$0.00</td>
                         </tr>
                       )}
@@ -3643,9 +3663,18 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                     </p>
                   )}
                   {form.getValues('closing_costs') > 0 && (
-                    <p className="text-xs text-orange-600 mt-1">
-                      <strong>Gastos de cierre:</strong> {formatCurrency(form.getValues('closing_costs'))} (aplicado al último pago)
-                    </p>
+                    form.getValues('closing_costs_financed') ? (
+                      <p className="text-xs text-blue-700 mt-1">
+                        <strong>Gastos de cierre:</strong> {formatCurrency(form.getValues('closing_costs'))} incluidos
+                        en el capital y repartidos entre todas las cuotas. El cliente recibe{' '}
+                        {formatCurrency(Number(form.getValues('amount') || 0))} y debe{' '}
+                        {formatCurrency(scheduleTotals.principal)} de capital.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-orange-600 mt-1">
+                        <strong>Gastos de cierre:</strong> {formatCurrency(form.getValues('closing_costs'))} (aplicado al último pago)
+                      </p>
+                    )
                   )}
                 </div>
               </CardContent>
