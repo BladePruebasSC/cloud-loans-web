@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { sumAmortizationTotals } from '@/utils/amortizationTotals';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -19,7 +19,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, FileText, Copy, Printer, Plus } from 'lucide-react';
 import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
-import { addPeriodsToDate, formatDateLocalIso, getFrequencyRateFactor } from '@/utils/frequencyUtils';
+import {
+  addPeriodsToDate, formatDateLocalIso, fromAnnualRate, getFrequencyLabel,
+  getFrequencyRateFactor, getPeriodRate, toAnnualRate,
+} from '@/utils/frequencyUtils';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 
@@ -1333,6 +1336,28 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     }
   }, [companySettings, form]);
 
+  // ── Tasa de interés: se ESCRIBE en anual, se GUARDA en mensual ──────────────
+  // `loans.interest_rate` es mensual por convención del sistema, pero el usuario piensa y
+  // compara en tasa anual. Antes el campo mostraba la mensual, así que al fijar la cuota o
+  // cambiar la frecuencia el número saltaba (de 20 a 2.0) y parecía que se hubiera roto.
+  //
+  // El texto que se ve es la fuente mientras el usuario escribe; solo se re-sincroniza cuando
+  // la tasa cambia POR FUERA (fijar cuota, edición de un préstamo, ajustes de la empresa).
+  // Reconvertir en cada tecla haría saltar el cursor y el número por el redondeo.
+  const [annualRateText, setAnnualRateText] = useState('');
+  const lastPushedMonthlyRate = useRef<number | null>(null);
+  const watchedInterestRate = form.watch('interest_rate');
+
+  useEffect(() => {
+    const monthly = Number(watchedInterestRate) || 0;
+    if (lastPushedMonthlyRate.current !== null
+        && Math.abs(lastPushedMonthlyRate.current - monthly) < 1e-6) {
+      return; // lo acaba de escribir el usuario: no tocar su texto
+    }
+    setAnnualRateText(monthly ? String(toAnnualRate(monthly)) : '');
+    lastPushedMonthlyRate.current = null;
+  }, [watchedInterestRate]);
+
   const watchedAmount = form.watch('amount');
   const watchedTerm = form.watch('term_months');
   // Normalizar a minúsculas para que "INDEFINITE" no rompa las validaciones/limpiezas
@@ -1501,20 +1526,29 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     }
   }, [initialData, clients]);
 
-  // Función para calcular la tasa de interés basada en una cuota fija
-  const calculateInterestFromQuota = (principal: number, quota: number, months: number) => {
-    if (principal <= 0 || quota <= 0 || months <= 0) return 0;
-    
-    // Si la cuota es menor o igual al principal dividido por meses, es 0% interés
-    if (quota <= principal / months) return 0;
-    
-    // Para interés simple mensual, calcular directamente
-    const totalPayment = quota * months;
-    const totalInterest = totalPayment - principal;
-    
-    // Calcular tasa de interés mensual
-    const monthlyRate = (totalInterest / principal) / months * 100;
-    return Math.max(0, Math.round(monthlyRate * 100) / 100);
+  /**
+   * Tasa MENSUAL que hace que el préstamo salga exactamente por la cuota fija indicada.
+   *
+   * CORRECCIÓN (2026-09-01): esto devolvía la tasa DEL PERÍODO —`periods` es el plazo en
+   * períodos de la frecuencia, no en meses— y se guardaba en `interest_rate`, que el sistema
+   * lee como MENSUAL. En un préstamo quincenal el cronograma volvía a multiplicar por ½, así
+   * que la tabla no daba la cuota que el usuario había fijado. Es el mismo fallo que ya se
+   * corrigió en `AmortizationTable.calculateAdjustedInterestRate`.
+   *
+   * Se divide por el factor de frecuencia para pasar de tasa de período a tasa mensual.
+   */
+  const calculateInterestFromQuota = (
+    principal: number, quota: number, periods: number, frequency: string,
+  ) => {
+    if (principal <= 0 || quota <= 0 || periods <= 0) return 0;
+
+    // Si la cuota no cubre ni el capital repartido, no hay interés.
+    if (quota <= principal / periods) return 0;
+
+    const totalInterest = quota * periods - principal;
+    const periodRate = (totalInterest / principal) / periods; // tanto por uno, POR PERÍODO
+    const monthlyRate = (periodRate / getFrequencyRateFactor(frequency)) * 100;
+    return Math.max(0, Math.round(monthlyRate * 1e6) / 1e6);
   };
 
   const fetchClients = async () => {
@@ -2119,20 +2153,25 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     }
     
     let newInterestRate = 0;
-    
+
     // Usar la cuota fija
     if (quotaRD > 0) {
-      newInterestRate = calculateInterestFromQuota(amount, quotaRD, months);
+      newInterestRate = calculateInterestFromQuota(
+        amount, quotaRD, months, form.getValues('payment_frequency'),
+      );
     } else {
       toast.error('Debe ingresar una cuota fija');
       return;
     }
-    
-    // Actualizar la tasa de interés
+
+    // Se guarda mensual (convención del sistema) pero se informa en ANUAL, que es como se
+    // escribe el campo y la única cifra comparable entre frecuencias.
     form.setValue('interest_rate', newInterestRate);
     setIsFixingQuota(true);
-    
-    toast.success(`Tasa de interés ajustada a ${newInterestRate}% para la cuota fijada`);
+
+    toast.success(
+      `Tasa ajustada a ${toAnnualRate(newInterestRate).toFixed(2)}% anual para la cuota fijada`
+    );
     
     // Recalcular para asegurar consistencia
     setTimeout(() => {
@@ -2591,24 +2630,34 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     }
   }, [form.watch('amount')]);
 
-  // Recalcular tasa de interés cuando cambie la cuota fija
+  // Recalcular la tasa cuando cambie la cuota fija.
+  //
+  // CORRECCIÓN (2026-09-01): faltaba `payment_frequency` tanto en el cálculo como en las
+  // dependencias. La tasa derivada se guardaba como si fuera mensual siendo del período, y al
+  // cambiar la frecuencia no se recalculaba: el cronograma dejaba de dar la cuota fijada.
+  //
+  // El campo se ESCRIBE en anual, así que el número ya no salta de 20 a 2.0 al fijar la cuota:
+  // lo que se guarda sigue siendo mensual, pero lo que se ve es su equivalente anual.
   useEffect(() => {
     const fixedPaymentEnabled = form.watch('fixed_payment_enabled');
     const fixedPaymentAmount = form.watch('fixed_payment_amount');
     const amount = form.watch('amount');
     const term_months = form.watch('term_months');
-    
+    const frequency = form.watch('payment_frequency');
+
     if (fixedPaymentEnabled && fixedPaymentAmount && amount > 0 && term_months > 0) {
-      const newInterestRate = calculateInterestFromQuota(amount, fixedPaymentAmount, term_months);
+      const newInterestRate = calculateInterestFromQuota(amount, fixedPaymentAmount, term_months, frequency);
       form.setValue('interest_rate', newInterestRate);
-      
-      // Mostrar mensaje informativo
-      toast.success(`Tasa de interés ajustada automáticamente a ${newInterestRate.toFixed(2)}% para la cuota fija de ${formatCurrency(fixedPaymentAmount)}`);
+
+      toast.success(
+        `Tasa ajustada a ${toAnnualRate(newInterestRate).toFixed(2)}% anual ` +
+        `para la cuota fija de ${formatCurrency(fixedPaymentAmount)}`
+      );
     } else if (!fixedPaymentEnabled) {
       // Si se desactiva la cuota fija, limpiar el campo de cuota fija
       form.setValue('fixed_payment_amount', 0);
     }
-  }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months')]);
+  }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months'), form.watch('payment_frequency')]);
 
   // Actualizar el esquema cuando cambien los días excluidos
   useEffect(() => {
@@ -2845,7 +2894,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <FormLabel className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
-                        <span>Porcentaje interés:</span>
+                        <span>Porcentaje interés (anual):</span>
                         <span className="text-blue-500 cursor-pointer text-sm">Lista de interés</span>
                       </FormLabel>
                       <FormField
@@ -2854,21 +2903,34 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                         render={({ field }) => (
                           <FormItem>
                             <FormControl>
+                              {/* Se escribe ANUAL; al formulario va la mensual, que es lo que
+                                  guarda `loans.interest_rate`. No cambia con la frecuencia. */}
                               <NumberInput
                                 placeholder="0"
-                                value={field.value || ''}
+                                value={annualRateText}
                                 onChange={(e) => {
                                   const value = e.target.value;
                                   // Permitir decimales con hasta 2 decimales
                                   if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
-                                    const numValue = value === '' ? 0 : parseFloat(value) || 0;
-                                    field.onChange(numValue);
+                                    setAnnualRateText(value);
+                                    const monthly = fromAnnualRate(
+                                      value === '' ? 0 : parseFloat(value) || 0
+                                    );
+                                    lastPushedMonthlyRate.current = monthly;
+                                    field.onChange(monthly);
                                   }
                                 }}
                                 className=""
                               />
                             </FormControl>
-                            
+                            {(Number(field.value) || 0) > 0 && (
+                              <p className="text-xs text-gray-500">
+                                Equivale a <strong>{(Number(field.value) || 0).toFixed(4)}% mensual</strong>
+                                {' · '}
+                                {(getPeriodRate(Number(field.value) || 0, form.watch('payment_frequency')) * 100).toFixed(4)}%
+                                {' '}por {getFrequencyLabel(form.watch('payment_frequency'), false)}
+                              </p>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}

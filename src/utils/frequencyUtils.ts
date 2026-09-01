@@ -84,7 +84,6 @@ export const getPeriodRate = (monthlyRatePercent: number, frequency?: string | n
 export const getLateFeePeriodDays = (frequency?: string | null): number =>
   FREQUENCIES[normalizeFrequency(frequency)].lateFeePeriodDays;
 
-/** Etiqueta legible del período ("meses", "quincenas", ...). */
 /**
  * Tasa MENSUAL (en %) → tasa ANUAL (en %).
  *
@@ -98,10 +97,17 @@ export const getLateFeePeriodDays = (frequency?: string | null): number =>
 export const toAnnualRate = (monthlyRate?: number | null): number =>
   Math.round((Number(monthlyRate) || 0) * 12 * 100) / 100;
 
-/** Tasa ANUAL (en %) → tasa mensual (en %), la inversa de `toAnnualRate`. */
+/**
+ * Tasa ANUAL (en %) → tasa mensual (en %), la inversa de `toAnnualRate`.
+ *
+ * Se redondea a SEIS decimales, no a dos: `20 / 12 = 1,666666…` y quedarse en `1,67` pierde
+ * un 0,2 % de la tasa en cada préstamo. Con seis decimales el viaje de ida y vuelta
+ * (`toAnnualRate(fromAnnualRate(20)) === 20`) es exacto a efectos de presentación.
+ */
 export const fromAnnualRate = (annualRate?: number | null): number =>
-  Math.round(((Number(annualRate) || 0) / 12) * 100) / 100;
+  Math.round(((Number(annualRate) || 0) / 12) * 1e6) / 1e6;
 
+/** Etiqueta legible del período ("meses", "quincenas", ...). */
 export const getFrequencyLabel = (frequency?: string | null, plural = true): string => {
   const info = FREQUENCIES[normalizeFrequency(frequency)];
   return plural ? info.labelPlural : info.label;
