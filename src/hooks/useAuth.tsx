@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { useSessionKeepAlive } from '@/hooks/useSessionKeepAlive';
 
 interface User {
   id: string;
@@ -75,6 +76,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [needsRegistrationCode, setNeedsRegistrationCode] = useState(false);
+
+  /**
+   * Distingue un cierre de sesión PEDIDO por el usuario de uno que emite el SDK porque falló
+   * la renovación del token. Sin esta marca, un fallo pasajero de red sacaba al usuario.
+   */
+  const userSignOutRef = useRef(false);
+
+  /**
+   * Cierra la sesión en Supabase dejando claro que es a propósito.
+   *
+   * Todos los cierres del código son deliberados (código de empresa incorrecto, empleado
+   * entrando por la puerta del dueño, alta recién creada…). Al marcarlos, el manejador de
+   * `SIGNED_OUT` sabe que no debe intentar recuperar nada.
+   */
+  const signOutIntentionally = useCallback(async () => {
+    userSignOutRef.current = true;
+    await supabase.auth.signOut();
+  }, []);
+
+  // Mantiene el token renovado aunque la pestaña pase una hora en segundo plano.
+  const handleSessionLost = useCallback(() => {
+    console.warn('Sesión: no se pudo renovar el token tras varios intentos');
+    toast.error('Tu sesión expiró. Vuelve a iniciar sesión.');
+    setUser(null);
+    setProfile(null);
+    setCompanyId(null);
+    setNeedsRegistrationCode(false);
+  }, []);
+
+  useSessionKeepAlive({ enabled: !!user, onSessionLost: handleSessionLost });
 
   // Timeout de seguridad para evitar cargas infinitas
   useEffect(() => {
@@ -326,7 +357,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         // Para empleados, el código de empresa es obligatorio
         if (!companyCode) {
-          await supabase.auth.signOut();
+          await signOutIntentionally();
           throw new Error('El código de empresa es requerido para empleados.');
         }
 
@@ -349,7 +380,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (companyError || !companyData) {
           console.error('❌ Error al buscar empresa:', companyError);
-          await supabase.auth.signOut();
+          await signOutIntentionally();
           throw new Error('Código de empresa inválido o no habilitado.');
         }
 
@@ -467,7 +498,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             
             if (updateError) {
               console.error('❌ Error al actualizar company_owner_id:', updateError);
-              await supabase.auth.signOut();
+              await signOutIntentionally();
               throw new Error('Error al actualizar la asociación de empresa.');
             }
             
@@ -494,7 +525,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return;
           }
           
-          await supabase.auth.signOut();
+          await signOutIntentionally();
           throw new Error('No tienes acceso a esta empresa o tu cuenta no está activa.');
         }
 
@@ -584,7 +615,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (employeeCheck) {
           console.log('⚠️ Usuario encontrado como empleado, redirigiendo...');
-          await supabase.auth.signOut();
+          await signOutIntentionally();
           throw new Error('Este usuario es un empleado. Por favor, inicia sesión usando la pestaña "Empleado".');
         }
 
@@ -700,7 +731,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (authData.user) {
         toast.success('¡Bienvenido! Tu cuenta ha sido creada exitosamente. Ahora puedes iniciar sesión.');
         // Cerrar sesión automáticamente para que el usuario tenga que hacer login
-        await supabase.auth.signOut();
+        await signOutIntentionally();
         setUser(null);
         setProfile(null);
         setCompanyId(null);
@@ -720,6 +751,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
+      // Marca que este cierre lo pidió el usuario: el manejador de SIGNED_OUT no debe
+      // dudar de él ni intentar recuperar la sesión.
+      userSignOutRef.current = true;
       // Limpiar el estado primero para evitar problemas
       setUser(null);
       setProfile(null);
@@ -728,7 +762,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setError(null);
       
       // Luego cerrar sesión en Supabase
-      await supabase.auth.signOut();
+      await signOutIntentionally();
       
       toast.success('Sesión cerrada exitosamente');
     } catch (err: any) {
@@ -907,7 +941,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Suscribirse SOLO a SIGNED_OUT para evitar conflictos
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
-        handleAuthStateChange(event, session);
+        // CORRECCIÓN (2026-09-01): antes se limpiaba el estado en cuanto llegaba el evento.
+        // El SDK también emite SIGNED_OUT cuando falla la renovación del token —lo típico al
+        // volver de suspender el equipo, con la red aún sin levantar— y ahí el usuario se
+        // encontraba deslogueado sin haber cerrado sesión.
+        //
+        // Si el cierre lo pidió el propio usuario se limpia sin más. Si no, se comprueba que
+        // de verdad no queda sesión antes de echarlo.
+        if (userSignOutRef.current) {
+          userSignOutRef.current = false;
+          handleAuthStateChange(event, session);
+          return;
+        }
+
+        void (async () => {
+          const { data } = await supabase.auth.getSession();
+          if (data?.session) {
+            console.log('Sesión: SIGNED_OUT ignorado, la sesión sigue viva');
+            return;
+          }
+          handleAuthStateChange(event, session);
+        })();
       }
       // Ignorar SIGNED_IN y otros eventos para evitar re-procesamiento
     });
