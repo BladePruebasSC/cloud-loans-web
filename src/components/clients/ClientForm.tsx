@@ -47,6 +47,7 @@ import {
   normalizeStoredTerritory, resolveGeocodedTerritory,
 } from '@/data/dominicanRepublic';
 import type { ResolvedPlace } from '@/utils/googleMaps';
+import { describeSupabaseError, findMissingColumn } from '@/utils/supabaseErrors';
 import {
   DOCUMENT_TYPES, formatDocument, documentToStored, getDocumentTypeInfo, supportsJceLookup,
   validateDocument, type DocumentType,
@@ -775,7 +776,11 @@ const ClientForm = () => {
       navigate('/clientes');
     } catch (error) {
       console.error('Error guardando cliente', error);
-      toast.error(error instanceof Error ? error.message : 'No se pudo guardar el cliente');
+      // Los errores de PostgREST son objetos planos, no `Error`: sin esto el mensaje real
+      // (columna que falta, unicidad, RLS) nunca llegaba a la pantalla.
+      toast.error(describeSupabaseError(error, 'No se pudo guardar el cliente'), {
+        duration: findMissingColumn(error) ? 12000 : 5000,
+      });
     } finally {
       setSaving(false);
     }

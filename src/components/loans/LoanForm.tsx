@@ -25,6 +25,7 @@ import {
 } from '@/utils/frequencyUtils';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
+import { describeSupabaseError, findMissingColumn } from '@/utils/supabaseErrors';
 
 // Función para reemplazar variables en la plantilla con datos del préstamo
 const replaceTemplateVariablesForLoan = (content: string, loanData: any, companySettings: any): string => {
@@ -2598,25 +2599,10 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       console.error('Error creating loan:', error);
 
       // Un `Error al crear el préstamo` a secas obliga a abrir la consola para saber qué pasó.
-      // El caso más frecuente con diferencia es que falte una migración: el código escribe una
-      // columna que la base de datos todavía no tiene y PostgREST responde 400 con el nombre
-      // de la columna dentro. Se dice cuál falta.
-      const pg = error as { code?: string; message?: string; details?: string; hint?: string };
-      const texto = `${pg?.message ?? ''} ${pg?.details ?? ''}`;
-      const columnaFaltante = texto.match(/column "?([a-z_]+)"? of relation/i)
-        ?? texto.match(/'([a-z_]+)' column of/i)
-        ?? texto.match(/Could not find the '([a-z_]+)' column/i);
-
-      if (pg?.code === 'PGRST204' || pg?.code === '42703' || columnaFaltante) {
-        const col = columnaFaltante?.[1] ?? 'desconocida';
-        toast.error(
-          `La base de datos no tiene la columna "${col}". Falta aplicar una migración ` +
-          `pendiente en Supabase (carpeta supabase/migrations).`,
-          { duration: 12000 },
-        );
-      } else {
-        toast.error(`Error al crear el préstamo${pg?.message ? `: ${pg.message}` : ''}`);
-      }
+      // El caso más frecuente con diferencia es que falte una migración.
+      toast.error(describeSupabaseError(error, 'Error al crear el préstamo'), {
+        duration: findMissingColumn(error) ? 12000 : 5000,
+      });
     } finally {
       setLoading(false);
     }
