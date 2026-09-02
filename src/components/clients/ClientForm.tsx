@@ -44,8 +44,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import {
   MUNICIPAL_SEAT, PROVINCE_NAMES, getDistricts, getMunicipalities,
-  normalizeStoredTerritory,
+  normalizeStoredTerritory, resolveGeocodedTerritory,
 } from '@/data/dominicanRepublic';
+import type { ResolvedPlace } from '@/utils/googleMaps';
 import {
   DOCUMENT_TYPES, formatDocument, documentToStored, getDocumentTypeInfo, supportsJceLookup,
   validateDocument, type DocumentType,
@@ -195,6 +196,9 @@ const validateStep = (step: StepId, d: ClientFormState): Errors => {
   if (step === 'ubicacion') {
     if (!d.province) e.province = 'La provincia es obligatoria';
     if (!d.municipality) e.municipality = 'El municipio es obligatorio';
+    // Sin sector, la dirección no basta para que el cobrador encuentre la casa: un municipio
+    // dominicano puede tener decenas de barrios y las calles se repiten entre ellos.
+    if (!d.sector.trim()) e.sector = 'El sector o barrio es obligatorio';
   }
 
   return e;
@@ -481,6 +485,53 @@ const ClientForm = () => {
   const unlockJceFields = () => {
     setJceVerified(false);
     toast.info('Campos desbloqueados. El cliente quedará como no verificado.');
+  };
+
+  /**
+   * Rellena la cascada con lo que Google deduce del punto marcado en el mapa.
+   *
+   * Provincia y municipio SE SOBRESCRIBEN: marcar el punto es un acto deliberado y las
+   * coordenadas mandan sobre lo que se hubiera tecleado antes. Sector y dirección solo se
+   * rellenan si están vacíos, porque ahí lo escrito a mano suele ser mejor que lo de Google
+   * ("Los Prados, frente al colmado" contra "Calle 5").
+   *
+   * Se avisa por toast de lo que cambió: un formulario que se reescribe solo y en silencio
+   * es peor que uno que no se rellena.
+   */
+  const handlePlaceResolved = (place: ResolvedPlace) => {
+    const territory = resolveGeocodedTerritory({
+      province: place.province,
+      municipalityCandidates: place.municipalityCandidates,
+    });
+
+    const changed: string[] = [];
+    const next = { ...formData };
+
+    if (territory.province && territory.province !== next.province) {
+      next.province = territory.province;
+      next.municipality = '';
+      next.municipal_district = '';
+      setDistrictIsCustom(false);
+      changed.push(territory.province);
+    }
+    if (territory.municipality && territory.municipality !== next.municipality) {
+      next.municipality = territory.municipality;
+      next.municipal_district = '';
+      setDistrictIsCustom(false);
+      changed.push(territory.municipality);
+    }
+    if (place.sector && !next.sector.trim()) {
+      next.sector = place.sector;
+      changed.push(place.sector);
+    }
+    if (place.street && !next.address.trim()) {
+      next.address = place.street;
+      changed.push(place.street);
+    }
+
+    if (changed.length === 0) return;
+    setFormData(next);
+    toast.success(`Rellenado desde el mapa: ${changed.join(' · ')}`);
   };
 
   /** Cambiar provincia invalida municipio y distrito; cambiar municipio invalida distrito. */
@@ -1196,7 +1247,8 @@ const ClientForm = () => {
               </div>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Field label="Sector / Barrio" hint="Ej.: Los Prados, Villa Juana">
+                <Field label="Sector / Barrio" required error={err('sector')}
+                  hint="Ej.: Los Prados, Villa Juana">
                   <Input value={formData.sector}
                     onChange={(e) => handleChange('sector', e.target.value)}
                     placeholder="Sector donde vive" />
@@ -1226,6 +1278,7 @@ const ClientForm = () => {
                   accuracy={homeLocation.accuracy}
                   note={homeLocation.note}
                   onChange={setHomeLocation}
+                  onPlaceResolved={handlePlaceResolved}
                 />
               </div>
 

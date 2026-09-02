@@ -479,6 +479,64 @@ export const resolveJceCity = (city?: string | null): JceLocation => {
   return { municipality, province: municipality ? province : '' };
 };
 
+// ----------------------------------------------------------------------------
+// Geocodificación inversa de Google → catálogo propio
+// ----------------------------------------------------------------------------
+
+/**
+ * Google adorna el nombre de la provincia según el idioma del navegador: devuelve
+ * "La Altagracia Province", "Provincia de Azua" o "Provincia La Altagracia" para lo que en
+ * el catálogo es "La Altagracia". Sin quitar el adorno, `findProvince` no encuentra nada.
+ */
+const stripProvinceWords = (v?: string | null): string =>
+  String(v ?? '')
+    .replace(/\bprovince\b/gi, '')
+    .replace(/^\s*provincia\s+(?:de\s+|del\s+)?/i, '')
+    .trim();
+
+/**
+ * Traduce lo que devuelve la geocodificación inversa de Google a (provincia, municipio) del
+ * catálogo, para rellenar la cascada al mover el punto en el mapa.
+ *
+ * Google no usa los mismos nombres ni el mismo nivel administrativo según la zona: el
+ * municipio puede venir en `locality` ("Salvaleón de Higüey") o en
+ * `administrative_area_level_2` ("Higüey"). Por eso se reciben VARIOS candidatos y se prueba
+ * cada uno contra el catálogo, del más específico al más general, en vez de fiarse del
+ * literal de un campo concreto.
+ *
+ * Si la provincia se reconoce pero ningún candidato encaja como municipio, se devuelve la
+ * provincia sola: es información buena y deja la cascada lista para que el empleado elija.
+ * Nunca se inventa un municipio ambiguo.
+ */
+export const resolveGeocodedTerritory = (parts: {
+  province?: string | null;
+  /** Candidatos a municipio, del más específico al más general */
+  municipalityCandidates?: Array<string | null | undefined>;
+}): JceLocation => {
+  const provinceName = findProvince(stripProvinceWords(parts.province))?.name ?? '';
+
+  for (const raw of parts.municipalityCandidates ?? []) {
+    const name = String(raw ?? '').trim();
+    if (!name) continue;
+
+    // Las mismas grafías alternativas que ya hacían falta para la JCE sirven aquí.
+    const candidate = JCE_CITY_ALIASES[normalizeName(name)] ?? name;
+
+    // Con la provincia ya conocida basta con que el municipio pertenezca a ella: eso
+    // desambigua nombres repetidos entre provincias.
+    if (provinceName) {
+      const hit = findMunicipality(provinceName, candidate);
+      if (hit) return { province: provinceName, municipality: hit.name };
+    }
+
+    // Sin provincia, solo vale si el nombre es inequívoco en todo el país.
+    const byName = resolveJceCity(candidate);
+    if (byName.municipality) return byName;
+  }
+
+  return { province: provinceName, municipality: '' };
+};
+
 export interface TerritorySelection {
   province: string;
   municipality: string;

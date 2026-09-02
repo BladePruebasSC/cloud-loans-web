@@ -33,14 +33,27 @@ export interface GMapsBounds {
   isEmpty(): boolean;
 }
 
+/** Un trozo de dirección devuelto por el geocodificador, etiquetado con sus `types`. */
+export interface GeocodeComponent {
+  long_name: string;
+  short_name: string;
+  types: string[];
+}
+
+export interface GeocodeResult {
+  address_components: GeocodeComponent[];
+  formatted_address: string;
+  geometry?: { location: GMapsPosition };
+}
+
 export interface GMapsApi {
   Map: new (el: HTMLElement, opts: Record<string, unknown>) => GMapsMap;
   Marker: new (opts: Record<string, unknown>) => GMapsMarker;
   LatLngBounds: new () => GMapsBounds;
   Geocoder: new () => {
     geocode(
-      req: { address: string },
-      cb: (results: Array<{ geometry: { location: GMapsPosition } }> | null, status: string) => void,
+      req: { address?: string; location?: LatLng },
+      cb: (results: GeocodeResult[] | null, status: string) => void,
     ): void;
   };
   DirectionsService: new () => {
@@ -169,6 +182,80 @@ export const loadGoogleMaps = (): Promise<GMapsApi> => {
   });
 
   return loaderPromise;
+};
+
+// ----------------------------------------------------------------------------
+// Geocodificación inversa: un punto → una dirección
+// ----------------------------------------------------------------------------
+
+/** Lo que se saca de un punto del mapa, sin traducir todavía al catálogo del país. */
+export interface ResolvedPlace {
+  /** Provincia tal como la escribe Google ("La Altagracia Province") */
+  province: string;
+  /** Candidatos a municipio, del más específico al más general */
+  municipalityCandidates: string[];
+  /** Barrio o sector */
+  sector: string;
+  /** Calle y número, si Google los conoce */
+  street: string;
+  /** Dirección completa formateada, para mostrarla como referencia */
+  formatted: string;
+}
+
+/**
+ * Traduce unas coordenadas a una dirección.
+ *
+ * Se recorren TODOS los resultados, no solo el primero: Google devuelve una lista que va de
+ * lo más específico (el portal) a lo más general (el país), y ningún resultado suelto tiene
+ * a la vez la calle y la provincia. Para cada dato se coge la primera aparición siguiendo un
+ * orden de preferencia de `types`.
+ *
+ * Devuelve `null` si no hay respuesta utilizable. Consume cuota de la Geocoding API, así que
+ * conviene llamarla solo cuando el punto cambia de verdad.
+ */
+export const reverseGeocode = async (p: LatLng): Promise<ResolvedPlace | null> => {
+  const maps = await loadGoogleMaps();
+  const geocoder = new maps.Geocoder();
+
+  const results = await new Promise<GeocodeResult[] | null>((resolve) => {
+    geocoder.geocode({ location: p }, (res, status) => {
+      if (status !== 'OK' || !res || res.length === 0) {
+        console.warn(`[Maps] geocodificación inversa sin resultado: ${status}`);
+        resolve(null);
+        return;
+      }
+      resolve(res);
+    });
+  });
+  if (!results) return null;
+
+  /** Primera aparición de cualquiera de estos `types`, respetando el orden dado. */
+  const pick = (...types: string[]): string => {
+    for (const type of types) {
+      for (const r of results) {
+        const hit = r.address_components.find(c => c.types.includes(type));
+        if (hit?.long_name) return hit.long_name;
+      }
+    }
+    return '';
+  };
+
+  const route = pick('route');
+  const streetNumber = pick('street_number');
+
+  return {
+    province: pick('administrative_area_level_1'),
+    // `locality` suele ser el nombre largo ("Salvaleón de Higüey") y el nivel 2 el corto
+    // ("Higüey"); cuál acierta depende de la zona, así que van los dos.
+    municipalityCandidates: [
+      pick('locality'),
+      pick('administrative_area_level_2'),
+      pick('administrative_area_level_3'),
+    ].filter(Boolean),
+    sector: pick('neighborhood', 'sublocality_level_1', 'sublocality'),
+    street: [route, streetNumber && `#${streetNumber}`].filter(Boolean).join(' '),
+    formatted: results[0]?.formatted_address ?? '',
+  };
 };
 
 // ----------------------------------------------------------------------------
