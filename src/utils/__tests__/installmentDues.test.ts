@@ -2,7 +2,9 @@
 // Prueban LOGICA FINANCIERA PURA: sin red, sin reloj, sin Supabase. Deterministas.
 import { describe, it, expect } from 'vitest';
 
-import { computeInstallmentDues, allocateAmountToInstallments, autoExtendSelection } from '@/utils/installmentDues';
+import {
+  computeInstallmentDues, allocateAmountToInstallments, countToCoverAmount, pendingForCount,
+} from '@/utils/installmentDues';
 
 /** Adapta el estilo `ok(nombre, condicion, detalle)` de las suites originales. */
 const ok = (name: string, cond: unknown, detail = '') =>
@@ -182,63 +184,88 @@ const cargo = (n, due, monto, extra = {}) => ({
       cuota(2, '2026-10-01', 8000, 2000),  // 10,000
       cuota(3, '2026-11-01', 8000, 2000),  // 10,000
     ], []);
-  
-    // Nada marcado a mano: escribir 12,000 arrastra desde la mas antigua.
-    const auto = autoExtendSelection(rows, [], [], 12000);
-    ok('arrastra 2 cuotas', auto.length === 2, String(auto.length));
-    ok('empieza por la mas antigua', auto[0] === 'i1' && auto[1] === 'i2', auto.join());
-  
-    const a = allocateAmountToInstallments(rows.filter(r => auto.includes(r.id)), 12000);
+
+    // Escribir 12,000 toma las dos mas antiguas.
+    ok('12,000 toma 2 cuotas', countToCoverAmount(rows, 12000) === 2, String(countToCoverAmount(rows, 12000)));
+
+    const a = allocateAmountToInstallments(rows.slice(0, 2), 12000);
     ok('cuota 1 se salda con 10,000', a.allocations[0].applied === 10000 && a.allocations[0].settles === true);
     ok('cuota 2 recibe 2,000 parciales', a.allocations[1].applied === 2000 && a.allocations[1].settles === false);
     ok('no sobra nada', a.leftover === 0);
-  
+
     // Monto exacto de una cuota: no arrastra la siguiente.
-    ok('10,000 exactos no arrastran la 2a', autoExtendSelection(rows, [], [], 10000).length === 1);
-    ok('9,000 solo toma la primera', autoExtendSelection(rows, [], [], 9000).join() === 'i1');
-    ok('monto 0 no arrastra nada', autoExtendSelection(rows, [], [], 0).length === 0);
-  
+    ok('10,000 exactos no arrastran la 2a', countToCoverAmount(rows, 10000) === 1);
+    ok('9,000 solo toma la primera', countToCoverAmount(rows, 9000) === 1);
+    ok('monto 0 no arrastra nada', countToCoverAmount(rows, 0) === 0);
+    ok('monto negativo tampoco', countToCoverAmount(rows, -500) === 0);
+
     // Cubrir mas de lo que existe: toma todas y no inventa.
-    ok('50,000 toma las 3 y para', autoExtendSelection(rows, [], [], 50000).join() === 'i1,i2,i3');
+    ok('50,000 toma las 3 y para', countToCoverAmount(rows, 50000) === 3);
   }
-  
+
   });
 
-  it("El arrastre va HACIA ADELANTE de lo marcado a mano", () => {
+  it("LA SELECCION ES CONSECUTIVA: no se pueden saltar cuotas", () => {
   {
+    // Regla de negocio: una deuda se salda por antiguedad. No se puede pagar la 1, la 4 y la
+    // 8 dejando huecos — las cuotas viejas son las que generan mora, y un hueco deja al
+    // prestamo en un estado que ni el estado de cuenta ni los informes saben describir.
+    //
+    // Antes se elegia con casillas sueltas y el hueco ERA EXPRESABLE. Ahora la seleccion es
+    // un contador —cuantas de las mas antiguas entran— y no existe forma de representarlo.
     const rows = computeInstallmentDues([
       cuota(1, '2026-09-01', 8000, 2000),
       cuota(2, '2026-10-01', 8000, 2000),
       cuota(3, '2026-11-01', 8000, 2000),
       cuota(4, '2026-12-01', 8000, 2000),
     ], []);
-  
-    // Marca la #2 y escribe 15,000: los 5,000 sobrantes van a la #3, no a la #1.
-    const auto = autoExtendSelection(rows, ['i2'], [], 15000);
-    ok('sigue por la #3, no vuelve a la #1', auto.join() === 'i3', auto.join());
-  
-    // Marca #1 y #3, escribe 25,000 (pendiente marcado 20,000): los 5,000 van a la #4.
-    ok('continua tras la ultima marcada', autoExtendSelection(rows, ['i1', 'i3'], [], 25000).join() === 'i4');
-  
-    // El monto no supera lo marcado: no arrastra nada.
-    ok('monto menor a lo marcado no arrastra', autoExtendSelection(rows, ['i1', 'i2'], [], 12000).length === 0);
-    ok('monto igual a lo marcado no arrastra', autoExtendSelection(rows, ['i1', 'i2'], [], 20000).length === 0);
+
+    // Sea cual sea el monto, lo elegido es SIEMPRE un prefijo: las N primeras, sin huecos.
+    for (const monto of [1, 5000, 10000, 10001, 25000, 40000, 99999]) {
+      const n = countToCoverAmount(rows, monto);
+      const elegidas = rows.slice(0, n).map(r => r.installmentNumber);
+      const esperado = rows.slice(0, n).map((_, i) => i + 1);
+      ok(`con ${monto} las cuotas son consecutivas desde la 1`,
+        elegidas.join() === esperado.join(), elegidas.join());
+    }
+
+    // "Pagar hasta la N" incluye todas las anteriores: es lo que hace el clic en una fila.
+    const hastaLa3 = rows.slice(0, 3).map(r => r.installmentNumber);
+    ok('pulsar la 3 incluye la 1 y la 2', hastaLa3.join() === '1,2,3', hastaLa3.join());
+
+    // Y el reparto respeta ese orden: la mas antigua se satura primero.
+    const a = allocateAmountToInstallments(rows.slice(0, 3), 25000);
+    ok('salda la 1', a.allocations[0].settles === true);
+    ok('salda la 2', a.allocations[1].settles === true);
+    ok('la 3 queda parcial con 5,000', a.allocations[2].applied === 5000 && a.allocations[2].settles === false);
   }
-  
+
   });
 
-  it("Desmarcar gana sobre el arrastre", () => {
+  it("Lo pendiente de un tramo se suma sin contar de mas", () => {
   {
     const rows = computeInstallmentDues([
       cuota(1, '2026-09-01', 8000, 2000),
       cuota(2, '2026-10-01', 8000, 2000),
       cuota(3, '2026-11-01', 8000, 2000),
     ], []);
-    // Si el empleado desmarca la #2, el arrastre la salta y sigue con la #3.
-    ok('salta la desmarcada', autoExtendSelection(rows, [], ['i2'], 12000).join() === 'i1,i3', autoExtendSelection(rows, [], ['i2'], 12000).join());
-    ok('sin exclusion tomaria i1,i2', autoExtendSelection(rows, [], [], 12000).join() === 'i1,i2');
+
+    ok('ninguna', pendingForCount(rows, 0) === 0);
+    ok('una', pendingForCount(rows, 1) === 10000);
+    ok('dos', pendingForCount(rows, 2) === 20000);
+    ok('todas', pendingForCount(rows, 3) === 30000);
+    // Pedir mas de las que hay no revienta ni inventa deuda.
+    ok('mas de las que hay', pendingForCount(rows, 99) === 30000);
+    ok('negativo', pendingForCount(rows, -3) === 0);
+
+    // Ida y vuelta: el monto que cubre N cuotas selecciona exactamente N.
+    for (let n = 1; n <= 3; n++) {
+      ok(`cubrir ${n} cuotas selecciona ${n}`,
+        countToCoverAmount(rows, pendingForCount(rows, n)) === n,
+        String(countToCoverAmount(rows, pendingForCount(rows, n))));
+    }
   }
-  
+
   });
 
   it("Arrastre con cargos y pagos parciales previos", () => {
@@ -249,30 +276,36 @@ const cargo = (n, due, monto, extra = {}) => ({
     );
     ok('el cargo queda con 600 pendientes', rows[0].pending === 600, String(rows[0].pending));
     // 600 (cargo) + 10,000 (cuota 1) = 10,600; con 11,000 sobran 400 para la cuota 2.
-    const auto = autoExtendSelection(rows, [], [], 11000);
-    ok('arrastra cargo + 2 cuotas', auto.length === 3, auto.join());
-    const a = allocateAmountToInstallments(rows.filter(r => auto.includes(r.id)), 11000);
+    ok('arrastra cargo + 2 cuotas', countToCoverAmount(rows, 11000) === 3, String(countToCoverAmount(rows, 11000)));
+
+    const a = allocateAmountToInstallments(rows.slice(0, 3), 11000);
     ok('el cargo se salda primero (mas antiguo)', a.allocations[0].applied === 600 && a.allocations[0].settles === true);
     ok('la cuota 1 se salda', a.allocations[1].applied === 10000 && a.allocations[1].settles === true);
     ok('la cuota 2 recibe 400', a.allocations[2].applied === 400 && a.allocations[2].settles === false);
     ok('todo repartido', a.leftover === 0 && a.applied === 11000);
+
+    // El cargo tampoco se puede saltar: va por fecha como cualquier otra fila.
+    ok('pagar solo la cuota 1 obliga a pasar por el cargo',
+      rows.slice(0, countToCoverAmount(rows, 10600)).map(r => r.isCharge).join() === 'true,false');
   }
-  
+
   });
 
-  it("Estabilidad: el arrastre es idempotente", () => {
+  it("Estabilidad: recalcular con el mismo monto da el mismo tramo", () => {
   {
     const rows = computeInstallmentDues([
       cuota(1, '2026-09-01', 8000, 2000),
       cuota(2, '2026-10-01', 8000, 2000),
     ], []);
-    // Reaplicar el resultado como si ya estuviera marcado no debe anadir mas (evita el bucle
-    // del efecto de React).
-    const first = autoExtendSelection(rows, [], [], 12000);
-    const second = autoExtendSelection(rows, first, [], 12000);
-    ok('no crece al reaplicar', second.length === 0, second.join());
+    // El efecto de React recalcula en cada render: si el resultado variara, entraria en bucle.
+    const first = countToCoverAmount(rows, 12000);
+    const second = countToCoverAmount(rows, 12000);
+    ok('estable', first === second && first === 2, `${first} vs ${second}`);
+
+    // Y sobre una lista vacia no hay nada que seleccionar.
+    ok('sin cuotas no selecciona', countToCoverAmount([], 12000) === 0);
+    ok('sin cuotas no hay pendiente', pendingForCount([], 3) === 0);
   }
-  
-  
+
   });
 });

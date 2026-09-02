@@ -142,45 +142,44 @@ export const computeInstallmentDues = (
   return rows.sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.installmentNumber - b.installmentNumber);
 };
 
+// ----------------------------------------------------------------------------
+// Selección: siempre un tramo CONSECUTIVO desde la cuota más antigua
+// ----------------------------------------------------------------------------
+// No se puede pagar la 1, la 4 y la 8 saltándose el resto. Una deuda se salda por orden de
+// antigüedad: las cuotas viejas son las que generan mora, y dejar huecos deja al préstamo en
+// un estado que ni el estado de cuenta ni los informes de morosidad saben describir.
+//
+// La regla no se comprueba DESPUÉS de elegir, se hace imposible de romper: la selección es un
+// solo número —cuántas de las más antiguas entran— en vez de una lista de casillas sueltas.
+// Así no hay estado desde el que se pueda expresar un hueco.
+
 /**
- * Cuotas que hay que añadir a la selección para cubrir `amount`.
+ * Cuántas de las cuotas más antiguas hacen falta para cubrir `amount`.
  *
- * Cuando el empleado escribe un monto mayor a lo pendiente de lo que marcó, el sobrante debe
- * caer en las cuotas SIGUIENTES — "la cuota es 10,000, el cliente trae 12,000: se salda la cuota
- * y 2,000 van a la siguiente como abono parcial". Devuelve solo lo que hay que añadir.
+ * Es el caso de "la cuota es 10,000 y el cliente trae 12,000": devuelve 2, y la segunda
+ * recibirá los 2,000 como abono parcial. Si el monto supera todo lo pendiente, devuelve
+ * todas: no se inventan cuotas que no existen.
  *
- * - `rows` debe venir en orden cronológico (`computeInstallmentDues` ya lo hace).
- * - Se arrastra hacia ADELANTE de la última cuota marcada a mano; si no hay ninguna, desde la
- *   más antigua.
- * - Nunca se añade algo que el empleado desmarcó (`excludedIds`), o la casilla no se podría
- *   desmarcar: volvería a añadirse en el acto.
+ * `rows` debe venir en orden cronológico (`computeInstallmentDues` ya lo hace).
  */
-export const autoExtendSelection = (
-  rows: DueRow[],
-  manualIds: string[],
-  excludedIds: string[],
-  amount: number,
-): string[] => {
-  const manualSet = new Set(manualIds);
-  const excludedSet = new Set(excludedIds);
+export const countToCoverAmount = (rows: DueRow[], amount: number): number => {
+  let need = round2(Number(amount) || 0);
+  if (need <= 0.005) return 0;
 
-  const basePending = round2(
-    rows.filter(r => manualSet.has(r.id)).reduce((s, r) => s + r.pending, 0)
-  );
-  let need = round2((Number(amount) || 0) - basePending);
-  if (need <= 0.005) return [];
-
-  const lastManualIndex = rows.reduce((last, r, i) => (manualSet.has(r.id) ? i : last), -1);
-
-  const added: string[] = [];
-  for (let i = lastManualIndex + 1; i < rows.length && need > 0.005; i++) {
-    const r = rows[i];
-    if (manualSet.has(r.id) || excludedSet.has(r.id)) continue;
-    added.push(r.id);
-    need = round2(need - r.pending);
+  let count = 0;
+  for (const row of rows) {
+    if (need <= 0.005) break;
+    count++;
+    need = round2(need - row.pending);
   }
-  return added;
+  return count;
 };
+
+/** Lo que queda pendiente en las `count` cuotas más antiguas. */
+export const pendingForCount = (rows: DueRow[], count: number): number =>
+  round2(
+    rows.slice(0, Math.max(0, count)).reduce((s, r) => s + r.pending, 0)
+  );
 
 export interface Allocation {
   row: DueRow;
