@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { AmortizationTable } from '@/components/loans/AmortizationTable';
+import { fromAnnualRate } from '@/utils/frequencyUtils';
 import {
   FileText,
   Plus,
@@ -217,7 +218,10 @@ const RequestsModule = () => {
     if (companySettings) {
       setFormData(prev => ({
         ...prev,
-        interest_rate: companySettings.interest_rate_default ?? prev.interest_rate,
+        // La tasa configurada en la empresa es ANUAL; aquí se maneja MENSUAL, como en `loans`.
+        interest_rate: companySettings.interest_rate_default != null
+          ? fromAnnualRate(companySettings.interest_rate_default)
+          : prev.interest_rate,
         term_months: companySettings.min_term_months ?? prev.term_months,
         late_fee_rate: companySettings.default_late_fee_rate ?? prev.late_fee_rate,
         grace_period_days: companySettings.default_grace_period_days ?? companySettings.grace_period_days ?? prev.grace_period_days,
@@ -631,7 +635,7 @@ const RequestsModule = () => {
       income_verification: '',
       collateral_description: '',
       // Resetear nuevos campos con valores por defecto de la configuración
-      interest_rate: companySettings?.interest_rate_default ?? 0,
+      interest_rate: fromAnnualRate(companySettings?.interest_rate_default ?? 0),
       term_months: companySettings?.min_term_months ?? 6, // Usar mínimo de configuración
       loan_type: 'personal',
       amortization_type: 'simple',
@@ -663,7 +667,7 @@ const RequestsModule = () => {
     if (showRequestForm && companySettings) {
       setFormData(prev => ({
         ...prev,
-        interest_rate: prev.interest_rate === 0 ? (companySettings.interest_rate_default ?? 0) : prev.interest_rate,
+        interest_rate: prev.interest_rate === 0 ? fromAnnualRate(companySettings.interest_rate_default ?? 0) : prev.interest_rate,
         late_fee_rate: prev.late_fee_rate === 2.0 ? (companySettings.default_late_fee_rate ?? 2.0) : prev.late_fee_rate,
         grace_period_days: prev.grace_period_days === 0 ? (companySettings.default_grace_period_days ?? companySettings.grace_period_days ?? 0) : prev.grace_period_days,
         late_fee_enabled: companySettings.default_late_fee_rate ? true : prev.late_fee_enabled

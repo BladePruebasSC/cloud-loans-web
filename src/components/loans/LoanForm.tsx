@@ -1289,7 +1289,10 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     resolver: zodResolver(loanSchema),
     defaultValues: {
       amount: companySettings?.min_loan_amount ?? 0,
-      interest_rate: companySettings?.interest_rate_default ?? 0,
+      // `interest_rate_default` de la empresa es ANUAL; `loans.interest_rate` es MENSUAL.
+      // Sin convertir, un 5% anual configurado entraba como 5% MENSUAL y el campo lo mostraba
+      // como 60% anual: la tasa quedaba multiplicada por doce.
+      interest_rate: fromAnnualRate(companySettings?.interest_rate_default ?? 0),
       term_months: companySettings?.min_term_months ?? 1,
       loan_type: 'personal',
       amortization_type: 'simple',
@@ -1322,7 +1325,8 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       // Solo actualizar si el formulario no ha sido modificado por el usuario
       const currentValues = form.getValues();
       if (currentValues.interest_rate === 0 || currentValues.interest_rate === undefined) {
-        form.setValue('interest_rate', companySettings.interest_rate_default ?? 0, { shouldDirty: false });
+        // La configurada es ANUAL, el campo del préstamo guarda MENSUAL.
+        form.setValue('interest_rate', fromAnnualRate(companySettings.interest_rate_default ?? 0), { shouldDirty: false });
       }
       if (currentValues.late_fee_rate === 2.0 || currentValues.late_fee_rate === undefined) {
         form.setValue('late_fee_rate', companySettings.default_late_fee_rate ?? 2.0, { shouldDirty: false });
@@ -2592,7 +2596,27 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       setShowGenerateDocumentsDialog(true);
     } catch (error) {
       console.error('Error creating loan:', error);
-      toast.error('Error al crear el préstamo');
+
+      // Un `Error al crear el préstamo` a secas obliga a abrir la consola para saber qué pasó.
+      // El caso más frecuente con diferencia es que falte una migración: el código escribe una
+      // columna que la base de datos todavía no tiene y PostgREST responde 400 con el nombre
+      // de la columna dentro. Se dice cuál falta.
+      const pg = error as { code?: string; message?: string; details?: string; hint?: string };
+      const texto = `${pg?.message ?? ''} ${pg?.details ?? ''}`;
+      const columnaFaltante = texto.match(/column "?([a-z_]+)"? of relation/i)
+        ?? texto.match(/'([a-z_]+)' column of/i)
+        ?? texto.match(/Could not find the '([a-z_]+)' column/i);
+
+      if (pg?.code === 'PGRST204' || pg?.code === '42703' || columnaFaltante) {
+        const col = columnaFaltante?.[1] ?? 'desconocida';
+        toast.error(
+          `La base de datos no tiene la columna "${col}". Falta aplicar una migración ` +
+          `pendiente en Supabase (carpeta supabase/migrations).`,
+          { duration: 12000 },
+        );
+      } else {
+        toast.error(`Error al crear el préstamo${pg?.message ? `: ${pg.message}` : ''}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -2984,7 +3008,13 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                       <FormField
                         control={form.control}
                         name="interest_rate"
-                        render={({ field }) => (
+                        render={({ field }) => {
+                          // Con cuota fija la tasa DEJA DE SER UN DATO DE ENTRADA: se deduce de
+                          // la cuota. Dejarla editable permitía teclear una tasa que el efecto
+                          // sobrescribía al instante — el número cambiaba solo y parecía roto.
+                          const derivedFromQuota = form.watch('fixed_payment_enabled');
+
+                          return (
                           <FormItem>
                             <FormControl>
                               {/* Se escribe ANUAL; al formulario va la mensual, que es lo que
@@ -2992,7 +3022,11 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                               <NumberInput
                                 placeholder="0"
                                 value={annualRateText}
+                                readOnly={derivedFromQuota}
+                                tabIndex={derivedFromQuota ? -1 : undefined}
+                                aria-readonly={derivedFromQuota}
                                 onChange={(e) => {
+                                  if (derivedFromQuota) return;
                                   const value = e.target.value;
                                   // Permitir decimales con hasta 2 decimales
                                   if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
@@ -3004,9 +3038,15 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                                     field.onChange(monthly);
                                   }
                                 }}
-                                className=""
+                                className={derivedFromQuota ? 'bg-gray-100 cursor-not-allowed text-gray-600' : ''}
                               />
                             </FormControl>
+                            {derivedFromQuota && (
+                              <p className="text-xs text-amber-700">
+                                Calculada a partir de la cuota fija. Desmarca <strong>FIJAR CUOTA</strong> para
+                                escribirla a mano.
+                              </p>
+                            )}
                             {(Number(field.value) || 0) > 0 && (
                               <p className="text-xs text-gray-500">
                                 Equivale a <strong>{(Number(field.value) || 0).toFixed(4)}% mensual</strong>
@@ -3017,7 +3057,8 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                             )}
                             <FormMessage />
                           </FormItem>
-                        )}
+                          );
+                        }}
                       />
                     </div>
 

@@ -927,13 +927,21 @@ const CompanySettings = () => {
                 </div>
 
                 <div>
-                  <Label htmlFor="interest_rate_default">Tasa de Interés por Defecto (%)</Label>
+                  <Label htmlFor="interest_rate_default">Tasa de Interés por Defecto (% anual)</Label>
                   <NumberInput
                     id="interest_rate_default"
                     step="0.1"
                     value={formData.interest_rate_default ?? ''}
                     onChange={(e) => handleInputChange('interest_rate_default', sanitizeNumber(e.target.value, 0))}
                   />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Anual, igual que en el formulario de préstamos.
+                    {(formData.interest_rate_default ?? 0) > 0 && (
+                      <> Equivale a <strong>
+                        {((formData.interest_rate_default ?? 0) / 12).toFixed(4)}% mensual
+                      </strong>.</>
+                    )}
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
