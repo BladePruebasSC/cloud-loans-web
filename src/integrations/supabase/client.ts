@@ -3,6 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 // import type { Database } from './types';
 
 const SUPABASE_URL = "https://jabiezfpkfyzfpiswcwz.supabase.co";
+
+// Se exporta porque tres sitios llaman a las Edge Functions construyendo la URL con
+// `import.meta.env.VITE_SUPABASE_URL`. Esa variable puede no estar definida en el entorno de
+// despliegue —aquí la URL está escrita a mano, así que nada obliga a configurarla— y entonces
+// la petición se va a `undefined/functions/v1/...`. Usar esta constante como respaldo.
+export const SUPABASE_FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
 const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImphYmllemZwa2Z5emZwaXN3Y3d6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIwODczNzIsImV4cCI6MjA2NzY2MzM3Mn0.mo2y35i7vtSq8v8FR8eAM0KDzDXG8v5629B6FiPKalg";
 
 // Import the supabase client like this:

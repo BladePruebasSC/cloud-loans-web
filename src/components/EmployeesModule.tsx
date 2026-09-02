@@ -13,7 +13,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, SUPABASE_FUNCTIONS_URL } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
@@ -294,8 +294,12 @@ export const EmployeesModule = () => {
 
         const { data: session } = await supabase.auth.getSession();
         
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const response = await fetch(`${supabaseUrl}/functions/v1/create-employee`, {
+        // Sin respaldo la URL quedaba en `undefined/functions/v1/...` cuando el entorno de
+        // despliegue no define la variable, que es lo normal: la URL está escrita a mano en client.ts.
+        const functionsUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim()
+          ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`
+          : SUPABASE_FUNCTIONS_URL;
+        const response = await fetch(`${functionsUrl}/create-employee`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session.session?.access_token}`,

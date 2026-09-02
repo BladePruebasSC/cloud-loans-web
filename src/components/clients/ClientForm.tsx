@@ -274,7 +274,10 @@ const ClientForm = () => {
   const [checkingDni, setCheckingDni] = useState(false);
 
   // Consulta a la JCE. `verified` bloquea los campos que confirmó el registro civil.
-  const { lookup: jceLookup, loading: jceLoading, error: jceError, clearError: clearJceError } = useJceLookup();
+  const {
+    lookup: jceLookup, loading: jceLoading, error: jceError,
+    diagnostic: jceDiagnostic, clearError: clearJceError,
+  } = useJceLookup();
   const [jceConsent, setJceConsent] = useState(false);
   const [jceVerified, setJceVerified] = useState(false);
   const [jcePhoto, setJcePhoto] = useState<string | null>(null);
@@ -978,9 +981,16 @@ const ClientForm = () => {
                         )}
                       </div>
                       {jceError && (
-                        <p className="flex items-start gap-1.5 text-xs font-medium text-red-700">
-                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{jceError}
-                        </p>
+                        <div className="space-y-1">
+                          <p className="flex items-start gap-1.5 text-xs font-medium text-red-700">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{jceError}
+                          </p>
+                          {jceDiagnostic && (
+                            <p className="rounded border border-red-200 bg-red-50 px-2 py-1 font-mono text-[11px] leading-snug text-red-800">
+                              {jceDiagnostic}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
