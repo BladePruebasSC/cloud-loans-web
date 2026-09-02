@@ -181,13 +181,18 @@ export const useJceLookup = () => {
         const code = payload.error?.code ?? `HTTP_${res.status}`;
         const hints: Record<string, string> = {
           NOT_CONFIGURED:
-            'la Edge Function está desplegada pero le faltan los secretos PERSONA_SEGURA_URL ' +
-            'y PERSONA_SEGURA_KEY (supabase secrets set ...).',
-          NETWORK_ERROR: 'la Edge Function no pudo contactar al proveedor de la JCE.',
+            'la función está desplegada pero PERSONA_SEGURA_URL apunta a un sitio vacío. ' +
+            'El proveedor por defecto no necesita clave: basta con borrar ese secreto.',
+          NETWORK_ERROR:
+            'la Edge Function no pudo contactar al proveedor de la JCE (psbi.me). ' +
+            'Puede ser una caída pasajera del proveedor o que se agotara el tiempo de espera.',
           UNAUTHORIZED: 'la Edge Function rechazó el token de sesión.',
-          NOT_FOUND: 'la JCE no devolvió datos para esa cédula.',
+          NOT_FOUND: 'el proveedor no tiene datos para esa cédula.',
           CONSENT_REQUIRED: 'falta el consentimiento del titular.',
           VALIDATION_FAILED: 'la cédula no pasó la validación del servidor.',
+          INTERNAL_ERROR:
+            'la función falló por dentro. Mira sus registros en el panel de Supabase ' +
+            '(Edge Functions → jce-lookup → Logs).',
           HTTP_404:
             'la Edge Function `jce-lookup` no existe en el proyecto. Despliégala con ' +
             '`supabase functions deploy jce-lookup`.',

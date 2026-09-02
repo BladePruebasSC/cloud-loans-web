@@ -23,8 +23,8 @@ export interface DocumentTypeInfo {
 export const DOCUMENT_TYPES: DocumentTypeInfo[] = [
   {
     value: 'cedula', label: 'Cédula',
-    hint: '11 dígitos. Se verifica el dígito verificador de la JCE.',
-    placeholder: '000-0000000-0', supportsJce: true,
+    hint: '11 dígitos, sin guiones. Se verifica el dígito verificador de la JCE.',
+    placeholder: '00000000000', supportsJce: true,
   },
   {
     value: 'pasaporte', label: 'Pasaporte',
@@ -74,13 +74,12 @@ export const isValidCedula = (value: string): boolean => {
   return check === Number(d[10]);
 };
 
-/** Cédula con máscara 000-0000000-0. Los demás documentos no se enmascaran. */
-export const formatCedula = (value: string): string => {
-  const d = onlyDigits(value).slice(0, 11);
-  if (d.length <= 3) return d;
-  if (d.length <= 10) return `${d.slice(0, 3)}-${d.slice(3)}`;
-  return `${d.slice(0, 3)}-${d.slice(3, 10)}-${d.slice(10)}`;
-};
+/**
+ * Cédula: 11 dígitos seguidos, SIN guiones. La máscara 000-0000000-0 se quitó a propósito —
+ * es como se guarda, como se consulta a la JCE y como la teclea el usuario, así que
+ * mostrarla con guiones solo obligaba a limpiarla en cada uso.
+ */
+export const formatCedula = (value: string): string => onlyDigits(value).slice(0, 11);
 
 /** Pasaporte / DNI / ID: mayúsculas, sin espacios ni símbolos raros. */
 export const formatGenericDocument = (value: string): string =>

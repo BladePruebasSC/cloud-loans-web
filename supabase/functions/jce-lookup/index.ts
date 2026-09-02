@@ -4,8 +4,11 @@
 // Equivalente en este stack (React + Supabase, sin servidor de aplicación) del
 // LookupController + PersonaSeguraService del diseño PHP de referencia.
 //
-// Toda la lógica de red y la API KEY viven AQUÍ. El navegador nunca las ve: llama a esta
-// función con su JWT de Supabase y recibe únicamente los datos normalizados.
+// Toda la lógica de red vive AQUÍ. El navegador no habla con el proveedor: llama a esta
+// función con su JWT de Supabase y recibe únicamente los datos normalizados. Esto no es solo
+// por la clave —el proveedor actual no pide ninguna— sino porque la auditoría de la Ley
+// 172-13, la caché y el hasheo de la cédula tienen que ocurrir en un sitio que el cliente no
+// pueda saltarse.
 //
 // Privacidad (Ley 172-13 RD) — reglas que no se rompen:
 //   · Consentimiento del titular obligatorio, revalidado en el servidor (no basta el front).
@@ -36,6 +39,14 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+/**
+ * Proveedor por defecto. Se pone aquí y no solo en un secreto porque el servicio NO pide
+ * clave: sin este valor la función quedaría sin configurar por omisión y la verificación no
+ * funcionaría hasta que alguien recordara registrar la variable.
+ * `PERSONA_SEGURA_URL` lo sigue sobrescribiendo si algún día cambia el proveedor.
+ */
+const DEFAULT_ENDPOINT = 'https://psbi.me/persona.php';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -234,28 +245,28 @@ serve(async (req) => {
     }
 
     // --- 4. Nivel 2: la API real -----------------------------------------
-    const endpoint = Deno.env.get('PERSONA_SEGURA_URL') ?? '';
-    const apiKey = Deno.env.get('PERSONA_SEGURA_KEY') ?? '';
-    if (!endpoint || !apiKey) {
-      // Sin credenciales configuradas: se dice con claridad en vez de fingir un fallo de red.
-      await audit(hash, 'sin_configurar', companyId, user.id);
-      return fail(503, 'NOT_CONFIGURED',
-        'La verificación con la JCE no está configurada. Pide al administrador que registre ' +
-        'PERSONA_SEGURA_URL y PERSONA_SEGURA_KEY en la Edge Function.');
-    }
+    // El proveedor NO exige clave: `POST cedula=<11 dígitos>` basta y responde JSON.
+    // Verificado contra el servicio real. La clave queda soportada por si algún día la
+    // piden, pero su ausencia NO es motivo para no consultar.
+    const endpoint = (Deno.env.get('PERSONA_SEGURA_URL') ?? '').trim() || DEFAULT_ENDPOINT;
+    const apiKey = (Deno.env.get('PERSONA_SEGURA_KEY') ?? '').trim();
 
     const timeoutSec = Number(Deno.env.get('PERSONA_SEGURA_TIMEOUT') ?? '8') || 8;
     let apiResp: Record<string, unknown>;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutSec * 1000);
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'cloud-loans-web/1.0',
+      };
+      // Enviar `X-API-KEY` vacía haría que un proveedor estricto rechazara la petición.
+      if (apiKey) headers['X-API-KEY'] = apiKey;
+
       const res = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'X-API-KEY': apiKey,
-          'User-Agent': 'cloud-loans-web/1.0',
-        },
+        headers,
+        // La cédula va SIN guiones: `onlyDigits` ya la dejó en 11 dígitos.
         body: new URLSearchParams({ cedula }).toString(),
         signal: controller.signal,
       }).finally(() => clearTimeout(timer));

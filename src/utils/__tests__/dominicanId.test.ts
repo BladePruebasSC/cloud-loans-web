@@ -73,11 +73,14 @@ const makeCedula = (first10) => `${first10}${checkDigit(first10)}`;
 
   it("Formato", () => {
   {
-    ok('mascara parcial 3', formatCedula('001') === '001');
-    ok('mascara parcial 7', formatCedula('0011234') === '001-1234');
-    ok('mascara completa', formatCedula('00112345678') === '001-1234567-8');
-    ok('recorta a 11', formatCedula('001123456789999') === '001-1234567-8');
-    ok('ignora no digitos', formatCedula('001-abc-1234567-8') === '001-1234567-8');
+    // La cedula se escribe y se muestra SIN guiones: 11 digitos seguidos.
+    ok('parcial 3', formatCedula('001') === '001');
+    ok('parcial 7', formatCedula('0011234') === '0011234');
+    ok('completa sin guiones', formatCedula('00112345678') === '00112345678');
+    ok('recorta a 11', formatCedula('001123456789999') === '00112345678');
+    ok('quita guiones pegados', formatCedula('001-1234567-8') === '00112345678');
+    ok('ignora no digitos', formatCedula('001-abc-1234567-8') === '00112345678');
+    ok('la cedula de prueba se mantiene', formatCedula('02800849057') === '02800849057');
   
     ok('generico en mayusculas', formatGenericDocument('a1234567') === 'A1234567');
     ok('generico sin simbolos', formatGenericDocument('A 123/456!') === 'A123456');
