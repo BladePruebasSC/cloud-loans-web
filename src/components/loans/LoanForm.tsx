@@ -1599,10 +1599,50 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     console.log('client_id set to:', client.id);
   };
 
-       const getMinimumPayment = () => {
+  /**
+   * Capital REAL del préstamo: lo que el cliente pide, más los gastos de cierre cuando se
+   * marcan como financiados.
+   *
+   * Es la cifra sobre la que hay que calcularlo todo —interés, cuota y mínimos—, porque
+   * financiarlos significa que el cliente los debe y paga interés por ellos.
+   * `calculateAmortization` ya lo hacía así, pero el mínimo de la cuota fija y la derivación
+   * de la tasa seguían leyendo `amount` a secas: con 10,000 + 2,000 financiados, el mínimo
+   * se calculaba sobre 10,000 y dejaba fijar una cuota que no cubría ni el capital de 12,000.
+   * El cronograma la aceptaba y el interés salía NEGATIVO.
+   */
+  const getFinancedAmount = () => {
+    const { amount, closing_costs, closing_costs_financed } = form.getValues();
+    const base = Number(amount) || 0;
+    if (!closing_costs_financed) return base;
+    return Math.round((base + (Number(closing_costs) || 0)) * 100) / 100;
+  };
+
+  /**
+   * Suelo absoluto de la cuota fija: la que devuelve solo el capital, sin un peso de interés.
+   *
+   * Por debajo de esto el interés del cronograma sale NEGATIVO, que no significa nada: sería
+   * la empresa regalando dinero. Es distinto del "mínimo recomendado" de `getMinimumPayment`,
+   * que es la cuota que produce la tasa actual y SÍ se puede bajar (bajar la cuota es
+   * justamente la forma de fijar una tasa menor).
+   *
+   * Los tipos que no amortizan capital en cada cuota (americano, indefinido) no tienen este
+   * suelo: ahí la cuota es solo interés y el capital se devuelve al final.
+   */
+  const getCapitalOnlyPayment = () => {
+    const { term_months, amortization_type } = form.getValues();
+    if (amortization_type === 'american' || amortization_type === 'indefinite') return 0;
+    const periods = Number(term_months) || 0;
+    const financed = getFinancedAmount();
+    if (periods <= 0 || financed <= 0) return 0;
+    return Math.ceil((financed / periods) * 100) / 100;
+  };
+
+  const getMinimumPayment = () => {
     const formValues = form.getValues();
-    const { amount, interest_rate, term_months, amortization_type, payment_frequency } = formValues;
-    
+    const { interest_rate, term_months, amortization_type, payment_frequency } = formValues;
+    // Sobre el capital financiado, no sobre lo que el cliente pidió.
+    const amount = getFinancedAmount();
+
     if (!amount || amount <= 0) return 0;
     
     // Para plazo indefinido no necesitamos term_months
@@ -1738,11 +1778,28 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
 
     // Validate fixed payment if enabled
     if (fixed_payment_enabled) {
-      const minimumPayment = getMinimumPayment();
       if (!fixed_payment_amount || fixed_payment_amount <= 0) {
         toast.error('Debe ingresar una cuota fija válida');
         return;
       }
+
+      // SUELO DURO: por debajo del capital repartido, el interés del cronograma sale negativo.
+      // Se comprueba ANTES que el mínimo recomendado porque es el error que de verdad rompe
+      // la tabla, y porque su mensaje explica el porqué.
+      const capitalOnly = getCapitalOnlyPayment();
+      if (capitalOnly > 0 && fixed_payment_amount < capitalOnly) {
+        const financiados = closing_costs_financed && closing_costs
+          ? ` (${formatCurrency(requestedAmount)} + ${formatCurrency(closing_costs)} de gastos de cierre)`
+          : '';
+        toast.error(
+          `La cuota no puede bajar de ${formatCurrency(capitalOnly)}: es el capital de ` +
+          `${formatCurrency(amount)}${financiados} repartido entre ${term_months} cuotas. ` +
+          `Por debajo de eso el interés saldría negativo.`
+        );
+        return;
+      }
+
+      const minimumPayment = getMinimumPayment();
       // Permitir un margen de tolerancia del 1% para evitar problemas con decimales
       const tolerance = minimumPayment * 0.01;
       if (fixed_payment_amount < (minimumPayment - tolerance)) {
@@ -1845,8 +1902,11 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
        // Si hay cuota fija, recalcular el interés total basado en la cuota
        if (fixed_payment_enabled && fixed_payment_amount) {
          totalAmount = fixed_payment_amount * totalPeriods;
-         const newTotalInterest = totalAmount - amount;
-         
+         // Nunca por debajo de cero: un interés negativo no significa nada y antes se pintaba
+         // tal cual en la tabla (RD$-165.00 por cuota). La validación de arriba ya impide
+         // llegar aquí, pero esto es lo que garantiza que ningún camino lo produzca.
+         const newTotalInterest = Math.max(0, totalAmount - amount);
+
          // Generar tabla con interés distribuido
          let remainingBalance = amount;
          const interestPerPayment = newTotalInterest / totalPeriods;
@@ -2641,11 +2701,19 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
   useEffect(() => {
     const fixedPaymentEnabled = form.watch('fixed_payment_enabled');
     const fixedPaymentAmount = form.watch('fixed_payment_amount');
-    const amount = form.watch('amount');
     const term_months = form.watch('term_months');
     const frequency = form.watch('payment_frequency');
+    // Los gastos de cierre financiados son capital: la tasa se deriva sobre el total, no
+    // sobre lo que el cliente pidió. Sin esto, marcar la casilla después de fijar la cuota
+    // dejaba una tasa calculada sobre 10,000 aplicándose a un préstamo de 12,000.
+    const amount = getFinancedAmount();
 
     if (fixedPaymentEnabled && fixedPaymentAmount && amount > 0 && term_months > 0) {
+      // Una cuota que no cubre ni el capital no define ninguna tasa válida: daría negativa.
+      // Se deja la tasa como estaba en vez de ponerla a 0 —borrar el 20% que el usuario
+      // escribió sería peor— y el campo de cuota ya avisa en rojo del mínimo.
+      if (fixedPaymentAmount < amount / term_months) return;
+
       const newInterestRate = calculateInterestFromQuota(amount, fixedPaymentAmount, term_months, frequency);
       form.setValue('interest_rate', newInterestRate);
 
@@ -2657,7 +2725,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       // Si se desactiva la cuota fija, limpiar el campo de cuota fija
       form.setValue('fixed_payment_amount', 0);
     }
-  }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months'), form.watch('payment_frequency')]);
+  }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months'), form.watch('payment_frequency'), form.watch('closing_costs'), form.watch('closing_costs_financed')]);
 
   // Actualizar el esquema cuando cambien los días excluidos
   useEffect(() => {
@@ -2818,7 +2886,13 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                             // Permitir un margen de tolerancia del 1% para evitar problemas con decimales
                             const tolerance = minimumPayment * 0.01;
                             const isBelow = field.value && field.value < (minimumPayment - tolerance);
-                            
+                            // Suelo duro: por debajo del capital repartido el interés sale
+                            // negativo. Se distingue del mínimo recomendado porque este NO se
+                            // puede bajar, mientras que aquel solo baja la tasa.
+                            const capitalOnly = getCapitalOnlyPayment();
+                            const isImpossible = Boolean(field.value) && capitalOnly > 0
+                              && field.value < capitalOnly;
+
                             return (
                               <FormItem>
                                 <FormControl>
@@ -2841,14 +2915,24 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                                           e.preventDefault();
                                         }
                                       }}
-                                      className={`h-10 ${isBelow ? "border-red-500 bg-red-50" : ""}`}
+                                      className={`h-10 ${isBelow || isImpossible ? "border-red-500 bg-red-50" : ""}`}
                                     />
-                                    {isBelow && minimumPayment > 0 && (
+                                    {isImpossible ? (
+                                      <span className="text-red-600 text-xs mt-1 block font-medium">
+                                        No puede bajar de {formatCurrency(capitalOnly)}: es el capital
+                                        entre {form.watch('term_months')} cuotas. Por debajo, el interés
+                                        sale negativo.
+                                      </span>
+                                    ) : isBelow && minimumPayment > 0 && (
                                       <span className="text-red-500 text-xs mt-1 block">
                                         Mínimo recomendado: RD${minimumPayment}
                                       </span>
                                     )}
-                                    
+                                    {!isImpossible && capitalOnly > 0 && (
+                                      <span className="text-gray-500 text-xs mt-1 block">
+                                        Mínimo posible {formatCurrency(capitalOnly)} (solo capital)
+                                      </span>
+                                    )}
                                   </div>
                                 </FormControl>
                                 <FormMessage />
