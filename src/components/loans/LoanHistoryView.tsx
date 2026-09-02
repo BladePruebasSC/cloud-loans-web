@@ -23,6 +23,7 @@ import {
   CreditCard
 } from 'lucide-react';
 import { PaymentActions } from './PaymentActions';
+import { sortPaymentsNewestFirst, sortPaymentsOldestFirst } from '@/utils/paymentOrdering';
 import { formatInTimeZone } from 'date-fns-tz';
 import { useAuth } from '@/hooks/useAuth';
 import jsPDF from 'jspdf';
@@ -138,10 +139,9 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     };
 
     const remainingByCharge = new Map<string, number>(charges.map(c => [c.id, Number(c.total_amount || 0)]));
-    const asc = [...payments].sort((a, b) =>
-      new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime() ||
-      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
+    // Recorrido acumulativo: aquí hace falta el orden CRONOLÓGICO, del primero al último.
+    // Mismo desempate que en el listado, o dos cuotas del mismo cobro se asignarían al revés.
+    const asc = sortPaymentsOldestFirst(payments);
     const chargeOrdinal = new Map<string, number>(charges.map((c, i) => [c.id, i + 1]));
 
     for (const p of asc) {
@@ -362,22 +362,11 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       if (error) throw error;
       setInstallments(instData || []);
 
-      // Ordenar por fecha de pago (descendente) y luego por created_at (descendente) como orden secundario
-      const sortedPayments = (data || []).sort((a, b) => {
-        const dateA = new Date(a.payment_date).getTime();
-        const dateB = new Date(b.payment_date).getTime();
-        
-        // Si las fechas son iguales, ordenar por created_at (más reciente primero)
-        if (dateA === dateB) {
-          const createdA = new Date(a.created_at).getTime();
-          const createdB = new Date(b.created_at).getTime();
-          return createdB - createdA; // Descendente
-        }
-        
-        return dateB - dateA; // Descendente (más reciente primero)
-      });
-      
-      setPayments(sortedPayments);
+      // Del más reciente al más antiguo. El desempate por `due_date` es imprescindible: un
+      // pago avanzado inserta todas sus cuotas en un solo `insert` y Postgres les pone el
+      // MISMO `created_at` (es el instante de la transacción), así que sin él las tres salían
+      // en orden de inserción y la primera cuota aparecía abajo, como si fuera la más reciente.
+      setPayments(sortPaymentsNewestFirst(data || []));
     } catch (error) {
       console.error('Error fetching payments:', error);
       toast.error('Error al cargar historial de pagos');
