@@ -128,7 +128,7 @@ export const HomeModule: React.FC = () => {
     <div className="min-h-full bg-slate-50">
       {/* ---------- Encabezado ---------- */}
       <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-20">
+        <div className="w-full px-4 sm:px-6 lg:px-8 pt-6 pb-20">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-widest text-slate-400">Centro de operaciones</p>
@@ -164,7 +164,7 @@ export const HomeModule: React.FC = () => {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-14 pb-10 space-y-5">
+      <div className="w-full px-4 sm:px-6 lg:px-8 -mt-14 pb-10 space-y-5">
         {/* ---------- Resumen del día ---------- */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <DayTile

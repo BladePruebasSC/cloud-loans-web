@@ -162,7 +162,7 @@ export const AnalyticsDashboard: React.FC = () => {
 
   return (
     <div className="min-h-full bg-slate-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-5">
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-6 space-y-5">
         {/* Encabezado */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>

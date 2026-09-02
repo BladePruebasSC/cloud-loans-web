@@ -318,7 +318,7 @@ export const CollectionRouteModule = () => {
   }, [clients]);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+    <div className="w-full space-y-5 p-4 sm:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs uppercase tracking-wide text-gray-500">Cobranza</p>

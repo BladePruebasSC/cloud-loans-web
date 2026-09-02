@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { describeSupabaseError } from '@/utils/supabaseErrors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
@@ -62,6 +63,8 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<DueRow[]>([]);
+  /** Motivo por el que no se pudieron leer las cuotas. Distinto de "no hay cuotas". */
+  const [loadError, setLoadError] = useState<string | null>(null);
   // La selección tiene tres piezas para que escribir un monto pueda arrastrar cuotas SIN pelearse
   // con lo que el empleado marca a mano:
   //   manualIds   — lo que marcó el empleado.
@@ -144,9 +147,14 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
       setManualIds([]);
       setAutoIds([]);
       setExcludedIds([]);
+      setLoadError(null);
     } catch (error) {
       console.error('Error cargando cuotas para pago avanzado:', error);
-      toast.error('No se pudieron cargar las cuotas del préstamo');
+      // NO se dibuja el estado "sin cuotas pendientes" cuando la carga falla. Son cosas
+      // OPUESTAS y confundirlas es grave: el panel decía que el préstamo no debe nada
+      // —en verde, como un préstamo saldado— cuando en realidad no había podido leerlo.
+      // Un cobrador puede dar por cobrado a un cliente que sigue debiendo.
+      setLoadError(describeSupabaseError(error, 'No se pudieron cargar las cuotas del préstamo'));
       setRows([]);
     } finally {
       setLoading(false);
@@ -364,6 +372,24 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
     return (
       <div className="flex items-center justify-center gap-2 py-10 text-gray-500">
         <Loader2 className="h-4 w-4 animate-spin" /> Cargando cuotas pendientes…
+      </div>
+    );
+  }
+
+  // El error va ANTES que el estado vacío: si la carga falló no se sabe qué debe el cliente,
+  // y decir "no debe nada" en verde sería afirmar lo contrario de lo que se sabe.
+  if (loadError) {
+    return (
+      <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
+        <p className="font-semibold text-red-800">No se pudieron leer las cuotas de este préstamo.</p>
+        <p className="mt-1 text-sm text-red-700">{loadError}</p>
+        <p className="mt-2 text-xs text-red-600">
+          Esto NO significa que el préstamo esté saldado: no se pudo comprobar.
+        </p>
+        <div className="mt-3 flex justify-center gap-2">
+          <Button variant="outline" onClick={() => load()}>Reintentar</Button>
+          <Button variant="ghost" onClick={onCancel}>Volver</Button>
+        </div>
       </div>
     );
   }

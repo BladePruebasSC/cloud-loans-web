@@ -830,7 +830,7 @@ const ClientForm = () => {
   const isLastStep = stepIndex === STEP_ORDER.length - 1;
 
   return (
-    <div className="mx-auto max-w-5xl p-4 pb-28 sm:p-6">
+    <div className="w-full p-4 pb-28 sm:p-6">
       {/* Cabecera */}
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
@@ -1508,7 +1508,9 @@ const ClientForm = () => {
 
       {/* Barra de acciones fija */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 p-3">
+        {/* Mismo ancho que el contenido de arriba: si se acota uno y el otro no, los botones
+            dejan de alinearse con los campos a los que pertenecen. */}
+        <div className="flex w-full items-center justify-between gap-3 p-3">
           <Button type="button" variant="outline" onClick={goBack} disabled={stepIndex === 0 || saving}>
             <ArrowLeft className="mr-2 h-4 w-4" />
             Atrás

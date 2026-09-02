@@ -1,10 +1,14 @@
 -- ============================================================================
 -- MIGRACIONES PENDIENTES — pegar entero en el SQL Editor de Supabase y ejecutar
 -- ============================================================================
--- Reúne las tres migraciones que el código ya usa pero que la base de datos todavía no
--- tiene. Mientras falten, estas operaciones fallan con un 400:
+-- Reúne las migraciones que el código ya usa pero que la base de datos todavía no tiene.
+-- Mientras falten, estas operaciones fallan con un 400:
 --
 --   · Crear o editar un préstamo   -> falta `loans.closing_costs_financed`
+--   · Pago avanzado                -> falta `payments.superseded_at`. Llega a decir que el
+--                                     préstamo NO TIENE CUOTAS PENDIENTES, que es falso.
+--   · Ruta de cobro                -> falta `payments.superseded_at`
+--   · Extensión de plazo           -> falta `payments.superseded_at`
 --   · Guardar un cliente           -> faltan `clients.document_type`, `latitude`, `longitude`,
 --                                     `location_accuracy`, `location_note`, `jce_verified`…
 --   · Verificar una cédula (JCE)   -> faltan `personas_cache`, `persona_lookups`, `jce-photos`
@@ -16,6 +20,9 @@
 --
 -- Equivale a aplicar, en este orden:
 --   20260902000000_jce_lookup_and_client_gps.sql
+--   20260903000000_supersede_payments_on_term_extension.sql  (solo las columnas; la función
+--       `calculate_loan_remaining_balance` de esa migración NO se toca aquí, para no pisar
+--       una versión posterior. Aplícala desde su archivo si hace falta.)
 --   20260904000000_add_closing_costs_financed.sql
 -- ============================================================================
 
@@ -33,7 +40,32 @@ COMMENT ON COLUMN public.loans.closing_costs_financed IS
 
 
 -- ----------------------------------------------------------------------------
--- 2. Cliente: tipo de documento, verificación JCE y ubicación GPS
+-- 2. Pagos anulados por una extensión     (desbloquea PAGO AVANZADO y RUTA DE COBRO)
+-- ----------------------------------------------------------------------------
+-- Tres pantallas consultan `payments.superseded_at` (pago avanzado, ruta de cobro y
+-- extensión de plazo). Sin la columna esas consultas devuelven 400 y las pantallas se
+-- quedan sin datos — el pago avanzado llega a decir que no quedan cuotas pendientes.
+--
+-- Al extender un plazo el pago se DESVINCULA de la cuota (`due_date` a NULL) pero la fila
+-- NO se borra: el dinero se recibió y debe seguir contando como ingreso en los informes,
+-- que agrupan por `payment_date` y no por `due_date`.
+ALTER TABLE public.payments
+  ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS superseded_reason TEXT,
+  ADD COLUMN IF NOT EXISTS original_due_date DATE;
+
+COMMENT ON COLUMN public.payments.superseded_at IS
+  'Cuándo dejó de aplicarse este pago al préstamo (extensión de plazo). Sigue contando como ingreso.';
+COMMENT ON COLUMN public.payments.original_due_date IS
+  'Cuota a la que estaba aplicado antes de anularse. `due_date` queda en NULL.';
+
+CREATE INDEX IF NOT EXISTS idx_payments_superseded
+  ON public.payments (loan_id)
+  WHERE superseded_at IS NOT NULL;
+
+
+-- ----------------------------------------------------------------------------
+-- 3. Cliente: tipo de documento, verificación JCE y ubicación GPS
 -- ----------------------------------------------------------------------------
 -- El NÚMERO del documento sigue en `clients.dni` (renombrar esa columna rompería medio
 -- sistema); aquí va solo de qué documento se trata.
@@ -84,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_has_location
 
 
 -- ----------------------------------------------------------------------------
--- 3. Caché de personas consultadas a la JCE
+-- 4. Caché de personas consultadas a la JCE
 -- ----------------------------------------------------------------------------
 -- La cédula en claro NUNCA se guarda: la clave es sha256(cédula).
 CREATE TABLE IF NOT EXISTS public.personas_cache (
@@ -112,7 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_personas_cache_fecha ON public.personas_cache (ul
 
 
 -- ----------------------------------------------------------------------------
--- 4. Auditoría de consultas (Ley 172-13)
+-- 5. Auditoría de consultas (Ley 172-13)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.persona_lookups (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -136,7 +168,7 @@ CREATE INDEX IF NOT EXISTS idx_persona_lookups_company ON public.persona_lookups
 
 
 -- ----------------------------------------------------------------------------
--- 5. RLS: estas dos tablas quedan cerradas al navegador
+-- 6. RLS: estas dos tablas quedan cerradas al navegador
 -- ----------------------------------------------------------------------------
 -- Se activa RLS y NO se crea ninguna política. En Postgres eso significa "nadie pasa",
 -- salvo `service_role`, que salta RLS y es la identidad con la que corre la Edge Function.
@@ -149,7 +181,7 @@ REVOKE ALL ON public.persona_lookups FROM anon, authenticated;
 
 
 -- ----------------------------------------------------------------------------
--- 6. Bucket PRIVADO para las fotos de la JCE
+-- 7. Bucket PRIVADO para las fotos de la JCE
 -- ----------------------------------------------------------------------------
 -- Sin políticas de storage para `authenticated`: las URLs las firma la Edge Function.
 INSERT INTO storage.buckets (id, name, public)
@@ -158,7 +190,7 @@ ON CONFLICT (id) DO NOTHING;
 
 
 -- ----------------------------------------------------------------------------
--- 7. Datos existentes
+-- 8. Datos existentes
 -- ----------------------------------------------------------------------------
 -- Los préstamos anteriores se crearon con el modelo antiguo (gastos de cierre aparte).
 UPDATE public.loans   SET closing_costs_financed = false WHERE closing_costs_financed IS NULL;
@@ -167,15 +199,22 @@ UPDATE public.clients SET document_type = 'cedula'       WHERE document_type IS 
 
 
 -- ============================================================================
--- Comprobación: las tres filas deben decir OK
+-- Comprobación: las cuatro filas deben decir OK
 -- ============================================================================
 SELECT
-  'loans.closing_costs_financed' AS columna,
+  'loans.closing_costs_financed' AS objeto,
   CASE WHEN EXISTS (
     SELECT 1 FROM information_schema.columns
      WHERE table_schema = 'public' AND table_name = 'loans'
        AND column_name = 'closing_costs_financed'
   ) THEN 'OK' ELSE 'FALTA' END AS estado
+UNION ALL
+SELECT 'payments.superseded_at',
+  CASE WHEN EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'payments'
+       AND column_name = 'superseded_at'
+  ) THEN 'OK' ELSE 'FALTA' END
 UNION ALL
 SELECT 'clients.location_accuracy',
   CASE WHEN EXISTS (
