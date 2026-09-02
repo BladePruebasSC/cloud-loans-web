@@ -14,9 +14,18 @@
 --   · Verificar una cédula (JCE)   -> faltan `personas_cache`, `persona_lookups`, `jce-photos`
 --     (la consulta devuelve los datos igual, pero sin caché, sin foto y sin auditoría)
 --
+-- La sección 4 es una RED DE SEGURIDAD: declara de golpe todas las columnas que escriben
+-- los formularios de cliente y préstamo, repartidas por una docena de migraciones. Basta
+-- con que UNA no se haya aplicado para que el guardado falle entero, y arreglarlas de una
+-- en una es un goteo sin fin.
+--
 -- Es IDEMPOTENTE: todo va con IF NOT EXISTS o ON CONFLICT, así que ejecutarlo dos veces no
--- rompe nada ni pisa datos existentes. No borra ni modifica ninguna fila salvo los UPDATE
--- del final, que solo rellenan valores por defecto en columnas recién creadas.
+-- rompe nada ni pisa datos existentes. `ADD COLUMN IF NOT EXISTS` no toca las columnas que
+-- ya existen: ni el tipo, ni los datos, ni el valor por defecto. No borra ni modifica
+-- ninguna fila salvo los UPDATE del final, que solo rellenan valores por defecto en
+-- columnas recién creadas.
+--
+-- AL TERMINAR, la consulta del final no debe devolver NINGUNA fila.
 --
 -- Equivale a aplicar, en este orden:
 --   20260902000000_jce_lookup_and_client_gps.sql
@@ -116,7 +125,94 @@ CREATE INDEX IF NOT EXISTS idx_clients_has_location
 
 
 -- ----------------------------------------------------------------------------
--- 4. Caché de personas consultadas a la JCE
+-- 4. RED DE SEGURIDAD: el resto de columnas que escriben los formularios
+-- ----------------------------------------------------------------------------
+-- Arreglar las columnas de una en una es un goteo sin fin: el formulario de clientes
+-- escribe ~50 campos repartidos por una docena de migraciones y basta con que UNA no se
+-- haya aplicado para que el guardado falle entero. Aquí se declaran TODAS de golpe.
+--
+-- `ADD COLUMN IF NOT EXISTS` no toca las que ya existen: ni el tipo, ni los datos, ni el
+-- valor por defecto. Para una base al día esto no hace absolutamente nada.
+--
+-- Los tipos coinciden con los de las migraciones originales; donde hubo dos versiones
+-- (NUMERIC(10,2) y DECIMAL(10,2), que en Postgres son lo mismo) se usa la primera.
+ALTER TABLE public.clients
+  -- Identidad
+  ADD COLUMN IF NOT EXISTS first_name TEXT,
+  ADD COLUMN IF NOT EXISTS last_name TEXT,
+  ADD COLUMN IF NOT EXISTS nickname TEXT,
+  ADD COLUMN IF NOT EXISTS nationality TEXT,
+  ADD COLUMN IF NOT EXISTS birth_date DATE,
+  ADD COLUMN IF NOT EXISTS gender TEXT,
+  ADD COLUMN IF NOT EXISTS marital_status TEXT,
+  ADD COLUMN IF NOT EXISTS photo_url TEXT,
+  -- Contacto
+  ADD COLUMN IF NOT EXISTS whatsapp TEXT,
+  ADD COLUMN IF NOT EXISTS phone_secondary TEXT,
+  -- Ubicación (la cascada provincia -> municipio -> distrito -> sector)
+  ADD COLUMN IF NOT EXISTS province TEXT,
+  ADD COLUMN IF NOT EXISTS municipality TEXT,
+  ADD COLUMN IF NOT EXISTS municipal_district TEXT,
+  ADD COLUMN IF NOT EXISTS sector TEXT,
+  ADD COLUMN IF NOT EXISTS neighborhood TEXT,
+  ADD COLUMN IF NOT EXISTS city TEXT,
+  ADD COLUMN IF NOT EXISTS collection_route TEXT,
+  -- Trabajo e ingresos
+  ADD COLUMN IF NOT EXISTS occupation TEXT,
+  ADD COLUMN IF NOT EXISTS employment_status TEXT,
+  ADD COLUMN IF NOT EXISTS monthly_income NUMERIC(12,2),
+  ADD COLUMN IF NOT EXISTS housing NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS dependents INTEGER,
+  ADD COLUMN IF NOT EXISTS rnc TEXT,
+  ADD COLUMN IF NOT EXISTS workplace_name TEXT,
+  ADD COLUMN IF NOT EXISTS workplace_address TEXT,
+  -- Datos bancarios
+  ADD COLUMN IF NOT EXISTS card_number TEXT,
+  ADD COLUMN IF NOT EXISTS bank_user TEXT,
+  ADD COLUMN IF NOT EXISTS bank_code TEXT,
+  ADD COLUMN IF NOT EXISTS bank_token_identifier TEXT,
+  ADD COLUMN IF NOT EXISTS bank_name TEXT,
+  -- Clasificación y extras
+  ADD COLUMN IF NOT EXISTS recommended_by TEXT,
+  ADD COLUMN IF NOT EXISTS color_classification TEXT,
+  ADD COLUMN IF NOT EXISTS visible_in_loan_data BOOLEAN DEFAULT true,
+  ADD COLUMN IF NOT EXISTS custom_field_1 TEXT,
+  ADD COLUMN IF NOT EXISTS custom_field_2 TEXT,
+  ADD COLUMN IF NOT EXISTS attachment_url TEXT,
+  ADD COLUMN IF NOT EXISTS credit_score INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active',
+  ADD COLUMN IF NOT EXISTS created_by UUID;
+
+COMMENT ON COLUMN public.clients.municipal_district IS
+  'Distrito municipal dentro del municipio. Opcional: muchos municipios no tienen.';
+
+-- Lo mismo para los préstamos: el formulario escribe columnas de varias migraciones.
+ALTER TABLE public.loans
+  ADD COLUMN IF NOT EXISTS amortization_type TEXT DEFAULT 'simple',
+  ADD COLUMN IF NOT EXISTS payment_frequency TEXT DEFAULT 'monthly',
+  ADD COLUMN IF NOT EXISTS first_payment_date DATE,
+  ADD COLUMN IF NOT EXISTS closing_costs NUMERIC(12,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS excluded_days TEXT[],
+  ADD COLUMN IF NOT EXISTS portfolio_id UUID,
+  ADD COLUMN IF NOT EXISTS minimum_payment_enabled BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS minimum_payment_type TEXT,
+  ADD COLUMN IF NOT EXISTS minimum_payment_percentage NUMERIC(6,2),
+  ADD COLUMN IF NOT EXISTS late_fee_enabled BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS late_fee_rate NUMERIC(6,2),
+  ADD COLUMN IF NOT EXISTS grace_period_days INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS max_late_fee NUMERIC(12,2),
+  ADD COLUMN IF NOT EXISTS late_fee_calculation_type TEXT,
+  ADD COLUMN IF NOT EXISTS add_expense_enabled BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS fixed_payment_enabled BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS fixed_payment_amount NUMERIC(12,2),
+  ADD COLUMN IF NOT EXISTS guarantor_name TEXT,
+  ADD COLUMN IF NOT EXISTS guarantor_phone TEXT,
+  ADD COLUMN IF NOT EXISTS guarantor_dni TEXT,
+  ADD COLUMN IF NOT EXISTS notes TEXT;
+
+
+-- ----------------------------------------------------------------------------
+-- 5. Caché de personas consultadas a la JCE
 -- ----------------------------------------------------------------------------
 -- La cédula en claro NUNCA se guarda: la clave es sha256(cédula).
 CREATE TABLE IF NOT EXISTS public.personas_cache (
@@ -144,7 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_personas_cache_fecha ON public.personas_cache (ul
 
 
 -- ----------------------------------------------------------------------------
--- 5. Auditoría de consultas (Ley 172-13)
+-- 6. Auditoría de consultas (Ley 172-13)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.persona_lookups (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -168,7 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_persona_lookups_company ON public.persona_lookups
 
 
 -- ----------------------------------------------------------------------------
--- 6. RLS: estas dos tablas quedan cerradas al navegador
+-- 7. RLS: estas dos tablas quedan cerradas al navegador
 -- ----------------------------------------------------------------------------
 -- Se activa RLS y NO se crea ninguna política. En Postgres eso significa "nadie pasa",
 -- salvo `service_role`, que salta RLS y es la identidad con la que corre la Edge Function.
@@ -181,7 +277,7 @@ REVOKE ALL ON public.persona_lookups FROM anon, authenticated;
 
 
 -- ----------------------------------------------------------------------------
--- 7. Bucket PRIVADO para las fotos de la JCE
+-- 8. Bucket PRIVADO para las fotos de la JCE
 -- ----------------------------------------------------------------------------
 -- Sin políticas de storage para `authenticated`: las URLs las firma la Edge Function.
 INSERT INTO storage.buckets (id, name, public)
@@ -190,7 +286,7 @@ ON CONFLICT (id) DO NOTHING;
 
 
 -- ----------------------------------------------------------------------------
--- 8. Datos existentes
+-- 9. Datos existentes
 -- ----------------------------------------------------------------------------
 -- Los préstamos anteriores se crearon con el modelo antiguo (gastos de cierre aparte).
 UPDATE public.loans   SET closing_costs_financed = false WHERE closing_costs_financed IS NULL;
@@ -199,32 +295,53 @@ UPDATE public.clients SET document_type = 'cedula'       WHERE document_type IS 
 
 
 -- ============================================================================
--- Comprobación: las cuatro filas deben decir OK
+-- COMPROBACIÓN — no debe devolver NINGUNA fila
 -- ============================================================================
-SELECT
-  'loans.closing_costs_financed' AS objeto,
-  CASE WHEN EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_schema = 'public' AND table_name = 'loans'
-       AND column_name = 'closing_costs_financed'
-  ) THEN 'OK' ELSE 'FALTA' END AS estado
+-- En vez de comprobar cuatro columnas sueltas, se listan TODAS las que los formularios
+-- escriben y se muestran solo las que siguen sin existir. Cero filas = nada que arreglar.
+-- Si aparece alguna, ese nombre es exactamente el que dirá el mensaje de error de la
+-- aplicación, y significa que su ALTER TABLE de arriba no llegó a ejecutarse.
+WITH esperadas(tabla, columna) AS (
+  VALUES
+    ('loans','closing_costs_financed'), ('loans','closing_costs'),
+    ('loans','amortization_type'), ('loans','payment_frequency'),
+    ('loans','first_payment_date'), ('loans','excluded_days'), ('loans','portfolio_id'),
+    ('loans','fixed_payment_enabled'), ('loans','fixed_payment_amount'),
+    ('loans','late_fee_enabled'), ('loans','late_fee_rate'), ('loans','grace_period_days'),
+    ('loans','max_late_fee'), ('loans','late_fee_calculation_type'),
+    ('loans','minimum_payment_enabled'), ('loans','minimum_payment_type'),
+    ('loans','minimum_payment_percentage'), ('loans','add_expense_enabled'),
+    ('loans','guarantor_name'), ('loans','guarantor_phone'), ('loans','guarantor_dni'),
+    ('loans','notes'),
+    ('payments','superseded_at'), ('payments','original_due_date'),
+    ('clients','first_name'), ('clients','last_name'), ('clients','nickname'),
+    ('clients','document_type'), ('clients','jce_verified'), ('clients','jce_verified_at'),
+    ('clients','nationality'), ('clients','birth_date'), ('clients','gender'),
+    ('clients','marital_status'), ('clients','photo_url'), ('clients','whatsapp'),
+    ('clients','phone_secondary'), ('clients','province'), ('clients','municipality'),
+    ('clients','municipal_district'), ('clients','sector'), ('clients','neighborhood'),
+    ('clients','city'), ('clients','collection_route'), ('clients','occupation'),
+    ('clients','employment_status'), ('clients','monthly_income'), ('clients','housing'),
+    ('clients','dependents'), ('clients','rnc'), ('clients','workplace_name'),
+    ('clients','workplace_address'), ('clients','card_number'), ('clients','bank_user'),
+    ('clients','bank_code'), ('clients','bank_token_identifier'), ('clients','bank_name'),
+    ('clients','recommended_by'), ('clients','color_classification'),
+    ('clients','visible_in_loan_data'), ('clients','custom_field_1'),
+    ('clients','custom_field_2'), ('clients','attachment_url'), ('clients','credit_score'),
+    ('clients','status'), ('clients','created_by'),
+    ('clients','latitude'), ('clients','longitude'), ('clients','location_accuracy'),
+    ('clients','location_note'), ('clients','location_updated_at')
+)
+SELECT e.tabla || '.' || e.columna AS falta_todavia
+  FROM esperadas e
+ WHERE NOT EXISTS (
+   SELECT 1 FROM information_schema.columns c
+    WHERE c.table_schema = 'public' AND c.table_name = e.tabla AND c.column_name = e.columna
+ )
 UNION ALL
-SELECT 'payments.superseded_at',
-  CASE WHEN EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_schema = 'public' AND table_name = 'payments'
-       AND column_name = 'superseded_at'
-  ) THEN 'OK' ELSE 'FALTA' END
-UNION ALL
-SELECT 'clients.location_accuracy',
-  CASE WHEN EXISTS (
-    SELECT 1 FROM information_schema.columns
-     WHERE table_schema = 'public' AND table_name = 'clients'
-       AND column_name = 'location_accuracy'
-  ) THEN 'OK' ELSE 'FALTA' END
-UNION ALL
-SELECT 'personas_cache',
-  CASE WHEN EXISTS (
-    SELECT 1 FROM information_schema.tables
-     WHERE table_schema = 'public' AND table_name = 'personas_cache'
-  ) THEN 'OK' ELSE 'FALTA' END;
+SELECT 'tabla ' || t
+  FROM (VALUES ('personas_cache'), ('persona_lookups')) AS x(t)
+ WHERE NOT EXISTS (
+   SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = x.t
+ );
