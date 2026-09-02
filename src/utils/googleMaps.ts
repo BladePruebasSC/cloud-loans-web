@@ -1,15 +1,13 @@
 // ============================================================================
 // Carga del SDK de Google Maps
 // ============================================================================
-// La clave se lee de `VITE_GOOGLE_MAPS_API_KEY`. Es una clave de NAVEGADOR: acaba en el
-// bundle sí o sí, no hay forma de ocultarla en una SPA. Protégela en la consola de Google
-// restringiéndola por dominio (HTTP referrers) y a las APIs "Maps JavaScript" y
-// "Geocoding" — no por secreto, que es imposible aquí.
+// DÓNDE SE USA: solo en el mapa de la RUTA DE COBRO. Fijar la ubicación de la vivienda de un
+// cliente NO pasa por aquí — toma las coordenadas del GPS del dispositivo o pegadas a mano,
+// que no cuesta nada y no depende de Google.
 //
-// SIN CLAVE EL SISTEMA SIGUE FUNCIONANDO: el selector de ubicación cae en modo manual
-// (GPS del dispositivo + coordenadas escritas a mano) y las rutas se abren en la app de
-// Google Maps mediante enlaces, que no requieren clave. Es el mismo mecanismo que ya usaba
-// `MapModule`. El mapa incrustado es una mejora, no un requisito.
+// SIN CLAVE EL SISTEMA SIGUE FUNCIONANDO: las rutas se abren en la app de Google Maps
+// mediante enlaces, que no requieren clave, y el orden por cercanía se calcula aquí. El mapa
+// incrustado es una mejora, no un requisito.
 
 export interface LatLng { lat: number; lng: number }
 
@@ -59,10 +57,58 @@ export interface GMapsApi {
   Animation: { DROP: number };
 }
 
-interface WindowWithMaps extends Window { google?: { maps?: GMapsApi } }
+interface WindowWithMaps extends Window {
+  google?: { maps?: GMapsApi };
+  /** Google llama a esta función global si rechaza la clave. Ver `subscribeMapsAuthFailure`. */
+  gm_authFailure?: () => void;
+}
+
+// ----------------------------------------------------------------------------
+// Rechazo de la clave por parte de Google
+// ----------------------------------------------------------------------------
+// Cuando el dominio no está autorizado o se agotó la cuota, el script SÍ carga: lo que hace
+// Google es pintar el mapa en gris con un aviso encima y llamar a `window.gm_authFailure`.
+// Sin engancharse ahí, la aplicación cree que todo fue bien y el usuario ve un rectángulo
+// gris sin explicación. Este es el único aviso que da.
+
+let mapsAuthFailed = false;
+const authFailureSubscribers = new Set<() => void>();
+
+export const hasMapsAuthFailed = (): boolean => mapsAuthFailed;
+
+/** Avisa cuando Google rechaza la clave. Devuelve la función para dejar de escuchar. */
+export const subscribeMapsAuthFailure = (cb: () => void): (() => void) => {
+  if (mapsAuthFailed) cb();
+  authFailureSubscribers.add(cb);
+  return () => { authFailureSubscribers.delete(cb); };
+};
+
+export const MAPS_AUTH_ERROR =
+  'Google rechazó la clave de mapas. Suele ser que el dominio no esté autorizado ' +
+  '(en desarrollo hay que añadir localhost) o que se agotara la cuota. ' +
+  'La ruta se abre igual con el botón de arriba.';
+
+/**
+ * Clave de la empresa. Va escrita aquí, no en un `.env`, por la misma razón que la URL de
+ * Supabase: el entorno de despliegue no define esas variables y la petición acababa saliendo
+ * sin clave. `VITE_GOOGLE_MAPS_API_KEY` la sigue sobrescribiendo si hace falta otra.
+ *
+ * NO ES UN SECRETO Y NO PUEDE SERLO: una clave de Maps para navegador viaja en el bundle,
+ * cualquiera que abra la aplicación la ve. Lo que la protege no es esconderla sino
+ * RESTRINGIRLA en la consola de Google Cloud:
+ *
+ *   · Restricción de aplicación → «Sitios web (referentes HTTP)» con los dominios propios.
+ *   · Restricción de API → solo «Maps JavaScript API».
+ *   · Un límite de gasto en la cuenta de facturación.
+ *
+ * Sin esas restricciones, cualquiera puede copiarla y consumir la cuota facturada a la
+ * empresa. Restringirla es obligatorio, no una recomendación.
+ */
+const DEFAULT_GOOGLE_MAPS_API_KEY = 'AIzaSyCbiYnzceF5RCEbnOP07NQijBTKtujw56E';
 
 export const GOOGLE_MAPS_API_KEY: string =
-  (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? '';
+  ((import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ?? '').trim()
+  || DEFAULT_GOOGLE_MAPS_API_KEY;
 
 export const isGoogleMapsConfigured = (): boolean => GOOGLE_MAPS_API_KEY.trim().length > 0;
 
@@ -85,6 +131,14 @@ export const loadGoogleMaps = (): Promise<GMapsApi> => {
     }
 
     const w = window as WindowWithMaps;
+
+    // Se instala antes de cargar el script: Google la llama en cuanto rechaza la clave.
+    w.gm_authFailure = () => {
+      mapsAuthFailed = true;
+      console.error(`[Maps] ${MAPS_AUTH_ERROR}`);
+      authFailureSubscribers.forEach(cb => cb());
+    };
+
     if (w.google?.maps) { resolve(w.google.maps); return; }
 
     const existing = document.getElementById('google-maps-sdk') as HTMLScriptElement | null;

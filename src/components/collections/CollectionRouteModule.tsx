@@ -38,6 +38,7 @@ import {
 } from '@/utils/collectionRoute';
 import {
   DR_CENTER, isGoogleMapsConfigured, loadGoogleMaps, mapsPointUrl, mapsRouteUrl,
+  subscribeMapsAuthFailure, MAPS_AUTH_ERROR,
   type GMapsMap, type LatLng,
 } from '@/utils/googleMaps';
 import type { RawInstallment, RawPayment } from '@/utils/installmentDues';
@@ -202,7 +203,13 @@ export const CollectionRouteModule = () => {
       })
       .catch((e: Error) => { if (!cancelled) setMapError(e.message); });
 
-    return () => { cancelled = true; };
+    // Si Google rechaza la clave, el script carga igual y el mapa sale en gris: este es el
+    // único aviso que llega, y sin él no habría forma de saber por qué.
+    const unsubscribe = subscribeMapsAuthFailure(() => {
+      if (!cancelled) setMapError(MAPS_AUTH_ERROR);
+    });
+
+    return () => { cancelled = true; unsubscribe(); };
   }, []);
 
   // Dibujar las paradas cada vez que cambian
@@ -410,7 +417,7 @@ export const CollectionRouteModule = () => {
                 </div>
               )}
               {mapError && (
-                <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-sm text-amber-800">
+                <div className="absolute inset-0 flex items-center justify-center bg-amber-50/95 p-4 text-center text-sm text-amber-900">
                   {mapError}
                 </div>
               )}
@@ -419,8 +426,8 @@ export const CollectionRouteModule = () => {
             <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600">
               <p className="font-medium text-gray-800">Mapa incrustado no disponible</p>
               <p className="mt-1 text-xs">
-                Falta la clave <code>VITE_GOOGLE_MAPS_API_KEY</code>. La ruta se abre igual en la
-                app de Google Maps con el botón de arriba, y el orden por cercanía funciona.
+                No hay clave de Google Maps configurada. La ruta se abre igual en la app de
+                Google Maps con el botón de arriba, y el orden por cercanía funciona.
               </p>
             </div>
           )}

@@ -223,6 +223,7 @@ type ClientRow = Partial<Record<
   monthly_income?: number | null; housing?: number | null; dependents?: number | null;
   credit_score?: number | null; visible_in_loan_data?: boolean | null;
   jce_verified?: boolean | null; latitude?: number | null; longitude?: number | null;
+  location_accuracy?: number | null;
 };
 
 /** Valores admitidos por una columna de `clients` al guardar. */
@@ -287,8 +288,8 @@ const ClientForm = () => {
   // Se llama `homeLocation` y no `location` porque ese nombre ya lo ocupa `useLocation()`
   // del router unas líneas más arriba.
   const [homeLocation, setHomeLocation] = useState<{
-    latitude: number | null; longitude: number | null; note: string;
-  }>({ latitude: null, longitude: null, note: '' });
+    latitude: number | null; longitude: number | null; accuracy: number | null; note: string;
+  }>({ latitude: null, longitude: null, accuracy: null, note: '' });
 
   // -------------------------------------------------------------------------
   // Carga
@@ -379,6 +380,8 @@ const ClientForm = () => {
       setHomeLocation({
         latitude: d.latitude !== null && d.latitude !== undefined ? Number(d.latitude) : null,
         longitude: d.longitude !== null && d.longitude !== undefined ? Number(d.longitude) : null,
+        accuracy: d.location_accuracy !== null && d.location_accuracy !== undefined
+          ? Number(d.location_accuracy) : null,
         note: d.location_note || '',
       });
 
@@ -693,6 +696,9 @@ const ClientForm = () => {
       // Ubicación de la vivienda, para la ruta de cobro
       latitude: homeLocation.latitude,
       longitude: homeLocation.longitude,
+      // Radio de error del GPS. Sirve para saber si el punto es de fiar: uno tomado con
+      // 500 m de error no distingue una casa de la siguiente calle.
+      location_accuracy: homeLocation.accuracy,
       location_note: homeLocation.note.trim() || null,
       location_updated_at: homeLocation.latitude !== null ? new Date().toISOString() : null,
       credit_score: formData.credit_score ? Number(formData.credit_score) : null,
@@ -1217,10 +1223,9 @@ const ClientForm = () => {
                 <LocationPicker
                   latitude={homeLocation.latitude}
                   longitude={homeLocation.longitude}
+                  accuracy={homeLocation.accuracy}
                   note={homeLocation.note}
                   onChange={setHomeLocation}
-                  addressHint={[formData.address, formData.sector, formData.municipality, formData.province]
-                    .filter(Boolean).join(', ')}
                 />
               </div>
 
