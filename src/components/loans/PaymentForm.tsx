@@ -455,11 +455,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     `;
   };
 
-  // Función helper para cerrar el modal de impresión y mostrar el diálogo de WhatsApp
-  // Función helper para cerrar el modal de WhatsApp y el formulario
-  const handleCloseWhatsAppDialog = (showRedirectToast: boolean = true) => {
-    setShowWhatsAppDialog(false);
-    // Cerrar el formulario después de cancelar o enviar
+  /**
+   * Cierra el formulario cuando el pago YA está registrado.
+   *
+   * En móvil el cobrador sigue cobrando, así que vuelve a Cobro Rápido; en escritorio se
+   * vuelve al listado de préstamos. Está extraído porque hay DOS finales de flujo —el normal
+   * y el del pago avanzado— y el avanzado se quedaba en el formulario: `onPaymentSuccess`
+   * solo refresca datos, no cierra nada.
+   */
+  const closeAfterPayment = (showRedirectToast: boolean = true) => {
     if (isMobile) {
       if (showRedirectToast) {
         toast.success('Redirigiendo a Cobro Rápido...');
@@ -470,6 +474,12 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     } else {
       onBack();
     }
+  };
+
+  // Función helper para cerrar el modal de WhatsApp y el formulario
+  const handleCloseWhatsAppDialog = (showRedirectToast: boolean = true) => {
+    setShowWhatsAppDialog(false);
+    closeAfterPayment(showRedirectToast);
   };
 
   const sendWhatsAppDirectly = async () => {
@@ -3488,6 +3498,10 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             onClose={() => {
               setAdvancedReceipt(null);
               onPaymentSuccess?.();
+              // Y se sale del formulario, igual que al terminar un pago normal. Antes solo
+              // se refrescaban los datos y el empleado se quedaba dentro, sin señal de que
+              // el pago hubiera terminado — con el riesgo de volver a cobrarlo.
+              closeAfterPayment(false);
             }}
           />
         </div>

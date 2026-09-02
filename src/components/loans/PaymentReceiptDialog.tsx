@@ -113,8 +113,11 @@ export const PaymentReceiptDialog = ({ receipt, onClose, title }: Props) => {
               </Button>
             ))}
           </div>
+          {/* Cerrar da el pago por terminado y sale del formulario, se haya impreso o no.
+              Por eso el texto no dice "sin imprimir": tras imprimir sigue siendo el botón
+              correcto y decirlo así hacía dudar de si el recibo se perdía. */}
           <Button type="button" variant="ghost" className="w-full" onClick={onClose}>
-            Continuar sin imprimir
+            Terminar y volver
           </Button>
         </div>
       </DialogContent>
