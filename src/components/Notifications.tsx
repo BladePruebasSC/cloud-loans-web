@@ -8,6 +8,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { daysBetweenIso } from '@/utils/frequencyUtils';
+import { addDaysIso } from '@/utils/portfolioMetrics';
 import { 
   Bell, 
   Clock, 
@@ -81,11 +83,30 @@ const Notifications: React.FC = () => {
     try {
         setLoading(true);
         const notificationsList: Notification[] = [];
-        const today = new Date();
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const nextWeek = new Date(today);
-      nextWeek.setDate(nextWeek.getDate() + 7);
+
+      // ====================================================================
+      // FECHAS: una sola definición de "hoy", en la zona horaria del negocio
+      // ====================================================================
+      // Aquí estaba el fallo de las notificaciones. Se hacía:
+      //
+      //     Math.floor((new Date('2026-09-05') - new Date()) / 86400000)
+      //
+      // y eso mezcla dos cosas incomparables: `new Date('2026-09-05')` se parsea como
+      // MEDIANOCHE UTC, mientras que `new Date()` es el instante actual con su hora. En
+      // Santo Domingo (UTC−4) la medianoche UTC del día 5 son las 20:00 del día 4 local, así
+      // que la resta no da un número entero de días y `Math.floor` se lo come: un pago del 5
+      // de septiembre, mirado el día 3 por la tarde, daba 1 y se anunciaba como "vence
+      // mañana". El desfase además cambiaba según la hora del día.
+      //
+      // `daysBetweenIso` compara dos fechas ISO parseadas como LOCALES a medianoche, así que
+      // devuelve días de calendario exactos. Es la misma utilidad que ya usan la mora, el
+      // CRM y las métricas de cartera.
+      const todayIsoDate = getCurrentDateStringForSantoDomingo();
+      const nextWeekIsoDate = addDaysIso(todayIsoDate, 7);
+
+      /** Días de calendario desde hoy hasta `iso`. Negativo si ya pasó. */
+      const daysFromToday = (iso?: string | null): number =>
+        daysBetweenIso(todayIsoDate, String(iso || '').split('T')[0]) ?? 0;
 
       // 1. Préstamos con pagos vencidos (fecha ya pasó)
       const { data: overdueLoans, error: overdueError } = await supabase
@@ -101,7 +122,9 @@ const Notifications: React.FC = () => {
         .eq('status', 'active')
         .neq('status', 'deleted')
         .neq('status', 'paid')
-        .lt('next_payment_date', today.toISOString().split('T')[0]);
+        // `today.toISOString()` daba la fecha en UTC: pasadas las 20:00 en Santo Domingo ya
+        // era el día siguiente y el filtro se corría un día.
+        .lt('next_payment_date', todayIsoDate);
 
       if (!overdueError && overdueLoans) {
         overdueLoans.forEach(loan => {
@@ -110,7 +133,7 @@ const Notifications: React.FC = () => {
             return;
           }
           
-          const daysOverdue = Math.floor((today.getTime() - new Date(loan.next_payment_date).getTime()) / (1000 * 60 * 60 * 24));
+          const daysOverdue = -daysFromToday(loan.next_payment_date);
           
           // Mensaje más específico según los días vencidos
           const clientName = (loan.clients as any)?.full_name || 'Cliente desconocido';
@@ -160,8 +183,8 @@ const Notifications: React.FC = () => {
           )
         `)
         .eq('user_id', user.id)
-        .gte('effective_date', today.toISOString().split('T')[0])
-        .lte('effective_date', nextWeek.toISOString().split('T')[0])
+        .gte('effective_date', todayIsoDate)
+        .lte('effective_date', nextWeekIsoDate)
         .order('effective_date', { ascending: true })
         .order('changed_at', { ascending: false }); // Más reciente primero
 
@@ -205,25 +228,10 @@ const Notifications: React.FC = () => {
             // Usar la fecha actual en zona horaria de Santo Domingo para comparar correctamente
             const todayString = getCurrentDateStringForSantoDomingo(); // Formato YYYY-MM-DD
             
-            // Parsear la fecha efectiva como fecha local (no UTC) para evitar problemas de zona horaria
-            const [year, month, day] = change.effective_date.split('-').map(Number);
-            const effectiveDateLocal = new Date(year, month - 1, day); // month es 0-indexado
-            
-            // Parsear la fecha actual como fecha local para comparar
-            const [todayYear, todayMonth, todayDay] = todayString.split('-').map(Number);
-            const todayLocal = new Date(todayYear, todayMonth - 1, todayDay);
-            
-            // Calcular la diferencia en días
-            const daysUntilEffective = Math.floor((effectiveDateLocal.getTime() - todayLocal.getTime()) / (1000 * 60 * 60 * 24));
-            
-            console.log('🔍 Calculando días hasta fecha efectiva:', {
-              effectiveDate: change.effective_date,
-              todayString,
-              daysUntilEffective,
-              effectiveDateLocal: effectiveDateLocal.toISOString().split('T')[0],
-              todayLocal: todayLocal.toISOString().split('T')[0]
-            });
-            
+            // Este cálculo ya era correcto (comparaba dos fechas locales a medianoche); se
+            // pasa a `daysFromToday` para que TODAS las notificaciones usen el mismo camino.
+            const daysUntilEffective = daysFromToday(change.effective_date);
+
             let title, message;
             if (daysUntilEffective === 0) {
               title = '📅 Cambio de Tasa HOY';
@@ -263,8 +271,8 @@ const Notifications: React.FC = () => {
         .eq('status', 'active')
         .neq('status', 'deleted')
         .neq('status', 'paid')
-        .gte('next_payment_date', today.toISOString().split('T')[0])
-        .lte('next_payment_date', nextWeek.toISOString().split('T')[0]);
+        .gte('next_payment_date', todayIsoDate)
+        .lte('next_payment_date', nextWeekIsoDate);
 
       if (!upcomingError && upcomingLoans) {
         upcomingLoans.forEach(loan => {
@@ -273,8 +281,7 @@ const Notifications: React.FC = () => {
             return;
           }
           
-          const paymentDate = new Date(loan.next_payment_date);
-          const daysUntilDue = Math.floor((paymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          const daysUntilDue = daysFromToday(loan.next_payment_date);
           
           // Determinar el tipo de notificación y mensaje
           const clientName = (loan.clients as any)?.full_name || 'Cliente desconocido';
@@ -331,8 +338,8 @@ const Notifications: React.FC = () => {
           )
         `)
         .not('next_contact_date', 'is', null)
-        .gte('next_contact_date', today.toISOString().split('T')[0])
-        .lte('next_contact_date', nextWeek.toISOString().split('T')[0]);
+        .gte('next_contact_date', todayIsoDate)
+        .lte('next_contact_date', nextWeekIsoDate);
 
       if (!followUpError && upcomingFollowUps) {
         upcomingFollowUps.forEach(followUp => {
@@ -342,7 +349,7 @@ const Notifications: React.FC = () => {
             return;
           }
           
-          const daysUntilFollowUp = Math.floor((new Date(followUp.next_contact_date).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          const daysUntilFollowUp = daysFromToday(followUp.next_contact_date);
           const contactTypeLabels = {
             phone: 'Llamada',
             email: 'Email',
@@ -394,9 +401,9 @@ const Notifications: React.FC = () => {
         lateFeeLoans.forEach(loan => {
           // Excluir préstamos completados - el filtro de status 'paid' ya los excluye, pero agregamos validación adicional
           
-          const today = new Date();
-          const nextPayment = new Date(loan.next_payment_date);
-          const daysOverdue = Math.max(0, Math.floor((today.getTime() - nextPayment.getTime()) / (1000 * 60 * 60 * 24)) - (loan.grace_period_days || 0));
+          // Días REALES de atraso. La gracia perdona la mora, no el atraso: descontarla aquí
+          // hacía que un préstamo vencido apareciera con menos días de los que lleva.
+          const daysOverdue = Math.max(0, -daysFromToday(loan.next_payment_date));
           const lateFeeAmount = loan.current_late_fee || 0;
           const clientName = (loan.clients as any).full_name || 'Cliente desconocido';
 
@@ -537,10 +544,12 @@ const Notifications: React.FC = () => {
         // Para pagos vencidos, siempre usar icono de alerta roja
         return <AlertTriangle className="h-4 w-4 text-red-500" />;
       case 'payment_due':
-        // Para pagos próximos, usar diferentes iconos según la urgencia
-        const today = new Date();
-        const dueDate = new Date(notification.dueDate);
-        const daysUntilDue = Math.floor((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        // Para pagos próximos, usar diferentes iconos según la urgencia.
+        // Mismo criterio de fechas que el texto, o el icono contradiría al mensaje.
+        const daysUntilDue = daysBetweenIso(
+          getCurrentDateStringForSantoDomingo(),
+          String(notification.dueDate || '').split('T')[0],
+        ) ?? 0;
         
         if (daysUntilDue === 0) {
           // Pago vence hoy - alerta roja
