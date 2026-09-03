@@ -1851,7 +1851,7 @@ const RequestsModule = () => {
                       />
                     </div>
                     <div>
-                      <Label htmlFor="edit_term_months">Plazo ({getFrequencyLabel(editFormData.payment_frequency)})</Label>
+                      <Label htmlFor="edit_term_months">Plazo</Label>
                       <Input
                         id="edit_term_months"
                         type="number"
@@ -2556,9 +2556,10 @@ const RequestsModule = () => {
                 </div>
 
                 <div>
-                  {/* El plazo va en PERÍODOS de la frecuencia elegida, no en meses: 12 con
-                      frecuencia quincenal son 12 quincenas. Decir "meses" era engañoso. */}
-                  <Label htmlFor="term_months">Plazo ({getFrequencyLabel(formData.payment_frequency)}) *</Label>
+                  {/* Sin unidad a propósito. El plazo va en PERÍODOS de la frecuencia elegida
+                      —12 con frecuencia quincenal son 12 quincenas—, así que poner "meses"
+                      era engañoso y poner la unidad variable resultaba ruidoso. */}
+                  <Label htmlFor="term_months">Plazo *</Label>
                   <Input
                     id="term_months"
                     type="number"
