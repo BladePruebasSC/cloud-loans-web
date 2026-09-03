@@ -17,7 +17,9 @@
 // de que ningun trigger haya corrido.
 import { describe, it, expect } from 'vitest';
 
-import { overdueFromDues, computeTodayAgenda, type OverdueFacts } from '@/utils/portfolioMetrics';
+import {
+  overdueFromDues, computeTodayAgenda, computePortfolioSnapshot, type OverdueFacts,
+} from '@/utils/portfolioMetrics';
 
 const ok = (name: string, cond: unknown, detail = '') =>
   expect(cond, detail ? `${name} — ${detail}` : name).toBe(true);
@@ -92,12 +94,27 @@ describe('atraso real desde las cuotas', () => {
     ok('pero esta pendiente', facts.pendingAmount === 800);
   });
 
-  it('El periodo de gracia descuenta dias, nunca por debajo de cero', () => {
-    const dues = [due('2026-08-20', 800)];  // 14 dias
-    ok('sin gracia', overdueFromDues(dues, HOY, 0).daysOverdue === 14);
-    ok('con 3 de gracia', overdueFromDues(dues, HOY, 3).daysOverdue === 11);
-    ok('con gracia mayor que el atraso', overdueFromDues(dues, HOY, 30).daysOverdue === 0);
-    // El monto NO cambia: la gracia perdona la mora, no la deuda.
+  it('LA GRACIA NO BORRA LOS DIAS DE ATRASO, solo la mora', () => {
+    // Fallo reportado: un prestamo vencido el dia 2, mirado el dia 3 y con 2 dias de gracia,
+    // mostraba "0 dias vencidos". Falso: lleva un dia vencido, lo que pasa es que ese dia no
+    // genera recargo. Son dos cosas distintas y estaban mezcladas en un solo numero.
+    const dues = [due('2026-08-20', 800)];  // 14 dias vencida
+
+    ok('sin gracia: 14 dias', overdueFromDues(dues, HOY, 0).daysOverdue === 14);
+    ok('con 3 de gracia SIGUEN siendo 14', overdueFromDues(dues, HOY, 3).daysOverdue === 14);
+    ok('con 30 de gracia tambien', overdueFromDues(dues, HOY, 30).daysOverdue === 14);
+
+    // Lo que si depende de la gracia es cuantos dias generan mora.
+    ok('sin gracia cobran los 14', overdueFromDues(dues, HOY, 0).lateFeeDays === 14);
+    ok('con 3 de gracia cobran 11', overdueFromDues(dues, HOY, 3).lateFeeDays === 11);
+    ok('con 30 de gracia no cobra ninguno', overdueFromDues(dues, HOY, 30).lateFeeDays === 0);
+
+    // El caso exacto de la captura: vencio ayer, 2 dias de gracia.
+    const ayer = overdueFromDues([due('2026-09-02', 839)], HOY, 2);
+    ok('1 dia de atraso, no 0', ayer.daysOverdue === 1, String(ayer.daysOverdue));
+    ok('pero 0 dias de mora', ayer.lateFeeDays === 0, String(ayer.lateFeeDays));
+
+    // El monto tampoco depende de la gracia: perdona el recargo, no la deuda.
     ok('el monto no depende de la gracia', overdueFromDues(dues, HOY, 30).overdueAmount === 800);
   });
 
@@ -118,7 +135,10 @@ describe('atraso real desde las cuotas', () => {
     }] as never[];
 
     const facts = new Map<string, OverdueFacts>([
-      ['L1', { daysOverdue: 14, overdueAmount: 800, pendingAmount: 20000, oldestOverdueDate: '2026-08-20' }],
+      ['L1', {
+        daysOverdue: 14, lateFeeDays: 14, overdueAmount: 800,
+        pendingAmount: 20000, oldestOverdueDate: '2026-08-20',
+      }],
     ]);
 
     const conCuotas = computeTodayAgenda(loans, HOY, facts);
@@ -130,5 +150,51 @@ describe('atraso real desde las cuotas', () => {
     const sinCuotas = computeTodayAgenda(loans, HOY);
     ok('antes reportaba 20,000', sinCuotas.overdueAmount === 20000, String(sinCuotas.overdueAmount));
     ok('25 veces mas de lo real', sinCuotas.overdueAmount / conCuotas.overdueAmount === 25);
+  });
+
+  it('Un prestamo en gracia SI aparece atrasado, con sus dias reales', () => {
+    // El cobrador tiene que verlo: la cuota esta vencida. Lo que la gracia decide es si se le
+    // cobra recargo, no si se le persigue.
+    const loans = [{
+      id: 'L1', client_id: 'C1', status: 'active',
+      remaining_balance: 20000, monthly_payment: 839,
+      next_payment_date: '2026-09-02', grace_period_days: 2,
+    }] as never[];
+
+    const facts = new Map<string, OverdueFacts>([
+      ['L1', {
+        daysOverdue: 1, lateFeeDays: 0, overdueAmount: 839,
+        pendingAmount: 13066.84, oldestOverdueDate: '2026-09-02',
+      }],
+    ]);
+    const agenda = computeTodayAgenda(loans, HOY, facts);
+
+    ok('esta en atrasados', agenda.overdue.length === 1, String(agenda.overdue.length));
+    ok('con 1 dia, no 0', agenda.overdue[0].daysOverdue === 1, String(agenda.overdue[0].daysOverdue));
+    ok('y 839 atrasados', agenda.overdueAmount === 839, String(agenda.overdueAmount));
+  });
+
+  it('El saldo de cartera cuadra con lo que suman las cuotas', () => {
+    // Fallo reportado: "Saldo por cobrar" no coincidia con lo que muestra "Ver cuotas".
+    // Salian de fuentes distintas: uno de `remaining_balance` y el otro de las cuotas.
+    const loans = [
+      { id: 'L1', status: 'active', amount: 10000, remaining_balance: 20000, current_late_fee: 0, next_payment_date: '2026-10-01', grace_period_days: 0 },
+      { id: 'L2', status: 'active', amount: 5000, remaining_balance: 7000, current_late_fee: 0, next_payment_date: '2026-10-01', grace_period_days: 0 },
+    ] as never[];
+
+    // Lo que de verdad suman sus cuotas pendientes es menos: el saldo de la columna iba viejo.
+    const facts = new Map<string, OverdueFacts>([
+      ['L1', { daysOverdue: 0, lateFeeDays: 0, overdueAmount: 0, pendingAmount: 12000, oldestOverdueDate: null }],
+      ['L2', { daysOverdue: 0, lateFeeDays: 0, overdueAmount: 0, pendingAmount: 6000, oldestOverdueDate: null }],
+    ]);
+
+    const conCuotas = computePortfolioSnapshot(loans, HOY, facts);
+    ok('saldo = suma de cuotas', conCuotas.activeBalance === 18000, String(conCuotas.activeBalance));
+
+    const sinCuotas = computePortfolioSnapshot(loans, HOY);
+    ok('antes daba 27,000', sinCuotas.activeBalance === 27000, String(sinCuotas.activeBalance));
+
+    // Y el ticket promedio sale del mismo saldo, asi que tambien se corrige.
+    ok('ticket promedio coherente', conCuotas.avgTicket === 9000, String(conCuotas.avgTicket));
   });
 });

@@ -228,11 +228,11 @@ export const usePortfolioData = () => {
   }, [user, companyId, load]);
 
   // ---------------- derivaciones ----------------
-  const portfolio = useMemo(() => computePortfolioSnapshot(loans, todayIso), [loans, todayIso]);
-  const cashflow = useMemo(() => computeCashflow(payments, sales, todayIso), [payments, sales, todayIso]);
-  const recovery = useMemo(() => computeRecovery(loans, cashflow), [loans, cashflow]);
   /**
-   * Atraso REAL de cada préstamo, calculado desde sus cuotas.
+   * Atraso y saldo REALES de cada préstamo, calculados desde sus cuotas.
+   *
+   * Va PRIMERO porque de aquí salen las demás derivaciones: no se puede referenciar en las
+   * dependencias de un `useMemo` anterior, porque ese array se evalúa en su propia línea.
    *
    * No se usa `next_payment_date` ni `remaining_balance`: los mantienen triggers y bastaba
    * con que uno no hubiera corrido para que el inicio mostrara días y montos viejos. Las
@@ -261,6 +261,13 @@ export const usePortfolioData = () => {
     }
     return facts;
   }, [installments, payments, loans, todayIso]);
+
+  const portfolio = useMemo(
+    () => computePortfolioSnapshot(loans, todayIso, overdueFactsByLoan),
+    [loans, todayIso, overdueFactsByLoan],
+  );
+  const cashflow = useMemo(() => computeCashflow(payments, sales, todayIso), [payments, sales, todayIso]);
+  const recovery = useMemo(() => computeRecovery(loans, cashflow), [loans, cashflow]);
 
   const agenda = useMemo(
     () => computeTodayAgenda(loans, todayIso, overdueFactsByLoan),

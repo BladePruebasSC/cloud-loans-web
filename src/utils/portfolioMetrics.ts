@@ -88,15 +88,28 @@ export const getSaleAmount = (sale: SaleLike): number => {
 export const isActiveLoan = (status: string | null | undefined) =>
   status === 'active' || status === 'overdue';
 
-/** Días de atraso de un préstamo HOY, descontado su período de gracia. */
+/**
+ * Días de atraso de un préstamo HOY.
+ *
+ * LOS DÍAS DE GRACIA NO SE DESCUENTAN AQUÍ. La gracia perdona la MORA de esos días, no el
+ * hecho de que la cuota esté vencida: si venció ayer, hay un día de atraso aunque no se
+ * cobre recargo por él. Antes se restaba, y un préstamo vencido el día 2 aparecía el día 3
+ * con "0 días vencidos", que es sencillamente falso.
+ *
+ * Para la mora, usa `lateFeeDays`.
+ */
 export const loanDaysOverdue = (loan: LoanLike, todayIso: string): number => {
   if (!isActiveLoan(loan.status)) return 0;
   const due = dateOnly(loan.next_payment_date);
   if (!due) return 0;
   const raw = daysBetweenIso(due, todayIso);
   if (raw === null) return 0;
-  return Math.max(0, raw - Number(loan.grace_period_days || 0));
+  return Math.max(0, raw);
 };
+
+/** Días que SÍ generan mora: los de atraso menos el período de gracia. */
+export const lateFeeDays = (daysOverdue: number, graceDays?: number | null): number =>
+  Math.max(0, (Number(daysOverdue) || 0) - (Number(graceDays) || 0));
 
 // ---------------------------------------------------------------------------
 // Lo que un préstamo debe DE VERDAD hoy, a partir de sus cuotas
@@ -122,8 +135,13 @@ export interface DueLike {
 }
 
 export interface OverdueFacts {
-  /** Días desde la cuota vencida más antigua SIN pagar, descontada la gracia. */
+  /**
+   * Días desde la cuota vencida más antigua SIN pagar.
+   * NO descuenta la gracia: si la cuota venció ayer, hay un día de atraso.
+   */
   daysOverdue: number;
+  /** Días que generan mora: los de atraso menos la gracia. */
+  lateFeeDays: number;
   /** Suma de lo pendiente de las cuotas YA VENCIDAS. Esto es "lo atrasado". */
   overdueAmount: number;
   /** Todo lo pendiente, vencido o no. */
@@ -133,7 +151,7 @@ export interface OverdueFacts {
 }
 
 export const NO_OVERDUE: OverdueFacts = {
-  daysOverdue: 0, overdueAmount: 0, pendingAmount: 0, oldestOverdueDate: null,
+  daysOverdue: 0, lateFeeDays: 0, overdueAmount: 0, pendingAmount: 0, oldestOverdueDate: null,
 };
 
 /**
@@ -141,6 +159,10 @@ export const NO_OVERDUE: OverdueFacts = {
  *
  * Los días salen de la cuota vencida MÁS ANTIGUA, no de la próxima a vencer: si alguien
  * lleva cinco cuotas sin pagar, su atraso es el de la primera, no el de la última.
+ *
+ * `graceDays` NO reduce `daysOverdue`: solo decide cuántos de esos días generan mora
+ * (`lateFeeDays`). Son dos cosas distintas y confundirlas hacía que un préstamo vencido
+ * apareciera como "0 días vencidos" mientras estuviera dentro de la gracia.
  */
 export const overdueFromDues = (
   dues: DueLike[],
@@ -164,10 +186,11 @@ export const overdueFromDues = (
   }
 
   const raw = oldestOverdueDate ? daysBetweenIso(oldestOverdueDate, todayIso) : null;
-  const daysOverdue = raw === null ? 0 : Math.max(0, raw - (Number(graceDays) || 0));
+  const daysOverdue = raw === null ? 0 : Math.max(0, raw);
 
   return {
     daysOverdue,
+    lateFeeDays: lateFeeDays(daysOverdue, graceDays),
     overdueAmount: round2(overdueAmount),
     pendingAmount: round2(pendingAmount),
     oldestOverdueDate,
@@ -232,7 +255,20 @@ export interface PortfolioSnapshot {
   maxDaysOverdue: number;
 }
 
-export const computePortfolioSnapshot = (loans: LoanLike[], todayIso: string): PortfolioSnapshot => {
+/**
+ * Fotografía de la cartera.
+ *
+ * `factsByLoan` trae lo pendiente y el atraso calculados desde las CUOTAS. Cuando llega,
+ * manda sobre `loans.remaining_balance` y `next_payment_date`, que son columnas que
+ * mantienen triggers y pueden ir por detrás. Es lo que hace que "Saldo por cobrar" coincida
+ * con lo que suma "Ver cuotas" en cada préstamo; antes eran dos fuentes distintas y no
+ * tenían por qué dar lo mismo.
+ */
+export const computePortfolioSnapshot = (
+  loans: LoanLike[],
+  todayIso: string,
+  factsByLoan?: Map<string, OverdueFacts>,
+): PortfolioSnapshot => {
   const buckets = AGING_BUCKETS.reduce((acc, b) => {
     acc[b] = { count: 0, balance: 0 };
     return acc;
@@ -258,11 +294,13 @@ export const computePortfolioSnapshot = (loans: LoanLike[], todayIso: string): P
     if (!isActiveLoan(loan.status)) continue;
 
     activeLoans++;
-    const balance = Number(loan.remaining_balance) || 0;
+    const facts = factsByLoan?.get(String(loan.id));
+    // Lo que suman las cuotas pendientes, que es lo que el usuario ve en "Ver cuotas".
+    const balance = facts ? facts.pendingAmount : (Number(loan.remaining_balance) || 0);
     activeBalance += balance;
     lateFeeTotal += Number(loan.current_late_fee) || 0;
 
-    const days = loanDaysOverdue(loan, todayIso);
+    const days = facts ? facts.daysOverdue : loanDaysOverdue(loan, todayIso);
     maxDaysOverdue = Math.max(maxDaysOverdue, days);
     const bucket = bucketForDays(days);
     buckets[bucket].count++;
@@ -606,12 +644,13 @@ export const computeTodayAgenda = (
     if (!isActiveLoan(loan.status)) continue;
     const facts = factsByLoan?.get(String(loan.id));
 
-    // Con cuotas: el préstamo está atrasado si tiene alguna vencida sin pagar, y la fecha
-    // que lo sitúa es la de esa cuota. Sin cuotas: lo que diga `next_payment_date`.
+    const days = facts ? facts.daysOverdue : loanDaysOverdue(loan, todayIso);
+
+    // La fecha que sitúa al préstamo: la cuota vencida más antigua si la hay, si no el
+    // próximo vencimiento. La GRACIA no entra aquí — perdona la mora, no el atraso.
     const due = facts?.oldestOverdueDate ?? dateOnly(loan.next_payment_date);
     if (!due) continue;
 
-    const days = facts ? facts.daysOverdue : loanDaysOverdue(loan, todayIso);
     const entry: AgendaLoan = {
       loan,
       daysOverdue: days,
@@ -621,6 +660,7 @@ export const computeTodayAgenda = (
         ? facts.overdueAmount
         : Number(loan.monthly_payment) || 0,
     };
+
     if (due === todayIso) dueToday.push(entry);
     else if (due < todayIso) overdue.push(entry);
     else if (due <= weekEnd) dueThisWeek.push(entry);

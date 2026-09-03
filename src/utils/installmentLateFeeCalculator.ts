@@ -394,18 +394,25 @@ export const getLateFeeBreakdownFromInstallments = async (
         const [year, month, day] = dueDateOnly.split('-').map(Number);
         const dueDate = new Date(year, month - 1, day); // month es 0-indexado
         const daysSinceDue = Math.floor((calculationDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        daysOverdue = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
-        
+
+        // DÍAS DE ATRASO y DÍAS QUE GENERAN MORA son cosas distintas. La gracia perdona el
+        // recargo de esos primeros días, no el hecho de que la cuota esté vencida. Antes se
+        // restaba de `daysOverdue`, así que una cuota vencida ayer con 2 días de gracia se
+        // mostraba como "0 días vencidos": falso, y encima ocultaba el atraso al cobrador.
+        daysOverdue = Math.max(0, daysSinceDue);
+        const feeDays = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
+
         console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number}:`, {
           dueDate: installment.due_date,
           calculationDate: calculationDate.toISOString().split('T')[0],
           daysSinceDue,
           gracePeriodDays: loan.grace_period_days || 0,
-          daysOverdue
+          daysOverdue,
+          feeDays
         });
-        
-        // Calcular mora si hay días de atraso
-        if (daysOverdue > 0) {
+
+        // La MORA sí espera a que pase la gracia.
+        if (feeDays > 0) {
           // CORRECCIÓN: Para préstamos indefinidos, usar interest_amount o total_amount
           // ya que principal_amount es 0.
           // CORRECCIÓN (auditoría 2026-08-28): la comparación era `principal_amount === 0`
@@ -420,20 +427,20 @@ export const getLateFeeBreakdownFromInstallments = async (
 
           switch (loan.late_fee_calculation_type) {
             case 'daily':
-              lateFee = (baseAmount * loan.late_fee_rate / 100) * daysOverdue;
+              lateFee = (baseAmount * loan.late_fee_rate / 100) * feeDays;
               break;
             case 'monthly': {
               // Usar el largo del período según la frecuencia de pago, no siempre 30 días
               const periodDays = getLateFeePeriodDays(loan.payment_frequency);
-              const periodsOverdue = Math.ceil(daysOverdue / periodDays);
+              const periodsOverdue = Math.ceil(feeDays / periodDays);
               lateFee = (baseAmount * loan.late_fee_rate / 100) * periodsOverdue;
               break;
             }
             case 'compound':
-              lateFee = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdue) - 1);
+              lateFee = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, feeDays) - 1);
               break;
             default:
-              lateFee = (baseAmount * loan.late_fee_rate / 100) * daysOverdue;
+              lateFee = (baseAmount * loan.late_fee_rate / 100) * feeDays;
           }
           
           if (loan.max_late_fee && loan.max_late_fee > 0) {
@@ -540,14 +547,17 @@ export const getLateFeeBreakdownFromInstallments = async (
           const isPaid = remainingInterest <= 0.01;
 
           const daysSinceDue = Math.floor((calculationDate.getTime() - installmentDate.getTime()) / (1000 * 60 * 60 * 24));
-          const daysOverdueForInstallment = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
-          
+          // Igual que en la rama de las cuotas guardadas: los días de atraso son los reales;
+          // la gracia solo decide cuántos generan mora.
+          const daysOverdueForInstallment = Math.max(0, daysSinceDue);
+          const feeDaysForInstallment = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
+
           let lateFeeForInstallment = 0;
-          // Solo calcular mora si la cuota NO está pagada y está vencida
-          if (!isPaid && daysOverdueForInstallment > 0 && baseAmount > 0) {
+          // Solo calcular mora si la cuota NO está pagada y ya pasó la gracia
+          if (!isPaid && feeDaysForInstallment > 0 && baseAmount > 0) {
             switch (loan.late_fee_calculation_type) {
               case 'daily':
-                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForInstallment;
+                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * feeDaysForInstallment;
                 break;
               // (baseAmount = interés íntegro del período: la mora se calcula sobre la obligación
               //  original, no sobre el saldo tras un abono parcial.)
@@ -558,15 +568,15 @@ export const getLateFeeBreakdownFromInstallments = async (
                 // indefinido diario/semanal/quincenal, las cuotas de la BD y las generadas
                 // dinámicamente aplicaban DOS fórmulas de mora distintas: la mora de un
                 // préstamo diario con 30 días de atraso salía como 1 período en vez de 30.
-                const periodsOverdue = Math.ceil(daysOverdueForInstallment / getLateFeePeriodDays(loan.payment_frequency));
+                const periodsOverdue = Math.ceil(feeDaysForInstallment / getLateFeePeriodDays(loan.payment_frequency));
                 lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * periodsOverdue;
                 break;
               }
               case 'compound':
-                lateFeeForInstallment = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdueForInstallment) - 1);
+                lateFeeForInstallment = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, feeDaysForInstallment) - 1);
                 break;
               default:
-                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForInstallment;
+                lateFeeForInstallment = (baseAmount * loan.late_fee_rate / 100) * feeDaysForInstallment;
             }
             
             if (loan.max_late_fee && loan.max_late_fee > 0) {
@@ -641,8 +651,10 @@ export const getLateFeeBreakdownFromInstallments = async (
           : 0;
         const nextInstallmentNumber = maxInstallmentNumber + 1;
         
-        const daysOverdueForNext = Math.max(0, daysSinceNextPayment - (loan.grace_period_days || 0));
-        
+        // Días reales de atraso; la gracia solo recorta los que devengan mora.
+        const daysOverdueForNext = Math.max(0, daysSinceNextPayment);
+        const feeDaysForNext = Math.max(0, daysSinceNextPayment - (loan.grace_period_days || 0));
+
         // Calcular el monto base para la mora
         const isIndefinite = loan.amortization_type === 'indefinite';
         let baseAmount = 0;
@@ -656,21 +668,21 @@ export const getLateFeeBreakdownFromInstallments = async (
         }
         
         let lateFeeForNext = 0;
-        if (daysOverdueForNext > 0 && baseAmount > 0) {
+        if (feeDaysForNext > 0 && baseAmount > 0) {
           switch (loan.late_fee_calculation_type) {
             case 'daily':
-              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForNext;
+              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * feeDaysForNext;
               break;
             case 'monthly': {
-              const periodsOverdue2 = Math.ceil(daysOverdueForNext / getLateFeePeriodDays(loan.payment_frequency));
+              const periodsOverdue2 = Math.ceil(feeDaysForNext / getLateFeePeriodDays(loan.payment_frequency));
               lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * periodsOverdue2;
               break;
             }
             case 'compound':
-              lateFeeForNext = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, daysOverdueForNext) - 1);
+              lateFeeForNext = baseAmount * (Math.pow(1 + loan.late_fee_rate / 100, feeDaysForNext) - 1);
               break;
             default:
-              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * daysOverdueForNext;
+              lateFeeForNext = (baseAmount * loan.late_fee_rate / 100) * feeDaysForNext;
           }
           
           if (loan.max_late_fee && loan.max_late_fee > 0) {

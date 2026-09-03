@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computePortfolioSnapshot, computeCashflow, computeRecovery, buildMonthlySeries,
   computeTodayAgenda, topRiskLoans, bucketForDays, getSaleAmount, startOfWeekIso, addDaysIso, monthLabel,
+  lateFeeDays,
 } from '@/utils/portfolioMetrics';
 
 /** Adapta el estilo `ok(nombre, condicion, detalle)` de las suites originales. */
@@ -69,13 +70,27 @@ const pay = (o) => ({ id: o.id, loan_id: o.loan_id || 'L1', amount: 0, principal
   
   });
 
-  it("Periodo de gracia", () => {
+  it("Periodo de gracia: NO borra los dias de atraso", () => {
   {
-    const loans = [loan({ id: 'G', next_payment_date: '2026-08-27', grace_period_days: 5 })]; // 2 d < gracia
+    // REGLA CORREGIDA (2026-09-03, indicada por la empresa): la gracia perdona la MORA de
+    // esos dias, no el hecho de que la cuota este vencida. Antes esta prueba fijaba lo
+    // contrario ("dentro de gracia cuenta como al dia"), y por eso un prestamo vencido el
+    // dia 2 se mostraba el dia 3 con "0 dias vencidos": falso, y le ocultaba el atraso al
+    // cobrador.
+    const loans = [loan({ id: 'G', next_payment_date: '2026-08-27', grace_period_days: 5 })];
     const s = computePortfolioSnapshot(loans, TODAY);
-    ok('dentro de gracia cuenta como al dia', s.overdueLoans === 0 && s.healthPct === 100);
+
+    ok('vencida hace 2 dias: cuenta como atrasado', s.overdueLoans === 1, String(s.overdueLoans));
+    ok('y la salud baja', s.healthPct < 100, String(s.healthPct));
+    ok('con sus 2 dias', s.maxDaysOverdue === 2, String(s.maxDaysOverdue));
+
+    // Lo que la gracia decide es cuantos de esos dias generan recargo.
+    ok('2 dias con 5 de gracia no cobran mora', lateFeeDays(2, 5) === 0);
+    ok('7 dias con 5 de gracia cobran 2', lateFeeDays(7, 5) === 2);
+    ok('sin gracia cobran todos', lateFeeDays(7, 0) === 7);
+    ok('gracia nula no rompe', lateFeeDays(7, null) === 7);
   }
-  
+
   });
 
   it("Flujo de caja: hoy / semana / mes", () => {
