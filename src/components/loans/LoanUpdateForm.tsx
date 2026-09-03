@@ -2911,19 +2911,33 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               }
             }
 
-            // Recalcular el balance del préstamo
-            const { data: updatedInstallments } = await supabase
-              .from('installments')
-              .select('principal_amount, is_paid')
-              .eq('loan_id', loan.id);
+            // ================================================================
+            // EL BALANCE NO SE RECALCULA AQUÍ
+            // ================================================================
+            // Antes se hacía, y con una fórmula equivocada:
+            //
+            //     suma de `principal_amount` de las cuotas NO pagadas
+            //
+            // Eso deja fuera TODO el interés pendiente, cuenta una cuota abonada a medias
+            // como si se debiera entera, y se escribía DESPUÉS de insertar los pagos — así
+            // que pisaba el valor correcto que acababan de dejar los triggers. Resultado: al
+            // pagar un cargo el saldo del préstamo saltaba a una cifra que no tenía que ver
+            // con lo que se acababa de cobrar, y el inicio mostraba una cartera irreal.
+            //
+            // La fuente de verdad es `calculate_loan_remaining_balance` en la base de datos
+            // (`total_amount + cargos − pagos`), que los triggers de `payments` e
+            // `installments` ya ejecutaron con las filas de arriba. Aquí solo se lee.
+            await new Promise(r => setTimeout(r, 300));
+            const { data: loanAfterCharges } = await supabase
+              .from('loans')
+              .select('remaining_balance')
+              .eq('id', loan.id)
+              .maybeSingle();
 
-            const newRemainingBalance = (updatedInstallments || [])
-              .filter(inst => !inst.is_paid)
-              .reduce((sum, inst) => sum + (inst.principal_amount || 0), 0);
+            const balanceAfterCharges = Number(loanAfterCharges?.remaining_balance ?? 0) || 0;
 
-            loanUpdates = {
-              remaining_balance: Math.max(0, newRemainingBalance)
-            };
+            // Solo se toca el estado, que la base no deduce sola.
+            loanUpdates = balanceAfterCharges <= 0.01 ? { status: 'paid' } : {};
 
             // Obtener el cliente para el recibo
             const { data: clientInfo } = await supabase
