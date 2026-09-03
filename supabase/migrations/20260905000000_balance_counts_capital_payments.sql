@@ -24,7 +24,106 @@
 --
 -- Se conserva íntegra la lógica anterior (frecuencia, indefinidos, cargos y el filtro
 -- `superseded_at` de 20260903000000): lo único que se añade es el término que faltaba.
+--
+-- ES AUTOSUFICIENTE. Incluye las funciones auxiliares de frecuencia de 20260828000000,
+-- porque en una base que se quedó atrás con las migraciones no existen y la función fallaba
+-- con «function loan_frequency_rate_factor(text) does not exist». Van con
+-- CREATE OR REPLACE: si ya estaban, se reescriben idénticas y no pasa nada.
 -- ============================================================================
+
+
+-- ----------------------------------------------------------------------------
+-- 0. Funciones auxiliares de frecuencia (de 20260828000000)
+-- ----------------------------------------------------------------------------
+-- El plazo de un préstamo está en PERÍODOS de su frecuencia, no en meses. Estas tres
+-- traducen entre una cosa y otra y las usa el cálculo del saldo.
+
+-- Suma `p_periods` períodos de la frecuencia dada a una fecha.
+-- En frecuencias basadas en meses, `+ INTERVAL 'n months'` de Postgres ya recorta al último
+-- día del mes (31-ene + 1 month = 28-feb), igual que el frontend.
+CREATE OR REPLACE FUNCTION loan_add_periods(
+    p_date DATE,
+    p_periods INTEGER,
+    p_frequency TEXT
+) RETURNS DATE AS $$
+BEGIN
+    RETURN CASE lower(COALESCE(p_frequency, 'monthly'))
+        WHEN 'daily'     THEN p_date + (p_periods           || ' days')::INTERVAL
+        WHEN 'weekly'    THEN p_date + (p_periods * 7       || ' days')::INTERVAL
+        WHEN 'biweekly'  THEN p_date + (p_periods * 14      || ' days')::INTERVAL
+        WHEN 'quarterly' THEN p_date + (p_periods * 3       || ' months')::INTERVAL
+        WHEN 'yearly'    THEN p_date + (p_periods * 12      || ' months')::INTERVAL
+        ELSE                  p_date + (p_periods           || ' months')::INTERVAL
+    END::DATE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp;
+
+-- Factor para convertir la tasa MENSUAL a la tasa del período de pago.
+CREATE OR REPLACE FUNCTION loan_frequency_rate_factor(p_frequency TEXT)
+RETURNS DECIMAL AS $$
+BEGIN
+    RETURN CASE lower(COALESCE(p_frequency, 'monthly'))
+        WHEN 'daily'     THEN 1.0 / 30.0
+        WHEN 'weekly'    THEN 1.0 / 4.0
+        WHEN 'biweekly'  THEN 0.5
+        WHEN 'quarterly' THEN 3.0
+        WHEN 'yearly'    THEN 12.0
+        ELSE                  1.0
+    END;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp;
+
+-- Días que dura un período (para prorratear mora de tipo 'monthly').
+CREATE OR REPLACE FUNCTION loan_frequency_period_days(p_frequency TEXT)
+RETURNS INTEGER AS $$
+BEGIN
+    RETURN CASE lower(COALESCE(p_frequency, 'monthly'))
+        WHEN 'daily'     THEN 1
+        WHEN 'weekly'    THEN 7
+        WHEN 'biweekly'  THEN 14
+        WHEN 'quarterly' THEN 90
+        WHEN 'yearly'    THEN 365
+        ELSE                  30
+    END;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp;
+
+-- Cuenta cuántos períodos ya vencieron, período por período, en vez de aproximar con AGE()
+-- en meses o con "días / 30" (que en un préstamo diario contaba 1 donde había 30).
+CREATE OR REPLACE FUNCTION loan_count_elapsed_periods(
+    p_first_due_date DATE,
+    p_as_of DATE,
+    p_frequency TEXT
+) RETURNS INTEGER AS $$
+DECLARE
+    v_count INTEGER := 0;
+    v_n INTEGER := 0;
+BEGIN
+    IF p_first_due_date IS NULL OR p_as_of IS NULL THEN
+        RETURN 0;
+    END IF;
+
+    -- Tope de seguridad: 100.000 períodos (≈273 años en diario)
+    WHILE v_n < 100000 LOOP
+        EXIT WHEN loan_add_periods(p_first_due_date, v_n, p_frequency) > p_as_of;
+        v_count := v_n + 1;
+        v_n := v_n + 1;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$ LANGUAGE plpgsql STABLE SET search_path = public, pg_temp;
+
+
+-- ----------------------------------------------------------------------------
+-- 1. El cálculo del saldo
+-- ----------------------------------------------------------------------------
+-- Se elimina primero porque `CREATE OR REPLACE` NO permite cambiar el tipo de retorno, y en
+-- bases antiguas la función devuelve DECIMAL(10,2) —que topa en 99.999.999,99 y reventaba el
+-- trigger con "numeric field overflow" en carteras grandes, abortando el cobro entero.
+-- Los cuerpos plpgsql no crean dependencias registradas, así que los triggers que la llaman
+-- siguen funcionando tras recrearla.
+DROP FUNCTION IF EXISTS calculate_loan_remaining_balance(UUID);
 
 CREATE OR REPLACE FUNCTION calculate_loan_remaining_balance(p_loan_id UUID)
 RETURNS DECIMAL(14,2) AS $$
