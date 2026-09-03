@@ -5,9 +5,10 @@ import { getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { daysBetweenIso } from '@/utils/frequencyUtils';
 import {
   buildMonthlySeries, computeCashflow, computePortfolioSnapshot, computeRecovery, computeTodayAgenda,
-  topRiskLoans, addDaysIso,
-  type LoanLike, type PaymentLike, type SaleLike,
+  topRiskLoans, addDaysIso, isActiveLoan, overdueFromDues,
+  type LoanLike, type PaymentLike, type SaleLike, type OverdueFacts,
 } from '@/utils/portfolioMetrics';
+import { computeInstallmentDues } from '@/utils/installmentDues';
 
 // ============================================================================
 // Datos de cartera — fuente única para INICIO y DASHBOARD
@@ -63,6 +64,19 @@ export interface TrackingLike {
   result?: string | null;
 }
 
+/** Cuota tal como la necesita `computeInstallmentDues`. */
+export interface InstallmentLike {
+  id: string;
+  loan_id: string;
+  installment_number: number;
+  due_date: string;
+  total_amount: number | null;
+  principal_amount: number | null;
+  interest_amount: number | null;
+  paid_amount: number | null;
+  is_paid: boolean | null;
+}
+
 export interface ActivityItem {
   id: string;
   kind: 'payment' | 'loan' | 'client' | 'contact';
@@ -105,6 +119,7 @@ export const usePortfolioData = () => {
   const [payments, setPayments] = useState<PaymentLike[]>([]);
   const [sales, setSales] = useState<SaleLike[]>([]);
   const [tracking, setTracking] = useState<TrackingLike[]>([]);
+  const [installments, setInstallments] = useState<InstallmentLike[]>([]);
   const [promises, setPromises] = useState<any[]>([]);
   const [legalTasks, setLegalTasks] = useState<any[]>([]);
   const [legalApprovals, setLegalApprovals] = useState<any[]>([]);
@@ -147,11 +162,17 @@ export const usePortfolioData = () => {
       setLoans(loanRows);
       const loanIds = loanRows.map(l => l.id);
 
+      // Cuotas SOLO de los préstamos vivos: son las que necesita el atraso y evita traerse
+      // el historial entero de la cartera.
+      const activeLoanIds = loanRows.filter(l => isActiveLoan(l.status)).map(l => l.id);
+
       // Pagos y seguimientos por préstamo (ver nota de arriba sobre `created_by`)
-      const [paymentRows, trackingRows] = await Promise.all([
+      const [paymentRows, trackingRows, installmentRows] = await Promise.all([
         fetchInChunks<PaymentLike>(
           ids => supabase.from('payments')
-            .select('id, loan_id, amount, principal_amount, interest_amount, late_fee, payment_date, created_by')
+            // `due_date` y `superseded_at` hacen falta para repartir los pagos entre cuotas
+            // y saber qué se debe de verdad (`computeInstallmentDues`).
+            .select('id, loan_id, amount, principal_amount, interest_amount, late_fee, payment_date, due_date, superseded_at, created_by')
             .in('loan_id', ids),
           loanIds
         ),
@@ -161,9 +182,16 @@ export const usePortfolioData = () => {
             .in('loan_id', ids),
           loanIds
         ),
+        fetchInChunks<InstallmentLike>(
+          ids => supabase.from('installments')
+            .select('id, loan_id, installment_number, due_date, total_amount, principal_amount, interest_amount, paid_amount, is_paid')
+            .in('loan_id', ids),
+          activeLoanIds
+        ),
       ]);
       setPayments(paymentRows);
       setTracking(trackingRows);
+      setInstallments(installmentRows);
 
       // Módulo legal: opcional. Si las tablas no existen, el panel sigue funcionando.
       const soon = addDaysIso(todayIso, 3);
@@ -203,7 +231,41 @@ export const usePortfolioData = () => {
   const portfolio = useMemo(() => computePortfolioSnapshot(loans, todayIso), [loans, todayIso]);
   const cashflow = useMemo(() => computeCashflow(payments, sales, todayIso), [payments, sales, todayIso]);
   const recovery = useMemo(() => computeRecovery(loans, cashflow), [loans, cashflow]);
-  const agenda = useMemo(() => computeTodayAgenda(loans, todayIso), [loans, todayIso]);
+  /**
+   * Atraso REAL de cada préstamo, calculado desde sus cuotas.
+   *
+   * No se usa `next_payment_date` ni `remaining_balance`: los mantienen triggers y bastaba
+   * con que uno no hubiera corrido para que el inicio mostrara días y montos viejos. Las
+   * cuotas y los pagos son el dato de origen y no pueden quedarse desfasados.
+   */
+  const overdueFactsByLoan = useMemo(() => {
+    const facts = new Map<string, OverdueFacts>();
+    if (installments.length === 0) return facts;
+
+    const byLoan = new Map<string, InstallmentLike[]>();
+    for (const inst of installments) {
+      const list = byLoan.get(inst.loan_id);
+      if (list) list.push(inst); else byLoan.set(inst.loan_id, [inst]);
+    }
+    const paymentsByLoan = new Map<string, PaymentLike[]>();
+    for (const p of payments) {
+      const list = paymentsByLoan.get(p.loan_id);
+      if (list) list.push(p); else paymentsByLoan.set(p.loan_id, [p]);
+    }
+
+    for (const loan of loans) {
+      const rows = byLoan.get(loan.id);
+      if (!rows) continue;
+      const dues = computeInstallmentDues(rows as never, (paymentsByLoan.get(loan.id) || []) as never);
+      facts.set(loan.id, overdueFromDues(dues, todayIso, Number(loan.grace_period_days) || 0));
+    }
+    return facts;
+  }, [installments, payments, loans, todayIso]);
+
+  const agenda = useMemo(
+    () => computeTodayAgenda(loans, todayIso, overdueFactsByLoan),
+    [loans, todayIso, overdueFactsByLoan],
+  );
   const riskLoans = useMemo(() => topRiskLoans(loans, todayIso, 8), [loans, todayIso]);
   const series12 = useMemo(() => buildMonthlySeries(payments, sales, loans, todayIso, 12), [payments, sales, loans, todayIso]);
   const series6 = useMemo(() => series12.slice(-6), [series12]);

@@ -99,6 +99,82 @@ export const loanDaysOverdue = (loan: LoanLike, todayIso: string): number => {
 };
 
 // ---------------------------------------------------------------------------
+// Lo que un préstamo debe DE VERDAD hoy, a partir de sus cuotas
+// ---------------------------------------------------------------------------
+// El panel de inicio se construía sobre dos columnas desnormalizadas de `loans`:
+// `next_payment_date` para los días de atraso y `remaining_balance` para el importe. Las dos
+// las mantienen triggers, así que cuando alguno no había corrido —o corría con datos a
+// medias— el inicio mostraba cifras viejas sin que nada lo delatara.
+//
+// Y el importe estaba mal por definición, no por estar desactualizado: sumaba el saldo
+// COMPLETO de cada préstamo atrasado. Un préstamo con una cuota de 800 vencida y otras
+// quince por vencer reportaba como "atrasado" el préstamo entero. Lo atrasado es lo que ya
+// venció y no se ha pagado, nada más.
+//
+// Estas funciones lo derivan de las CUOTAS, que son el dato real: no dependen de que ningún
+// trigger haya corrido y no hay forma de que se queden viejas.
+
+/** Una cuota ya reducida a lo que importa aquí. Lo produce `computeInstallmentDues`. */
+export interface DueLike {
+  dueDate: string;
+  /** Lo que queda por pagar de esa cuota */
+  pending: number;
+}
+
+export interface OverdueFacts {
+  /** Días desde la cuota vencida más antigua SIN pagar, descontada la gracia. */
+  daysOverdue: number;
+  /** Suma de lo pendiente de las cuotas YA VENCIDAS. Esto es "lo atrasado". */
+  overdueAmount: number;
+  /** Todo lo pendiente, vencido o no. */
+  pendingAmount: number;
+  /** Vencimiento de la cuota atrasada más antigua, o null si no hay ninguna. */
+  oldestOverdueDate: string | null;
+}
+
+export const NO_OVERDUE: OverdueFacts = {
+  daysOverdue: 0, overdueAmount: 0, pendingAmount: 0, oldestOverdueDate: null,
+};
+
+/**
+ * Atraso real de un préstamo a partir de sus cuotas pendientes.
+ *
+ * Los días salen de la cuota vencida MÁS ANTIGUA, no de la próxima a vencer: si alguien
+ * lleva cinco cuotas sin pagar, su atraso es el de la primera, no el de la última.
+ */
+export const overdueFromDues = (
+  dues: DueLike[],
+  todayIso: string,
+  graceDays = 0,
+): OverdueFacts => {
+  let overdueAmount = 0;
+  let pendingAmount = 0;
+  let oldestOverdueDate: string | null = null;
+
+  for (const due of dues || []) {
+    const pending = Number(due?.pending) || 0;
+    if (pending <= 0.005) continue;
+    pendingAmount += pending;
+
+    const date = dateOnly(due?.dueDate);
+    if (!date || date >= todayIso) continue;
+
+    overdueAmount += pending;
+    if (!oldestOverdueDate || date < oldestOverdueDate) oldestOverdueDate = date;
+  }
+
+  const raw = oldestOverdueDate ? daysBetweenIso(oldestOverdueDate, todayIso) : null;
+  const daysOverdue = raw === null ? 0 : Math.max(0, raw - (Number(graceDays) || 0));
+
+  return {
+    daysOverdue,
+    overdueAmount: round2(overdueAmount),
+    pendingAmount: round2(pendingAmount),
+    oldestOverdueDate,
+  };
+};
+
+// ---------------------------------------------------------------------------
 // Antigüedad de cartera (PAR)
 // ---------------------------------------------------------------------------
 
@@ -507,7 +583,19 @@ export interface TodayAgenda {
   overdueAmount: number;
 }
 
-export const computeTodayAgenda = (loans: LoanLike[], todayIso: string): TodayAgenda => {
+/**
+ * Agenda del día.
+ *
+ * `factsByLoan` trae el atraso REAL calculado desde las cuotas (ver `overdueFromDues`). Es
+ * opcional: si no llega, se cae a las columnas desnormalizadas de `loans`, que es como
+ * funcionaba antes y sirve para pantallas que no cargan las cuotas. Cuando llega, manda,
+ * porque `next_payment_date` y `remaining_balance` dependen de que un trigger haya corrido.
+ */
+export const computeTodayAgenda = (
+  loans: LoanLike[],
+  todayIso: string,
+  factsByLoan?: Map<string, OverdueFacts>,
+): TodayAgenda => {
   const dueToday: AgendaLoan[] = [];
   const overdue: AgendaLoan[] = [];
   const dueThisWeek: AgendaLoan[] = [];
@@ -516,14 +604,22 @@ export const computeTodayAgenda = (loans: LoanLike[], todayIso: string): TodayAg
 
   for (const loan of loans) {
     if (!isActiveLoan(loan.status)) continue;
-    const due = dateOnly(loan.next_payment_date);
+    const facts = factsByLoan?.get(String(loan.id));
+
+    // Con cuotas: el préstamo está atrasado si tiene alguna vencida sin pagar, y la fecha
+    // que lo sitúa es la de esa cuota. Sin cuotas: lo que diga `next_payment_date`.
+    const due = facts?.oldestOverdueDate ?? dateOnly(loan.next_payment_date);
     if (!due) continue;
-    const days = loanDaysOverdue(loan, todayIso);
+
+    const days = facts ? facts.daysOverdue : loanDaysOverdue(loan, todayIso);
     const entry: AgendaLoan = {
       loan,
       daysOverdue: days,
       dueDate: due,
-      amount: Number(loan.monthly_payment) || 0,
+      // Lo que se espera cobrar de este préstamo: lo vencido si lo hay, si no la cuota.
+      amount: facts && facts.overdueAmount > 0
+        ? facts.overdueAmount
+        : Number(loan.monthly_payment) || 0,
     };
     if (due === todayIso) dueToday.push(entry);
     else if (due < todayIso) overdue.push(entry);
@@ -540,7 +636,13 @@ export const computeTodayAgenda = (loans: LoanLike[], todayIso: string): TodayAg
     dueToday, overdue, dueThisWeek, upcoming,
     expectedToday: round2(dueToday.reduce((s, e) => s + e.amount, 0)),
     expectedWeek: round2([...dueToday, ...dueThisWeek].reduce((s, e) => s + e.amount, 0)),
-    overdueAmount: round2(overdue.reduce((s, e) => s + (Number(e.loan.remaining_balance) || 0), 0)),
+    // ATRASADO = lo que ya venció y no se pagó. Antes se sumaba el `remaining_balance`
+    // COMPLETO de cada préstamo atrasado, así que un préstamo con una cuota vencida de 800
+    // aportaba aquí su deuda entera. La cifra salía inflada por un orden de magnitud.
+    overdueAmount: round2(overdue.reduce((s, e) => {
+      const facts = factsByLoan?.get(String(e.loan.id));
+      return s + (facts ? facts.overdueAmount : (Number(e.loan.remaining_balance) || 0));
+    }, 0)),
   };
 };
 
