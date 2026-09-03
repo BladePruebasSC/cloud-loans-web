@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { AmortizationTable } from '@/components/loans/AmortizationTable';
-import { fromAnnualRate } from '@/utils/frequencyUtils';
+import { fromAnnualRate, toAnnualRate, getFrequencyLabel } from '@/utils/frequencyUtils';
 import {
   FileText,
   Plus,
@@ -1206,7 +1206,7 @@ const RequestsModule = () => {
                     )}
                     {selectedRequest.closing_costs && (
                       <div>
-                        <Label className="text-xs font-medium text-gray-500 uppercase">Costos de Cierre</Label>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Gastos de Cierre</Label>
                         <p className="text-sm font-semibold mt-1">RD$ {selectedRequest.closing_costs.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                       </div>
                     )}
@@ -1227,13 +1227,20 @@ const RequestsModule = () => {
                     {selectedRequest.interest_rate !== null && selectedRequest.interest_rate !== undefined && (
                       <div>
                         <Label className="text-xs font-medium text-gray-500 uppercase">Tasa de Interés</Label>
-                        <p className="text-sm font-semibold mt-1">{selectedRequest.interest_rate}%</p>
+                        <p className="text-sm font-semibold mt-1">
+                          {toAnnualRate(selectedRequest.interest_rate)}% anual
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {Number(selectedRequest.interest_rate).toFixed(4)}% mensual
+                        </p>
                       </div>
                     )}
                     {selectedRequest.term_months && (
                       <div>
-                        <Label className="text-xs font-medium text-gray-500 uppercase">Plazo (meses)</Label>
-                        <p className="text-sm font-semibold mt-1">{selectedRequest.term_months} meses</p>
+                        <Label className="text-xs font-medium text-gray-500 uppercase">Plazo</Label>
+                        <p className="text-sm font-semibold mt-1">
+                          {selectedRequest.term_months} {getFrequencyLabel(selectedRequest.payment_frequency)}
+                        </p>
                       </div>
                     )}
                     {selectedRequest.loan_type && (
@@ -1830,17 +1837,21 @@ const RequestsModule = () => {
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div>
-                      <Label htmlFor="edit_interest_rate">Tasa de Interés (%)</Label>
+                      {/* Anual al escribir, mensual al guardar: misma convención que el resto. */}
+                      <Label htmlFor="edit_interest_rate">Tasa de Interés (% anual)</Label>
                       <Input
                         id="edit_interest_rate"
                         type="number"
                         step="0.01"
-                        value={editFormData.interest_rate}
-                        onChange={(e) => setEditFormData({...editFormData, interest_rate: Number(e.target.value)})}
+                        value={editFormData.interest_rate ? toAnnualRate(editFormData.interest_rate) : ''}
+                        onChange={(e) => setEditFormData({
+                          ...editFormData,
+                          interest_rate: e.target.value === '' ? 0 : fromAnnualRate(Number(e.target.value)),
+                        })}
                       />
                     </div>
                     <div>
-                      <Label htmlFor="edit_term_months">Plazo (meses)</Label>
+                      <Label htmlFor="edit_term_months">Plazo ({getFrequencyLabel(editFormData.payment_frequency)})</Label>
                       <Input
                         id="edit_term_months"
                         type="number"
@@ -1902,7 +1913,7 @@ const RequestsModule = () => {
                       />
                     </div>
                     <div>
-                      <Label htmlFor="edit_closing_costs">Costos de Cierre</Label>
+                      <Label htmlFor="edit_closing_costs">Gastos de Cierre</Label>
                       <Input
                         id="edit_closing_costs"
                         type="number"
@@ -2521,20 +2532,33 @@ const RequestsModule = () => {
               <div className="p-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
-                  <Label htmlFor="interest_rate">Tasa de Interés (%) *</Label>
+                  {/* Se ESCRIBE en anual y se guarda en MENSUAL, igual que en el formulario de
+                      préstamos. Antes el campo mostraba la mensual derivada de la tasa anual
+                      de la empresa: un 5% configurado salía aquí como 0.416667. */}
+                  <Label htmlFor="interest_rate">Tasa de Interés (% anual) *</Label>
                   <Input
                     id="interest_rate"
                     type="number"
                     step="0.01"
-                    value={formData.interest_rate === 0 ? '' : formData.interest_rate}
-                    onChange={(e) => setFormData({...formData, interest_rate: e.target.value === '' ? 0 : Number(e.target.value)})}
-                    placeholder="Ej: 15.5"
+                    value={formData.interest_rate ? toAnnualRate(formData.interest_rate) : ''}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      interest_rate: e.target.value === '' ? 0 : fromAnnualRate(Number(e.target.value)),
+                    })}
+                    placeholder="Ej: 20"
                     required
                   />
+                  {formData.interest_rate > 0 && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Equivale a <strong>{formData.interest_rate.toFixed(4)}% mensual</strong>
+                    </p>
+                  )}
                 </div>
-                
+
                 <div>
-                  <Label htmlFor="term_months">Plazo (meses) *</Label>
+                  {/* El plazo va en PERÍODOS de la frecuencia elegida, no en meses: 12 con
+                      frecuencia quincenal son 12 quincenas. Decir "meses" era engañoso. */}
+                  <Label htmlFor="term_months">Plazo ({getFrequencyLabel(formData.payment_frequency)}) *</Label>
                   <Input
                     id="term_months"
                     type="number"
@@ -2604,7 +2628,7 @@ const RequestsModule = () => {
                 </div>
                 
                 <div>
-                  <Label htmlFor="closing_costs">Costos de Cierre</Label>
+                  <Label htmlFor="closing_costs">Gastos de Cierre</Label>
                   <Input
                     id="closing_costs"
                     type="number"

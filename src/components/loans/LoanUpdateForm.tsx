@@ -6352,97 +6352,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                           </div>
                         )}
 
-                        {extensionPreview.rows.length > 0 && (
-                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2 space-y-2">
-                            <div className="text-sm text-blue-900 font-semibold">Cómo se reparten las cuotas</div>
-                            <p className="text-xs text-blue-800">{extensionPreview.description}</p>
-                            <p className="text-xs text-blue-800">
-                              {extensionPreview.additionalCount > 0 ? (
-                                <>
-                                  Se <strong>recalculan las {extensionPreview.pendingCountBefore} cuotas pendientes</strong> y se
-                                  crean <strong>{extensionPreview.additionalCount} nuevas</strong>, para que todas queden con el
-                                  mismo reparto. Las {extensionPreview.paidCount} cuotas ya pagadas no se modifican.
-                                </>
-                              ) : (
-                                <>
-                                  Con <strong>0 cuotas adicionales</strong> no se alarga el plazo: solo se
-                                  <strong> vuelve a repartir</strong> el capital pendiente entre las
-                                  {' '}{extensionPreview.pendingCountBefore} cuotas que quedan. Sirve para corregir un préstamo
-                                  cuyas cuotas quedaron con importes distintos entre sí.
-                                </>
-                              )}
-                            </p>
-
-                            {extensionPreview.totalAlreadyPaid > 0 && (
-                              <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
-                                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                                <div>
-                                  <p className="font-semibold">
-                                    Se ELIMINARÁN {formatCurrency(extensionPreview.totalAlreadyPaid)} en abonos
-                                  </p>
-                                  <p className="mt-1">
-                                    La extensión rehace el préstamo con las cuotas pendientes como si fuera nuevo. Los
-                                    abonos a cuotas que <strong>no están terminadas de pagar</strong> se
-                                    <strong> borran</strong>: el cliente volverá a deber ese dinero y los pagos
-                                    desaparecerán del historial.
-                                  </p>
-                                  <p className="mt-1">
-                                    Las cuotas ya <strong>pagadas por completo</strong> y sus pagos no se tocan.
-                                    Queda constancia de lo eliminado en el historial del préstamo.
-                                  </p>
-                                </div>
-                              </div>
-                            )}
-
-                            <div className="max-h-44 overflow-y-auto rounded border border-blue-200 bg-white">
-                              <table className="w-full text-xs">
-                                <thead className="sticky top-0 bg-blue-100 text-blue-900">
-                                  <tr>
-                                    <th className="px-2 py-1 text-left font-semibold">#</th>
-                                    <th className="px-2 py-1 text-left font-semibold">Vence</th>
-                                    <th className="px-2 py-1 text-right font-semibold">Capital</th>
-                                    <th className="px-2 py-1 text-right font-semibold">Interés</th>
-                                    <th className="px-2 py-1 text-right font-semibold">Cuota</th>
-                                    <th className="px-2 py-1 text-right font-semibold">Abonado (se elimina)</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {extensionPreview.rows.map((row) => (
-                                    <tr key={`${row.installmentNumber}-${row.dueDate}`} className={row.isNew ? 'bg-green-50' : ''}>
-                                      <td className="px-2 py-1">
-                                        {row.installmentNumber}
-                                        {row.isNew && <span className="ml-1 text-[10px] font-semibold text-green-700">NUEVA</span>}
-                                      </td>
-                                      <td className="px-2 py-1">{formatDateStringForSantoDomingo(row.dueDate)}</td>
-                                      <td className="px-2 py-1 text-right">{formatCurrency(row.principal)}</td>
-                                      <td className="px-2 py-1 text-right">{formatCurrency(row.interest)}</td>
-                                      <td className="px-2 py-1 text-right font-semibold">
-                                        {formatCurrency(row.total)}
-                                        {row.cappedByPayment && (
-                                          <span className="ml-1 text-[10px] font-normal text-amber-700">fijada</span>
-                                        )}
-                                      </td>
-                                      <td className="px-2 py-1 text-right text-amber-700 line-through">
-                                        {row.alreadyPaid > 0 ? formatCurrency(row.alreadyPaid) : '—'}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                                <tfoot className="border-t border-blue-200 bg-blue-50 font-semibold text-blue-900">
-                                  <tr>
-                                    <td className="px-2 py-1" colSpan={2}>Total</td>
-                                    <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.outstandingCapital)}</td>
-                                    <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalPendingInterest)}</td>
-                                    <td className="px-2 py-1 text-right">{formatCurrency(extensionPreview.totalPendingAmount)}</td>
-                                    <td className="px-2 py-1 text-right text-amber-700 line-through">
-                                      {extensionPreview.totalAlreadyPaid > 0 ? formatCurrency(extensionPreview.totalAlreadyPaid) : '—'}
-                                    </td>
-                                  </tr>
-                                </tfoot>
-                              </table>
-                            </div>
-                          </div>
-                        )}
+                        {/* El desglose cuota por cuota NO va aquí: esta columna es estrecha y la
+                            tabla salía con seis columnas comprimidas y scroll horizontal, ilegible.
+                            Se muestra a lo ancho, debajo del formulario. */}
                       </>
                     )}
                   </div>
@@ -6585,6 +6497,111 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               </CardContent>
             </Card>
           </div>
+
+          {/* ---------------------------------------------------------------- */}
+          {/* Desglose de la extensión, A LO ANCHO                              */}
+          {/* ---------------------------------------------------------------- */}
+          {/* Ocupa las tres columnas y va al final del grid, en el hueco que deja el
+              formulario. Antes vivía en la columna de la derecha, donde una tabla de seis
+              columnas quedaba comprimida con scroll horizontal y no se podía leer — que es
+              justo lo que hay que revisar antes de confirmar una extensión. */}
+          {form.watch('update_type') === 'term_extension'
+            && extensionPreview
+            && extensionPreview.rows.length > 0 && (
+            <div className="lg:col-span-3">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+                <div className="text-sm text-blue-900 font-semibold">Cómo se reparten las cuotas</div>
+                <p className="text-xs text-blue-800">{extensionPreview.description}</p>
+                <p className="text-xs text-blue-800">
+                  {extensionPreview.additionalCount > 0 ? (
+                    <>
+                      Se <strong>recalculan las {extensionPreview.pendingCountBefore} cuotas pendientes</strong> y se
+                      crean <strong>{extensionPreview.additionalCount} nuevas</strong>, para que todas queden con el
+                      mismo reparto. Las {extensionPreview.paidCount} cuotas ya pagadas no se modifican.
+                    </>
+                  ) : (
+                    <>
+                      Con <strong>0 cuotas adicionales</strong> no se alarga el plazo: solo se
+                      <strong> vuelve a repartir</strong> el capital pendiente entre las
+                      {' '}{extensionPreview.pendingCountBefore} cuotas que quedan. Sirve para corregir un préstamo
+                      cuyas cuotas quedaron con importes distintos entre sí.
+                    </>
+                  )}
+                </p>
+
+                {extensionPreview.totalAlreadyPaid > 0 && (
+                  <div className="flex items-start gap-2 rounded border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <p className="font-semibold">
+                        Se ELIMINARÁN {formatCurrency(extensionPreview.totalAlreadyPaid)} en abonos
+                      </p>
+                      <p className="mt-1">
+                        La extensión rehace el préstamo con las cuotas pendientes como si fuera nuevo. Los
+                        abonos a cuotas que <strong>no están terminadas de pagar</strong> se
+                        <strong> borran</strong>: el cliente volverá a deber ese dinero y los pagos
+                        desaparecerán del historial.
+                      </p>
+                      <p className="mt-1">
+                        Las cuotas ya <strong>pagadas por completo</strong> y sus pagos no se tocan.
+                        Queda constancia de lo eliminado en el historial del préstamo.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Con el ancho completo caben todas las cuotas sin comprimir; el scroll
+                    vertical solo aparece si el plazo es largo. */}
+                <div className="max-h-96 overflow-y-auto rounded border border-blue-200 bg-white">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-blue-100 text-blue-900">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold">#</th>
+                        <th className="px-3 py-2 text-left font-semibold">Vence</th>
+                        <th className="px-3 py-2 text-right font-semibold">Capital</th>
+                        <th className="px-3 py-2 text-right font-semibold">Interés</th>
+                        <th className="px-3 py-2 text-right font-semibold">Cuota</th>
+                        <th className="px-3 py-2 text-right font-semibold">Abonado (se elimina)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {extensionPreview.rows.map((row) => (
+                        <tr key={`${row.installmentNumber}-${row.dueDate}`} className={row.isNew ? 'bg-green-50' : ''}>
+                          <td className="px-3 py-2">
+                            {row.installmentNumber}
+                            {row.isNew && <span className="ml-1 text-[10px] font-semibold text-green-700">NUEVA</span>}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">{formatDateStringForSantoDomingo(row.dueDate)}</td>
+                          <td className="px-3 py-2 text-right">{formatCurrency(row.principal)}</td>
+                          <td className="px-3 py-2 text-right">{formatCurrency(row.interest)}</td>
+                          <td className="px-3 py-2 text-right font-semibold">
+                            {formatCurrency(row.total)}
+                            {row.cappedByPayment && (
+                              <span className="ml-1 text-[10px] font-normal text-amber-700">fijada</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right text-amber-700 line-through">
+                            {row.alreadyPaid > 0 ? formatCurrency(row.alreadyPaid) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="border-t border-blue-200 bg-blue-50 font-semibold text-blue-900">
+                      <tr>
+                        <td className="px-3 py-2" colSpan={2}>Total</td>
+                        <td className="px-3 py-2 text-right">{formatCurrency(extensionPreview.outstandingCapital)}</td>
+                        <td className="px-3 py-2 text-right">{formatCurrency(extensionPreview.totalPendingInterest)}</td>
+                        <td className="px-3 py-2 text-right">{formatCurrency(extensionPreview.totalPendingAmount)}</td>
+                        <td className="px-3 py-2 text-right text-amber-700 line-through">
+                          {extensionPreview.totalAlreadyPaid > 0 ? formatCurrency(extensionPreview.totalAlreadyPaid) : '—'}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
