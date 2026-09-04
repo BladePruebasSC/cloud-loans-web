@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+// El rediseño usa contenedores propios (`rounded-xl border bg-white`) en vez de `Card`: la
+// pantalla es una sola columna de bloques y `Card` añadía un nivel de anidamiento y una
+// cabecera con título que aquí solo repetía lo evidente.
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -15,18 +17,12 @@ import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeC
 import { getCurrentDateInSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { getLateFeePeriodDays } from '@/utils/frequencyUtils';
 import { toast } from 'sonner';
-import { 
-  Search, 
-  User, 
-  DollarSign, 
-  CreditCard, 
-  CheckCircle2, 
+import {
+  Search,
+  CheckCircle2,
   AlertTriangle,
   ArrowLeft,
   Smartphone,
-  Zap,
-  Calendar,
-  TrendingUp,
   Printer,
   X
 } from 'lucide-react';
@@ -182,31 +178,23 @@ export const QuickCollectionModule = () => {
   // Restringir acceso si no es móvil - DESPUÉS de todos los hooks
   if (!isMobile) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-        <Card className="max-w-md w-full">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-red-600">
-              <Smartphone className="h-6 w-6" />
-              Acceso Restringido
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-gray-600">
-              Este módulo está diseñado exclusivamente para dispositivos móviles.
-            </p>
-            <p className="text-sm text-gray-500">
-              Por favor, accede desde un teléfono o tablet para usar el módulo de Cobro Rápido.
-            </p>
-            <div className="pt-4">
-              <Button 
-                onClick={() => window.history.back()} 
-                className="w-full"
-              >
-                Volver
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex min-h-[70vh] items-center justify-center p-6">
+        <div className="w-full max-w-sm text-center">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+            <Smartphone className="h-7 w-7 text-slate-500" />
+          </div>
+          <h2 className="text-lg font-semibold text-slate-900">Cobro Rápido es para el móvil</h2>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">
+            Está pensado para cobrar en la calle, con una mano y sin buscar nada. Ábrelo desde
+            el teléfono o la tableta.
+          </p>
+          <p className="mt-4 text-sm text-slate-500">
+            Desde el escritorio, usa <strong className="font-medium text-slate-700">Préstamos → Registrar Pago</strong>.
+          </p>
+          <Button variant="outline" className="mt-6 w-full" onClick={() => window.history.back()}>
+            Volver
+          </Button>
+        </div>
       </div>
     );
   }
@@ -950,250 +938,232 @@ export const QuickCollectionModule = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50 pb-24">
-      {/* Header móvil optimizado */}
-      <div className="sticky top-0 z-10 bg-white border-b shadow-md">
-        <div className="px-4 py-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-md">
-              <Zap className="h-6 w-6 text-white" />
-            </div>
-            <div className="flex-1">
-              <h1 className="text-xl font-bold text-gray-900">Cobro Rápido</h1>
-              <p className="text-xs text-gray-500">Búsqueda y cobro instantáneo</p>
-            </div>
+    <div className="min-h-screen bg-slate-50 pb-28">
+      {/* ==================================================================== */}
+      {/* Cabecera                                                             */}
+      {/* ==================================================================== */}
+      {/* Sin degradados ni sombras marcadas: en la calle, con sol, lo que se lee
+          es el contraste del texto, no el color de fondo. */}
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
+          <div>
+            <h1 className="text-base font-semibold tracking-tight text-slate-900">Cobro Rápido</h1>
+            <p className="text-xs text-slate-500">
+              {loans.length} {loans.length === 1 ? 'préstamo activo' : 'préstamos activos'}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] uppercase tracking-wide text-slate-400">Por cobrar</p>
+            <p className="text-sm font-semibold tabular-nums text-slate-900">
+              {formatCurrency(loans.reduce((sum, l) => sum + l.monthly_payment, 0))}
+            </p>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="px-4 py-4 space-y-4 max-w-2xl mx-auto">
-        {/* Búsqueda de préstamos */}
+      <div className="mx-auto max-w-2xl space-y-3 px-4 py-4">
         {!showPaymentForm ? (
           <>
-            <Card className="border-2 border-blue-200 shadow-lg">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Search className="h-5 w-5 text-blue-600" />
-                  Buscar Préstamo
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                  <Input
-                    placeholder="Buscar por nombre o cédula..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 h-12 text-base"
-                    autoFocus
-                  />
-                </div>
+            {/* ============================================================ */}
+            {/* Búsqueda                                                      */}
+            {/* ============================================================ */}
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="Nombre o cédula del cliente"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-12 rounded-xl border-slate-200 bg-white pl-10 text-base shadow-sm placeholder:text-slate-400"
+                autoFocus
+                inputMode="search"
+              />
+              {searchTerm.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  aria-label="Limpiar búsqueda"
+                  className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 active:bg-slate-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
 
-                {/* Lista de préstamos */}
-                {showLoanList && filteredLoans.length > 0 && (
-                  <div className="border rounded-lg max-h-64 overflow-y-auto">
-                    {filteredLoans.map((loan) => (
-                      <div
-                        key={loan.id}
-                        onClick={() => selectLoan(loan)}
-                        className="p-4 border-b last:border-b-0 hover:bg-blue-50 cursor-pointer transition-colors active:bg-blue-100"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <div className="font-semibold text-gray-900 mb-1">
-                              {loan.client?.full_name}
-                            </div>
-                            <div className="text-sm text-gray-600 mb-2">
-                              <Badge variant="outline" className="text-xs">
-                                {loan.client?.dni}
-                              </Badge>
-                            </div>
-                            <div className="flex items-center gap-4 text-xs text-gray-500">
-                              <span className="flex items-center gap-1">
-                                <DollarSign className="h-3 w-3" />
-                                {formatCurrency(loan.remaining_balance)}
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Calendar className="h-3 w-3" />
-                                {new Date(loan.next_payment_date).toLocaleDateString('es-DO')}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex flex-col items-end gap-1">
-                            <Badge className="bg-blue-600">
-                              {formatCurrency(loan.monthly_payment)}
-                            </Badge>
-                            {loan.late_fee_enabled && lateFeeAmount > 0 && (
-                              <Badge variant="destructive" className="text-xs">
-                                Mora: {formatCurrency(lateFeeAmount)}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+            {/* Resultados */}
+            {showLoanList && filteredLoans.length > 0 && (
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                {filteredLoans.map((loan, index) => (
+                  <button
+                    key={loan.id}
+                    type="button"
+                    onClick={() => selectLoan(loan)}
+                    className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors active:bg-slate-100 ${
+                      index > 0 ? 'border-t border-slate-100' : ''
+                    }`}
+                  >
+                    {/* Inicial del cliente: ancla visual para recorrer la lista a ojo */}
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-semibold text-slate-600">
+                      {(loan.client?.full_name || '?').trim().charAt(0).toUpperCase()}
+                    </span>
 
-                {searchTerm.length > 0 && !showLoanList && (
-                  <div className="text-center py-8 text-gray-500">
-                    <Search className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                    <p>No se encontraron préstamos</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Estadísticas rápidas */}
-            <div className="grid grid-cols-2 gap-3">
-              <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white border-0">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs opacity-90 mb-1">Préstamos Activos</p>
-                      <p className="text-2xl font-bold">{loans.length}</p>
-                    </div>
-                    <TrendingUp className="h-8 w-8 opacity-80" />
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white border-0">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs opacity-90 mb-1">Total a Cobrar</p>
-                      <p className="text-2xl font-bold">
-                        {formatCurrency(loans.reduce((sum, l) => sum + l.monthly_payment, 0))}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-slate-900">{loan.client?.full_name}</p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">
+                        {loan.client?.dni}
+                        <span className="mx-1.5 text-slate-300">·</span>
+                        vence {formatDateStringForSantoDomingo(String(loan.next_payment_date || '').split('T')[0])}
                       </p>
                     </div>
-                    <DollarSign className="h-8 w-8 opacity-80" />
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+
+                    <div className="shrink-0 text-right">
+                      <p className="font-semibold tabular-nums text-slate-900">
+                        {formatCurrency(loan.monthly_payment)}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        saldo {formatCurrency(loan.remaining_balance)}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {searchTerm.length > 0 && !showLoanList && (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center">
+                <p className="text-sm font-medium text-slate-700">Sin resultados</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  No hay ningún préstamo activo de «{searchTerm}».
+                </p>
+              </div>
+            )}
+
+            {searchTerm.length === 0 && (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-12 text-center">
+                <Search className="mx-auto h-8 w-8 text-slate-300" />
+                <p className="mt-3 text-sm font-medium text-slate-700">Busca al cliente</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Escribe su nombre o su cédula para cobrarle.
+                </p>
+              </div>
+            )}
           </>
         ) : (
           /* Formulario de pago */
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              {/* Información del cliente */}
-              <Card className="border-2 border-blue-200">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <User className="h-5 w-5 text-blue-600" />
-                      Cliente
-                    </CardTitle>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setShowPaymentForm(false);
-                        setSelectedLoan(null);
-                        setSearchTerm('');
-                      }}
-                    >
-                      <ArrowLeft className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="p-3 bg-blue-50 rounded-lg">
-                    <div className="font-semibold text-gray-900 mb-1">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
+              {/* ============================================================ */}
+              {/* Cliente                                                       */}
+              {/* ============================================================ */}
+              <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <button
+                    type="button"
+                    aria-label="Volver a la búsqueda"
+                    onClick={() => {
+                      setShowPaymentForm(false);
+                      setSelectedLoan(null);
+                      setSearchTerm('');
+                    }}
+                    className="-ml-1.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 active:bg-slate-100"
+                  >
+                    <ArrowLeft className="h-5 w-5" />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold text-slate-900">
                       {selectedLoan?.client?.full_name}
-                    </div>
-                    <Badge variant="outline" className="text-xs">
-                      {selectedLoan?.client?.dni}
-                    </Badge>
+                    </p>
+                    <p className="truncate text-xs text-slate-500">{selectedLoan?.client?.dni}</p>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="p-2 bg-gray-50 rounded">
-                      <div className="text-gray-600">Balance</div>
-                      <div className="font-bold text-red-600">
-                        {formatCurrency(selectedLoan?.remaining_balance || 0)}
-                      </div>
-                    </div>
-                    <div className="p-2 bg-gray-50 rounded">
-                      <div className="text-gray-600">Cuota</div>
-                      <div className="font-bold text-blue-600">
-                        {formatCurrency(selectedLoan?.monthly_payment || 0)}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
 
-              {/* Monto del pago */}
-              <Card className="border-2 border-green-200 shadow-lg">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <DollarSign className="h-5 w-5 text-green-600" />
-                    Monto a Cobrar
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
+                {/* Las dos cifras que el cobrador necesita tener delante al cobrar. */}
+                <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100">
+                  <div className="px-4 py-3">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Cuota</p>
+                    <p className="mt-0.5 font-semibold tabular-nums text-slate-900">
+                      {formatCurrency(selectedLoan?.monthly_payment || 0)}
+                    </p>
+                  </div>
+                  <div className="px-4 py-3">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Saldo pendiente</p>
+                    <p className="mt-0.5 font-semibold tabular-nums text-slate-900">
+                      {formatCurrency(selectedLoan?.remaining_balance || 0)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* ============================================================ */}
+              {/* Monto                                                         */}
+              {/* ============================================================ */}
+              <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                   <FormField
                     control={form.control}
                     name="amount"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-base font-semibold">Monto de la Cuota</FormLabel>
+                        <FormLabel className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Monto a cobrar
+                        </FormLabel>
                         <FormControl>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="0.00"
-                            className="h-16 text-2xl font-bold text-center"
-                            {...field}
-                            value={field.value || ''}
-                            onChange={(e) => {
-                              const value = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
-                              field.onChange(value);
-                              setPaymentAmount(value);
-                            }}
-                          />
+                          <div className="relative">
+                            {/* El símbolo va fuera del campo: dentro, el teclado numérico del
+                                móvil lo borra al escribir y confunde. */}
+                            <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg font-medium text-slate-400">
+                              RD$
+                            </span>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              inputMode="decimal"
+                              placeholder="0.00"
+                              className="h-16 rounded-xl border-slate-200 pl-14 text-right text-2xl font-semibold tabular-nums"
+                              {...field}
+                              value={field.value || ''}
+                              onChange={(e) => {
+                                const value = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                                field.onChange(value);
+                                setPaymentAmount(value);
+                              }}
+                            />
+                          </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
 
-                  {/* Botones de monto rápido - Diseño tipo app móvil */}
+                  {/* Atajos de monto. Tres en una fila: se alcanzan con el pulgar y no
+                      empujan el resto del formulario fuera de la pantalla. El importe se
+                      muestra UNA vez —antes salía dos veces en el mismo botón. */}
                   {quickAmountButtons.length > 0 && (
-                    <div className="space-y-2">
-                      <FormLabel className="text-sm font-medium text-gray-600">Opciones Rápidas</FormLabel>
-                      <div className="grid grid-cols-1 gap-3">
-                        {quickAmountButtons.map((btn, idx) => (
-                          <Button
+                    <div className="grid grid-cols-3 gap-2">
+                      {quickAmountButtons.map((btn, idx) => {
+                        const isSelected = Math.round(paymentAmount) === btn.amount;
+                        return (
+                          <button
                             key={idx}
                             type="button"
-                            variant={idx === 0 ? "default" : "outline"}
-                            className={`h-16 w-full flex items-center justify-between px-4 ${
-                              idx === 0 
-                                ? 'bg-green-600 hover:bg-green-700 text-white shadow-md' 
-                                : 'bg-white hover:bg-gray-50 border-2 border-gray-200'
-                            }`}
                             onClick={() => {
                               form.setValue('amount', btn.amount);
                               setPaymentAmount(btn.amount);
                             }}
+                            className={`rounded-xl border px-2 py-2.5 text-center transition-colors ${
+                              isSelected
+                                ? 'border-slate-900 bg-slate-900 text-white'
+                                : 'border-slate-200 bg-white text-slate-700 active:bg-slate-50'
+                            }`}
                           >
-                            <div className="flex flex-col items-start">
-                              <span className={`text-sm font-semibold ${idx === 0 ? 'text-white' : 'text-gray-700'}`}>
-                                {btn.label}
-                              </span>
-                              <span className={`text-xs ${idx === 0 ? 'text-green-100' : 'text-gray-500'}`}>
-                                {formatCurrency(btn.amount)}
-                              </span>
-                            </div>
-                            <div className={`text-lg font-bold ${idx === 0 ? 'text-white' : 'text-green-600'}`}>
+                            <span className="block text-[11px] font-medium uppercase tracking-wide opacity-70">
+                              {btn.label}
+                            </span>
+                            <span className="mt-0.5 block text-sm font-semibold tabular-nums">
                               {formatCurrency(btn.amount)}
-                            </div>
-                          </Button>
-                        ))}
-                      </div>
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
 
@@ -1203,221 +1173,213 @@ export const QuickCollectionModule = () => {
                       control={form.control}
                       name="late_fee_amount"
                       render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="flex items-center gap-2 text-base font-semibold">
-                            <AlertTriangle className="h-5 w-5 text-orange-600" />
-                            Mora (Opcional)
-                          </FormLabel>
-                          <div className="space-y-2">
-                            <div className="flex gap-2">
-                              <FormControl>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  max={lateFeeAmount}
-                                  placeholder="0.00"
-                                  className="h-14 text-lg font-semibold"
-                                  {...field}
-                                  value={field.value || ''}
-                                  onChange={(e) => {
-                                    const value = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
-                                    field.onChange(value);
-                                  }}
-                                />
-                              </FormControl>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => field.onChange(lateFeeAmount)}
-                                className="h-14 px-4 whitespace-nowrap border-2 border-orange-300 hover:bg-orange-50"
-                              >
-                                Pagar Toda
-                              </Button>
-                            </div>
-                            <div className="text-sm text-orange-600 font-medium bg-orange-50 p-2 rounded">
-                              Mora pendiente: {formatCurrency(lateFeeAmount)}
-                            </div>
+                        <FormItem className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <FormLabel className="flex items-center gap-1.5 text-sm font-medium text-amber-900">
+                              <AlertTriangle className="h-4 w-4" />
+                              Mora acumulada
+                            </FormLabel>
+                            <span className="text-sm font-semibold tabular-nums text-amber-900">
+                              {formatCurrency(lateFeeAmount)}
+                            </span>
                           </div>
+                          <div className="mt-2.5 flex gap-2">
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                max={lateFeeAmount}
+                                inputMode="decimal"
+                                placeholder="0.00"
+                                className="h-11 rounded-lg border-amber-200 bg-white text-right font-semibold tabular-nums"
+                                {...field}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                                  field.onChange(value);
+                                }}
+                              />
+                            </FormControl>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => field.onChange(lateFeeAmount)}
+                              className="h-11 shrink-0 border-amber-300 bg-white px-3 text-amber-900 hover:bg-amber-100"
+                            >
+                              Toda
+                            </Button>
+                          </div>
+                          <p className="mt-2 text-xs text-amber-800/80">
+                            Cobrarla es opcional: déjalo en 0 si no la vas a cobrar hoy.
+                          </p>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
                   )}
+              </div>
 
-                  {/* Resumen del total */}
-                  <div className="p-5 bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg">
-                    <div className="flex flex-col space-y-2">
-                      <span className="text-white text-sm font-medium opacity-90">Total a Cobrar</span>
-                      <span className="text-3xl font-bold text-white">
-                        {formatCurrency(
-                          paymentAmount + (form.watch('late_fee_amount') || 0)
-                        )}
-                      </span>
+              {/* ============================================================ */}
+              {/* Método de pago                                                */}
+              {/* ============================================================ */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <FormField
+                  control={form.control}
+                  name="payment_method"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                        Método de pago
+                      </FormLabel>
+                      <FormControl>
+                        {/* Sin emoji: en un recibo y en un arqueo de caja lo que se lee es
+                            la palabra, y los emoji se ven distintos en cada teléfono. */}
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <SelectTrigger className="h-12 rounded-xl border-slate-200 text-base">
+                            <SelectValue placeholder="Seleccionar método" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cash" className="py-2.5 text-base">Efectivo</SelectItem>
+                            <SelectItem value="bank_transfer" className="py-2.5 text-base">Transferencia</SelectItem>
+                            <SelectItem value="card" className="py-2.5 text-base">Tarjeta</SelectItem>
+                            <SelectItem value="check" className="py-2.5 text-base">Cheque</SelectItem>
+                            <SelectItem value="online" className="py-2.5 text-base">En línea</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* ============================================================ */}
+              {/* Barra de cobro                                                */}
+              {/* ============================================================ */}
+              {/* El total vive AQUÍ, junto al botón que lo cobra, y no en una tarjeta
+                  más arriba: es la última cifra que se mira antes de pulsar. */}
+              <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+                <div className="mx-auto max-w-2xl px-4 py-3">
+                  <div className="mb-2.5 flex items-baseline justify-between">
+                    <div>
+                      <span className="text-xs uppercase tracking-wide text-slate-500">Total a cobrar</span>
                       {(form.watch('late_fee_amount') || 0) > 0 && (
-                        <div className="pt-2 border-t border-green-400/30">
-                          <div className="flex justify-between text-sm text-green-100">
-                            <span>Cuota:</span>
-                            <span>{formatCurrency(paymentAmount)}</span>
-                          </div>
-                          <div className="flex justify-between text-sm text-green-100">
-                            <span>Mora:</span>
-                            <span>{formatCurrency(form.watch('late_fee_amount') || 0)}</span>
-                          </div>
-                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          cuota {formatCurrency(paymentAmount)}
+                          {' + '}mora {formatCurrency(form.watch('late_fee_amount') || 0)}
+                        </p>
                       )}
                     </div>
+                    <span className="text-2xl font-semibold tabular-nums text-slate-900">
+                      {formatCurrency(paymentAmount + (form.watch('late_fee_amount') || 0))}
+                    </span>
                   </div>
-                </CardContent>
-              </Card>
-
-              {/* Método de pago */}
-              <Card className="border-2 border-gray-200 shadow-md">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <CreditCard className="h-5 w-5 text-gray-600" />
-                    Método de Pago
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <FormField
-                    control={form.control}
-                    name="payment_method"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormControl>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
-                            <SelectTrigger className="h-14 text-base font-medium">
-                              <SelectValue placeholder="Seleccionar método" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="cash" className="text-base py-3">💵 Efectivo</SelectItem>
-                              <SelectItem value="bank_transfer" className="text-base py-3">🏦 Transferencia</SelectItem>
-                              <SelectItem value="card" className="text-base py-3">💳 Tarjeta</SelectItem>
-                              <SelectItem value="check" className="text-base py-3">📝 Cheque</SelectItem>
-                              <SelectItem value="online" className="text-base py-3">🌐 En línea</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </CardContent>
-              </Card>
-
-              {/* Botones de acción */}
-              <div className="flex gap-3 sticky bottom-0 bg-white pt-4 pb-6">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="flex-1 h-14"
-                  onClick={() => {
-                    setShowPaymentForm(false);
-                    setSelectedLoan(null);
-                    setSearchTerm('');
-                    form.reset();
-                  }}
-                  disabled={loading}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  type="submit"
-                  className="flex-1 h-14 bg-green-600 hover:bg-green-700 text-lg font-semibold"
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <>⏳ Procesando...</>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-5 w-5 mr-2" />
-                      Registrar Cobro
-                    </>
-                  )}
-                </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-12 flex-1 rounded-xl"
+                      onClick={() => {
+                        setShowPaymentForm(false);
+                        setSelectedLoan(null);
+                        setSearchTerm('');
+                        form.reset();
+                      }}
+                      disabled={loading}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="submit"
+                      className="h-12 flex-[2] rounded-xl bg-emerald-600 text-base font-semibold hover:bg-emerald-700"
+                      disabled={loading}
+                    >
+                      {loading ? 'Registrando…' : (
+                        <>
+                          <CheckCircle2 className="mr-2 h-5 w-5" />
+                          Registrar cobro
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
               </div>
             </form>
           </Form>
         )}
       </div>
 
-      {/* Modal de Recibo */}
+      {/* Recibo del cobro recién hecho */}
       <Dialog open={showReceiptModal} onOpenChange={setShowReceiptModal}>
-        <DialogContent className="max-w-md mx-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5 text-green-600" />
-                <span>Pago Registrado</span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowReceiptModal(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </DialogTitle>
+        <DialogContent className="mx-auto max-w-sm rounded-2xl">
+          <DialogHeader className="items-center text-center">
+            <div className="mb-1 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50">
+              <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+            </div>
+            <DialogTitle className="text-base font-semibold">Cobro registrado</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            {lastPayment && lastPayment.loan && (
-              <>
-                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="text-center mb-4">
-                    <div className="text-2xl font-bold text-green-600 mb-2">
-                      {formatCurrency(lastPayment.amount + (lastPayment.late_fee || 0))}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      Pago registrado exitosamente
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Cliente:</span>
-                      <span className="font-semibold">{lastPayment.loan.client?.full_name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Fecha:</span>
-                      <span>{new Date(lastPayment.payment_date).toLocaleDateString('es-DO')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Método:</span>
-                      <span>{lastPayment.payment_method === 'cash' ? 'Efectivo' : 
-                             lastPayment.payment_method === 'bank_transfer' ? 'Transferencia' :
-                             lastPayment.payment_method === 'card' ? 'Tarjeta' :
-                             lastPayment.payment_method === 'check' ? 'Cheque' : 'En línea'}</span>
-                    </div>
-                  </div>
+
+          {lastPayment && lastPayment.loan && (
+            <div className="space-y-4">
+              {/* El importe manda: es lo que el cobrador confirma en voz alta al cliente. */}
+              <p className="text-center text-3xl font-semibold tabular-nums text-slate-900">
+                {formatCurrency(lastPayment.amount + (lastPayment.late_fee || 0))}
+              </p>
+
+              <dl className="divide-y divide-slate-100 rounded-xl border border-slate-200 text-sm">
+                <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <dt className="text-slate-500">Cliente</dt>
+                  <dd className="truncate font-medium text-slate-900">
+                    {lastPayment.loan.client?.full_name}
+                  </dd>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    onClick={() => {
-                      printReceipt();
-                      setTimeout(() => {
-                        setShowReceiptModal(false);
-                        setShowWhatsAppDialog(true);
-                      }, 500);
-                    }}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700"
-                  >
-                    <Printer className="h-4 w-4 mr-2" />
-                    Imprimir Recibo
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
+                <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <dt className="text-slate-500">Fecha</dt>
+                  <dd className="text-slate-900">
+                    {formatDateStringForSantoDomingo(
+                      String(lastPayment.payment_date || '').split('T')[0]
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <dt className="text-slate-500">Método</dt>
+                  <dd className="text-slate-900">
+                    {lastPayment.payment_method === 'cash' ? 'Efectivo' :
+                     lastPayment.payment_method === 'bank_transfer' ? 'Transferencia' :
+                     lastPayment.payment_method === 'card' ? 'Tarjeta' :
+                     lastPayment.payment_method === 'check' ? 'Cheque' : 'En línea'}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowReceiptModal(false);
+                    setShowWhatsAppDialog(true);
+                  }}
+                  className="h-11 flex-1 rounded-xl"
+                >
+                  Continuar
+                </Button>
+                <Button
+                  onClick={() => {
+                    printReceipt();
+                    setTimeout(() => {
                       setShowReceiptModal(false);
                       setShowWhatsAppDialog(true);
-                    }}
-                    className="flex-1"
-                  >
-                    Cerrar
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
+                    }, 500);
+                  }}
+                  className="h-11 flex-1 rounded-xl"
+                >
+                  <Printer className="mr-2 h-4 w-4" />
+                  Imprimir
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
