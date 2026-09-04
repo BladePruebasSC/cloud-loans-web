@@ -97,6 +97,9 @@ export async function getLoanBalanceBreakdown(
     .sort((a, b) => (a.due || '').localeCompare(b.due || '') || a.installment_number - b.installment_number);
   const remainingPaidByDue = new Map<string, number>();
   for (const [k, v] of paidToChargesByDue) remainingPaidByDue.set(k, v);
+  // Cuánto se llevó realmente cada fecha en CARGOS. Se necesita más abajo para no volver a
+  // contar ese mismo dinero como si hubiera pagado la cuota regular del mismo día.
+  const appliedToChargesByDue = new Map<string, number>();
   let pendingCharges = 0;
   for (const ch of chargeInstallments) {
     const paid = ch.due ? (remainingPaidByDue.get(ch.due) || 0) : 0;
@@ -104,9 +107,33 @@ export async function getLoanBalanceBreakdown(
     pendingCharges = round2(pendingCharges + Math.max(0, round2(ch.total - applied)));
     if (ch.due && applied > 0.01) {
       remainingPaidByDue.set(ch.due, round2(paid - applied));
+      appliedToChargesByDue.set(ch.due, round2((appliedToChargesByDue.get(ch.due) || 0) + applied));
     }
   }
   pendingCharges = round2(pendingCharges);
+
+  /**
+   * Lo pagado en una fecha que corresponde a la CUOTA REGULAR de ese día.
+   *
+   * AQUÍ ESTABA EL FALLO. `paidByDue` suma todos los pagos de una fecha, cargos incluidos, y
+   * el cálculo de abajo lo usaba tal cual para decidir cuánto se había pagado de la cuota
+   * regular. Un cargo suele fecharse el mismo día que una cuota, así que al cobrarlo su
+   * importe se contaba TAMBIÉN como si hubiera saldado la cuota de esa fecha: el balance
+   * bajaba una cuota entera de más.
+   *
+   * Caso reportado: préstamo de 10,000 a 13 cuotas diarias de 836.11 con un cargo de 1,250
+   * ya cobrado. El saldo real es 8,361.02 y mostraba 7,524.91 — exactamente 836.11 menos,
+   * una cuota fantasma. Y no era un desfase de presentación: "A saldar" es la cifra con la
+   * que se liquida el préstamo.
+   *
+   * Se descuenta lo que los cargos ya consumieron de esa fecha.
+   */
+  const paidForRegular = (due: string | null): number => {
+    if (!due) return 0;
+    const total = paidByDue.get(due) || 0;
+    const toCharges = appliedToChargesByDue.get(due) || 0;
+    return round2(Math.max(0, round2(total - toCharges)));
+  };
 
   // Indefinite: base = capital actual + interés pendiente (por due_date)
   if (amort === 'indefinite') {
@@ -252,7 +279,7 @@ export async function getLoanBalanceBreakdown(
       .reduce((sum: number, inst: any) => {
         const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
         if (!due) return sum;
-        const totalPaid = paidByDue.get(due) || 0;
+        const totalPaid = paidForRegular(due);
         const expectedInterest = round2(Number(inst.interest_amount || 0));
         const expectedPrincipal = round2(Number(inst.principal_amount || 0));
         const principalPaid = Math.min(expectedPrincipal, Math.max(0, round2(totalPaid - expectedInterest)));
@@ -267,7 +294,7 @@ export async function getLoanBalanceBreakdown(
       .filter((inst: any) => !isChargeInst(inst))
       .reduce((sum: number, inst: any) => {
         const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
-        const totalPaid = due ? (paidByDue.get(due) || 0) : 0;
+        const totalPaid = paidForRegular(due);
         const expectedInterest = round2(Number(inst.interest_amount || 0));
         const interestPaid = Math.min(expectedInterest, totalPaid);
         const rem = Math.max(0, round2(expectedInterest - interestPaid));
