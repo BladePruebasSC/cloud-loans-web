@@ -1855,8 +1855,12 @@ const RequestsModule = () => {
                       <Input
                         id="edit_term_months"
                         type="number"
-                        value={editFormData.term_months}
-                        onChange={(e) => setEditFormData({...editFormData, term_months: Number(e.target.value)})}
+                        value={editFormData.term_months === 0 ? '' : editFormData.term_months}
+                        onChange={(e) => setEditFormData({
+                          ...editFormData,
+                          term_months: e.target.value === '' ? 0 : Number(e.target.value),
+                        })}
+                        placeholder="0"
                       />
                     </div>
                     <div>
@@ -2563,9 +2567,14 @@ const RequestsModule = () => {
                   <Input
                     id="term_months"
                     type="number"
-                    value={formData.term_months}
-                    onChange={(e) => setFormData({...formData, term_months: Number(e.target.value)})}
-                    placeholder="Ej: 12"
+                    // El 0 va como marcador de posición, no como valor: escrito de verdad
+                    // había que borrarlo antes de teclear, y quedaba un "10" al escribir "1".
+                    value={formData.term_months === 0 ? '' : formData.term_months}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      term_months: e.target.value === '' ? 0 : Number(e.target.value),
+                    })}
+                    placeholder="0"
                     required
                   />
                 </div>

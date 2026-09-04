@@ -56,7 +56,10 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
   const [amortizationData, setAmortizationData] = useState<AmortizationRow[]>([]);
   const [recordsPerPage, setRecordsPerPage] = useState(50);
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortColumn, setSortColumn] = useState<string>('installment');
+  // Por FECHA de vencimiento: es el orden en que se cobra y el único que tiene sentido leer
+  // de arriba abajo. Antes ordenaba por número de cuota comparado como TEXTO, así que salía
+  // 1, 10, 11, 12, 2, 3… — el cronograma quedaba ilegible en cuanto pasaba de 9 cuotas.
+  const [sortColumn, setSortColumn] = useState<string>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   
   // Nuevas variables para cuota fija
@@ -299,20 +302,29 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
     );
   });
 
+  /** Número de cuota como NÚMERO. Llega como 3 o como "3/12", según de dónde salga la fila. */
+  const installmentNumber = (value: unknown): number => {
+    const match = String(value ?? '').match(/\d+/);
+    return match ? Number(match[0]) : 0;
+  };
+
   const sortedData = [...filteredData].sort((a, b) => {
     let aValue: any = a[sortColumn as keyof AmortizationRow];
     let bValue: any = b[sortColumn as keyof AmortizationRow];
 
     if (sortColumn === 'date') {
-      aValue = new Date(aValue).getTime();
-      bValue = new Date(bValue).getTime();
+      // Las fechas son 'YYYY-MM-DD': comparadas como texto ya quedan en orden cronológico,
+      // y así no se pasa por `new Date()`, que interpreta esa cadena como UTC.
+      aValue = String(aValue ?? '');
+      bValue = String(bValue ?? '');
     } else if (sortColumn === 'installment') {
-      // Para installment, si es string (como "1/X"), mantener como string
-      // Si es número, convertir a string para comparación consistente
-      aValue = typeof aValue === 'string' ? aValue : aValue.toString();
-      bValue = typeof bValue === 'string' ? bValue : bValue.toString();
+      // Comparación NUMÉRICA. Como texto, "10" va antes que "2" y el cronograma salía
+      // desordenado en cuanto había más de nueve cuotas.
+      aValue = installmentNumber(aValue);
+      bValue = installmentNumber(bValue);
     }
 
+    if (aValue === bValue) return 0;
     if (sortDirection === 'asc') {
       return aValue > bValue ? 1 : -1;
     } else {
