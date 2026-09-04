@@ -1068,6 +1068,47 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   }, 0);
   
   const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
+
+  /**
+   * Lo que cada fecha se llevó en CARGOS.
+   *
+   * Un cargo se fecha casi siempre el mismo día que una cuota. Sin esta cuenta, el dinero de
+   * un cargo cobrado se contaba TAMBIÉN como si hubiera saldado la cuota regular de ese día,
+   * y el saldo bajaba una cuota entera de más: un cargo de 3,000 restaba 3,836.11.
+   *
+   * Es el mismo reparto que hace `paidChargesAmount` unas líneas arriba, pero agrupado por
+   * fecha para poder descontarlo de lo que se atribuye a las cuotas.
+   */
+  const paidToChargesByDueDate = allCharges.reduce((map, inst) => {
+    const chargeDueDate = inst.due_date?.split('T')[0];
+    if (!chargeDueDate) return map;
+
+    const chargesWithSameDate = allCharges
+      .filter(c => c.due_date?.split('T')[0] === chargeDueDate)
+      .sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
+
+    const totalPaidForDate = payments
+      .filter(p => p.due_date?.split('T')[0] === chargeDueDate
+        && Math.abs(Number(p.interest_amount || 0)) < 0.01)
+      .reduce((s, p) => s + (Number(p.principal_amount ?? p.amount) || 0), 0);
+
+    const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
+    let remaining = totalPaidForDate;
+    for (let i = 0; i < Math.max(0, chargeIndex); i++) {
+      remaining -= Math.min(remaining, chargesWithSameDate[i].total_amount || 0);
+    }
+    const applied = Math.min(Math.max(0, remaining), inst.total_amount || 0);
+
+    map.set(chargeDueDate, Math.round(((map.get(chargeDueDate) || 0) + applied) * 100) / 100);
+    return map;
+  }, new Map<string, number>());
+
+  /** Lo pagado en una fecha que corresponde a la CUOTA REGULAR, ya sin lo de los cargos. */
+  const paidForRegularOn = (due: string | null | undefined, totalPaidForDue: number): number => {
+    if (!due) return 0;
+    const toCharges = paidToChargesByDueDate.get(due) || 0;
+    return Math.round(Math.max(0, totalPaidForDue - toCharges) * 100) / 100;
+  };
   
   // Calcular pagos y abonos
   const totalPaidFromPayments = payments.reduce((sum, p) => sum + (p.principal_amount || 0), 0);
@@ -1122,7 +1163,9 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       .reduce((sum, inst) => {
         const due = inst.due_date ? String(inst.due_date).split('T')[0] : null;
         if (!due) return sum;
-        const totalPaid = paidAmountByDue.get(due) || 0;
+        // Sin descontar lo que se llevaron los cargos de esa fecha, cobrar un cargo saldaba
+        // también la cuota del mismo día.
+        const totalPaid = paidForRegularOn(due, paidAmountByDue.get(due) || 0);
         const expectedInterest = round2(Number(inst.interest_amount || 0));
         const expectedPrincipal = round2(Number(inst.principal_amount || 0));
         const principalPaid = Math.min(expectedPrincipal, Math.max(0, round2(totalPaid - expectedInterest)));
@@ -1161,11 +1204,13 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         let interestPaidForThisInstallment = 0;
         
         if (installmentDueDate) {
-          // Usar MONTO pagado por due_date y aplicar interés primero
+          // Usar MONTO pagado por due_date y aplicar interés primero, descontando antes lo
+          // que se llevaron los cargos de esa misma fecha.
           const totalPaidForThisInstallment = payments
             .filter(p => (p.due_date?.split('T')[0] === installmentDueDate))
             .reduce((s, p) => s + (Number(p.amount) || 0), 0);
-          interestPaidForThisInstallment = Math.min(originalInterest, round2(totalPaidForThisInstallment));
+          const paraLaCuota = paidForRegularOn(installmentDueDate, totalPaidForThisInstallment);
+          interestPaidForThisInstallment = Math.min(originalInterest, round2(paraLaCuota));
         }
         
         // Interés pendiente de esta cuota = interés original - interés ya pagado
