@@ -42,7 +42,7 @@ const Notifications: React.FC = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { user, companyId } = useAuth();
+  const { user, companyId, profile } = useAuth();
   const navigate = useNavigate();
 
   // Función para navegar a la acción específica de la notificación
@@ -122,6 +122,9 @@ const Notifications: React.FC = () => {
         .eq('status', 'active')
         .neq('status', 'deleted')
         .neq('status', 'paid')
+        // El borrado es LÓGICO y marca las dos cosas: `status` y `deleted_at`. Filtrar solo
+        // por `status` deja pasar cualquier fila cuyo estado se tocara después.
+        .is('deleted_at', null)
         // `today.toISOString()` daba la fecha en UTC: pasadas las 20:00 en Santo Domingo ya
         // era el día siguiente y el filtro se corría un día.
         .lt('next_payment_date', todayIsoDate);
@@ -271,6 +274,7 @@ const Notifications: React.FC = () => {
         .eq('status', 'active')
         .neq('status', 'deleted')
         .neq('status', 'paid')
+        .is('deleted_at', null)
         .gte('next_payment_date', todayIsoDate)
         .lte('next_payment_date', nextWeekIsoDate);
 
@@ -394,6 +398,7 @@ const Notifications: React.FC = () => {
         .eq('loan_officer_id', companyId as string)
         .neq('status', 'deleted')
         .neq('status', 'paid')
+        .is('deleted_at', null)
         .eq('late_fee_enabled', true)
         .gt('current_late_fee', 0);
 
@@ -529,14 +534,57 @@ const Notifications: React.FC = () => {
     }
   };
 
-  // Cargar notificaciones al montar el componente
+  // ==========================================================================
+  // Cuándo se recargan las notificaciones
+  // ==========================================================================
+  // Antes SOLO al montar y cada 5 minutos. Como la lista se arma consultando los préstamos,
+  // borrar uno no la cambiaba: seguía anunciando pagos de préstamos que ya no existen hasta
+  // que pasara el intervalo. Se avisaba de deuda inexistente durante minutos.
+  //
+  // Ahora hay cuatro disparadores, del más inmediato al último recurso:
+  //   · Realtime sobre `loans` y `payments` — reacciona al instante al borrar, crear o cobrar.
+  //   · El evento `installmentsUpdated` que ya emiten los formularios de pago.
+  //   · Volver a la pestaña, por si algo cambió desde otro dispositivo.
+  //   · Un intervalo de 2 minutos como red de seguridad (antes 5).
   useEffect(() => {
+    if (!user) return;
+
     fetchNotifications();
-    
-    // Recargar notificaciones cada 5 minutos
-    const interval = setInterval(fetchNotifications, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [user]);
+
+    // Las ráfagas son normales: un pago avanzado inserta varias filas de golpe y cada una
+    // dispara su evento. Se agrupan para no lanzar una consulta por fila.
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const refetchSoon = () => {
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(() => { pending = null; fetchNotifications(); }, 600);
+    };
+
+    const loanOfficerId = profile?.role === 'employee' && profile?.company_owner_id
+      ? profile.company_owner_id
+      : user.id;
+
+    const channel = supabase
+      .channel(`notifications-${loanOfficerId}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'loans', filter: `loan_officer_id=eq.${loanOfficerId}` },
+        refetchSoon)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'payments' },
+        refetchSoon)
+      .subscribe();
+
+    window.addEventListener('installmentsUpdated', refetchSoon);
+    window.addEventListener('focus', refetchSoon);
+    const interval = setInterval(fetchNotifications, 2 * 60 * 1000);
+
+    return () => {
+      if (pending) clearTimeout(pending);
+      supabase.removeChannel(channel);
+      window.removeEventListener('installmentsUpdated', refetchSoon);
+      window.removeEventListener('focus', refetchSoon);
+      clearInterval(interval);
+    };
+  }, [user, profile]);
 
   const getNotificationIcon = (notification: Notification) => {
     switch (notification.type) {
