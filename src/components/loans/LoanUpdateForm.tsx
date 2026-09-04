@@ -2507,6 +2507,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       // Actualizar el préstamo según el tipo de actualización
       let loanUpdates: any = {};
       let chargePaymentIds: string[] = [];
+      // Saldo real antes y después de cobrar cargos.
+      //
+      // Hacen falta porque los "valores anteriores" del historial se leen de la base MÁS
+      // ABAJO, cuando el cobro YA se registró: para `pay_charges` eso guardaba como "antes"
+      // el saldo de DESPUÉS, y como "después" la previsualización del formulario, que aún
+      // tenía el cargo sin pagar. El historial salía invertido y parecía que cobrar un cargo
+      // de 3,000 SUBÍA la deuda en 3,000.
+      let balanceBeforeCharges: number | null = null;
+      let balanceAfterCharges: number | null = null;
 
       switch (updateType) {
         case 'add_charge':
@@ -2833,6 +2842,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               return;
             }
 
+            // Saldo ANTES de tocar nada. Se lee aquí y no más abajo porque en cuanto se
+            // inserten los pagos los triggers lo habrán recalculado.
+            const { data: loanBeforeCharges } = await supabase
+              .from('loans')
+              .select('remaining_balance')
+              .eq('id', loan.id)
+              .maybeSingle();
+            balanceBeforeCharges = Number(loanBeforeCharges?.remaining_balance ?? 0) || 0;
+
             // Distribuir el pago entre los cargos seleccionados
             let remainingAmount = chargePaymentAmount;
             const paymentsToInsert: any[] = [];
@@ -2934,7 +2952,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               .eq('id', loan.id)
               .maybeSingle();
 
-            const balanceAfterCharges = Number(loanAfterCharges?.remaining_balance ?? 0) || 0;
+            balanceAfterCharges = Number(loanAfterCharges?.remaining_balance ?? 0) || 0;
 
             // Solo se toca el estado, que la base no deduce sola.
             loanUpdates = balanceAfterCharges <= 0.01 ? { status: 'paid' } : {};
@@ -4569,6 +4587,25 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           oldValueObj.current_late_fee = currentLateFee;
           newValueObj.current_late_fee = (currentLateFee || 0) - (data.late_fee_amount || 0);
           description = `Eliminar Mora: ${data.adjustment_reason}. Monto eliminado: RD$${(data.late_fee_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        } else if (updateType === 'pay_charges') {
+          // Los dos valores se leyeron de la base en el momento correcto: uno antes de
+          // insertar los pagos y otro después de que los triggers recalcularan. Sin esto, el
+          // "anterior" salía del `fetch` de más arriba —que ya corre con el cobro hecho— y el
+          // "nuevo" de `calculatedValues`, una previsualización del formulario con el cargo
+          // todavía sin pagar. Quedaban al revés: parecía que cobrar SUBÍA la deuda.
+          if (balanceBeforeCharges !== null) oldValueObj.balance = balanceBeforeCharges;
+          if (balanceAfterCharges !== null) newValueObj.balance = balanceAfterCharges;
+          const cobrado = balanceBeforeCharges !== null && balanceAfterCharges !== null
+            ? Math.round((balanceBeforeCharges - balanceAfterCharges) * 100) / 100
+            : chargePaymentAmount;
+          description = `Pago de Cargos: ${data.adjustment_reason || ''}`.trim() +
+            `. Monto: RD$${chargePaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` +
+            `. Saldo: RD$${(balanceBeforeCharges ?? 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` +
+            ` → RD$${(balanceAfterCharges ?? 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` +
+            ` (−RD$${cobrado.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
+          if (data.notes) {
+            description += `. Notas: ${data.notes}`;
+          }
         } else if (updateType === 'add_charge') {
           oldValueObj.balance =
             (freshRemainingBalance !== null && freshRemainingBalance !== undefined)
