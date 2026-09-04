@@ -12,7 +12,7 @@ import {
   RefreshCw, DollarSign, CreditCard, UserPlus, Zap, Phone, MessageSquare, ArrowRight, AlertTriangle,
   Clock, CheckCircle2, TrendingUp, TrendingDown, Activity, Users, Gavel, Target, Briefcase, Package,
   ShoppingCart, Scale, FileText, BarChart3, MapPin, HandHeart, Building2, ChevronRight, CalendarDays,
-  ArrowUpRight, Wallet, ShieldCheck,
+  ArrowUpRight, Wallet, ShieldCheck, PencilLine, Trash2,
 } from 'lucide-react';
 
 const MONTH_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -50,10 +50,14 @@ const SEVERITY_STYLE: Record<PendingItem['severity'], { dot: string; badge: stri
 };
 const ACTIVITY_ICON: Record<ActivityItem['kind'], any> = {
   payment: DollarSign, loan: CreditCard, client: UserPlus, contact: MessageSquare,
+  loan_update: PencilLine, deletion: Trash2,
 };
 const ACTIVITY_STYLE: Record<ActivityItem['kind'], string> = {
   payment: 'bg-green-100 text-green-700', loan: 'bg-blue-100 text-blue-700',
   client: 'bg-purple-100 text-purple-700', contact: 'bg-slate-100 text-slate-700',
+  loan_update: 'bg-amber-100 text-amber-700',
+  // Lo eliminado va en rojo a propósito: es lo que más importa poder repasar después.
+  deletion: 'bg-red-100 text-red-700',
 };
 
 export const HomeModule: React.FC = () => {

@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
+import { useAuth } from '@/hooks/useAuth';
 
 interface Payment {
   id: string;
@@ -118,6 +119,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [isLatestPayment, setIsLatestPayment] = useState(false);
   const [hasLaterCapitalPayment, setHasLaterCapitalPayment] = useState(false);
   const [forceDelete, setForceDelete] = useState(false);
+  const { companyId } = useAuth();
 
   // Verificar si este pago es el último del préstamo y si hay abonos a capital posteriores
   useEffect(() => {
@@ -315,6 +317,44 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       }
 
       console.log('🗑️ ✅ Pago eliminado exitosamente');
+
+      // PASO 2.2: Dejar constancia de la eliminación.
+      //
+      // El borrado de un pago es FÍSICO: la fila desaparece de `payments` y con ella toda
+      // huella de que ese dinero se recibió alguna vez. Sin esta anotación, un pago cobrado y
+      // luego borrado no aparecía en ningún sitio —ni en el historial del préstamo ni en la
+      // actividad reciente—, así que nadie podía saber que había existido ni quién lo quitó.
+      //
+      // Se registra DESPUÉS del borrado y sin cortar el flujo si falla: perder la anotación
+      // es malo, pero dejar el pago a medio eliminar sería peor.
+      try {
+        const importe = Number(payment.amount || 0);
+        const detalle = [
+          Number(payment.principal_amount) ? `capital RD$${Number(payment.principal_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+          Number(payment.interest_amount) ? `interés RD$${Number(payment.interest_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+          Number(payment.late_fee) ? `mora RD$${Number(payment.late_fee).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+        ].filter(Boolean).join(', ');
+
+        await supabase.from('loan_history').insert({
+          loan_id: payment.loan_id,
+          change_type: 'balance_adjustment',
+          old_value: JSON.stringify({ payment_amount: importe }),
+          new_value: JSON.stringify({ payment_amount: 0 }),
+          description:
+            `Pago eliminado: RD$${importe.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` +
+            ` del ${String(payment.payment_date || '').split('T')[0]}` +
+            (detalle ? ` (${detalle})` : ''),
+          created_by: companyId,
+          notes: JSON.stringify({
+            update_type: 'delete_payment',
+            deleted_payment_id: payment.id,
+            amount: importe,
+            payment_date: payment.payment_date,
+          }),
+        });
+      } catch (historyError) {
+        console.error('🗑️ No se pudo registrar la eliminación en el historial:', historyError);
+      }
 
       // PASO 2.5: Si era un pago de cargo, eliminar la entrada correspondiente en loan_history
       if (payment.notes?.startsWith('Pago de cargo')) {

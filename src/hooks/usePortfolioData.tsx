@@ -77,9 +77,19 @@ export interface InstallmentLike {
   is_paid: boolean | null;
 }
 
+/** Fila de `loan_history`: todo cambio hecho sobre un préstamo. */
+export interface LoanHistoryLike {
+  id: string;
+  loan_id: string;
+  change_type: string | null;
+  description: string | null;
+  notes: string | null;
+  created_at: string | null;
+}
+
 export interface ActivityItem {
   id: string;
-  kind: 'payment' | 'loan' | 'client' | 'contact';
+  kind: 'payment' | 'loan' | 'client' | 'contact' | 'loan_update' | 'deletion';
   at: string;          // ISO datetime o fecha
   title: string;
   subtitle?: string;
@@ -120,6 +130,8 @@ export const usePortfolioData = () => {
   const [sales, setSales] = useState<SaleLike[]>([]);
   const [tracking, setTracking] = useState<TrackingLike[]>([]);
   const [installments, setInstallments] = useState<InstallmentLike[]>([]);
+  const [loanHistory, setLoanHistory] = useState<LoanHistoryLike[]>([]);
+  const [deletedLoans, setDeletedLoans] = useState<LoanLike[]>([]);
   const [promises, setPromises] = useState<any[]>([]);
   const [legalTasks, setLegalTasks] = useState<any[]>([]);
   const [legalApprovals, setLegalApprovals] = useState<any[]>([]);
@@ -143,9 +155,12 @@ export const usePortfolioData = () => {
       const [settingsRes, clientsRes, loansRes, salesRes] = await Promise.all([
         supabase.from('company_settings').select('company_name, phone').eq('user_id', companyId).maybeSingle(),
         supabase.from('clients').select('id, full_name, dni, phone, status, created_at, credit_score').eq('user_id', companyId),
+        // Se traen TAMBIÉN los borrados: las métricas los descartan un par de líneas más
+        // abajo, pero la actividad reciente tiene que poder contar que se eliminaron y de
+        // quién eran. Sin ellos, un préstamo borrado desaparecía sin dejar rastro visible.
         supabase.from('loans')
           .select('id, client_id, amount, remaining_balance, total_amount, monthly_payment, status, start_date, next_payment_date, grace_period_days, current_late_fee, interest_rate, amortization_type, payment_frequency, collection_stage, created_at, deleted_at, client:client_id(full_name, dni, phone)')
-          .eq('loan_officer_id', companyId).neq('status', 'deleted'),
+          .eq('loan_officer_id', companyId),
         supabase.from('sales').select('*').eq('user_id', companyId),
       ]);
 
@@ -158,16 +173,25 @@ export const usePortfolioData = () => {
       setClients((clientsRes.data || []) as ClientLike[]);
       setSales((salesRes.data || []) as SaleLike[]);
 
-      const loanRows = ((loansRes.data || []) as any[]).filter(l => !l.deleted_at) as LoanLike[];
+      const allLoanRows = ((loansRes.data || []) as any[]) as LoanLike[];
+      // Las métricas (cartera, agenda, riesgo) SOLO ven los préstamos vivos.
+      const loanRows = allLoanRows.filter(l => !(l as any).deleted_at && l.status !== 'deleted');
       setLoans(loanRows);
+      setDeletedLoans(allLoanRows.filter(l => (l as any).deleted_at || l.status === 'deleted'));
+
+      // OJO: los pagos se piden SOLO de los préstamos vivos. Incluir los de un préstamo
+      // borrado los metería en el flujo de caja y en "cobrado este mes", que es dinero que la
+      // empresa ya no reconoce. El historial sí se pide de todos, porque es justo donde consta
+      // que ese préstamo se eliminó.
       const loanIds = loanRows.map(l => l.id);
+      const allLoanIds = allLoanRows.map(l => l.id);
 
       // Cuotas SOLO de los préstamos vivos: son las que necesita el atraso y evita traerse
       // el historial entero de la cartera.
       const activeLoanIds = loanRows.filter(l => isActiveLoan(l.status)).map(l => l.id);
 
       // Pagos y seguimientos por préstamo (ver nota de arriba sobre `created_by`)
-      const [paymentRows, trackingRows, installmentRows] = await Promise.all([
+      const [paymentRows, trackingRows, installmentRows, historyRows] = await Promise.all([
         fetchInChunks<PaymentLike>(
           ids => supabase.from('payments')
             // `due_date` y `superseded_at` hacen falta para repartir los pagos entre cuotas
@@ -188,10 +212,21 @@ export const usePortfolioData = () => {
             .in('loan_id', ids),
           activeLoanIds
         ),
+        // Cambios sobre los préstamos: extensiones, cargos, abonos a capital, ediciones,
+        // eliminaciones y pagos borrados. Es la única fuente de esos hechos.
+        fetchInChunks<LoanHistoryLike>(
+          ids => supabase.from('loan_history')
+            .select('id, loan_id, change_type, description, notes, created_at')
+            .in('loan_id', ids)
+            .order('created_at', { ascending: false })
+            .limit(200),
+          allLoanIds
+        ),
       ]);
       setPayments(paymentRows);
       setTracking(trackingRows);
       setInstallments(installmentRows);
+      setLoanHistory(historyRows);
 
       // Módulo legal: opcional. Si las tablas no existen, el panel sigue funcionando.
       const soon = addDaysIso(todayIso, 3);
@@ -372,8 +407,13 @@ export const usePortfolioData = () => {
   /** Actividad reciente combinada (pagos, préstamos, clientes, gestiones). */
   const activity = useMemo<ActivityItem[]>(() => {
     const items: ActivityItem[] = [];
+    // Incluye los borrados: un cambio o un pago de un préstamo ya eliminado sigue teniendo
+    // dueño, y sin esto la fila decía "Cliente" a secas.
+    const anyLoanById = new Map<string, LoanLike>(
+      [...loans, ...deletedLoans].map(l => [l.id, l])
+    );
     const nameOfLoan = (loanId: string) => {
-      const l = loanById.get(loanId);
+      const l = anyLoanById.get(loanId);
       return l?.client?.full_name || clientById.get(l?.client_id || '')?.full_name || 'Cliente';
     };
     for (const p of payments) {
@@ -411,8 +451,59 @@ export const usePortfolioData = () => {
         subtitle: t.client_response || undefined, loanId: t.loan_id,
       });
     }
-    return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 14);
-  }, [payments, loans, clients, tracking, loanById, clientById]);
+
+    // ---- Préstamos eliminados -------------------------------------------
+    for (const l of deletedLoans) {
+      const at = String((l as any).deleted_at || l.created_at || '');
+      if (!at) continue;
+      items.push({
+        id: `ld-${l.id}`, kind: 'deletion', at,
+        title: `Préstamo eliminado · ${l.client?.full_name || clientById.get(l.client_id)?.full_name || 'cliente'}`,
+        amount: Number(l.amount) || 0, loanId: l.id, clientId: l.client_id,
+      });
+    }
+
+    // ---- Cambios sobre préstamos ----------------------------------------
+    // `loan_history.change_type` solo distingue cuatro categorías, y varias operaciones
+    // distintas comparten `balance_adjustment`. Lo que sí identifica cada una es el prefijo
+    // de la descripción (y, en las entradas nuevas, `update_type` dentro de `notes`).
+    const ETIQUETAS: Array<{ test: RegExp; label: string; borrado?: boolean }> = [
+      { test: /^term_extension/i,   label: 'Extensión de plazo' },
+      { test: /^Agregar Cargo/i,    label: 'Cargo agregado' },
+      { test: /^Pago de Cargos/i,   label: 'Cargo cobrado' },
+      { test: /^Eliminar Mora/i,    label: 'Mora eliminada' },
+      { test: /^Pago eliminado/i,   label: 'Pago eliminado', borrado: true },
+      { test: /^capital_payment/i,  label: 'Abono a capital' },
+      { test: /^edit_loan/i,        label: 'Préstamo editado' },
+      { test: /^settle_loan/i,      label: 'Préstamo saldado' },
+      { test: /^delete_loan/i,      label: 'Préstamo eliminado', borrado: true },
+      { test: /^payment_agreement/i, label: 'Acuerdo de pago' },
+    ];
+
+    for (const h of loanHistory) {
+      const at = String(h.created_at || '');
+      if (!at) continue;
+      const desc = String(h.description || '');
+      const match = ETIQUETAS.find(e => e.test.test(desc));
+      // Sin etiqueta reconocida no se inventa un título: se omite antes que llenar la lista
+      // de "Ajuste de balance" genéricos que no dicen nada.
+      if (!match) continue;
+
+      // El detalle va tras el primer ":" o "."; se recorta para que quepa en una línea.
+      const detalle = desc.replace(/^[^:]*:\s*/, '').split('. Notas:')[0].trim();
+
+      items.push({
+        id: `h-${h.id}`,
+        kind: match.borrado ? 'deletion' : 'loan_update',
+        at,
+        title: `${match.label} · ${nameOfLoan(h.loan_id)}`,
+        subtitle: detalle && detalle !== desc ? detalle.slice(0, 90) : undefined,
+        loanId: h.loan_id,
+      });
+    }
+
+    return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 20);
+  }, [payments, loans, clients, tracking, loanHistory, deletedLoans, loanById, clientById]);
 
   const onboarding = useMemo(() => ({
     companyConfigured,
