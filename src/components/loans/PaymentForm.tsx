@@ -29,8 +29,28 @@ import {
   formatDateLocalIso,
   getFrequencyRateFactor,
   getLateFeePeriodDays,
+  getPeriodRate,
   parseIsoDateLocal,
 } from '@/utils/frequencyUtils';
+
+/**
+ * Interés que devenga UNA cuota, ajustado a la frecuencia de pago.
+ *
+ * `loans.interest_rate` es MENSUAL por convención del sistema: una cuota diaria devenga 1/30
+ * de esa tasa, una quincenal la mitad, una semanal un cuarto. Calcularlo como
+ * `amount * interest_rate / 100` —como se hacía en seis sitios de este archivo— devuelve el
+ * interés de un MES COMPLETO.
+ *
+ * En un préstamo diario de 10,000 al 0.83% mensual, eso mostraba RD$83.00 de "interés fijo
+ * por cuota" cuando la cuota real cobra RD$2.77: treinta veces más. Y "Capital por Cuota"
+ * salía por diferencia (836.11 − 83.00 = 753.11) en vez de los 833.34 reales.
+ */
+const interestPerInstallment = (loan?: {
+  amount?: number | null;
+  interest_rate?: number | null;
+  payment_frequency?: string | null;
+} | null): number =>
+  (Number(loan?.amount) || 0) * getPeriodRate(Number(loan?.interest_rate) || 0, loan?.payment_frequency);
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle, Printer, Download } from 'lucide-react';
 import { Search, User } from 'lucide-react';
@@ -773,24 +793,17 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 
       console.log('🔍 PaymentForm: Pagos encontrados:', payments);
 
-      // Calcular el capital por cuota (misma fórmula que LateFeeInfo)
-      // Fórmula correcta: interés fijo por cuota = (monto_total * tasa_interés) / 100
-      const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+      // Interés de UNA cuota, ajustado a la frecuencia (ver `interestPerInstallment`).
+      const fixedInterestPerPayment = interestPerInstallment(loan);
       const principalPerPayment = loan.monthly_payment - fixedInterestPerPayment;
-      
+
       console.log('🔍 PaymentForm: Cálculos base:', {
-        principalPerPayment,
-        monthlyPayment: loan.monthly_payment,
-        interestRate: loan.interest_rate,
-        fixedInterestPerPayment
-      });
-      
-      console.log('🔍 PaymentForm: DEBUG - Verificando cálculo de capital:', {
         amount: loan.amount,
         interestRate: loan.interest_rate,
-        fixedInterestPerPayment: (loan.amount * loan.interest_rate) / 100,
+        frequency: loan.payment_frequency,
         monthlyPayment: loan.monthly_payment,
-        principalPerPayment: loan.monthly_payment - ((loan.amount * loan.interest_rate) / 100)
+        fixedInterestPerPayment,
+        principalPerPayment
       });
 
       // Detectar cuotas completas basándose en pagos de capital (misma lógica que LateFeeInfo)
@@ -931,16 +944,17 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       console.log('🔍 Pagos con interés > 0:', paymentsWithInterest.length);
       console.log('🔍 Total interés en BD:', payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0));
 
-      // Calcular el interés fijo por cuota
+      // Interés fijo por cuota. `payment_frequency` hace falta: sin ella la tasa mensual se
+      // aplicaría entera a una cuota diaria (30× de más).
       const { data: loan } = await supabase
         .from('loans')
-        .select('amount, interest_rate')
+        .select('amount, interest_rate, payment_frequency')
         .eq('id', loanId)
         .single();
 
       if (!loan) return 0;
 
-      const fixedInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+      const fixedInterestPerPayment = interestPerInstallment(loan);
       console.log('🔍 Interés fijo por cuota:', fixedInterestPerPayment);
 
       // Calcular cuántas cuotas se han completado y el estado actual de la cuota en progreso
@@ -1725,8 +1739,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         return;
       }
 
-      // Calcular interés por cuota para préstamos indefinidos
-      const interestPerPayment = (selectedLoan.amount * selectedLoan.interest_rate) / 100;
+      // Interés por cuota, ajustado a la frecuencia: un indefinido diario devenga 1/30 de la
+      // tasa mensual en cada cuota, no la tasa entera.
+      const interestPerPayment = interestPerInstallment(selectedLoan);
 
       // Calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
       const [startYear, startMonth, startDay] = selectedLoan.start_date.split('-').map(Number);
@@ -1918,7 +1933,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 
     // Fallback ultra defensivo (no debería pasar)
     if (!dueKey) {
-      const fallbackInterest = round2((selectedLoan.amount * selectedLoan.interest_rate) / 100);
+      const fallbackInterest = round2(interestPerInstallment(selectedLoan));
       const interestPayment = Math.min(round2(amount), fallbackInterest);
       return {
         interestPayment,
@@ -2501,8 +2516,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           const interestPerPayment =
             Number(selectedLoan.monthly_payment || 0) > 0.01
               ? Number(selectedLoan.monthly_payment)
-              : (selectedLoan.amount * selectedLoan.interest_rate / 100) *
-                getFrequencyRateFactor(selectedLoan.payment_frequency);
+              : interestPerInstallment(selectedLoan);
           let paidInstallmentsCount = 0;
           let currentInstallmentInterestPaid = 0;
           
@@ -3652,13 +3666,13 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Interés Fijo por Cuota:</span>
                   <span className="font-semibold text-orange-600">
-                    {formatCurrency((selectedLoan.amount * selectedLoan.interest_rate) / 100)}
+                    {formatCurrency(interestPerInstallment(selectedLoan))}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Capital por Cuota:</span>
                   <span className="font-semibold text-blue-600">
-                    {formatCurrency(selectedLoan.monthly_payment - ((selectedLoan.amount * selectedLoan.interest_rate) / 100))}
+                    {formatCurrency(selectedLoan.monthly_payment - interestPerInstallment(selectedLoan))}
                   </span>
                 </div>
                 {paymentDistribution && paymentDistribution.alreadyPaidInterest > 0 && (
@@ -3724,7 +3738,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                       <div className="font-medium mb-1">🎯 Lógica de Aplicación de Pagos:</div>
                       <ul className="text-xs space-y-1">
                         <li>• <strong>Cuota mensual:</strong> {formatCurrency(selectedLoan.monthly_payment)} (interés + capital)</li>
-                        <li>• <strong>Interés fijo:</strong> {formatCurrency((selectedLoan.amount * selectedLoan.interest_rate) / 100)} por cuota</li>
+                        <li>• <strong>Interés fijo:</strong> {formatCurrency(interestPerInstallment(selectedLoan))} por cuota</li>
                         <li>• <strong>Primero:</strong> Se paga el interés fijo de la cuota</li>
                         <li>• <strong>Después:</strong> El resto se aplica al capital</li>
                         <li>• <strong>Balance:</strong> Solo se reduce con pagos al capital</li>
