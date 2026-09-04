@@ -2163,8 +2163,16 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       const startDate = createLocalDate(first_payment_date);
       const paymentDate = adjustDateForExcludedDays(addPeriodsToDate(startDate, 1, payment_frequency));
       
-      // Para plazo indefinido, mostrar solo 1 período con "1/X"
-      const totalPaymentWithClosingCosts = interestPerPayment + (closing_costs || 0);
+      // Para plazo indefinido, mostrar solo 1 período con "1/X".
+      //
+      // Se usa `closingCostsAsCharge`, NO `closing_costs` en crudo. Ésta era la única rama que
+      // sumaba el importe sin mirar si estaba financiado, y con la casilla marcada los gastos
+      // se cobraban DOS VECES: ya iban dentro del capital —y por eso el interés sube de 3,000
+      // a 3,150— y encima se añadían enteros a la cuota, que salía 8,150 en vez de 3,150.
+      //
+      // Financiado significa exactamente eso: el cliente los paga a través del interés de un
+      // capital mayor, no aparte.
+      const totalPaymentWithClosingCosts = interestPerPayment + closingCostsAsCharge;
       schedule.push({
         payment: '1/X', // Mostrar 1/X para indicar que es indefinido
         date: formatDateLocalIso(paymentDate),
