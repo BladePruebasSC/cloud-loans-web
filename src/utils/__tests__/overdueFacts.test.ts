@@ -174,6 +174,39 @@ describe('atraso real desde las cuotas', () => {
     ok('y 839 atrasados', agenda.overdueAmount === 839, String(agenda.overdueAmount));
   });
 
+  it('Un prestamo INDEFINIDO sin datos por cuotas no desaparece de la cartera', () => {
+    // FALLO REPORTADO (2026-09-04): los prestamos indefinidos dejaron de aparecer en el
+    // inicio y en la cartera.
+    //
+    // CAUSA: el atraso y el saldo se derivan de `installments`, pero un indefinido tiene UNA
+    // SOLA fila ahi —los periodos siguientes se generan sobre la marcha, porque un prestamo
+    // sin vencimiento no tiene un numero de cuotas que escribir—. Al pagarse esa fila se
+    // quedaba sin cuotas pendientes: saldo 0, sin atraso, fuera de la agenda.
+    //
+    // La correccion es NO calcular datos por cuotas para ellos. Aqui se comprueba que el
+    // respaldo (`remaining_balance` / `next_payment_date`) los mantiene visibles.
+    const loans = [
+      { id: 'FIJO', status: 'active', amount: 10000, remaining_balance: 12000, current_late_fee: 0, next_payment_date: '2026-08-20', grace_period_days: 0, amortization_type: 'simple' },
+      { id: 'INDEF', status: 'active', amount: 100000, remaining_balance: 105000, current_late_fee: 0, next_payment_date: '2026-08-25', grace_period_days: 0, amortization_type: 'indefinite' },
+    ] as never[];
+
+    // Solo el de plazo fijo tiene datos por cuotas: el indefinido se omite a proposito.
+    const facts = new Map<string, OverdueFacts>([
+      ['FIJO', { daysOverdue: 14, lateFeeDays: 14, overdueAmount: 800, pendingAmount: 11000, oldestOverdueDate: '2026-08-20' }],
+    ]);
+
+    const cartera = computePortfolioSnapshot(loans, HOY, facts);
+    ok('cuenta los dos prestamos activos', cartera.activeLoans === 2, String(cartera.activeLoans));
+    // 11,000 (por cuotas) + 105,000 (respaldo del indefinido)
+    ok('el indefinido aporta su saldo', cartera.activeBalance === 116000, String(cartera.activeBalance));
+
+    const agenda = computeTodayAgenda(loans, HOY, facts);
+    ok('los dos figuran atrasados', agenda.overdue.length === 2, String(agenda.overdue.length));
+    const indef = agenda.overdue.find(e => e.loan.id === 'INDEF');
+    ok('el indefinido esta en la agenda', !!indef);
+    ok('con sus dias desde next_payment_date', indef?.daysOverdue === 9, String(indef?.daysOverdue));
+  });
+
   it('El saldo de cartera cuadra con lo que suman las cuotas', () => {
     // Fallo reportado: "Saldo por cobrar" no coincidia con lo que muestra "Ver cuotas".
     // Salian de fuentes distintas: uno de `remaining_balance` y el otro de las cuotas.

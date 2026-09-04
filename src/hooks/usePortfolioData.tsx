@@ -272,10 +272,27 @@ export const usePortfolioData = () => {
    * No se usa `next_payment_date` ni `remaining_balance`: los mantienen triggers y bastaba
    * con que uno no hubiera corrido para que el inicio mostrara días y montos viejos. Las
    * cuotas y los pagos son el dato de origen y no pueden quedarse desfasados.
+   *
+   * SALVO EN LOS PRÉSTAMOS INDEFINIDOS, donde las cuotas NO son el dato de origen: solo
+   * existe UNA fila en `installments` (la que crea `generateOriginalInstallments` con
+   * `installment_number = 1`) y los períodos siguientes se generan sobre la marcha, porque un
+   * préstamo sin vencimiento no tiene un número de cuotas que escribir.
+   *
+   * Derivar el saldo de esa única fila daba el interés de un período —RD$3,150 en un préstamo
+   * de 105,000— en vez del saldo real; y en cuanto esa fila se pagaba, el préstamo se quedaba
+   * sin cuotas pendientes, desaparecía de la agenda y aportaba cero a la cartera. Por eso
+   * estos préstamos "no se reconocían" en el inicio.
+   *
+   * Para ellos se cae al respaldo (`remaining_balance` / `next_payment_date`), que la función
+   * SQL `calculate_loan_remaining_balance` sí calcula por períodos devengados. Es la misma
+   * separación que hace `getLoanBalanceBreakdown`, que tiene una rama entera para indefinidos.
    */
   const overdueFactsByLoan = useMemo(() => {
     const facts = new Map<string, OverdueFacts>();
     if (installments.length === 0) return facts;
+
+    const esIndefinido = (loan: LoanLike) =>
+      String(loan.amortization_type || '').toLowerCase() === 'indefinite';
 
     const byLoan = new Map<string, InstallmentLike[]>();
     for (const inst of installments) {
@@ -289,6 +306,7 @@ export const usePortfolioData = () => {
     }
 
     for (const loan of loans) {
+      if (esIndefinido(loan)) continue;   // sus cuotas no describen la deuda: ver nota arriba
       const rows = byLoan.get(loan.id);
       if (!rows) continue;
       const dues = computeInstallmentDues(rows as never, (paymentsByLoan.get(loan.id) || []) as never);
