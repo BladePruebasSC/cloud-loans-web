@@ -116,6 +116,38 @@ describe('balance con un cargo cobrado en la fecha de una cuota', () => {
       String(round2(bueno.totalBalance - malo.totalBalance)));
   });
 
+  it('La tarjeta del listado daba 9,197.13: el cargo mas UNA CUOTA que nadie pago', () => {
+    // Segundo reporte (2026-09-04). `LoansModule` no usaba esta funcion para plazo fijo:
+    // tenia una copia propia con el mismo fallo, asi que la tarjeta seguia mal aunque
+    // Detalles ya estuviera bien. Los numeros son los de la captura.
+    //
+    // Prestamo de 10,000 a 12 cuotas diarias de 836.11 con un cargo de 3,000 fechado el
+    // mismo dia que la cuota #12 (13 sept). Saldo antes de cobrar: 13,033.24.
+    const doce: Cuota[] = [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        due_date: `2026-09-${String(i + 2).padStart(2, '0')}`,
+        principal_amount: 833.34, interest_amount: 2.77, total_amount: 836.11,
+      })),
+      { due_date: '2026-09-13', principal_amount: 3000, interest_amount: 0, total_amount: 3000 },
+    ];
+    const soloElCargo: Pago[] = [{ due_date: '2026-09-13', amount: 3000, interest_amount: 0 }];
+
+    const antes = calcular(10000, doce, [], true);
+    ok('antes de cobrar: 13,033.24', antes.totalBalance === 13033.24, String(antes.totalBalance));
+
+    const malo = calcular(10000, doce, soloElCargo, false);
+    const bueno = calcular(10000, doce, soloElCargo, true);
+
+    ok('la copia daba 9,197.13', malo.totalBalance === 9197.13, String(malo.totalBalance));
+    ok('lo correcto es 10,033.24', bueno.totalBalance === 10033.24, String(bueno.totalBalance));
+
+    // Cobrando 3,000 el saldo debe bajar 3,000, ni un peso mas.
+    ok('baja exactamente 3,000', round2(antes.totalBalance - bueno.totalBalance) === 3000,
+      String(round2(antes.totalBalance - bueno.totalBalance)));
+    ok('la copia bajaba 3,836.11', round2(antes.totalBalance - malo.totalBalance) === 3836.11,
+      String(round2(antes.totalBalance - malo.totalBalance)));
+  });
+
   it('El desglose cuadra con lo que muestra "Ver cuotas"', () => {
     const r = calcular(10000, CUOTAS, PAGOS, true);
     // 10 cuotas pendientes de las 12; el cargo ya esta cobrado.
