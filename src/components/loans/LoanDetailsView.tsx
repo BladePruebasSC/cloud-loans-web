@@ -40,6 +40,8 @@ import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { LoanCollectionCard } from '@/components/legal/LoanCollectionCard';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
+import { computeInstallmentLateFee } from '@/utils/lateFeeWaiver';
+import { getLateFeePeriodDays } from '@/utils/frequencyUtils';
 
 interface LoanDetailsViewProps {
   loanId: string;
@@ -1297,27 +1299,17 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
           const baseAmount = isIndefiniteLoanFb && installment.principal_amount === 0
             ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
             : (installment.principal_amount || installment.total_amount || installment.amount || 0);
-          const lateFeeRate = loan.late_fee_rate || 0;
-
-          let lateFee = 0;
-          switch (loan.late_fee_calculation_type) {
-            case 'daily':
-              lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
-              break;
-            case 'monthly':
-              const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
-              lateFee = (baseAmount * lateFeeRate / 100) * monthsOverdue;
-              break;
-            case 'compound':
-              lateFee = baseAmount * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
-              break;
-            default:
-              lateFee = (baseAmount * lateFeeRate / 100) * effectiveDaysOverdue;
-          }
-
-          if (loan.max_late_fee && loan.max_late_fee > 0) {
-            lateFee = Math.min(lateFee, loan.max_late_fee);
-          }
+          // Misma fórmula que el cálculo de mora (antes estaba copiada aquí con `/30` fijo en el
+          // tipo 'monthly', así que en préstamos diarios/semanales/quincenales este respaldo daba
+          // una cifra distinta a la del resto de la aplicación).
+          const lateFee = computeInstallmentLateFee({
+            base: baseAmount,
+            feeDays: effectiveDaysOverdue,
+            rate: loan.late_fee_rate || 0,
+            calculationType: loan.late_fee_calculation_type || 'daily',
+            periodDays: getLateFeePeriodDays(loan.payment_frequency || 'monthly'),
+            maxLateFee: loan.max_late_fee || 0,
+          });
 
           calculatedLateFee += Math.max(0, lateFee - (installment.late_fee_paid || 0));
         }

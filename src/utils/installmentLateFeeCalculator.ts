@@ -8,6 +8,7 @@ import {
   parseIsoDateLocal,
 } from './frequencyUtils';
 import { supabase } from '@/integrations/supabase/client';
+import { spendLateFeeCredit } from './lateFeeWaiver';
 
 export interface LoanData {
   id: string;
@@ -449,20 +450,18 @@ export const getLateFeeBreakdownFromInstallments = async (
           
           lateFee = Math.round(lateFee * 100) / 100;
 
-          // Restar la mora ya pagada de esta cuota
+          // Restar la mora ya pagada (o condonada) de esta cuota.
           const rawLateFeePaid = installment.late_fee_paid || 0;
-          let lateFeePaid = rawLateFeePaid;
-          // For indefinite loans: if there is no payment directly linked to this installment
-          // but late_fee_paid is set, treat it as surplus for dynamic installments.
-          // This prevents stale late_fee_paid values (from incorrect redistribution or a
-          // "Eliminar Mora" that predates a newly-added CARGO) from hiding owed mora.
-          if (isIndefinite && rawLateFeePaid > 0 && totalPaidForInstallment <= 0) {
+          if (isIndefinite && !thisRowIsCharge) {
+            // En un préstamo INDEFINIDO el crédito de mora es del PRÉSTAMO, no de la fila: la
+            // mayoría de los períodos ni siquiera existen como fila en `installments`. Va todo
+            // al fondo y se descuenta al final sobre todas las cuotas de interés pendientes
+            // —esta incluida—, de la más vieja a la más nueva (ver `spendLateFeeCredit`).
             lateFeePaidSurplusPool += Math.round(rawLateFeePaid * 100) / 100;
-            lateFeePaid = 0;
-          } else if (isIndefinite && rawLateFeePaid > lateFee) {
-            lateFeePaidSurplusPool += Math.round((rawLateFeePaid - lateFee) * 100) / 100;
+          } else {
+            // Cuotas de plazo fijo y CARGOS: el crédito es de la fila y solo baja su propia mora.
+            lateFee = Math.max(0, lateFee - rawLateFeePaid);
           }
-          lateFee = Math.max(0, lateFee - lateFeePaid);
         }
       }
       
@@ -496,7 +495,29 @@ export const getLateFeeBreakdownFromInstallments = async (
         isCharge
       });
     }
-    
+
+    // ------------------------------------------------------------------------
+    // CRÉDITO DE MORA EN INDEFINIDOS (2026-09-05)
+    // ------------------------------------------------------------------------
+    // FALLO REPORTADO: al condonar la mora con "Actualizar → Eliminar Mora", el aviso decía
+    // "Nueva mora: RD$0" y al recargar volvía EXACTAMENTE el mismo monto.
+    //
+    // CAUSA: la condonación se anota como `late_fee_paid` en las filas de `installments`. Un
+    // préstamo indefinido tiene UNA SOLA fila (`installment_number = 1`); los demás períodos se
+    // generan aquí sobre la marcha. Esa fila mandaba su `late_fee_paid` al fondo —para que un
+    // valor viejo no ocultara mora nueva— pero el fondo SOLO se gastaba en los períodos
+    // generados dinámicamente, nunca en la fila guardada. En un préstamo cuya mora sale entera
+    // de esa fila (mensual, un único período vencido: 25,000 al 5% con 28 días de atraso y 2 de
+    // gracia = RD$406.25) la condonación no quitaba ni un peso.
+    //
+    // Ahora el fondo se descuenta sobre TODO el desglose, de la cuota más vieja a la más nueva.
+    const applyLateFeeCredit = () => {
+      if (!isIndefinite || lateFeePaidSurplusPool <= 0.001) return;
+      const { applied, remaining } = spendLateFeeCredit(breakdown, lateFeePaidSurplusPool);
+      lateFeePaidSurplusPool = remaining;
+      totalLateFee = Math.max(0, Math.round((totalLateFee - applied) * 100) / 100);
+    };
+
     // CORRECCIÓN: Para préstamos indefinidos, generar dinámicamente todas las cuotas vencidas
     // desde la primera no pagada hasta hoy
     if (loan.amortization_type === 'indefinite' && loan.start_date && loan.next_payment_date) {
@@ -518,6 +539,7 @@ export const getLateFeeBreakdownFromInstallments = async (
       // que inventar nada: cada importe cae en su rango real.
       if (!indefinitePeriods) {
         console.warn('getLateFeeBreakdownFromInstallments: start_date inválido:', loan.start_date);
+        applyLateFeeCredit();
         return { totalLateFee, breakdown };
       }
       const baseAmount = indefinitePeriods.base;
@@ -584,13 +606,8 @@ export const getLateFeeBreakdownFromInstallments = async (
             }
             
             lateFeeForInstallment = Math.round(lateFeeForInstallment * 100) / 100;
-
-            // Apply surplus pool from DB installments (e.g. late_fee_paid set by "Eliminar Mora")
-            if (lateFeePaidSurplusPool > 0) {
-              const applied = Math.min(lateFeePaidSurplusPool, lateFeeForInstallment);
-              lateFeeForInstallment = Math.max(0, lateFeeForInstallment - applied);
-              lateFeePaidSurplusPool = Math.max(0, lateFeePaidSurplusPool - applied);
-            }
+            // El crédito de mora (`late_fee_paid`) NO se descuenta aquí: se aplica al final sobre
+            // todo el desglose, para que la fila guardada en la BD también pueda beneficiarse.
           }
 
           // Agregar la cuota generada dinámicamente al breakdown
@@ -713,7 +730,9 @@ export const getLateFeeBreakdownFromInstallments = async (
         });
       }
     }
-    
+
+    applyLateFeeCredit();
+
     return { totalLateFee, breakdown };
   } catch (error) {
     console.error('Error en getLateFeeBreakdownFromInstallments:', error);

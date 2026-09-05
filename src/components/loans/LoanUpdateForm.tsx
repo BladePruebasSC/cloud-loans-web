@@ -25,8 +25,14 @@ import {
   formatDateLocalIso,
   getFrequencyLabel,
   getFrequencyRateFactor,
+  getLateFeePeriodDays,
   parseIsoDateLocal,
 } from '@/utils/frequencyUtils';
+import {
+  computeInstallmentLateFee,
+  distributeLateFeeWaiver,
+  type WaiverTargetRow,
+} from '@/utils/lateFeeWaiver';
 import { computeExtendedSchedule } from '@/utils/loanRescheduling';
 import type { RawPayment } from '@/utils/installmentDues';
 import { formatCurrency } from '@/lib/utils';
@@ -3548,10 +3554,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               };
               console.log(`✅ Eliminando mora: ${lateFeeToRemove} de ${currentLateFeeValue}, nueva mora: ${newLateFee}`);
             } else {
-              // Calcular la mora total de todas las cuotas pendientes para distribuir proporcionalmente
+              // Mora pendiente de cada cuota, para saber dónde anotar la condonación.
+              // La fórmula es la de `computeInstallmentLateFee`, la MISMA que usa el cálculo de
+              // la mora: antes estaba copiada aquí con `Math.ceil(días / 30)` fijo en el tipo
+              // 'monthly', así que en un préstamo diario, semanal o quincenal se anotaba un
+              // reparto que el cálculo luego no reconocía y parte de lo condonado se perdía.
               const currentDate = getCurrentDateInSantoDomingo();
-              let totalCalculatedLateFee = 0;
-              const installmentLateFees: Array<{ id: string; lateFee: number }> = [];
+              const waiverRows: WaiverTargetRow[] = [];
 
               // Para indefinidos: usar la fecha efectiva de próximo pago (igual que getLateFeeBreakdownFromInstallments)
               // para saber qué cuotas ignorar (las que ya pasaron y están cubiertas por pagos anteriores).
@@ -3568,87 +3577,77 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   if (instDue < nextPay) return;
                 }
 
-                const [dy, dm, dd] = String(installment.due_date).split('T')[0].split('-').map(Number);
-                const dueDate = new Date(dy, dm - 1, dd);
+                const dueIso = String(installment.due_date || '').split('T')[0];
+                const dueDate = parseIsoDateLocal(dueIso);
+                if (!dueDate) return;
+
                 const daysOverdue = Math.max(0, Math.floor((currentDate.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)));
-                
-                if (daysOverdue > 0) {
-                  const gracePeriod = (loan as any).grace_period_days || 0;
-                  const effectiveDaysOverdue = Math.max(0, daysOverdue - gracePeriod);
-                  
-                  if (effectiveDaysOverdue > 0) {
-                    // Para préstamos indefinidos, usar interest_amount/total_amount/amount
-                    // porque principal_amount = 0 (cuotas de interés puro)
-                    const principalPerPayment = isIndefiniteLoan && (!installment.principal_amount || installment.principal_amount === 0)
-                      ? (installment.interest_amount || installment.total_amount || installment.amount || 0)
-                      : installment.principal_amount;
-                    const lateFeeRate = (loan as any).late_fee_rate || 2;
-                    
-                    let lateFee = 0;
-                    switch ((loan as any).late_fee_calculation_type) {
-                      case 'daily':
-                        lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
-                        break;
-                      case 'monthly':
-                        const monthsOverdue = Math.ceil(effectiveDaysOverdue / 30);
-                        lateFee = (principalPerPayment * lateFeeRate / 100) * monthsOverdue;
-                        break;
-                      case 'compound':
-                        lateFee = principalPerPayment * (Math.pow(1 + lateFeeRate / 100, effectiveDaysOverdue) - 1);
-                        break;
-                      default:
-                        lateFee = (principalPerPayment * lateFeeRate / 100) * effectiveDaysOverdue;
-                    }
-                    
-                    if ((loan as any).max_late_fee && (loan as any).max_late_fee > 0) {
-                      lateFee = Math.min(lateFee, (loan as any).max_late_fee);
-                    }
-                    
-                    const remainingLateFee = Math.max(0, lateFee - (installment.late_fee_paid || 0));
-                    totalCalculatedLateFee += remainingLateFee;
-                    
-                    installmentLateFees.push({
-                      id: installment.id,
-                      lateFee: remainingLateFee
-                    });
-                  }
-                }
+                const feeDays = Math.max(0, daysOverdue - ((loan as any).grace_period_days || 0));
+                if (feeDays <= 0) return;
+
+                // En indefinidos las cuotas son de interés puro: `principal_amount` vale 0.
+                const base = isIndefiniteLoan && Number(installment.principal_amount || 0) < 0.01
+                  ? Number(installment.interest_amount || installment.total_amount || installment.amount || 0)
+                  : Number(installment.principal_amount || installment.total_amount || installment.amount || 0);
+
+                const lateFee = computeInstallmentLateFee({
+                  base,
+                  feeDays,
+                  rate: Number((loan as any).late_fee_rate ?? 2),
+                  calculationType: (loan as any).late_fee_calculation_type || 'daily',
+                  periodDays: getLateFeePeriodDays(loan.payment_frequency || 'monthly'),
+                  maxLateFee: Number((loan as any).max_late_fee || 0),
+                });
+
+                const alreadyCredited = Number(installment.late_fee_paid) || 0;
+                waiverRows.push({
+                  id: installment.id,
+                  dueDate: dueIso,
+                  pendingLateFee: Math.max(0, round2(lateFee - alreadyCredited)),
+                  currentLateFeePaid: alreadyCredited,
+                });
               });
-              
-              // Distribuir proporcionalmente la mora eliminada entre las cuotas
-              if (totalCalculatedLateFee > 0) {
-                for (const installmentFee of installmentLateFees) {
-                  const proportion = installmentFee.lateFee / totalCalculatedLateFee;
-                  const lateFeeToRemoveFromThisInstallment = lateFeeToRemove * proportion;
 
-                  // Actualizar late_fee_paid en esta cuota
-                  const currentLateFeePaid = installments.find((i: any) => i.id === installmentFee.id)?.late_fee_paid || 0;
-                  const newLateFeePaid = currentLateFeePaid + lateFeeToRemoveFromThisInstallment;
+              // Si ninguna cuota devenga mora todavía (p. ej. dentro de los días de gracia),
+              // se anota igualmente en la primera para que el recálculo devuelva 0.
+              const waiverTargets = waiverRows.length > 0
+                ? waiverRows
+                : (installments[0]
+                    ? [{
+                        id: installments[0].id,
+                        dueDate: String(installments[0].due_date || '').split('T')[0],
+                        pendingLateFee: 0,
+                        currentLateFeePaid: Number(installments[0].late_fee_paid) || 0,
+                      }]
+                    : []);
 
-                  await supabase
-                    .from('installments')
-                    .update({ late_fee_paid: Math.round(newLateFeePaid * 100) / 100 })
-                    .eq('id', installmentFee.id);
+              // De la cuota más vieja a la más nueva, sin pasarse de la mora de cada una.
+              const waiverUpdates = distributeLateFeeWaiver(waiverTargets, lateFeeToRemove);
 
-                  console.log(`✅ Cuota ${installments.find((i: any) => i.id === installmentFee.id)?.installment_number}: eliminando ${lateFeeToRemoveFromThisInstallment.toFixed(2)} de mora`);
-                }
-              } else if (installments.length > 0) {
-                // Fallback: si no se pudo calcular mora dinámica (ej. aún sin días de gracia vencidos),
-                // registrar el monto eliminado en la primera cuota para que el recálculo devuelva 0
-                const firstInstallment = installments[0];
-                const currentLateFeePaid = firstInstallment?.late_fee_paid || 0;
-                await supabase
+              for (const update of waiverUpdates) {
+                // El error SÍ se revisa: sin esto, una escritura rechazada (RLS, columna
+                // ausente) dejaba el aviso de "Nueva mora: RD$0" y la mora intacta al recargar.
+                const { error: waiverError } = await supabase
                   .from('installments')
-                  .update({ late_fee_paid: Math.round((currentLateFeePaid + lateFeeToRemove) * 100) / 100 })
-                  .eq('id', firstInstallment.id);
+                  .update({ late_fee_paid: update.lateFeePaid })
+                  .eq('id', update.id);
+
+                if (waiverError) {
+                  console.error('Error anotando la mora eliminada en la cuota:', waiverError);
+                  toast.error('No se pudo eliminar la mora: la cuota no se pudo actualizar.');
+                  setLoading(false);
+                  return;
+                }
+
+                console.log(`✅ Cuota ${installments.find((i: any) => i.id === update.id)?.installment_number}: eliminando ${update.added.toFixed(2)} de mora`);
               }
-              
+
               // Actualizar el campo current_late_fee en el préstamo
               const newLateFee = Math.max(0, currentLateFeeValue - lateFeeToRemove);
               loanUpdates = {
                 current_late_fee: newLateFee,
               };
-              
+
               console.log(`✅ Eliminando mora: ${lateFeeToRemove} de ${currentLateFeeValue}, nueva mora: ${newLateFee}`);
             }
           }
