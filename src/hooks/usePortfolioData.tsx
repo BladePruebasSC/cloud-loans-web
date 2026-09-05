@@ -32,12 +32,20 @@ const chunk = <T,>(arr: T[], size = CHUNK): T[][] => {
 
 async function fetchInChunks<T>(
   build: (ids: string[]) => PromiseLike<{ data: T[] | null; error: unknown }>,
-  ids: string[]
+  ids: string[],
+  /** Nombre para el registro cuando algo falla. Sin él, un error deja la lista vacía en silencio. */
+  label = 'consulta'
 ): Promise<T[]> {
   const rows: T[] = [];
   for (const part of chunk(ids)) {
     const { data, error } = await build(part);
-    if (error) continue;
+    if (error) {
+      // Se continúa a propósito —una tabla que falle no debe tumbar el panel entero—, pero
+      // se DEJA CONSTANCIA. Antes se descartaba en silencio, así que una consulta rota se
+      // veía igual que "no hay datos" y no había forma de distinguirlas.
+      console.error(`[portfolio] fallo al leer ${label}:`, error);
+      continue;
+    }
     if (data) rows.push(...data);
   }
   return rows;
@@ -198,19 +206,19 @@ export const usePortfolioData = () => {
             // y saber qué se debe de verdad (`computeInstallmentDues`).
             .select('id, loan_id, amount, principal_amount, interest_amount, late_fee, payment_date, due_date, superseded_at, created_by')
             .in('loan_id', ids),
-          loanIds
+          loanIds, 'pagos'
         ),
         fetchInChunks<TrackingLike>(
           ids => supabase.from('collection_tracking')
             .select('id, loan_id, contact_type, contact_date, contact_time, client_response, next_contact_date, result')
             .in('loan_id', ids),
-          loanIds
+          loanIds, 'gestiones de cobro'
         ),
         fetchInChunks<InstallmentLike>(
           ids => supabase.from('installments')
             .select('id, loan_id, installment_number, due_date, total_amount, principal_amount, interest_amount, paid_amount, is_paid')
             .in('loan_id', ids),
-          activeLoanIds
+          activeLoanIds, 'cuotas'
         ),
         // Cambios sobre los préstamos: extensiones, cargos, abonos a capital, ediciones,
         // eliminaciones y pagos borrados. Es la única fuente de esos hechos.
@@ -220,7 +228,7 @@ export const usePortfolioData = () => {
             .in('loan_id', ids)
             .order('created_at', { ascending: false })
             .limit(200),
-          allLoanIds
+          allLoanIds, 'historial de préstamos'
         ),
       ]);
       setPayments(paymentRows);
@@ -482,32 +490,66 @@ export const usePortfolioData = () => {
     }
 
     // ---- Cambios sobre préstamos ----------------------------------------
-    // `loan_history.change_type` solo distingue cuatro categorías, y varias operaciones
-    // distintas comparten `balance_adjustment`. Lo que sí identifica cada una es el prefijo
-    // de la descripción (y, en las entradas nuevas, `update_type` dentro de `notes`).
-    const ETIQUETAS: Array<{ test: RegExp; label: string; borrado?: boolean }> = [
-      { test: /^term_extension/i,   label: 'Extensión de plazo' },
-      { test: /^Agregar Cargo/i,    label: 'Cargo agregado' },
-      { test: /^Pago de Cargos/i,   label: 'Cargo cobrado' },
-      { test: /^Eliminar Mora/i,    label: 'Mora eliminada' },
-      { test: /^Pago eliminado/i,   label: 'Pago eliminado', borrado: true },
-      { test: /^capital_payment/i,  label: 'Abono a capital' },
-      { test: /^edit_loan/i,        label: 'Préstamo editado' },
-      { test: /^settle_loan/i,      label: 'Préstamo saldado' },
-      { test: /^delete_loan/i,      label: 'Préstamo eliminado', borrado: true },
-      { test: /^payment_agreement/i, label: 'Acuerdo de pago' },
+    // `loan_history.change_type` solo distingue siete categorías y varias operaciones muy
+    // distintas comparten `balance_adjustment`, así que hay que mirar más fino.
+    //
+    // La descripción se guarda de DOS maneras según la operación: unas usan el identificador
+    // interno (`term_extension: …`, `capital_payment: …`) y otras un título en español
+    // (`Agregar Cargo: …`, `Eliminar Mora: …`). Además, `pay_charges` cambió de la primera
+    // forma a la segunda hace dos días, así que las entradas viejas y las nuevas del MISMO
+    // tipo no se parecen. Por eso se reconocen ambas grafías.
+    //
+    // Cuando existe, manda `notes.update_type`: es el dato explícito y no depende de cómo se
+    // haya redactado el texto.
+    const ETIQUETAS: Record<string, { label: string; borrado?: boolean }> = {
+      term_extension:    { label: 'Extensión de plazo' },
+      add_charge:        { label: 'Cargo agregado' },
+      pay_charges:       { label: 'Cargo cobrado' },
+      remove_late_fee:   { label: 'Mora eliminada' },
+      delete_payment:    { label: 'Pago eliminado', borrado: true },
+      capital_payment:   { label: 'Abono a capital' },
+      edit_loan:         { label: 'Préstamo editado' },
+      settle_loan:       { label: 'Préstamo saldado' },
+      delete_loan:       { label: 'Préstamo eliminado', borrado: true },
+      payment_agreement: { label: 'Acuerdo de pago' },
+    };
+
+    /** Los títulos en español que sustituyen al identificador en algunas descripciones. */
+    const POR_TEXTO: Array<[RegExp, string]> = [
+      [/^Agregar Cargo/i,   'add_charge'],
+      [/^Pago de Cargos/i,  'pay_charges'],
+      [/^Eliminar Mora/i,   'remove_late_fee'],
+      [/^Pago eliminado/i,  'delete_payment'],
+      [/^Abono a Capital/i, 'capital_payment'],
     ];
 
     for (const h of loanHistory) {
       const at = String(h.created_at || '');
       if (!at) continue;
       const desc = String(h.description || '');
-      const match = ETIQUETAS.find(e => e.test.test(desc));
-      // Sin etiqueta reconocida no se inventa un título: se omite antes que llenar la lista
-      // de "Ajuste de balance" genéricos que no dicen nada.
+
+      // 1) El tipo explícito de `notes`, cuando la entrada lo trae.
+      let tipo: string | null = null;
+      try {
+        const parsed = JSON.parse(h.notes || '{}');
+        if (parsed && typeof parsed.update_type === 'string') tipo = parsed.update_type;
+      } catch { /* `notes` suele ser texto libre: no es un error que no sea JSON */ }
+
+      // 2) El identificador al principio de la descripción (`term_extension: …`).
+      if (!tipo) {
+        const porId = desc.match(/^([a-z_]+)\s*:/);
+        if (porId && ETIQUETAS[porId[1]]) tipo = porId[1];
+      }
+
+      // 3) El título en español.
+      if (!tipo) tipo = POR_TEXTO.find(([re]) => re.test(desc))?.[1] ?? null;
+
+      const match = tipo ? ETIQUETAS[tipo] : undefined;
+      // Sin tipo reconocido no se inventa un título: se omite antes que llenar la lista de
+      // "Ajuste de balance" genéricos que no dicen nada.
       if (!match) continue;
 
-      // El detalle va tras el primer ":" o "."; se recorta para que quepa en una línea.
+      // El detalle va tras el primer ":"; se recorta para que quepa en una línea.
       const detalle = desc.replace(/^[^:]*:\s*/, '').split('. Notas:')[0].trim();
 
       items.push({
