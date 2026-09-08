@@ -14,6 +14,7 @@ import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import {
   AGING_BUCKETS, AGING_COLOR, AGING_LABEL, loanDaysOverdue, type AgingBucket,
 } from '@/utils/portfolioMetrics';
+import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import {
   RefreshCw, TrendingUp, TrendingDown, Wallet, CreditCard, AlertTriangle, Users, PiggyBank,
   ArrowLeft, Percent, Target, ShieldCheck, Download, Activity,
@@ -24,9 +25,6 @@ const compact = (v: number) =>
     : Math.abs(v) >= 1_000 ? `${Math.round(v / 1_000)}k`
     : String(Math.round(v));
 
-const TYPE_LABEL: Record<string, string> = {
-  simple: 'Simple', french: 'Francés', german: 'Alemán', american: 'Americano', indefinite: 'Indefinido',
-};
 const FREQ_LABEL: Record<string, string> = {
   daily: 'Diario', weekly: 'Semanal', biweekly: 'Quincenal', monthly: 'Mensual', quarterly: 'Trimestral', yearly: 'Anual',
 };
@@ -59,7 +57,7 @@ export const AnalyticsDashboard: React.FC = () => {
       m.set(k, e);
     }
     return Array.from(m.entries()).map(([k, v], i) => ({
-      name: TYPE_LABEL[k] || k, value: Math.round(v.balance), count: v.count, fill: PALETTE[i % PALETTE.length],
+      name: getAmortizationLabel(k) || k, value: Math.round(v.balance), count: v.count, fill: PALETTE[i % PALETTE.length],
     })).sort((a, b) => b.value - a.value);
   }, [loans]);
 

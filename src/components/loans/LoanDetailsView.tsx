@@ -41,6 +41,7 @@ import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { LoanCollectionCard } from '@/components/legal/LoanCollectionCard';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { computeInstallmentLateFee } from '@/utils/lateFeeWaiver';
+import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import { getLateFeePeriodDays } from '@/utils/frequencyUtils';
 
 interface LoanDetailsViewProps {
@@ -1622,7 +1623,7 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       </div>
                       <div>
                         <span className="text-gray-600">Tipo de préstamo:</span>
-                        <div className="font-semibold">{loan.loan_type?.toUpperCase() || 'N/A'} | {loan.amortization_type?.toUpperCase() || 'N/A'}</div>
+                        <div className="font-semibold">{loan.loan_type?.toUpperCase() || 'N/A'} | {getAmortizationLabel(loan.amortization_type) || 'N/A'}</div>
                       </div>
                       <div>
                         <span className="text-gray-600">Porcentaje de interés:</span>

@@ -15,6 +15,7 @@ import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { AmortizationTable } from '@/components/loans/AmortizationTable';
 import { fromAnnualRate, toAnnualRate, getFrequencyLabel } from '@/utils/frequencyUtils';
+import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import {
   FileText,
   Plus,
@@ -1252,7 +1253,7 @@ const RequestsModule = () => {
                     {selectedRequest.amortization_type && (
                       <div>
                         <Label className="text-xs font-medium text-gray-500 uppercase">Tipo de Amortización</Label>
-                        <p className="text-sm font-semibold mt-1 capitalize">{selectedRequest.amortization_type}</p>
+                        <p className="text-sm font-semibold mt-1">{getAmortizationLabel(selectedRequest.amortization_type)}</p>
                       </div>
                     )}
                     {selectedRequest.payment_frequency && (

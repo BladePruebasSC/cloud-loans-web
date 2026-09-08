@@ -9,6 +9,7 @@ import {
   type LoanLike, type PaymentLike, type SaleLike, type OverdueFacts,
 } from '@/utils/portfolioMetrics';
 import { computeInstallmentDues } from '@/utils/installmentDues';
+import { getAmortizationLabel } from '@/utils/amortizationLabels';
 
 // ============================================================================
 // Datos de cartera — fuente única para INICIO y DASHBOARD
@@ -461,7 +462,8 @@ export const usePortfolioData = () => {
       items.push({
         id: `l-${l.id}`, kind: 'loan', at,
         title: `Préstamo a ${l.client?.full_name || clientById.get(l.client_id)?.full_name || 'cliente'}`,
-        subtitle: l.amortization_type ? String(l.amortization_type).toUpperCase() : undefined,
+        // El identificador se guarda en inglés; aquí se enseña, así que en español.
+        subtitle: getAmortizationLabel(l.amortization_type) || undefined,
         amount: Number(l.amount) || 0, loanId: l.id, clientId: l.client_id,
       });
     }

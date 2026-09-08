@@ -10,6 +10,32 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { spendLateFeeCredit } from './lateFeeWaiver';
 
+// ----------------------------------------------------------------------------
+// TRAZA DEL CÁLCULO (apagada por defecto)
+// ----------------------------------------------------------------------------
+// Esta función la llaman a la vez el inicio, la cartera, el listado, la agenda y cada tarjeta
+// de préstamo. Con una cartera normal escupía CIENTOS de líneas por carga y tapaba los errores
+// de verdad: al pedir la consola para diagnosticar un fallo, el error real quedaba fuera.
+// Para encenderla, en la consola del navegador:
+//     localStorage.setItem('debug:mora', '1')   (y recargar)
+// Para apagarla:
+//     localStorage.removeItem('debug:mora')
+// Los `console.error` y `console.warn` NO dependen de esto: los problemas siempre se ven.
+let lateFeeDebugCache: boolean | null = null;
+const lateFeeDebugEnabled = (): boolean => {
+  if (lateFeeDebugCache === null) {
+    try {
+      lateFeeDebugCache = typeof localStorage !== 'undefined' && localStorage.getItem('debug:mora') === '1';
+    } catch {
+      lateFeeDebugCache = false; // navegación privada / almacenamiento bloqueado
+    }
+  }
+  return lateFeeDebugCache;
+};
+const debugLog = (...args: unknown[]): void => {
+  if (lateFeeDebugEnabled()) console.log(...args);
+};
+
 export interface LoanData {
   id: string;
   remaining_balance: number;
@@ -60,7 +86,7 @@ export const getLateFeeBreakdownFromInstallments = async (
       return { totalLateFee: 0, breakdown: [] };
     }
 
-    console.log('🔍 getLateFeeBreakdownFromInstallments: Fecha de cálculo:', formatDateLocalIso(calculationDate));
+    debugLog('🔍 getLateFeeBreakdownFromInstallments: Fecha de cálculo:', formatDateLocalIso(calculationDate));
     // Obtener las cuotas de la tabla installments
     const { data: installments, error } = await supabase
       .from('installments')
@@ -251,7 +277,7 @@ export const getLateFeeBreakdownFromInstallments = async (
           if (matchingInstallment) {
             assignedPaymentIds.add(payment.id);
             paymentToInstallmentMap.set(payment.id, matchingInstallment.installment_number);
-            console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación por due_date - Cuota ${matchingInstallment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount}, due_date: ${payment.due_date})`);
+            debugLog(`🔍 getLateFeeBreakdownFromInstallments: Asignación por due_date - Cuota ${matchingInstallment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount}, due_date: ${payment.due_date})`);
           }
         }
       }
@@ -296,7 +322,7 @@ export const getLateFeeBreakdownFromInstallments = async (
             paymentToInstallmentMap.set(payment.id, installment.installment_number);
             covered += payment.amount || 0;
             unassignedIdx++;
-            console.log(`🔍 getLateFeeBreakdownFromInstallments: Asignación en cascada - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount}); cubierto ${covered}/${expectedTotal}`);
+            debugLog(`🔍 getLateFeeBreakdownFromInstallments: Asignación en cascada - Cuota ${installment.installment_number} → Pago del ${payment.payment_date} (RD$${payment.amount}); cubierto ${covered}/${expectedTotal}`);
           }
         }
       }
@@ -352,12 +378,12 @@ export const getLateFeeBreakdownFromInstallments = async (
       const isActuallyPaid = totalPaidForInstallment >= effectiveInstallmentTotalAmount - 0.01;
       
       if (isActuallyPaid && totalPaidForInstallment > 0) {
-        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} marcada como pagada - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${effectiveInstallmentTotalAmount}`);
+        debugLog(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} marcada como pagada - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${effectiveInstallmentTotalAmount}`);
       } else if (totalPaidForInstallment > 0 && totalPaidForInstallment < effectiveInstallmentTotalAmount) {
-        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} con pago parcial - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${effectiveInstallmentTotalAmount}, Pendiente: RD$${effectiveInstallmentTotalAmount - totalPaidForInstallment}`);
+        debugLog(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} con pago parcial - Total pagado: RD$${totalPaidForInstallment}, Monto total: RD$${effectiveInstallmentTotalAmount}, Pendiente: RD$${effectiveInstallmentTotalAmount - totalPaidForInstallment}`);
       }
       
-      console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} - Estado final:`, {
+      debugLog(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number} - Estado final:`, {
         is_paid_in_db: installment.is_paid,
         isActuallyPaid,
         late_fee_paid: installment.late_fee_paid,
@@ -403,7 +429,7 @@ export const getLateFeeBreakdownFromInstallments = async (
         daysOverdue = Math.max(0, daysSinceDue);
         const feeDays = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
 
-        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number}:`, {
+        debugLog(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number}:`, {
           dueDate: installment.due_date,
           calculationDate: calculationDate.toISOString().split('T')[0],
           daysSinceDue,
@@ -544,7 +570,7 @@ export const getLateFeeBreakdownFromInstallments = async (
       }
       const baseAmount = indefinitePeriods.base;
 
-      console.log(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - baseAmount=${baseAmount}, períodos=${indefinitePeriods.dates.length}`);
+      debugLog(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - baseAmount=${baseAmount}, períodos=${indefinitePeriods.dates.length}`);
 
       for (let idx = 0; idx < indefinitePeriods.dates.length; idx++) {
         const installmentNum = idx + 1;
@@ -627,7 +653,7 @@ export const getLateFeeBreakdownFromInstallments = async (
             totalLateFee += lateFeeForInstallment;
           }
           
-          console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota generada dinámicamente para indefinido:`, {
+          debugLog(`🔍 getLateFeeBreakdownFromInstallments: Cuota generada dinámicamente para indefinido:`, {
             installment: installmentNum,
             dueDate: dueDateStr,
             daysOverdue: isPaid ? 0 : daysOverdueForInstallment,
@@ -722,7 +748,7 @@ export const getLateFeeBreakdownFromInstallments = async (
         // Agregar la mora al total
         totalLateFee += lateFeeForNext;
         
-        console.log(`🔍 getLateFeeBreakdownFromInstallments: Cuota generada dinámicamente para next_payment_date:`, {
+        debugLog(`🔍 getLateFeeBreakdownFromInstallments: Cuota generada dinámicamente para next_payment_date:`, {
           installment: nextInstallmentNumber,
           dueDate: loan.next_payment_date,
           daysOverdue: daysOverdueForNext,
