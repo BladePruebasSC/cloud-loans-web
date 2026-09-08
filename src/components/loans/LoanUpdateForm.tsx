@@ -2634,7 +2634,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             .select('amount, principal_amount, interest_amount, due_date')
             .eq('loan_id', loan.id);
 
-          const round2 = (n: number) => Math.round(((Number.isFinite(n) ? n : 0) * 100)) / 100;
+          // OJO (2026-09-08): aquí había un `const round2` idéntico al del componente. El
+          // `case 'add_charge'` NO abre llaves, así que ese `const` no vivía en el caso sino en
+          // el bloque del `switch` ENTERO: tapaba al del componente para TODOS los casos
+          // siguientes, y como esta línea solo se ejecuta al agregar un cargo, cualquier otro
+          // caso que llamara a `round2` reventaba con "Cannot access 'round2' before
+          // initialization" (zona muerta temporal). Fue justo lo que pasó al usar `round2` en
+          // "Eliminar Mora". Se elimina el duplicado: el del componente (arriba) sirve igual.
           const amortizationTypeLower = ((loan as any).amortization_type || loan.amortization_type || '').toLowerCase();
           const isIndefinite = amortizationTypeLower === 'indefinite';
           
