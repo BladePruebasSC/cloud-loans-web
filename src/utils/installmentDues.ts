@@ -132,8 +132,11 @@ export const computeInstallmentDues = (
   // decir que no queda nada pendiente en un préstamo que lleva meses devengando interés.
   //
   // Se completa la rejilla con los mismos períodos que usan el cálculo de mora y el desglose de
-  // balance: desde la primera cuota hasta HOY, más el período en curso que aún no vence (así el
-  // cobrador puede adelantarlo, y el total coincide con "Interés pend. hoy").
+  // balance: desde la primera cuota hasta HOY. Y si TODO lo vencido está pagado, se sigue hasta
+  // dar con el primer período sin pagar, porque un préstamo indefinido nunca se queda sin
+  // próxima cuota que cobrar (2026-09-08: "ahora no generan la siguiente cuota"). Nunca se
+  // adelanta un período futuro mientras quede algo pendiente: lo que viene no compite con lo
+  // vencido, que es lo que hay que cobrar primero.
   if (indefinite?.startDate && indefinite?.todayIso) {
     const first = parseIsoDateLocal(getFirstDueDateIso(dateOnly(indefinite.startDate), indefinite.frequency));
     const nonCharges = rows.filter(r => !r.isCharge);
@@ -147,9 +150,32 @@ export const computeInstallmentDues = (
     );
 
     if (first && base > 0.005) {
+      // Cuánto se ha abonado a cada período. Los pagos de CARGO (sin interés) no cuentan: un
+      // cargo es otra obligación y vence el día que se creó, no en una fecha de la rejilla.
+      const paidByDue = new Map<string, number>();
+      for (const p of payments || []) {
+        if (p.superseded_at) continue;
+        const due = dateOnly(p.due_date);
+        if (!due) continue;
+        const principal = Number(p.principal_amount ?? p.amount ?? 0) || 0;
+        const interest = Number(p.interest_amount ?? 0) || 0;
+        if (principal > 0.005 && interest < 0.01) continue; // abono a un cargo
+        const gross = Number(p.amount ?? 0) || round2(principal + interest);
+        paidByDue.set(due, round2((paidByDue.get(due) || 0) + gross));
+      }
+      const periodoCubierto = (iso: string) => (paidByDue.get(iso) || 0) + 0.005 >= base;
+
       const covered = new Set(nonCharges.map(r => r.dueDate));
+      let quedaAlgoPendiente = false;
+
       for (let n = 0; n < 100000; n++) { // tope de seguridad
         const iso = formatDateLocalIso(addPeriodsToDate(first, n, indefinite.frequency));
+        const cubierto = periodoCubierto(iso);
+
+        // Más allá de HOY solo se generan los períodos que ya se pagaron por adelantado y, si no
+        // quedaba nada pendiente, uno más: el próximo a cobrar.
+        if (iso > indefinite.todayIso && !cubierto && quedaAlgoPendiente) break;
+
         if (!covered.has(iso)) {
           rows.push({
             id: `virtual:${iso}`,
@@ -165,7 +191,8 @@ export const computeInstallmentDues = (
             isVirtual: true,
           });
         }
-        if (iso > indefinite.todayIso) break; // incluye el primero que aún no vence
+        if (!cubierto) quedaAlgoPendiente = true;
+        if (iso > indefinite.todayIso && !cubierto) break; // el próximo a cobrar, y se para
       }
     }
   }

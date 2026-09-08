@@ -395,6 +395,32 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           // de vencimiento sea futura, para que se vea "lo que viene" apenas se crea el préstamo).
           monthsElapsed = Math.max(1, monthsElapsed);
 
+          // Y SIEMPRE debe haber una PRÓXIMA CUOTA QUE COBRAR (2026-09-08: "los préstamos
+          // indefinidos ahora no generan la siguiente cuota").
+          //
+          // El conteo de arriba se detiene en HOY, que es lo correcto mientras quede algo
+          // pendiente: la cuota de mañana no debe aparecer como pendiente hoy. Pero cuando el
+          // cliente se pone al día —o paga por adelantado, como aquí, hasta un período que aún no
+          // vence— no quedaba NINGUNA cuota, y un préstamo sin vencimiento se quedaba sin nada
+          // que cobrar: 0 pendientes y la próxima fecha congelada.
+          //
+          // Solo se estira si TODO lo generado está pagado, y solo hasta el primer período sin
+          // pagar: nunca se adelanta lo que viene mientras haya algo vencido por cobrar.
+          const isPeriodFullyPaid = (dueKey: string) => {
+            const paid = Number(interestPaidByDueDate.get(dueKey)?.sum || 0);
+            return interestPerPayment > 0.01 && paid + 0.05 >= interestPerPayment;
+          };
+          let todoPagadoHastaHoy = true;
+          for (let n = 0; n < monthsElapsed; n++) {
+            if (!isPeriodFullyPaid(dateToKey(addPeriodsToBase(n)))) { todoPagadoHastaHoy = false; break; }
+          }
+          if (todoPagadoHastaHoy) {
+            for (let n = monthsElapsed; n < monthsElapsed + 600; n++) { // tope de seguridad
+              monthsElapsed = n + 1;
+              if (!isPeriodFullyPaid(dateToKey(addPeriodsToBase(n)))) break;
+            }
+          }
+
           console.log('🔍 InstallmentsTable: Cálculo de cuotas para préstamo indefinido:', {
             loanId,
             finalMonthsElapsed: monthsElapsed,

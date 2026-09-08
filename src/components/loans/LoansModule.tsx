@@ -199,19 +199,45 @@ export const LoansModule = () => {
         const startIso = String(loan.start_date).split('T')[0];
         const firstDueFromStart = addPeriodIso(startIso, freq);
 
-        const paidByDue = new Map<string, number>(); // solo dues válidos (>= firstDueFromStart)
+        // REJILLA REAL DE PERÍODOS (2026-09-08).
+        //
+        // FALLO: la "Próxima fecha de pago" se quedaba clavada en la fecha de un CARGO. Un cargo
+        // vence el día en que se creó —el 2 de septiembre, pongamos—, que NO es una fecha de la
+        // rejilla (los períodos caen el día 1). Aquí entraba cualquier pago posterior al inicio,
+        // así que el abono de un cargo de RD$500 se leía como un pago PARCIAL de un período de
+        // RD$4,500, y un "parcial" manda sobre todo lo demás unas líneas más abajo: la próxima
+        // fecha se congelaba en la del cargo aunque el cliente estuviera al día.
+        //
+        // Solo cuentan los pagos que caen EN un período. La rejilla llega hasta hoy o hasta el
+        // último pago —lo que sea más tarde—, más uno, para reconocer los pagos adelantados.
+        const todayIsoForGrid = getCurrentDateStringForSantoDomingo();
+        const dueDatesFromPayments = ((payRows || []) as any[])
+          .map(p => (p?.due_date ? String(p.due_date).split('T')[0] : ''))
+          .filter(Boolean)
+          .sort();
+        const lastPaidDue = dueDatesFromPayments[dueDatesFromPayments.length - 1] || '';
+        const limitIso = lastPaidDue > todayIsoForGrid ? lastPaidDue : todayIsoForGrid;
+
+        const gridDates = new Set<string>();
+        {
+          let iso = firstDueFromStart;
+          for (let n = 0; n < 5000; n++) { // tope de seguridad
+            gridDates.add(iso);
+            if (iso > limitIso) break;
+            iso = addPeriodIso(iso, freq);
+          }
+        }
+
+        const paidByDue = new Map<string, number>(); // solo fechas que son un período real
         for (const p of (payRows || []) as any[]) {
           const rawDue = p?.due_date ? String(p.due_date).split('T')[0] : null;
           if (!rawDue) continue;
+          if (!gridDates.has(rawDue)) continue; // un cargo, o una fecha "clamp" inválida
           const interest = Number(p?.interest_amount || 0) || 0;
           const amt = Number(p?.amount || 0) || 0;
           const paidValue = interest > 0.01 ? interest : (amt > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
           if (paidValue <= 0.01) continue;
-          if (rawDue < firstDueFromStart) {
-            // Ignorar dues inválidos (ej. 28-feb) para determinar la fecha activa.
-          } else {
-            paidByDue.set(rawDue, (paidByDue.get(rawDue) || 0) + paidValue);
-          }
+          paidByDue.set(rawDue, (paidByDue.get(rawDue) || 0) + paidValue);
         }
 
         const fullyPaid: string[] = [];

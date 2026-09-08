@@ -30,14 +30,15 @@ const CUOTA_GUARDADA: RawInstallment = {
 const AGENDA = { startDate: '2026-05-08', frequency: 'monthly', todayIso: '2026-09-08' };
 
 describe('computeInstallmentDues con préstamos indefinidos', () => {
-  it('EL CASO REPORTADO: salen TODOS los períodos, no solo el guardado', () => {
+  it('EL CASO REPORTADO: salen TODOS los períodos vencidos, no solo el guardado', () => {
     const sinAgenda = computeInstallmentDues([CUOTA_GUARDADA], []);
     expect(sinAgenda).toHaveLength(1); // el fallo, tal cual
 
     const conAgenda = computeInstallmentDues([CUOTA_GUARDADA], [], AGENDA);
-    // Jun, jul, ago y sep vencidos + oct, el período en curso que aún no vence.
+    // Jun, jul, ago y sep. Octubre NO: mientras haya algo vencido sin cobrar, lo que viene no
+    // se adelanta.
     expect(conAgenda.map(r => r.dueDate)).toEqual([
-      '2026-06-08', '2026-07-08', '2026-08-08', '2026-09-08', '2026-10-08',
+      '2026-06-08', '2026-07-08', '2026-08-08', '2026-09-08',
     ]);
     expect(conAgenda.every(r => r.pending === 1250)).toBe(true);
   });
@@ -48,11 +49,35 @@ describe('computeInstallmentDues con préstamos indefinidos', () => {
 
     const pendientes = filas.filter(r => r.pending > 0.005);
     // Antes: cero filas pendientes → "no hay cuotas ni cargos pendientes" en un préstamo que
-    // debe cuatro períodos de interés.
+    // debe tres períodos de interés.
     expect(pendientes.map(r => r.dueDate)).toEqual([
-      '2026-07-08', '2026-08-08', '2026-09-08', '2026-10-08',
+      '2026-07-08', '2026-08-08', '2026-09-08',
     ]);
-    expect(pendingForCount(pendientes, pendientes.length)).toBe(5000);
+    expect(pendingForCount(pendientes, pendientes.length)).toBe(3750);
+  });
+
+  it('AL DÍA: siempre queda una PRÓXIMA cuota que cobrar', () => {
+    // FALLO REPORTADO (2026-09-08): "los préstamos indefinidos ahora no generan la siguiente
+    // cuota... queda pendiente pero ya no hay nueva cuota". El cliente pagó incluso un período
+    // que aún no vencía, y el préstamo se quedó sin nada que cobrar.
+    const pagada: RawInstallment = { ...CUOTA_GUARDADA, is_paid: true, paid_amount: 1250 };
+    const pagos: RawPayment[] = ['2026-06-08', '2026-07-08', '2026-08-08', '2026-09-08', '2026-10-08']
+      .map(due => ({ amount: 1250, interest_amount: 1250, due_date: due }));
+
+    const filas = computeInstallmentDues([pagada], pagos, AGENDA);
+    const pendientes = filas.filter(r => r.pending > 0.005);
+
+    // Octubre estaba pagado por adelantado, así que la próxima es NOVIEMBRE. Antes: ninguna.
+    expect(pendientes.map(r => r.dueDate)).toEqual(['2026-11-08']);
+    expect(pendientes[0].pending).toBe(1250);
+    expect(pendientes[0].isVirtual).toBe(true);
+  });
+
+  it('No se adelanta la cuota de mañana mientras haya algo vencido', () => {
+    // Al revés del caso de arriba: con períodos sin pagar, el que aún no vence no debe aparecer
+    // como pendiente (eso ya se corrigió una vez y no debe volver).
+    const filas = computeInstallmentDues([CUOTA_GUARDADA], [], AGENDA);
+    expect(filas.some(r => r.dueDate > AGENDA.todayIso)).toBe(false);
   });
 
   it('Solo la fila guardada se marca en `installments`; los períodos generados no', () => {
