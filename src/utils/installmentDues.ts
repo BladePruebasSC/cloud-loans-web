@@ -11,6 +11,8 @@
 // Los pagos de CARGO (con interés 0) solo alimentan cargos y los pagos de cuota solo cuotas
 // regulares: es la misma separación que ya hace `PaymentForm` al recalcular `paid_amount`.
 
+import { addPeriodsToDate, formatDateLocalIso, getFirstDueDateIso, parseIsoDateLocal } from './frequencyUtils';
+
 const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
 const dateOnly = (v: unknown) => String(v ?? '').split('T')[0];
 
@@ -52,6 +54,34 @@ export interface DueRow {
   /** Parte de capital de la cuota completa (para repartir un abono parcial) */
   principal: number;
   interest: number;
+  /**
+   * Período de un préstamo INDEFINIDO que no existe como fila en `installments`.
+   *
+   * Un indefinido guarda UNA SOLA cuota (`installment_number = 1`); los demás períodos se
+   * generan al vuelo porque un préstamo sin vencimiento no tiene un número de cuotas que
+   * escribir. Quien cobre contra una de estas filas debe registrar el pago normalmente —el
+   * sistema empareja pago y período por `due_date`— pero NO intentar actualizar `installments`:
+   * no hay fila que actualizar.
+   */
+  isVirtual?: boolean;
+}
+
+/**
+ * Datos para generar los períodos de un préstamo INDEFINIDO que no tienen fila en la base.
+ * Es la misma rejilla que usan el cálculo de mora y el desglose de balance.
+ */
+export interface IndefiniteSchedule {
+  /** `loans.start_date` ('YYYY-MM-DD'). */
+  startDate: string;
+  /** `loans.payment_frequency`. */
+  frequency: string;
+  /** Hoy en Santo Domingo ('YYYY-MM-DD'). */
+  todayIso: string;
+  /**
+   * Interés de un período. Si no se pasa, se toma de la última cuota regular guardada, que es
+   * lo que hace el cálculo de mora.
+   */
+  periodInterest?: number;
 }
 
 /** ¿La fila es un CARGO? (sin interés y principal = total) — misma regla que el resto del sistema. */
@@ -71,6 +101,7 @@ const rowIsCharge = (i: RawInstallment) =>
 export const computeInstallmentDues = (
   installments: RawInstallment[],
   payments: RawPayment[],
+  indefinite?: IndefiniteSchedule | null,
 ): DueRow[] => {
   const rows: DueRow[] = (installments || []).map(i => {
     const total = round2(Number(i.total_amount || 0));
@@ -88,6 +119,56 @@ export const computeInstallmentDues = (
       interest: round2(Number(i.interest_amount || 0)),
     };
   });
+
+  // --------------------------------------------------------------------------
+  // INDEFINIDOS: los períodos que no tienen fila (2026-09-08)
+  // --------------------------------------------------------------------------
+  // FALLO REPORTADO: "los préstamos indefinidos que tienen varias cuotas pendientes, en pago
+  // avanzado solo sale la primera, no las demás; igual pasa aun cuando está pagada".
+  //
+  // CAUSA: un indefinido guarda UNA SOLA fila en `installments` —los demás períodos se generan
+  // al vuelo, porque un préstamo sin vencimiento no tiene un número de cuotas que escribir—, y
+  // este cálculo solo miraba las filas de la base. Con la única fila pagada, el panel llegaba a
+  // decir que no queda nada pendiente en un préstamo que lleva meses devengando interés.
+  //
+  // Se completa la rejilla con los mismos períodos que usan el cálculo de mora y el desglose de
+  // balance: desde la primera cuota hasta HOY, más el período en curso que aún no vence (así el
+  // cobrador puede adelantarlo, y el total coincide con "Interés pend. hoy").
+  if (indefinite?.startDate && indefinite?.todayIso) {
+    const first = parseIsoDateLocal(getFirstDueDateIso(dateOnly(indefinite.startDate), indefinite.frequency));
+    const nonCharges = rows.filter(r => !r.isCharge);
+    const lastNonCharge = nonCharges[nonCharges.length - 1];
+    // Mismo orden de preferencia que el cálculo de mora: la última cuota regular guardada manda,
+    // y `periodInterest` (la cuota del préstamo) solo entra si no hay ninguna.
+    const base = round2(
+      Number(lastNonCharge?.interest || lastNonCharge?.total || 0) > 0.005
+        ? Number(lastNonCharge?.interest || lastNonCharge?.total || 0)
+        : Number(indefinite.periodInterest ?? 0)
+    );
+
+    if (first && base > 0.005) {
+      const covered = new Set(nonCharges.map(r => r.dueDate));
+      for (let n = 0; n < 100000; n++) { // tope de seguridad
+        const iso = formatDateLocalIso(addPeriodsToDate(first, n, indefinite.frequency));
+        if (!covered.has(iso)) {
+          rows.push({
+            id: `virtual:${iso}`,
+            installmentNumber: n + 1,
+            dueDate: iso,
+            isCharge: false,
+            total: base,
+            paid: 0,
+            pending: base,
+            isPaid: false,
+            principal: 0, // en un indefinido la cuota es interés puro
+            interest: base,
+            isVirtual: true,
+          });
+        }
+        if (iso > indefinite.todayIso) break; // incluye el primero que aún no vence
+      }
+    }
+  }
 
   // Pagos disponibles por (fecha, tipo). Un pago sin interés se considera de cargo.
   const pool = new Map<string, number>();
@@ -113,6 +194,16 @@ export const computeInstallmentDues = (
 
   const byId = new Map((installments || []).map(i => [i.id, i]));
 
+  /**
+   * INDEFINIDOS: dinero de interés que no encontró su período por fecha exacta.
+   *
+   * Un pago mayor que el interés de su período, o con una fecha que no cae en la rejilla (un
+   * cobro adelantado, una fecha ajustada), se quedaba sin aplicar y el período ya cobrado
+   * volvía a salir pendiente. Se recoge aquí y se reparte en cascada más abajo, que es lo
+   * mismo que hacen el cálculo de mora y el desglose de balance.
+   */
+  let indefiniteCarry = 0;
+
   for (const [key, group] of groups) {
     group.sort((a, b) => a.installmentNumber - b.installmentNumber);
     let available = pool.get(key) || 0;
@@ -136,6 +227,32 @@ export const computeInstallmentDues = (
       r.pending = round2(Math.max(0, r.total - assign));
       r.isPaid = r.pending < 0.01 && r.total > 0;
       available = round2(Math.max(0, available - assign));
+    }
+
+    if (indefinite && key.endsWith('|regular') && available > 0.005) {
+      indefiniteCarry = round2(indefiniteCarry + available);
+    }
+  }
+
+  if (indefinite) {
+    // Pagos de interés cuya fecha no tiene ninguna fila ni período en la rejilla.
+    for (const [key, amount] of pool) {
+      if (!key.endsWith('|regular') || groups.has(key)) continue;
+      indefiniteCarry = round2(indefiniteCarry + amount);
+    }
+
+    if (indefiniteCarry > 0.005) {
+      const pendientes = rows
+        .filter(r => !r.isCharge && r.pending > 0.005)
+        .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.installmentNumber - b.installmentNumber);
+      for (const r of pendientes) {
+        if (indefiniteCarry <= 0.005) break;
+        const assign = round2(Math.min(indefiniteCarry, r.pending));
+        r.paid = round2(r.paid + assign);
+        r.pending = round2(Math.max(0, r.pending - assign));
+        r.isPaid = r.pending < 0.01 && r.total > 0;
+        indefiniteCarry = round2(indefiniteCarry - assign);
+      }
     }
   }
 

@@ -10,6 +10,7 @@ import {
 } from '@/utils/portfolioMetrics';
 import { computeInstallmentDues } from '@/utils/installmentDues';
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
+import { activityInstant } from '@/utils/activityTime';
 
 // ============================================================================
 // Datos de cartera — fuente única para INICIO y DASHBOARD
@@ -205,7 +206,7 @@ export const usePortfolioData = () => {
           ids => supabase.from('payments')
             // `due_date` y `superseded_at` hacen falta para repartir los pagos entre cuotas
             // y saber qué se debe de verdad (`computeInstallmentDues`).
-            .select('id, loan_id, amount, principal_amount, interest_amount, late_fee, payment_date, due_date, superseded_at, created_by')
+            .select('id, loan_id, amount, principal_amount, interest_amount, late_fee, payment_date, payment_time_local, due_date, superseded_at, created_by')
             .in('loan_id', ids),
           loanIds, 'pagos'
         ),
@@ -446,7 +447,9 @@ export const usePortfolioData = () => {
     for (const p of payments) {
       if (!p.payment_date) continue;
       items.push({
-        id: `p-${p.id}`, kind: 'payment', at: String(p.payment_date),
+        // `payment_date` es solo la FECHA: sin la hora real, todos los pagos del día quedaban
+        // empatados y por debajo de cualquier cosa que sí tuviera hora.
+        id: `p-${p.id}`, kind: 'payment', at: String(p.payment_time_local || p.payment_date),
         title: `Pago de ${nameOfLoan(p.loan_id)}`,
         subtitle: [
           Number(p.principal_amount) ? `capital ${Math.round(Number(p.principal_amount)).toLocaleString('es-DO')}` : '',
@@ -564,7 +567,16 @@ export const usePortfolioData = () => {
       });
     }
 
-    return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 20);
+    // Se ordena por INSTANTE, no por texto.
+    //
+    // FALLO REPORTADO (2026-09-08): un préstamo creado justo después de su cliente salía como
+    // "hace 9 h" y el cliente como "hace 5 h". Los sellos de tiempo de esta lista vienen en dos
+    // formatos —unos con hora ('2026-09-08T20:00:00+00:00') y otros solo fecha ('2026-09-08')—
+    // y `localeCompare` los compara como cadenas: la fecha suelta es PREFIJO de la otra, así que
+    // siempre resulta "menor" y cualquier cosa sin hora se hundía por debajo de todo lo del
+    // mismo día. Comparar instantes trata a las dos formas por igual (una fecha suelta se sitúa
+    // al mediodía, que es lo único razonable cuando no se guardó la hora).
+    return items.sort((a, b) => activityInstant(b.at) - activityInstant(a.at)).slice(0, 20);
   }, [payments, loans, clients, tracking, loanHistory, deletedLoans, loanById, clientById]);
 
   const onboarding = useMemo(() => ({

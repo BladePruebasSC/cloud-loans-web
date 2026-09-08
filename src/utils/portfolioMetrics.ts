@@ -50,6 +50,11 @@ export interface PaymentLike {
   interest_amount: number | null;
   late_fee?: number | null;
   payment_date: string | null;
+  /**
+   * Instante real del cobro. `payment_date` es solo la FECHA, así que la actividad reciente no
+   * podía decir a qué hora se cobró y ordenaba todos los pagos del día como si fueran a la vez.
+   */
+  payment_time_local?: string | null;
   created_by?: string | null;
 }
 

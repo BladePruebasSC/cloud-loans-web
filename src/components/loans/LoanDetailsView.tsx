@@ -1437,6 +1437,20 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
         }
       }
 
+      // EL CAPITAL DE UN INDEFINIDO VA EN "AL DÍA" (2026-09-08).
+      //
+      // Faltaba por completo: la columna de capital solo recibía los CARGOS, así que un préstamo
+      // indefinido de RD$25,000 enseñaba un balance por antigüedad sin rastro de esos 25,000 y no
+      // cuadraba con "Capital pend. hoy" de esta misma pantalla.
+      //
+      // Va entero al rango "Al día" y NUNCA a un rango de atraso: en un préstamo indefinido el
+      // capital no tiene fecha de vencimiento —el cliente paga interés mientras quiera y devuelve
+      // el capital cuando decide—, así que no puede estar vencido. Lo que sí se atrasa es el
+      // interés de cada período, y eso ya se reparte arriba.
+      if (capitalPending > 0.005) {
+        capitalRanges['current'] = round2(capitalRanges['current'] + capitalPending);
+      }
+
       // CORRECCIÓN (auditoría de cálculos): "Interés pend. hoy" (pendingInterestForIndefinite, más
       // arriba en esta pantalla) y este desglose por antigüedad vienen de DOS motores de cálculo
       // distintos que no cuentan los períodos exactamente igual: el de "pend. hoy" (getLoanBalanceBreakdown)

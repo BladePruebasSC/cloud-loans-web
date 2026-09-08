@@ -111,7 +111,9 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
           .eq('loan_id', loanId),
         supabase
           .from('loans')
-          .select('amount, interest_rate, client:client_id(full_name, dni, phone)')
+          // `start_date`, `payment_frequency` y `amortization_type` hacen falta para reconstruir
+          // los períodos de un préstamo INDEFINIDO: solo el primero existe en `installments`.
+          .select('amount, interest_rate, start_date, payment_frequency, amortization_type, monthly_payment, client:client_id(full_name, dni, phone)')
           .eq('id', loanId)
           .maybeSingle(),
         companyId
@@ -142,7 +144,20 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
       }
       setCompanySettings((settings ?? null) as ReceiptCompany | null);
 
-      const dues = computeInstallmentDues(installments || [], payments || [])
+      // En un préstamo INDEFINIDO solo existe la PRIMERA cuota en `installments`; el resto de
+      // los períodos se generan al vuelo. Sin esta rejilla el panel enseñaba una sola cuota —o
+      // ninguna, si esa estaba pagada— en préstamos que llevaban meses devengando interés.
+      const isIndefinite = String((loanRow as any)?.amortization_type || '').toLowerCase() === 'indefinite';
+      const schedule = isIndefinite && (loanRow as any)?.start_date
+        ? {
+            startDate: String((loanRow as any).start_date),
+            frequency: String((loanRow as any).payment_frequency || 'monthly'),
+            todayIso: today,
+            periodInterest: Number((loanRow as any).monthly_payment) || undefined,
+          }
+        : null;
+
+      const dues = computeInstallmentDues(installments || [], payments || [], schedule)
         .filter(r => r.pending > 0.005);
       setRows(dues);
       setSelectedCount(0);
@@ -159,7 +174,7 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
     } finally {
       setLoading(false);
     }
-  }, [loanId, companyId]);
+  }, [loanId, companyId, today]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -276,6 +291,10 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
       // mantiene (`PaymentActions` lo recalcula solo para cargos al borrar un pago). Escribirlo en
       // una cuota regular dejaría un valor que nadie actualiza y que luego se leería como pagado.
       for (const a of allocation.allocations) {
+        // Un período generado de un indefinido no tiene fila que actualizar: el pago queda
+        // registrado con su `due_date` y de ahí lo lee el resto del sistema.
+        if (a.row.isVirtual) continue;
+
         const update: {
           paid_amount?: number; is_paid?: boolean; paid_date?: string; late_fee_paid?: number;
         } = {};

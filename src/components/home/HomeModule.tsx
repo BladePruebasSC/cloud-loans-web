@@ -7,6 +7,7 @@ import { CollectionTracking } from '@/components/loans/CollectionTracking';
 import { useAuth } from '@/hooks/useAuth';
 import { usePortfolioData, type PendingItem, type ActivityItem } from '@/hooks/usePortfolioData';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
+import { formatRelativeTime } from '@/utils/activityTime';
 import { formatCurrency } from '@/lib/utils';
 import {
   RefreshCw, DollarSign, CreditCard, UserPlus, Zap, Phone, MessageSquare, ArrowRight, AlertTriangle,
@@ -25,19 +26,8 @@ const greeting = () => {
   return h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches';
 };
 
-const relativeTime = (iso: string): string => {
-  const d = new Date(iso.length <= 10 ? `${iso}T12:00:00` : iso);
-  if (isNaN(d.getTime())) return '';
-  const mins = Math.round((Date.now() - d.getTime()) / 60000);
-  if (mins < 1) return 'ahora';
-  if (mins < 60) return `hace ${mins} min`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `hace ${hrs} h`;
-  const days = Math.round(hrs / 24);
-  if (days === 1) return 'ayer';
-  if (days < 30) return `hace ${days} días`;
-  return d.toLocaleDateString('es-DO', { day: 'numeric', month: 'short' });
-};
+// La antigüedad de cada fila vive en `@/utils/activityTime`: es la MISMA regla con la que se
+// ordena la lista, y así una fila no puede decir una hora distinta de la que la coloca.
 
 const KIND_ICON: Record<PendingItem['kind'], any> = {
   overdue: AlertTriangle, due_today: Clock, follow_up: Phone,
@@ -396,7 +386,7 @@ export const HomeModule: React.FC = () => {
                           <div className="min-w-0 flex-1">
                             <p className="text-sm text-slate-800 truncate">{a.title}</p>
                             <p className="text-xs text-slate-400">
-                              {relativeTime(a.at)}{a.subtitle ? ` · ${a.subtitle}` : ''}
+                              {formatRelativeTime(a.at)}{a.subtitle ? ` · ${a.subtitle}` : ''}
                             </p>
                           </div>
                           {a.amount ? <span className="text-sm font-semibold text-slate-900 shrink-0">{formatCurrency(a.amount)}</span> : null}

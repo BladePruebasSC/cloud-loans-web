@@ -2465,6 +2465,14 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       }
 
       // ── MODO CREACIÓN (comportamiento original, sin cambios) ──
+      // El INSTANTE de creación se escribe explícitamente. Antes se dejaba al valor por defecto
+      // de la columna; si ese defecto falta en la base (esta ha ido cambiando de esquema),
+      // `created_at` queda NULL y la actividad reciente del inicio tiene que caer a `start_date`
+      // —una fecha SIN hora—, con lo que el préstamo aparece con una hora inventada y por debajo
+      // del cliente que se registró justo antes. Con la columna escrita, la fila siempre sabe
+      // cuándo se creó. No se toca en el modo edición: allí ya existe y no debe moverse.
+      const loanDataForInsert = { ...loanData, created_at: new Date().toISOString() };
+
       // Verificar campos UUID antes de enviar
       console.log('UUID fields check:');
       console.log('client_id:', loanData.client_id, 'type:', typeof loanData.client_id);
@@ -2473,7 +2481,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
 
       const { data: insertedLoan, error } = await supabase
         .from('loans')
-        .insert([loanData])
+        .insert([loanDataForInsert])
         .select()
         .single();
 
