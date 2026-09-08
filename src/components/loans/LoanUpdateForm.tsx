@@ -33,6 +33,7 @@ import {
   distributeLateFeeWaiver,
   type WaiverTargetRow,
 } from '@/utils/lateFeeWaiver';
+import { describeSupabaseError } from '@/utils/supabaseErrors';
 import { computeExtendedSchedule } from '@/utils/loanRescheduling';
 import type { RawPayment } from '@/utils/installmentDues';
 import { formatCurrency } from '@/lib/utils';
@@ -3634,7 +3635,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
                 if (waiverError) {
                   console.error('Error anotando la mora eliminada en la cuota:', waiverError);
-                  toast.error('No se pudo eliminar la mora: la cuota no se pudo actualizar.');
+                  // El motivo va en el aviso: un "no se pudo" a secas obliga a abrir la consola,
+                  // y la consola de esta pantalla va llena de trazas del cálculo.
+                  toast.error(describeSupabaseError(waiverError, 'No se pudo eliminar la mora: la cuota no se pudo actualizar.'));
                   setLoading(false);
                   return;
                 }
