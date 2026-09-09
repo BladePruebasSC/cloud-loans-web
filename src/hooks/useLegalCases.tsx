@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { daysBetweenIso, isCaseOpen, translateLegalError, type LegalCaseStatus } from '@/utils/legalWorkflow';
+import { fetchLateFeesForLoans } from '@/utils/portfolioLateFees';
 
 // ============================================================================
 // Datos del módulo de Cobranza Legal
@@ -162,7 +163,10 @@ export const useLegalCases = () => {
           .select('*, client:client_id(full_name,dni,phone,email,address,city), loan:loan_id(amount,remaining_balance,current_late_fee,next_payment_date,grace_period_days,monthly_payment,status,start_date,interest_rate,payment_frequency,amortization_type)')
           .eq('company_id', companyId).order('opened_at', { ascending: false }),
         supabase.from('loans')
-          .select('id, client_id, amount, remaining_balance, current_late_fee, next_payment_date, grace_period_days, monthly_payment, status, collection_stage, collection_stage_since, deleted_at, client:client_id(full_name,dni,phone)')
+          // La configuración de mora hace falta para CALCULARLA desde las cuotas: la columna
+          // `current_late_fee` está cacheada y en esta pantalla salía RD$0.00 en préstamos que
+          // sí tenían mora, simplemente porque nadie la había escrito nunca.
+          .select('id, client_id, amount, remaining_balance, current_late_fee, next_payment_date, start_date, term_months, interest_rate, amortization_type, payment_frequency, grace_period_days, late_fee_enabled, late_fee_rate, max_late_fee, late_fee_calculation_type, monthly_payment, status, collection_stage, collection_stage_since, deleted_at, client:client_id(full_name,dni,phone)')
           .eq('loan_officer_id', companyId).in('status', ['active', 'overdue']),
         supabase.from('legal_intimations').select('*').eq('company_id', companyId).order('created_at', { ascending: false }),
         supabase.from('legal_approvals').select('*').eq('company_id', companyId).order('requested_at', { ascending: false }),
@@ -186,9 +190,24 @@ export const useLegalCases = () => {
 
       const openCaseByLoan = new Map<string, string>();
       for (const c of caseRows) if (isCaseOpen(c.status)) openCaseByLoan.set(c.loan_id, c.id);
-      const loans = ((loansRes.data || []) as any[])
-        .filter(l => !l.deleted_at)
-        .map(l => ({ ...l, daysOverdue: computeDaysOverdue(l, todayIso), activeCaseId: openCaseByLoan.get(l.id) || null })) as CollectionLoanRow[];
+      const loanRows = ((loansRes.data || []) as any[]).filter(l => !l.deleted_at);
+
+      // MORA CALCULADA DESDE LAS CUOTAS (2026-09-09).
+      //
+      // FALLO REPORTADO: "en la parte de cobranza en la mora siempre sale 0.00 aun teniendo un
+      // monto". Esta pantalla pintaba `loans.current_late_fee` tal cual, y esa columna solo la
+      // escriben algunos flujos (registrar un pago, el barrido de mora, la configuración
+      // global): en un préstamo por el que no ha pasado ninguno se queda en 0 para siempre. El
+      // resto de la aplicación nunca la usa; calcula la mora desde las cuotas, y eso es lo que
+      // se hace aquí con el mismo motor.
+      const lateFeeByLoan = await fetchLateFeesForLoans(loanRows);
+
+      const loans = loanRows.map(l => ({
+        ...l,
+        current_late_fee: lateFeeByLoan.get(String(l.id)) ?? l.current_late_fee,
+        daysOverdue: computeDaysOverdue(l, todayIso),
+        activeCaseId: openCaseByLoan.get(l.id) || null,
+      })) as CollectionLoanRow[];
       setCollectionLoans(loans);
 
       await loadSettings();

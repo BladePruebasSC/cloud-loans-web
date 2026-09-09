@@ -33,7 +33,7 @@ const PALETTE = ['#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#dc2626', '#0891b2
 export const AnalyticsDashboard: React.FC = () => {
   const navigate = useNavigate();
   const P = usePortfolioData();
-  const { portfolio, cashflow, recovery, series6, series12, riskLoans, clientStats, loans, todayIso } = P;
+  const { portfolio, cashflow, recovery, series6, series12, riskLoans, clientStats, loans, todayIso, lateFeeByLoan } = P;
   const [tab, setTab] = useState('resumen');
   const [range, setRange] = useState<6 | 12>(6);
   const series = range === 6 ? series6 : series12;
@@ -468,7 +468,11 @@ export const AnalyticsDashboard: React.FC = () => {
                           <td className="py-2">{formatDateStringForSantoDomingo(r.dueDate)}</td>
                           <td className={`py-2 text-right font-semibold ${r.daysOverdue > 60 ? 'text-red-700' : r.daysOverdue > 30 ? 'text-red-600' : 'text-amber-600'}`}>{r.daysOverdue}</td>
                           <td className="py-2 text-right font-semibold">{money(r.amount)}</td>
-                          <td className="py-2 text-right text-red-600">{money(Number(r.loan.current_late_fee) || 0)}</td>
+                          {/* La mora calculada desde las cuotas manda sobre `current_late_fee`,
+                              que es una columna cacheada y se queda con importes viejos. */}
+                          <td className="py-2 text-right text-red-600">
+                            {money(lateFeeByLoan.get(String(r.loan.id)) ?? (Number(r.loan.current_late_fee) || 0))}
+                          </td>
                           <td className="py-2 text-right">
                             <Button size="sm" variant="ghost" className="h-8"
                               onClick={() => navigate(`/prestamos?action=payment&loanId=${r.loan.id}`)}>Cobrar</Button>

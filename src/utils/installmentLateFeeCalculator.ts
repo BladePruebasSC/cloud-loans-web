@@ -55,12 +55,28 @@ export interface LoanData {
 }
 
 /**
+ * Cuotas y pagos ya leídos por quien llama.
+ *
+ * Sin esto, calcular la mora de una cartera entera son DOS consultas por préstamo. El inicio y
+ * la cobranza ya traen esas dos tablas para otras cosas, así que se las pasan y aquí no se
+ * vuelve a consultar. Es la manera de que esas pantallas usen el MISMO cálculo que el detalle
+ * del préstamo en vez de leer `loans.current_late_fee`, una columna cacheada que nadie mantiene
+ * al día (2026-09-09: el inicio seguía sumando una mora ya condonada y la cobranza mostraba
+ * RD$0.00 en préstamos que sí la tenían).
+ */
+export interface PreloadedLateFeeData {
+  installments?: any[] | null;
+  payments?: any[] | null;
+}
+
+/**
  * Obtiene el desglose de mora usando las cuotas de la tabla installments
  */
 export const getLateFeeBreakdownFromInstallments = async (
   loanId: string,
   loan: LoanData,
-  calculationDate: Date = getCurrentDateInSantoDomingo()
+  calculationDate: Date = getCurrentDateInSantoDomingo(),
+  preloaded?: PreloadedLateFeeData | null
 ): Promise<{
   totalLateFee: number;
   breakdown: Array<{
@@ -87,20 +103,31 @@ export const getLateFeeBreakdownFromInstallments = async (
     }
 
     debugLog('🔍 getLateFeeBreakdownFromInstallments: Fecha de cálculo:', formatDateLocalIso(calculationDate));
-    // Obtener las cuotas de la tabla installments
-    const { data: installments, error } = await supabase
-      .from('installments')
-      .select('*')
-      .eq('loan_id', loanId)
-      .order('installment_number', { ascending: true });
-      
-    if (error) {
-      console.error('Error obteniendo cuotas:', error);
-      return { totalLateFee: 0, breakdown: [] };
+
+    // Cuotas: las que ya trajo quien llama, o una consulta propia.
+    let installments: any[] | null | undefined;
+    if (preloaded?.installments) {
+      installments = [...preloaded.installments].sort(
+        (a, b) => (Number(a?.installment_number) || 0) - (Number(b?.installment_number) || 0)
+      );
+    } else {
+      const { data, error } = await supabase
+        .from('installments')
+        .select('*')
+        .eq('loan_id', loanId)
+        .order('installment_number', { ascending: true });
+
+      if (error) {
+        console.error('Error obteniendo cuotas:', error);
+        return { totalLateFee: 0, breakdown: [] };
+      }
+      installments = data;
     }
-    
+
     if (!installments || installments.length === 0) {
-      console.warn('No se encontraron cuotas en la tabla installments para el préstamo:', loanId);
+      if (!preloaded) {
+        console.warn('No se encontraron cuotas en la tabla installments para el préstamo:', loanId);
+      }
       return { totalLateFee: 0, breakdown: [] };
     }
     
@@ -122,15 +149,23 @@ export const getLateFeeBreakdownFromInstallments = async (
       isCharge?: boolean;
     }> = [];
     
-    // Obtener todos los pagos del préstamo para verificar si hay pagos que cubren cuotas
-    const { data: payments, error: paymentsError } = await supabase
-      .from('payments')
-      .select('id, principal_amount, interest_amount, payment_date, amount, due_date')
-      .eq('loan_id', loanId)
-      .order('payment_date', { ascending: true });
-    
-    if (paymentsError) {
-      console.error('Error obteniendo pagos:', paymentsError);
+    // Pagos: igual que las cuotas, se aprovechan los que ya vengan leídos.
+    let payments: any[] | null | undefined;
+    if (preloaded?.payments) {
+      payments = [...preloaded.payments].sort(
+        (a, b) => String(a?.payment_date || '').localeCompare(String(b?.payment_date || ''))
+      );
+    } else {
+      const { data, error: paymentsError } = await supabase
+        .from('payments')
+        .select('id, principal_amount, interest_amount, payment_date, amount, due_date')
+        .eq('loan_id', loanId)
+        .order('payment_date', { ascending: true });
+
+      if (paymentsError) {
+        console.error('Error obteniendo pagos:', paymentsError);
+      }
+      payments = data;
     }
     
     const amortizationType = String(loan.amortization_type || '').toLowerCase();

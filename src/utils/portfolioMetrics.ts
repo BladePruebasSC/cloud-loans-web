@@ -273,6 +273,14 @@ export const computePortfolioSnapshot = (
   loans: LoanLike[],
   todayIso: string,
   factsByLoan?: Map<string, OverdueFacts>,
+  /**
+   * Mora calculada desde las cuotas. Manda sobre `loans.current_late_fee`, que es una columna
+   * CACHEADA: solo la escriben algunos flujos, así que se queda con importes viejos —una mora ya
+   * condonada seguía sumando aquí— o en 0 para siempre en préstamos por los que no ha pasado
+   * ninguno. Si un préstamo no está en el mapa (no se leyeron sus cuotas) se usa la columna, que
+   * es mejor que dar 0 y hacer desaparecer una mora real.
+   */
+  lateFeeByLoan?: Map<string, number>,
 ): PortfolioSnapshot => {
   const buckets = AGING_BUCKETS.reduce((acc, b) => {
     acc[b] = { count: 0, balance: 0 };
@@ -303,7 +311,10 @@ export const computePortfolioSnapshot = (
     // Lo que suman las cuotas pendientes, que es lo que el usuario ve en "Ver cuotas".
     const balance = facts ? facts.pendingAmount : (Number(loan.remaining_balance) || 0);
     activeBalance += balance;
-    lateFeeTotal += Number(loan.current_late_fee) || 0;
+    const lateFeeCalculada = lateFeeByLoan?.get(String(loan.id));
+    lateFeeTotal += lateFeeCalculada !== undefined
+      ? lateFeeCalculada
+      : (Number(loan.current_late_fee) || 0);
 
     const days = facts ? facts.daysOverdue : loanDaysOverdue(loan, todayIso);
     maxDaysOverdue = Math.max(maxDaysOverdue, days);

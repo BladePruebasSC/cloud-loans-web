@@ -11,6 +11,7 @@ import {
 import { computeInstallmentDues } from '@/utils/installmentDues';
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import { activityInstant } from '@/utils/activityTime';
+import { computeLateFeesByLoan } from '@/utils/portfolioLateFees';
 
 // ============================================================================
 // Datos de cartera — fuente única para INICIO y DASHBOARD
@@ -169,7 +170,10 @@ export const usePortfolioData = () => {
         // abajo, pero la actividad reciente tiene que poder contar que se eliminaron y de
         // quién eran. Sin ellos, un préstamo borrado desaparecía sin dejar rastro visible.
         supabase.from('loans')
-          .select('id, client_id, amount, remaining_balance, total_amount, monthly_payment, status, start_date, next_payment_date, grace_period_days, current_late_fee, interest_rate, amortization_type, payment_frequency, collection_stage, created_at, deleted_at, client:client_id(full_name, dni, phone)')
+          // La configuración de mora (`late_fee_*`, `term_months`) hace falta para CALCULARLA
+          // desde las cuotas: `current_late_fee` es una columna cacheada que nadie mantiene al
+          // día y hacía que el inicio siguiera sumando una mora ya condonada.
+          .select('id, client_id, amount, remaining_balance, total_amount, monthly_payment, status, start_date, next_payment_date, term_months, grace_period_days, current_late_fee, late_fee_enabled, late_fee_rate, max_late_fee, late_fee_calculation_type, interest_rate, amortization_type, payment_frequency, collection_stage, created_at, deleted_at, client:client_id(full_name, dni, phone)')
           .eq('loan_officer_id', companyId),
         supabase.from('sales').select('*').eq('user_id', companyId),
       ]);
@@ -218,7 +222,9 @@ export const usePortfolioData = () => {
         ),
         fetchInChunks<InstallmentLike>(
           ids => supabase.from('installments')
-            .select('id, loan_id, installment_number, due_date, total_amount, principal_amount, interest_amount, paid_amount, is_paid')
+            // `late_fee_paid` es donde queda anotada la mora cobrada o CONDONADA: sin ella, el
+            // cálculo de mora de esta pantalla ignoraría las condonaciones.
+            .select('id, loan_id, installment_number, due_date, amount, total_amount, principal_amount, interest_amount, paid_amount, late_fee_paid, is_paid')
             .in('loan_id', ids),
           activeLoanIds, 'cuotas'
         ),
@@ -325,9 +331,51 @@ export const usePortfolioData = () => {
     return facts;
   }, [installments, payments, loans, todayIso]);
 
+  /**
+   * MORA de cada préstamo, calculada desde las cuotas con el MISMO motor que el detalle del
+   * préstamo y el cobro rápido.
+   *
+   * FALLO REPORTADO (2026-09-09): "aun cuando eliminas la mora de un préstamo, en inicio sigue
+   * diciendo que hay préstamo en mora y el monto lo dice". El inicio sumaba
+   * `loans.current_late_fee`, una columna CACHEADA que solo escriben algunos flujos (registrar
+   * un pago, el barrido de mora, la configuración global). En un préstamo por el que no ha
+   * pasado ninguno se queda con un importe viejo —o en 0 para siempre—, y ni las condonaciones
+   * ni el paso de los días la mueven.
+   *
+   * No hace consultas: reaprovecha las cuotas y los pagos que este hook ya trae. A los
+   * indefinidos SÍ se les calcula (a diferencia del atraso y el saldo, la mora sí sale bien de
+   * las cuotas: el motor genera los períodos que faltan).
+   */
+  const [lateFeeByLoan, setLateFeeByLoan] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    if (loans.length === 0 || installments.length === 0) {
+      setLateFeeByLoan(new Map());
+      return;
+    }
+
+    const byLoan = new Map<string, InstallmentLike[]>();
+    for (const inst of installments) {
+      const list = byLoan.get(inst.loan_id);
+      if (list) list.push(inst); else byLoan.set(inst.loan_id, [inst]);
+    }
+    const paysByLoan = new Map<string, PaymentLike[]>();
+    for (const p of payments) {
+      const list = paysByLoan.get(p.loan_id);
+      if (list) list.push(p); else paysByLoan.set(p.loan_id, [p]);
+    }
+
+    const activos = loans.filter(l => isActiveLoan(l.status));
+    computeLateFeesByLoan(activos as never, byLoan as never, paysByLoan as never)
+      .then(map => { if (!cancelled) setLateFeeByLoan(map); })
+      .catch(err => console.error('Error calculando la mora de la cartera:', err));
+
+    return () => { cancelled = true; };
+  }, [loans, installments, payments]);
+
   const portfolio = useMemo(
-    () => computePortfolioSnapshot(loans, todayIso, overdueFactsByLoan),
-    [loans, todayIso, overdueFactsByLoan],
+    () => computePortfolioSnapshot(loans, todayIso, overdueFactsByLoan, lateFeeByLoan),
+    [loans, todayIso, overdueFactsByLoan, lateFeeByLoan],
   );
   const cashflow = useMemo(() => computeCashflow(payments, sales, todayIso), [payments, sales, todayIso]);
   const recovery = useMemo(() => computeRecovery(loans, cashflow), [loans, cashflow]);
@@ -597,7 +645,7 @@ export const usePortfolioData = () => {
     loading, refreshing, lastUpdated, todayIso, companyName, can,
     loans, clients, payments, sales, tracking, legalCases,
     portfolio, cashflow, recovery, agenda, riskLoans, series6, series12,
-    pending, activity, onboarding, clientStats,
+    pending, activity, onboarding, clientStats, lateFeeByLoan,
     refresh: () => load(true),
   };
 };
