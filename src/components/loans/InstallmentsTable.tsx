@@ -962,11 +962,14 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             let cur = firstDueFromStart;
             let rowNum = 1;
             const MAX_PERIODS = 500;
+            // ¿Ya hay alguna cuota sin cobrar en la lista? Decide cuándo se puede dejar de
+            // generar: mientras no la haya, un préstamo indefinido tiene que seguir.
+            let hayCuotaPendiente = false;
 
             while (rowNum <= MAX_PERIODS) {
               // Las fechas de cargos tienen su propia fila; no generar cuota regular en esa fecha
               if (chargeDueDates.has(cur)) {
-                if (cur > todayIsoForRows) break;
+                if (cur > todayIsoForRows && hayCuotaPendiente) break;
                 cur = addPeriodIso(cur, freq);
                 continue;
               }
@@ -998,9 +1001,19 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 is_partial: isPartial
               });
 
+              if (!isPaid) hayCuotaPendiente = true;
               rowNum++;
-              // Parar después de incluir el primer período futuro (próxima cuota pendiente)
-              if (cur > todayIsoForRows) break;
+
+              // Se para al incluir el primer período futuro QUE SIGA PENDIENTE.
+              //
+              // FALLO REPORTADO (2026-09-08): "la tabla de ver cuotas sigue sin generar la
+              // siguiente cuota". Antes se paraba en el primer período futuro sin mirar si
+              // estaba pagado. Este cliente pagó por adelantado hasta el 1 de octubre —un
+              // período que aún no vence—, así que la última fila generada salía "Pagada" y el
+              // préstamo se quedaba con 0 pendientes y nada que cobrar. Un préstamo indefinido
+              // no termina: si lo que viene ya está pagado, hay que seguir hasta el primero que
+              // no lo esté.
+              if (cur > todayIsoForRows && !isPaid) break;
               cur = addPeriodIso(cur, freq);
             }
           }
