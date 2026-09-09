@@ -92,7 +92,8 @@ export const HomeModule: React.FC = () => {
     const approvals = pending.filter(p => p.kind === 'legal_approval').length;
     if (approvals > 0) out.push({ id: 'appr', tone: 'warning', text: `${approvals} intimación${approvals === 1 ? '' : 'es'} esperando aprobación`, to: '/cobranza?tab=casos' });
     const noContact = pending.filter(p => p.kind === 'overdue' && p.rank === 0).length;
-    if (noContact > 0) out.push({ id: 'nocon', tone: 'warning', text: `${noContact} cliente${noContact === 1 ? '' : 's'} en mora sin gestión reciente`, to: '/cobranza?tab=bandeja' });
+    // "atrasado", no "en mora": aquí se habla de cuotas vencidas, no del recargo por atraso.
+    if (noContact > 0) out.push({ id: 'nocon', tone: 'warning', text: `${noContact} cliente${noContact === 1 ? '' : 's'} atrasado${noContact === 1 ? '' : 's'} sin gestión reciente`, to: '/cobranza?tab=bandeja' });
     return out;
   }, [pending]);
 
@@ -181,10 +182,19 @@ export const HomeModule: React.FC = () => {
             sub={`${agenda.dueToday.length} cuota${agenda.dueToday.length === 1 ? '' : 's'} vence${agenda.dueToday.length === 1 ? '' : 'n'} hoy`}
             onClick={() => navigate('/cobro-rapido')}
           />
+          {/* "MORA" SIGNIFICA DOS COSAS DISTINTAS, y esta casilla decía la que no era.
+              Aquí se cuentan los préstamos ATRASADOS y su saldo en riesgo; el recargo por
+              atraso —lo que el préstamo llama "Mora Actual"— es otro número, y sale más abajo
+              en "Mora acumulada". Se llamaban igual, así que tras condonar toda la mora del
+              único préstamo atrasado el inicio seguía diciendo "1 en mora · RD$10,999.92"
+              mientras la ficha del cliente decía "Mora Actual: RD$0". Los dos eran correctos:
+              el cliente sigue debiendo 11 mil con 93 días de atraso, y ya no tiene recargo.
+              Condonar el recargo no pone al día un préstamo, así que esta casilla NO puede
+              vaciarse: lo que se arregla es el nombre. */}
           <DayTile
-            icon={AlertTriangle} label="En mora" tone="bg-red-100 text-red-700"
+            icon={AlertTriangle} label="Atrasados" tone="bg-red-100 text-red-700"
             value={String(portfolio.overdueLoans)}
-            sub={formatCurrency(portfolio.overdueBalance)}
+            sub={`${formatCurrency(portfolio.overdueBalance)} en riesgo`}
             onClick={() => navigate('/cobranza?tab=bandeja')}
           />
           <DayTile
@@ -409,7 +419,9 @@ export const HomeModule: React.FC = () => {
                 {[
                   { label: 'Préstamos activos', value: String(portfolio.activeLoans) },
                   { label: 'Saldo por cobrar', value: formatCurrency(portfolio.activeBalance) },
-                  { label: 'Mora acumulada', value: formatCurrency(portfolio.lateFeeTotal), cls: portfolio.lateFeeTotal > 0 ? 'text-red-600' : '' },
+                  // El RECARGO por atraso, no el saldo de los préstamos atrasados: es el mismo
+                  // número que la ficha del préstamo enseña como "Mora Actual".
+                  { label: 'Mora acumulada (recargos)', value: formatCurrency(portfolio.lateFeeTotal), cls: portfolio.lateFeeTotal > 0 ? 'text-red-600' : '' },
                   { label: 'Clientes con préstamo', value: `${clientStats.withLoan} de ${clientStats.total}` },
                   { label: 'Cobrado este mes', value: formatCurrency(cashflow.month.collected), cls: 'text-emerald-700' },
                 ].map(r => (

@@ -100,14 +100,14 @@ export const AnalyticsDashboard: React.FC = () => {
       ['Ingreso total', recovery.totalIncome],
       ['Saldo activo', portfolio.activeBalance],
       ['Saldo al día', portfolio.currentBalance],
-      ['Saldo en mora', portfolio.overdueBalance],
+      ['Saldo atrasado', portfolio.overdueBalance],
       ['% cartera al día', portfolio.healthPct],
       ['PAR-30', portfolio.par30],
       ['PAR-60', portfolio.par60],
       ['PAR-90', portfolio.par90],
       ['Préstamos activos', portfolio.activeLoans],
-      ['Préstamos en mora', portfolio.overdueLoans],
-      ['Mora acumulada por cobrar', portfolio.lateFeeTotal],
+      ['Préstamos atrasados', portfolio.overdueLoans],
+      ['Recargos por mora acumulados', portfolio.lateFeeTotal],
       [],
       ['Mes', 'Capital', 'Interés', 'Mora', 'POS', 'Cobrado', 'Ingreso', 'Colocado', 'Préstamos'],
       ...series12.map(s => [s.label, s.capital, s.interes, s.mora, s.pos, s.cobrado, s.ingreso, s.colocado, s.prestamos]),
@@ -196,7 +196,7 @@ export const AnalyticsDashboard: React.FC = () => {
             value={money(cashflow.month.income)} trend={cashflow.incomeMoMPct}
             sub={`Interés ${money(cashflow.month.interest)} · POS ${money(cashflow.month.pos)}`} />
           <Kpi icon={AlertTriangle} label="Cartera en riesgo (PAR-30)" tone="bg-red-100 text-red-700"
-            value={`${portfolio.par30.toFixed(1)}%`} sub={`${money(portfolio.overdueBalance)} en mora · ${portfolio.overdueLoans} préstamos`} />
+            value={`${portfolio.par30.toFixed(1)}%`} sub={`${money(portfolio.overdueBalance)} en atraso · ${portfolio.overdueLoans} préstamos`} />
           <Kpi icon={ShieldCheck} label="Cartera al día" tone="bg-violet-100 text-violet-700"
             value={`${portfolio.healthPct.toFixed(1)}%`} sub={`${money(portfolio.currentBalance)} sin atraso`} />
         </div>
@@ -380,7 +380,7 @@ export const AnalyticsDashboard: React.FC = () => {
                   <table className="w-full text-sm">
                     <thead className="text-xs uppercase text-slate-500 border-b">
                       <tr><th className="text-left py-2">Cliente</th><th className="text-right py-2">Préstamos</th>
-                        <th className="text-right py-2">En mora</th><th className="text-right py-2">Saldo</th>
+                        <th className="text-right py-2">Atrasados</th><th className="text-right py-2">Saldo</th>
                         <th className="text-right py-2">% de cartera</th></tr>
                     </thead>
                     <tbody>
@@ -409,7 +409,7 @@ export const AnalyticsDashboard: React.FC = () => {
               <Kpi icon={AlertTriangle} label="PAR-30" tone="bg-red-100 text-red-700" value={`${portfolio.par30.toFixed(1)}%`} sub="Saldo con +30 días de atraso" />
               <Kpi icon={AlertTriangle} label="PAR-60" tone="bg-red-100 text-red-700" value={`${portfolio.par60.toFixed(1)}%`} sub="Saldo con +60 días" />
               <Kpi icon={AlertTriangle} label="PAR-90" tone="bg-red-100 text-red-700" value={`${portfolio.par90.toFixed(1)}%`} sub="Saldo con +90 días" />
-              <Kpi icon={Activity} label="Mora por cobrar" tone="bg-orange-100 text-orange-700" value={money(portfolio.lateFeeTotal)} sub={`Peor atraso: ${portfolio.maxDaysOverdue} días`} />
+              <Kpi icon={Activity} label="Recargos por cobrar" tone="bg-orange-100 text-orange-700" value={money(portfolio.lateFeeTotal)} sub={`Peor atraso: ${portfolio.maxDaysOverdue} días`} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -452,7 +452,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <Panel title="Préstamos de mayor riesgo" subtitle="Ordenados por días de atraso y saldo expuesto"
               action={<Button size="sm" variant="outline" onClick={() => navigate('/cobranza?tab=bandeja')}>Ir a cobranza</Button>}>
               {riskLoans.length === 0 ? (
-                <p className="text-sm text-slate-500 py-8 text-center">No hay préstamos en mora 🎉</p>
+                <p className="text-sm text-slate-500 py-8 text-center">No hay préstamos atrasados 🎉</p>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -510,7 +510,7 @@ export const AnalyticsDashboard: React.FC = () => {
                   <p className="text-xs text-slate-500 mt-1">del saldo en los 3 mayores clientes</p>
                 </div>
                 <div className="rounded-lg border p-4">
-                  <p className="text-slate-500 text-xs mb-1">Clientes con mora</p>
+                  <p className="text-slate-500 text-xs mb-1">Clientes atrasados</p>
                   <p className="text-xl font-bold text-red-600">{topClients.filter(c => c.overdue > 0).length}</p>
                   <p className="text-xs text-slate-500 mt-1">entre los de mayor exposición</p>
                 </div>

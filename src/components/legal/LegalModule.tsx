@@ -221,7 +221,7 @@ export const LegalModule: React.FC = () => {
           <Card><CardContent className="p-0 overflow-x-auto">
             {loading ? <div className="py-12 text-center text-gray-500">Cargando…</div> : (
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-xs uppercase text-gray-600"><tr><th className="text-left px-3 py-2">Cliente</th><th className="text-left px-3 py-2">Etapa</th><th className="text-right px-3 py-2">Mora</th><th className="text-right px-3 py-2">Saldo</th><th className="text-right px-3 py-2">Mora RD$</th><th className="text-left px-3 py-2">Próx. cuota</th><th className="text-left px-3 py-2">Caso</th><th></th></tr></thead>
+                <thead className="bg-gray-50 text-xs uppercase text-gray-600"><tr><th className="text-left px-3 py-2">Cliente</th><th className="text-left px-3 py-2">Etapa</th><th className="text-right px-3 py-2">Atraso</th><th className="text-right px-3 py-2">Saldo</th><th className="text-right px-3 py-2">Mora RD$</th><th className="text-left px-3 py-2">Próx. cuota</th><th className="text-left px-3 py-2">Caso</th><th></th></tr></thead>
                 <tbody>
                   {queueLoans.map(l => (
                     <tr key={l.id} className="border-t hover:bg-amber-50/40">
