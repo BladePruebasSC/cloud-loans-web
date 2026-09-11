@@ -18,6 +18,8 @@ import { toast } from 'sonner';
 import { formatCurrencyNumber } from '@/lib/utils';
 import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
+import { interleaveCapitalPayments, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
+import { PiggyBank } from 'lucide-react';
 
 interface Installment {
   id: string;
@@ -195,7 +197,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       // y los pagos con due_date para no "partir" pagos históricos cuando cambia el interés.
       const { data: capitalPaymentsDataRaw, error: capitalPaymentsError } = await supabase
         .from('capital_payments')
-        .select('amount, capital_before, capital_after, keep_installments, created_at')
+        .select('id, amount, capital_before, capital_after, keep_installments, adjustment_reason, created_at')
         .eq('loan_id', loanId)
         .order('created_at', { ascending: true });
 
@@ -1735,6 +1737,19 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   // Si el préstamo está saldado, el total pendiente debe ser 0
   const isLoanSettled = loanInfo?.status === 'paid';
 
+  // Las cuotas con los ABONOS A CAPITAL intercalados por fecha: el abono es un pago más y la
+  // tabla tiene que decir cuándo se hizo y cuánto bajó el capital (pedido del 2026-09-11).
+  const scheduleEntries = interleaveCapitalPayments(
+    installments, inst => inst.due_date, capitalPayments as CapitalPaymentLike[],
+  );
+  /** "Capital: RD$150,000.00 → RD$100,000.00 · motivo" de un abono. */
+  const abonoDetalle = (abono: CapitalPaymentEntry) => [
+    abono.capitalBefore !== null && abono.capitalAfter !== null
+      ? `Capital: RD$${formatCurrencyNumber(abono.capitalBefore)} → RD$${formatCurrencyNumber(abono.capitalAfter)}`
+      : '',
+    abono.reason || '',
+  ].filter(Boolean).join(' · ');
+
   // ✅ CORRECCIÓN: El "Total Pendiente" debe salir del plan de cuotas real (installments),
   // no de `loan.total_amount` (puede quedar desactualizado tras un abono a capital).
   // `balancePending` ya se calcula como: capital pendiente (regular) + interés pendiente + cargos pendientes.
@@ -1912,7 +1927,20 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                 <div className="overflow-x-auto">
                   {/* Vista móvil */}
                   <div className="block md:hidden space-y-3">
-                    {installments.map((installment) => (
+                    {scheduleEntries.map((entry) => entry.kind === 'capital_payment' ? (
+                      <div key={entry.entry.key} className="border border-teal-200 rounded-lg p-4 bg-teal-50">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold text-teal-800 flex items-center gap-2">
+                            <PiggyBank className="h-4 w-4" /> Abono a capital
+                          </span>
+                          <span className="font-bold text-teal-700">RD${formatCurrencyNumber(entry.entry.amount)}</span>
+                        </div>
+                        <div className="mt-2 text-sm text-teal-800">
+                          {formatDate(entry.entry.dateIso)}
+                          {abonoDetalle(entry.entry) && <div className="text-xs mt-1">{abonoDetalle(entry.entry)}</div>}
+                        </div>
+                      </div>
+                    ) : ((installment: typeof entry.row) => (
                       <div key={installment.id} className="border rounded-lg p-4 bg-white">
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex items-center gap-2">
@@ -1968,7 +1996,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                           </div>
                         )}
                       </div>
-                    ))}
+                    ))(entry.row))}
                   </div>
 
                   {/* Vista desktop */}
@@ -1988,7 +2016,22 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                         </tr>
                       </thead>
                       <tbody>
-                        {installments.map((installment) => (
+                        {scheduleEntries.map((entry) => entry.kind === 'capital_payment' ? (
+                          <tr key={entry.entry.key} className="border-b bg-teal-50">
+                            <td className="p-3 font-semibold text-teal-800">
+                              <div className="flex items-center gap-2">
+                                <PiggyBank className="h-4 w-4" /> Abono a capital
+                              </div>
+                            </td>
+                            <td className="p-3 text-teal-800">{formatDate(entry.entry.dateIso)}</td>
+                            <td className="p-3 font-semibold text-teal-700">RD${formatCurrencyNumber(entry.entry.amount)}</td>
+                            <td className="p-3 text-teal-700">RD${formatCurrencyNumber(entry.entry.amount)}</td>
+                            <td className="p-3 text-teal-800 text-sm" colSpan={5}>
+                              <Badge variant="outline" className="mr-2 border-teal-300 bg-teal-100 text-teal-800">Abono</Badge>
+                              {abonoDetalle(entry.entry)}
+                            </td>
+                          </tr>
+                        ) : ((installment: typeof entry.row) => (
                           <tr key={installment.id} className="border-b hover:bg-gray-50">
                             <td className="p-3 font-semibold">
                               {formatInstallmentLabel(
@@ -2023,7 +2066,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                               )}
                             </td>
                           </tr>
-                        ))}
+                        ))(entry.row))}
                       </tbody>
                     </table>
                   </div>

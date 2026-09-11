@@ -80,12 +80,11 @@ interface PaymentActionsProps {
 }
 
 /**
- * Instante REAL en que se registró un pago.
+ * Instante REAL en que se registró un pago: decide cuál es "el último" y se puede eliminar.
  *
- * FALLO REPORTADO (2026-09-11): "ahora no me deja eliminar los últimos pagos". El chequeo de
- * "abono a capital posterior" comparaba el instante del abono con la FECHA del pago
- * ('2026-09-11', es decir, medianoche): cualquier abono hecho ese mismo día —aunque fuera ANTES
- * del pago— contaba como posterior y la opción de eliminar desaparecía.
+ * FALLO REPORTADO (2026-09-11): "ahora no me deja eliminar los últimos pagos". Se comparaba con
+ * la FECHA del pago ('2026-09-11', es decir, medianoche), y lo hecho ese mismo día a otra hora
+ * quedaba mal ordenado.
  */
 const paymentInstantIso = (p: { created_at?: string | null; payment_date?: string | null; payment_time_local?: string | null }): string | null => {
   if (p.created_at) return String(p.created_at);
@@ -140,7 +139,6 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [isLatestPayment, setIsLatestPayment] = useState(false);
-  const [hasLaterCapitalPayment, setHasLaterCapitalPayment] = useState(false);
   /** Ya se sabe si este pago se puede eliminar (evita enseñar un motivo antes de comprobarlo). */
   const [deleteCheckDone, setDeleteCheckDone] = useState(false);
   const [forceDelete, setForceDelete] = useState(false);
@@ -179,19 +177,6 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           setIsLatestPayment(false);
         }
 
-        // ¿Hay un abono a capital registrado DESPUÉS de este pago? (Comparando instantes, no el
-        // día: ver `paymentInstantIso`.)
-        if (propioIso) {
-          const { data: laterCapital } = await supabase
-            .from('capital_payments')
-            .select('id')
-            .eq('loan_id', payment.loan_id)
-            .gt('created_at', propioIso)
-            .limit(1);
-          setHasLaterCapitalPayment(!!(laterCapital && laterCapital.length > 0));
-        } else {
-          setHasLaterCapitalPayment(false);
-        }
         setDeleteCheckDone(true);
       } catch (error) {
         console.error('🔍 Error en verificación:', error);
@@ -307,28 +292,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       console.log('🗑️ Datos del préstamo obtenidos:', loanData);
 
-      // VALIDACIÓN: No permitir eliminar un pago si existe un abono a capital posterior a él.
-      // Eliminarlo alteraría el historial de saldo sobre el que se calculó ese abono.
-      // Se compara con el INSTANTE del pago, no con su día (ver `paymentInstantIso`).
-      const paymentInstant = paymentInstantIso(payment as any);
-      if (paymentInstant) {
-        const { data: laterCapitalPayments, error: capCheckError } = await supabase
-          .from('capital_payments')
-          .select('id, created_at, amount')
-          .eq('loan_id', payment.loan_id)
-          .gt('created_at', paymentInstant)
-          .limit(1);
-
-        if (!capCheckError && laterCapitalPayments && laterCapitalPayments.length > 0) {
-          const capDate = String(laterCapitalPayments[0].created_at).split('T')[0];
-          toast.error(
-            `No se puede eliminar este pago porque existe un abono a capital realizado el ${capDate} que depende del historial previo. Elimine primero el abono a capital.`
-          );
-          setLoading(false);
-          setShowDeleteModal(false);
-          return;
-        }
-      }
+      // (2026-09-11) Ya NO se bloquea la eliminación porque haya un abono a capital posterior.
+      // El aviso decía "elimine primero el abono a capital", pero la aplicación no tiene forma de
+      // eliminar un abono: un pago anterior a un abono quedaba sin poder borrarse nunca. Pedido:
+      // "después del abono a capital debe permitirme eliminar pagos". El saldo no depende del
+      // orden: capital pendiente = monto prestado − capital cobrado − abonos, sea cual sea.
 
       // PASO 2: Eliminar el pago
       console.log('🗑️ ELIMINANDO PAGO...');
@@ -1402,11 +1370,9 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
               ? 'Comprobando…'
               : loanStatus === 'paid'
                 ? 'El préstamo está saldado'
-                : hasLaterCapitalPayment
-                  ? 'Hay un abono a capital posterior: elimínelo primero'
-                  : !isLatestPayment
-                    ? 'Solo se puede eliminar el último pago'
-                    : null;
+                : !isLatestPayment
+                  ? 'Solo se puede eliminar el último pago'
+                  : null;
             return (
               <DropdownMenuItem
                 disabled={!!motivo}

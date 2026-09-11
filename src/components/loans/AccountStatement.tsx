@@ -31,6 +31,16 @@ import { addHours } from 'date-fns';
 import { formatDateStringForSantoDomingo, createDateInSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { getFrequencyRateFactor } from '@/utils/frequencyUtils';
 import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
+import { interleaveCapitalPayments, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
+import { PiggyBank } from 'lucide-react';
+
+/** "Capital: RD$150,000.00 → RD$100,000.00 · motivo" de un abono a capital. */
+const abonoDetalle = (abono: CapitalPaymentEntry): string => [
+  abono.capitalBefore !== null && abono.capitalAfter !== null
+    ? `Capital: ${formatCurrency(abono.capitalBefore)} → ${formatCurrency(abono.capitalAfter)}`
+    : '',
+  abono.reason || '',
+].filter(Boolean).join(' · ');
 
 interface Payment {
   id: string;
@@ -113,6 +123,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   const [currentLateFee, setCurrentLateFee] = useState(0);
   const [amortizationPeriod, setAmortizationPeriod] = useState('all');
   const [amortizationSchedule, setAmortizationSchedule] = useState<any[]>([]);
+  /** Abonos a capital: se intercalan en la tabla de amortización como una fila más. */
+  const [capitalPaymentRows, setCapitalPaymentRows] = useState<CapitalPaymentLike[]>([]);
 
   // Función para traducir el método de pago en las notas
   const translatePaymentNotes = (notes: string) => {
@@ -353,8 +365,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Obtener abonos a capital
       const { data: capitalPaymentsData, error: capitalPaymentsError } = await supabase
         .from('capital_payments')
-        .select('amount, capital_before, capital_after, created_at')
+        .select('id, amount, capital_before, capital_after, adjustment_reason, created_at')
         .eq('loan_id', loanId);
+      setCapitalPaymentRows((capitalPaymentsData || []) as CapitalPaymentLike[]);
       
       if (capitalPaymentsError) {
         console.error('Error obteniendo abonos a capital:', capitalPaymentsError);
@@ -2737,7 +2750,20 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  ${amortizationSchedule.map(installment => `
+                  ${interleaveCapitalPayments(amortizationSchedule, (row: any) => row?.dueDate, capitalPaymentRows).map(entry => entry.kind === 'capital_payment' ? `
+                    <tr style="background-color: #f0fdfa;">
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; font-weight: bold; color: #115e59;">Abono a capital</td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; color: #115e59;">${formatDate(entry.entry.dateIso)}</td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; color: #0f766e; font-weight: bold;">${formatCurrency(entry.entry.amount)}</td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; color: #0f766e;">${formatCurrency(entry.entry.amount)}</td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; color: #999;">—</td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; color: #115e59;">${entry.entry.capitalAfter !== null ? formatCurrency(entry.entry.capitalAfter) : '—'}</td>
+                      <td style="padding: 6px; text-align: left; border: 1px solid #ddd; color: #115e59;">
+                        Abono a capital
+                        ${abonoDetalle(entry.entry) ? `<div style="font-size: 10px; margin-top: 2px;">${abonoDetalle(entry.entry)}</div>` : ''}
+                      </td>
+                    </tr>
+                  ` : ((installment: any) => `
                     <tr style="${installment.isSettled ? 'background-color: #eff6ff;' : installment.isPaid ? 'background-color: #f0fdf4;' : installment.isPartial ? 'background-color: #fef3c7;' : ''}">
                       <td style="padding: 6px; text-align: left; border: 1px solid #ddd; font-weight: bold;">
                         ${installment.installment}
@@ -2784,7 +2810,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                         </span>
                       </td>
                     </tr>
-                  `).join('')}
+                  `)(entry.row)).join('')}
                 </tbody>
               </table>
             </div>
@@ -3183,13 +3209,47 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {amortizationSchedule
-                        .filter((_, index) => {
+                      {interleaveCapitalPayments(
+                        amortizationSchedule.filter((_, index) => {
                           if (amortizationPeriod === 'all') return true;
                           const limit = parseInt(amortizationPeriod);
                           return index < limit;
-                        })
-                        .map((installment) => (
+                        }),
+                        (row: any) => row?.dueDate,
+                        capitalPaymentRows,
+                        // En una vista recortada no se añade un abono que cae después de lo mostrado.
+                        { includeTrailing: amortizationPeriod === 'all' },
+                      )
+                        .map((entry) => entry.kind === 'capital_payment' ? (
+                          <tr key={entry.entry.key} className="border-b bg-teal-50">
+                            <td className="p-3">
+                              <div className="flex items-center gap-2 font-medium text-teal-800">
+                                <PiggyBank className="h-4 w-4" /> Abono a capital
+                              </div>
+                            </td>
+                            <td className="p-3 text-teal-800">{formatDate(entry.entry.dateIso)}</td>
+                            <td className="p-3 font-semibold text-teal-700">{formatCurrency(entry.entry.amount)}</td>
+                            <td className="p-3 text-teal-700">{formatCurrency(entry.entry.amount)}</td>
+                            <td className="p-3 text-gray-400">—</td>
+                            <td className="p-3 text-teal-800">
+                              {entry.entry.capitalAfter !== null ? (
+                                <>
+                                  <div>{formatCurrency(entry.entry.capitalAfter)}</div>
+                                  <div className="text-xs text-teal-700">capital tras el abono</div>
+                                </>
+                              ) : '—'}
+                            </td>
+                            <td className="p-3">
+                              <Badge variant="outline" className="border-teal-300 bg-teal-100 text-teal-800">
+                                <PiggyBank className="h-3 w-3 mr-1" />
+                                Abono a capital
+                              </Badge>
+                              {abonoDetalle(entry.entry) && (
+                                <div className="text-xs text-teal-700 mt-1">{abonoDetalle(entry.entry)}</div>
+                              )}
+                            </td>
+                          </tr>
+                        ) : ((installment: any) => (
                           <tr key={(installment as any).rowKey || installment.installment} className={`border-b hover:bg-gray-50 ${(installment as any).isSettled ? 'bg-blue-50' : installment.isPaid ? 'bg-green-50' : ''}`}>
                             <td className="p-3">
                               <div className="flex items-center gap-2">
@@ -3272,7 +3332,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                               )}
                             </td>
                           </tr>
-                        ))}
+                        ))(entry.row))}
                     </tbody>
                   </table>
                   
