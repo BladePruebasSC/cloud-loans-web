@@ -67,6 +67,8 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
   const [rows, setRows] = useState<DueRow[]>([]);
   /** Motivo por el que no se pudieron leer las cuotas. Distinto de "no hay cuotas". */
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** Un indefinido nunca queda saldado por cobrar cuotas: siempre hay un período devengándose. */
+  const [isIndefiniteLoan, setIsIndefiniteLoan] = useState(false);
   // La selección es UN SOLO NÚMERO: cuántas de las cuotas más antiguas entran en el pago.
   //
   // Antes eran tres listas (marcadas a mano, arrastradas por el monto y desmarcadas), y con
@@ -159,6 +161,7 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
       // los períodos se generan al vuelo. Sin esta rejilla el panel enseñaba una sola cuota —o
       // ninguna, si esa estaba pagada— en préstamos que llevaban meses devengando interés.
       const isIndefinite = String((loanRow as any)?.amortization_type || '').toLowerCase() === 'indefinite';
+      setIsIndefiniteLoan(isIndefinite);
       const frequency = String((loanRow as any)?.payment_frequency || 'monthly');
       const schedule = isIndefinite && (loanRow as any)?.start_date
         ? {
@@ -343,7 +346,13 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
         .eq('id', loanId)
         .single();
 
-      if (loanAfter && Number(loanAfter.remaining_balance || 0) <= 0) {
+      // Se marca saldado SOLO si este cobro cubrió todo lo que quedaba pendiente. Antes bastaba
+      // con que `remaining_balance` llegara a 0, y esa columna la calcula la base con su propia
+      // fórmula: en un préstamo a plazo fijo con abono a capital restaba el abono dos veces, el
+      // saldo llegaba a 0 con cuotas por cobrar y el préstamo quedaba "pagado" —con lo que,
+      // entre otras cosas, ya no dejaba eliminar sus pagos—. Un indefinido nunca se salda así.
+      const cubrioTodo = allocation.applied + 0.005 >= totalPending;
+      if (!isIndefiniteLoan && cubrioTodo && loanAfter && Number(loanAfter.remaining_balance || 0) <= 0.01) {
         await supabase.from('loans').update({ status: 'paid' }).eq('id', loanId);
       }
 

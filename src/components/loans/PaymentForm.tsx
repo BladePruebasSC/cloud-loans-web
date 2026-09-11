@@ -2933,12 +2933,27 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         bdCalculated: !fetchError && updatedLoanData
       });
 
+      // ¿Queda saldado? Se confirma con el MISMO cálculo de la ficha del préstamo antes de
+      // marcarlo. `remaining_balance` lo calcula la base con su propia fórmula, que en un plazo
+      // fijo con abono a capital restaba el abono dos veces: llegaba a 0 con cuotas por cobrar y
+      // el préstamo quedaba "pagado" (y ya no dejaba eliminar sus pagos).
+      let quedaSaldado = finalBalance <= 0;
+      if (quedaSaldado) {
+        try {
+          const confirmacion = await getLoanBalanceBreakdown(supabase as any, selectedLoan as any);
+          if (confirmacion.totalBalance > 0.01) quedaSaldado = false;
+        } catch (confirmError) {
+          // Sin poder confirmarlo se respeta lo que diga la base, como antes.
+          console.error('No se pudo confirmar el saldo del préstamo:', confirmError);
+        }
+      }
+
       // Preparar datos de actualización del préstamo
       // CORRECCIÓN: NO incluir remaining_balance ni next_payment_date porque los triggers ya los actualizaron
       const loanUpdateData: any = {
         // remaining_balance: NO incluir - ya fue actualizado por los triggers de la BD (incluye cargos)
         // next_payment_date: NO incluir si los triggers lo actualizaron - usar el valor del trigger
-        status: finalBalance <= 0 ? 'paid' : 'active',
+        status: quedaSaldado ? 'paid' : 'active',
         paid_installments: updatedPaidInstallments,
       };
 

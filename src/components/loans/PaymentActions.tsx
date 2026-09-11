@@ -79,6 +79,29 @@ interface PaymentActionsProps {
   loanStatus?: string; // Estado del préstamo para validar si se puede eliminar
 }
 
+/**
+ * Instante REAL en que se registró un pago.
+ *
+ * FALLO REPORTADO (2026-09-11): "ahora no me deja eliminar los últimos pagos". El chequeo de
+ * "abono a capital posterior" comparaba el instante del abono con la FECHA del pago
+ * ('2026-09-11', es decir, medianoche): cualquier abono hecho ese mismo día —aunque fuera ANTES
+ * del pago— contaba como posterior y la opción de eliminar desaparecía.
+ */
+const paymentInstantIso = (p: { created_at?: string | null; payment_date?: string | null; payment_time_local?: string | null }): string | null => {
+  if (p.created_at) return String(p.created_at);
+  if (p.payment_time_local) return String(p.payment_time_local);
+  const day = String(p.payment_date || '').split('T')[0];
+  // Sin hora registrada, el pago pudo ser a cualquier hora de ese día: se toma el final del día
+  // en Santo Domingo para no bloquear por un abono hecho esa misma mañana.
+  return day ? `${day}T23:59:59.999-04:00` : null;
+};
+
+/** Milisegundos de un sello de tiempo (0 si no se puede leer). */
+const instantMs = (v: unknown): number => {
+  const t = Date.parse(String(v || ''));
+  return Number.isFinite(t) ? t : 0;
+};
+
 // Función para traducir el método de pago en las notas
 const translatePaymentNotes = (notes: string) => {
   if (!notes) return notes;
@@ -118,6 +141,8 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [loading, setLoading] = useState(false);
   const [isLatestPayment, setIsLatestPayment] = useState(false);
   const [hasLaterCapitalPayment, setHasLaterCapitalPayment] = useState(false);
+  /** Ya se sabe si este pago se puede eliminar (evita enseñar un motivo antes de comprobarlo). */
+  const [deleteCheckDone, setDeleteCheckDone] = useState(false);
   const [forceDelete, setForceDelete] = useState(false);
   const { companyId } = useAuth();
 
@@ -130,9 +155,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         const { data: allPayments, error } = await supabase
           .from('payments')
           .select('id, created_at')
-          .eq('loan_id', payment.loan_id)
-          .order('created_at', { ascending: false })
-          .order('id', { ascending: false }); // Ordenar también por ID para consistencia
+          .eq('loan_id', payment.loan_id);
 
         if (error) {
           console.error('🔍 Error verificando último pago:', error);
@@ -140,34 +163,36 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           return;
         }
 
-        if (allPayments && allPayments.length > 0) {
-          const latestPaymentId = allPayments[0].id;
-          const isLatest = latestPaymentId === payment.id;
+        // Instante de ESTE pago según la base (el objeto recibido puede no traerlo).
+        const propio = (allPayments || []).find(p => p.id === payment.id);
+        const propioIso = propio?.created_at ? String(propio.created_at) : paymentInstantIso(payment as any);
 
-          console.log('🔍 Resultado:', {
-            currentPaymentId: payment.id,
-            latestPaymentId: latestPaymentId,
-            totalPayments: allPayments.length,
-            isLatest: isLatest
-          });
-
+        if (propio) {
+          // "El último" = el registrado más tarde. Un pago avanzado inserta varias filas en UNA
+          // operación y todas llevan el MISMO `created_at`: antes solo una —la de mayor id, al
+          // azar— se podía eliminar y las demás del mismo cobro no. Ahora cualquiera de ese
+          // último lote; al borrarla, las que queden siguen siendo las últimas.
+          const propioMs = instantMs(propioIso);
+          const isLatest = !(allPayments || []).some(p => p.id !== payment.id && instantMs(p.created_at) > propioMs);
           setIsLatestPayment(isLatest);
         } else {
-          console.log('🔍 No hay pagos encontrados');
           setIsLatestPayment(false);
         }
 
-        // Verificar si existe algún abono a capital posterior a este pago
-        const paymentDate = (payment.payment_date as string)?.split('T')[0] || payment.payment_date;
-        if (paymentDate) {
+        // ¿Hay un abono a capital registrado DESPUÉS de este pago? (Comparando instantes, no el
+        // día: ver `paymentInstantIso`.)
+        if (propioIso) {
           const { data: laterCapital } = await supabase
             .from('capital_payments')
             .select('id')
             .eq('loan_id', payment.loan_id)
-            .gt('created_at', paymentDate)
+            .gt('created_at', propioIso)
             .limit(1);
           setHasLaterCapitalPayment(!!(laterCapital && laterCapital.length > 0));
+        } else {
+          setHasLaterCapitalPayment(false);
         }
+        setDeleteCheckDone(true);
       } catch (error) {
         console.error('🔍 Error en verificación:', error);
         setIsLatestPayment(false);
@@ -284,13 +309,14 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       // VALIDACIÓN: No permitir eliminar un pago si existe un abono a capital posterior a él.
       // Eliminarlo alteraría el historial de saldo sobre el que se calculó ese abono.
-      const paymentDate = (payment.payment_date as string)?.split('T')[0] || payment.payment_date;
-      if (paymentDate) {
+      // Se compara con el INSTANTE del pago, no con su día (ver `paymentInstantIso`).
+      const paymentInstant = paymentInstantIso(payment as any);
+      if (paymentInstant) {
         const { data: laterCapitalPayments, error: capCheckError } = await supabase
           .from('capital_payments')
           .select('id, created_at, amount')
           .eq('loan_id', payment.loan_id)
-          .gt('created_at', paymentDate)
+          .gt('created_at', paymentInstant)
           .limit(1);
 
         if (!capCheckError && laterCapitalPayments && laterCapitalPayments.length > 0) {
@@ -1369,18 +1395,36 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <MessageCircle className="mr-2 h-4 w-4" />
             Enviar por WhatsApp
           </DropdownMenuItem>
-          {isLatestPayment && loanStatus !== 'paid' && !hasLaterCapitalPayment && (
-            <DropdownMenuItem
-              onClick={() => {
-                setForceDelete(false);
-                setShowPasswordVerification(true);
-              }}
-              className="text-red-600"
-            >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Eliminar Pago
-            </DropdownMenuItem>
-          )}
+          {(() => {
+            // Si no se puede eliminar, se dice POR QUÉ. Antes la opción simplemente desaparecía
+            // y no había forma de saber si era un fallo o una regla.
+            const motivo = !deleteCheckDone
+              ? 'Comprobando…'
+              : loanStatus === 'paid'
+                ? 'El préstamo está saldado'
+                : hasLaterCapitalPayment
+                  ? 'Hay un abono a capital posterior: elimínelo primero'
+                  : !isLatestPayment
+                    ? 'Solo se puede eliminar el último pago'
+                    : null;
+            return (
+              <DropdownMenuItem
+                disabled={!!motivo}
+                onClick={() => {
+                  if (motivo) return;
+                  setForceDelete(false);
+                  setShowPasswordVerification(true);
+                }}
+                className="text-red-600"
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                <div className="flex flex-col">
+                  <span>Eliminar Pago</span>
+                  {motivo && <span className="text-[11px] text-gray-500">{motivo}</span>}
+                </div>
+              </DropdownMenuItem>
+            );
+          })()}
         </DropdownMenuContent>
       </DropdownMenu>
 
