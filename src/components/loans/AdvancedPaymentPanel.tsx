@@ -31,6 +31,7 @@ import {
   type DueRow,
 } from '@/utils/installmentDues';
 import type { AdvancedReceiptData, ReceiptCompany } from '@/utils/advancedPaymentReceipt';
+import { buildIndefiniteInterestResolver, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 
 interface Props {
   loanId: string;
@@ -97,6 +98,7 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
         { data: payments, error: pErr },
         { data: loanRow },
         { data: settings },
+        { data: capitalRows, error: cErr },
       ] = await Promise.all([
         supabase
           .from('installments')
@@ -121,9 +123,18 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
               .select('company_name, address, phone, tax_id')
               .eq('user_id', companyId).maybeSingle()
           : Promise.resolve({ data: null }),
+        // Abonos a capital: en un indefinido cambian la cuota de los períodos siguientes.
+        supabase
+          .from('capital_payments')
+          .select('amount, capital_before, capital_after, created_at')
+          .eq('loan_id', loanId),
       ]);
       if (iErr) throw iErr;
       if (pErr) throw pErr;
+      // Sin los abonos el panel sigue sirviendo (con la cuota de la fila guardada), así que un
+      // fallo aquí se registra pero no bloquea el cobro.
+      if (cErr) console.error('Error leyendo abonos a capital para el pago avanzado:', cErr);
+      const abonos = (capitalRows || []) as CapitalPaymentLike[];
 
       if (loanRow) {
         // `client:client_id(...)` devuelve un objeto, pero según la relación puede llegar
@@ -148,12 +159,26 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
       // los períodos se generan al vuelo. Sin esta rejilla el panel enseñaba una sola cuota —o
       // ninguna, si esa estaba pagada— en préstamos que llevaban meses devengando interés.
       const isIndefinite = String((loanRow as any)?.amortization_type || '').toLowerCase() === 'indefinite';
+      const frequency = String((loanRow as any)?.payment_frequency || 'monthly');
       const schedule = isIndefinite && (loanRow as any)?.start_date
         ? {
             startDate: String((loanRow as any).start_date),
-            frequency: String((loanRow as any).payment_frequency || 'monthly'),
+            frequency,
             todayIso: today,
             periodInterest: Number((loanRow as any).monthly_payment) || undefined,
+            // FALLO REPORTADO (2026-09-10): tras un abono a capital el panel seguía cobrando la
+            // cuota VIEJA (4,500 en vez de 3,000): tomaba el interés de la única fila guardada,
+            // que es la primera cuota y conserva el capital original. Con abonos, cada período
+            // lleva la cuota que le corresponde por su fecha.
+            interestForDue: abonos.length > 0
+              ? buildIndefiniteInterestResolver({
+                  amount: Number((loanRow as any).amount) || 0,
+                  interestRate: Number((loanRow as any).interest_rate) || 0,
+                  frequency,
+                  currentInterest: Number((loanRow as any).monthly_payment) || 0,
+                  capitalPayments: abonos,
+                })
+              : undefined,
           }
         : null;
 

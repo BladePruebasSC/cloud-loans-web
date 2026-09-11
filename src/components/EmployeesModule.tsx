@@ -770,7 +770,7 @@ export const EmployeesModule = () => {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${totalSalary.toLocaleString()}</div>
+            <div className="text-2xl font-bold">${totalSalary.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <p className="text-xs text-muted-foreground">Salarios mensuales</p>
           </CardContent>
         </Card>
@@ -865,7 +865,7 @@ export const EmployeesModule = () => {
                         {employee.salary && (
                           <div className="flex items-center gap-2">
                             <DollarSign className="h-4 w-4" />
-                            <span>${employee.salary.toLocaleString()}</span>
+                            <span>${employee.salary.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                         )}
                       </div>

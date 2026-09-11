@@ -536,7 +536,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
               )}
                <span className="text-lg font-bold text-red-700">
-                 ${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
+                 ${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                </span>
             </div>
           </div>
@@ -553,7 +553,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
               </div>
               <div className="flex justify-between">
                  <span>Mora calculada:</span>
-                 <span>${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}</span>
+                 <span>${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
           )}
@@ -578,7 +578,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="text-gray-600">Capital pendiente:</span>
-                    <div className="font-semibold">${remainingBalance.toLocaleString()}</div>
+                    <div className="font-semibold">${remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                   <div>
                     <span className="text-gray-600">Fecha de pago:</span>
@@ -605,7 +605,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   </div>
                   <div>
                     <span className="text-gray-600">Mora pagada:</span>
-                    <div className="font-semibold text-green-600">RD${totalLateFeePaid.toLocaleString()}</div>
+                    <div className="font-semibold text-green-600">RD${totalLateFeePaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                 </div>
               </CardContent>
@@ -620,7 +620,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                     <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
                       <span className="text-red-800 font-medium">Mora Actual:</span>
                        <span className="text-red-700 font-bold text-lg">
-                         ${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}
+                         ${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                        </span>
                     </div>
                     
@@ -631,7 +631,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                       </div>
                       <div>
                         <span className="text-gray-600">Mora calculada:</span>
-                         <div className="font-semibold">${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString()}</div>
+                         <div className="font-semibold">${(lateFeeCalculation?.late_fee_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                     </div>
                   </div>
@@ -667,10 +667,10 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                             </div>
                             <div className="text-right">
                               <div className={`font-semibold ${item.isPaid ? 'text-green-600' : 'text-red-600'}`}>
-                                {item.isPaid ? 'PAGADA' : `$${item.lateFee.toLocaleString()}`}
+                                {item.isPaid ? 'PAGADA' : `$${item.lateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                               </div>
                               <div className="text-xs text-gray-500">
-                                Capital: ${item.principal.toLocaleString()}
+                                Capital: ${item.principal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </div>
                             </div>
                           </div>
@@ -690,26 +690,26 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                   <div className="flex justify-between">
                     <span>En 7 días más:</span>
                     <span className="font-semibold">
-                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 7)).toLocaleString() : '0'}
+                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 7)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0'}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span>En 15 días más:</span>
                     <span className="font-semibold">
-                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 15)).toLocaleString() : '0'}
+                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 15)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0'}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span>En 30 días más:</span>
                     <span className="font-semibold">
-                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 30)).toLocaleString() : '0'}
+                      ${lateFeeCalculation ? (lateFeeCalculation.late_fee_amount + (pendingCapital * lateFeeRate / 100 * 30)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0'}
                     </span>
                   </div>
                 </div>
                 <div className="mt-3 text-xs text-gray-600">
                   💡 Cálculo: Mora actual + (Capital pendiente × {lateFeeRate}% × días adicionales)
                   <br />
-                  📊 Capital pendiente: ${pendingCapital.toLocaleString()} | Incremento diario: ${(pendingCapital * lateFeeRate / 100).toLocaleString()}
+                  📊 Capital pendiente: ${pendingCapital.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | Incremento diario: ${(pendingCapital * lateFeeRate / 100).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   <br />
                   🔍 Tipo de cálculo: {lateFeeCalculationType === 'daily' ? 'Diario' : lateFeeCalculationType === 'monthly' ? 'Mensual' : 'Compuesto'}
                 </div>
@@ -776,7 +776,7 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                           <div>
                             <span className="text-gray-600">Mora pagada:</span>
                             <div className="font-semibold text-green-600">
-                              ${record.late_fee_amount.toLocaleString()}
+                              ${record.late_fee_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                           </div>
                           <div>
@@ -800,11 +800,11 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
                           </div>
                           <div>
                             <span className="text-gray-600">Mora del período:</span>
-                            <div className="font-semibold">${record.late_fee_amount.toLocaleString()}</div>
+                            <div className="font-semibold">${record.late_fee_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                           </div>
                           <div>
                             <span className="text-gray-600">Total acumulado:</span>
-                            <div className="font-semibold">${record.total_late_fee.toLocaleString()}</div>
+                            <div className="font-semibold">${record.total_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                           </div>
                         </div>
                       )}

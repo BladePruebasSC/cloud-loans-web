@@ -25,6 +25,11 @@ export interface RawInstallment {
   interest_amount?: number | null;
   paid_amount?: number | null;
   is_paid?: boolean | null;
+  /**
+   * Día en que se condonó TODA la mora de esta cuota ("Actualizar → Eliminar Mora").
+   * Los días de atraso se cuentan desde aquí: al quitar la mora se quitan también los días.
+   */
+  late_fee_waived_at?: string | null;
 }
 
 export interface RawPayment {
@@ -64,6 +69,12 @@ export interface DueRow {
    * no hay fila que actualizar.
    */
   isVirtual?: boolean;
+  /**
+   * Desde cuándo cuentan los días de atraso: la fecha de vencimiento, o el día en que se
+   * condonó la mora si es posterior. `dueDate` sigue siendo el vencimiento real: la cuota no
+   * deja de estar vencida, lo que se perdona son los días.
+   */
+  overdueSince?: string;
 }
 
 /**
@@ -82,7 +93,19 @@ export interface IndefiniteSchedule {
    * lo que hace el cálculo de mora.
    */
   periodInterest?: number;
+  /**
+   * Interés de CADA período según su fecha (`buildIndefiniteInterestResolver`). Tras un abono a
+   * capital la cuota cambia, y la fila guardada conserva el interés de antes: sin esto todos los
+   * períodos salían con la cuota vieja.
+   */
+  interestForDue?: (dueIso: string) => number;
 }
+
+/** La fecha ISO más tardía de las dos (ignora las vacías). */
+const laterIso = (a: string, b?: string | null): string => {
+  const other = dateOnly(b);
+  return other && other > a ? other : a;
+};
 
 /** ¿La fila es un CARGO? (sin interés y principal = total) — misma regla que el resto del sistema. */
 const rowIsCharge = (i: RawInstallment) =>
@@ -106,10 +129,11 @@ export const computeInstallmentDues = (
   const rows: DueRow[] = (installments || []).map(i => {
     const total = round2(Number(i.total_amount || 0));
     const isCharge = rowIsCharge(i);
+    const dueDate = dateOnly(i.due_date);
     return {
       id: i.id,
       installmentNumber: Number(i.installment_number) || 0,
-      dueDate: dateOnly(i.due_date),
+      dueDate,
       isCharge,
       total,
       paid: 0,
@@ -117,6 +141,7 @@ export const computeInstallmentDues = (
       isPaid: !!i.is_paid,
       principal: round2(Number(i.principal_amount || 0)),
       interest: round2(Number(i.interest_amount || 0)),
+      overdueSince: laterIso(dueDate, i.late_fee_waived_at),
     };
   });
 
@@ -148,8 +173,20 @@ export const computeInstallmentDues = (
         ? Number(lastNonCharge?.interest || lastNonCharge?.total || 0)
         : Number(indefinite.periodInterest ?? 0)
     );
+    /** Interés del período que vence en `iso`: la cuota vigente EN ESA FECHA, no la de la fila guardada. */
+    const baseFor = (iso: string): number =>
+      indefinite.interestForDue ? round2(indefinite.interestForDue(iso)) : base;
 
-    if (first && base > 0.005) {
+    // En un indefinido la condonación es del PRÉSTAMO: se anota en la única fila guardada, pero
+    // perdona los días de todos los períodos que ya estaban vencidos ese día.
+    const waivedAt = (installments || [])
+      .filter(i => !rowIsCharge(i))
+      .reduce((acc, i) => laterIso(acc, i.late_fee_waived_at), '');
+    if (waivedAt) {
+      for (const r of nonCharges) r.overdueSince = laterIso(r.dueDate, waivedAt);
+    }
+
+    if (first && (base > 0.005 || indefinite.interestForDue)) {
       // Cuánto se ha abonado a cada período. Los pagos de CARGO (sin interés) no cuentan: un
       // cargo es otra obligación y vence el día que se creó, no en una fecha de la rejilla.
       const paidByDue = new Map<string, number>();
@@ -163,7 +200,7 @@ export const computeInstallmentDues = (
         const gross = Number(p.amount ?? 0) || round2(principal + interest);
         paidByDue.set(due, round2((paidByDue.get(due) || 0) + gross));
       }
-      const periodoCubierto = (iso: string) => (paidByDue.get(iso) || 0) + 0.005 >= base;
+      const periodoCubierto = (iso: string) => (paidByDue.get(iso) || 0) + 0.005 >= baseFor(iso);
 
       const covered = new Set(nonCharges.map(r => r.dueDate));
       let quedaAlgoPendiente = false;
@@ -177,18 +214,20 @@ export const computeInstallmentDues = (
         if (iso > indefinite.todayIso && !cubierto && quedaAlgoPendiente) break;
 
         if (!covered.has(iso)) {
+          const cuota = baseFor(iso);
           rows.push({
             id: `virtual:${iso}`,
             installmentNumber: n + 1,
             dueDate: iso,
             isCharge: false,
-            total: base,
+            total: cuota,
             paid: 0,
-            pending: base,
+            pending: cuota,
             isPaid: false,
             principal: 0, // en un indefinido la cuota es interés puro
-            interest: base,
+            interest: cuota,
             isVirtual: true,
+            overdueSince: laterIso(iso, waivedAt),
           });
         }
         if (!cubierto) quedaAlgoPendiente = true;

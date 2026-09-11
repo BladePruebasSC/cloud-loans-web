@@ -556,7 +556,7 @@ export const CollectionTracking: React.FC<CollectionTrackingProps> = ({
                               )}
                               {record.result === 'payment_promise' && record.promise_amount != null && (
                                 <span className="text-xs text-amber-800 font-medium">
-                                  Promesa: RD${Number(record.promise_amount).toLocaleString('es-DO')} para el {record.promise_date ? new Date(record.promise_date + 'T00:00:00').toLocaleDateString() : '—'}
+                                  Promesa: RD${Number(record.promise_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} para el {record.promise_date ? new Date(record.promise_date + 'T00:00:00').toLocaleDateString() : '—'}
                                 </span>
                               )}
                             </div>

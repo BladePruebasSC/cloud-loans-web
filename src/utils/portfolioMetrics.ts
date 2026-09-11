@@ -137,6 +137,11 @@ export interface DueLike {
   dueDate: string;
   /** Lo que queda por pagar de esa cuota */
   pending: number;
+  /**
+   * Desde cuándo cuentan sus días de atraso, si no es el vencimiento: el día en que se condonó
+   * su mora. Ver `DueRow.overdueSince`.
+   */
+  overdueSince?: string;
 }
 
 export interface OverdueFacts {
@@ -153,6 +158,12 @@ export interface OverdueFacts {
   pendingAmount: number;
   /** Vencimiento de la cuota atrasada más antigua, o null si no hay ninguna. */
   oldestOverdueDate: string | null;
+  /**
+   * Vencimiento de la primera cuota con algo pendiente (vencida o no). Es la fecha que sitúa
+   * al préstamo en la agenda cuando está al día; `loans.next_payment_date` la mantiene un
+   * trigger y puede ir por detrás.
+   */
+  nextDueDate?: string | null;
 }
 
 export const NO_OVERDUE: OverdueFacts = {
@@ -168,6 +179,11 @@ export const NO_OVERDUE: OverdueFacts = {
  * `graceDays` NO reduce `daysOverdue`: solo decide cuántos de esos días generan mora
  * (`lateFeeDays`). Son dos cosas distintas y confundirlas hacía que un préstamo vencido
  * apareciera como "0 días vencidos" mientras estuviera dentro de la gracia.
+ *
+ * La CONDONACIÓN de mora sí los reduce (2026-09-10: "cuando se elimina la mora no se están
+ * eliminando los días atrasados, elimínalos junto a la mora aunque la cuota esté vencida"). Una
+ * cuota cuya mora se condonó cuenta sus días desde ese día (`overdueSince`); sigue sumando en
+ * lo atrasado, porque el dinero de la cuota se sigue debiendo.
  */
 export const overdueFromDues = (
   dues: DueLike[],
@@ -177,6 +193,8 @@ export const overdueFromDues = (
   let overdueAmount = 0;
   let pendingAmount = 0;
   let oldestOverdueDate: string | null = null;
+  let oldestCountFrom: string | null = null;
+  let nextDueDate: string | null = null;
 
   for (const due of dues || []) {
     const pending = Number(due?.pending) || 0;
@@ -184,13 +202,18 @@ export const overdueFromDues = (
     pendingAmount += pending;
 
     const date = dateOnly(due?.dueDate);
+    if (date && (!nextDueDate || date < nextDueDate)) nextDueDate = date;
     if (!date || date >= todayIso) continue;
 
     overdueAmount += pending;
     if (!oldestOverdueDate || date < oldestOverdueDate) oldestOverdueDate = date;
+
+    const since = dateOnly(due?.overdueSince);
+    const countFrom = since && since > date ? since : date;
+    if (!oldestCountFrom || countFrom < oldestCountFrom) oldestCountFrom = countFrom;
   }
 
-  const raw = oldestOverdueDate ? daysBetweenIso(oldestOverdueDate, todayIso) : null;
+  const raw = oldestCountFrom ? daysBetweenIso(oldestCountFrom, todayIso) : null;
   const daysOverdue = raw === null ? 0 : Math.max(0, raw);
 
   return {
@@ -199,6 +222,7 @@ export const overdueFromDues = (
     overdueAmount: round2(overdueAmount),
     pendingAmount: round2(pendingAmount),
     oldestOverdueDate,
+    nextDueDate,
   };
 };
 
@@ -664,7 +688,7 @@ export const computeTodayAgenda = (
 
     // La fecha que sitúa al préstamo: la cuota vencida más antigua si la hay, si no el
     // próximo vencimiento. La GRACIA no entra aquí — perdona la mora, no el atraso.
-    const due = facts?.oldestOverdueDate ?? dateOnly(loan.next_payment_date);
+    const due = facts?.oldestOverdueDate ?? facts?.nextDueDate ?? dateOnly(loan.next_payment_date);
     if (!due) continue;
 
     const entry: AgendaLoan = {

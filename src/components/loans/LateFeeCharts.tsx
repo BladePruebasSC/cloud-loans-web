@@ -82,7 +82,7 @@ export const LateFeeCharts: React.FC<LateFeeChartsProps> = ({ reports }) => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              RD${totalLateFee.toLocaleString()}
+              RD${totalLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-muted-foreground">
               {reports.length} préstamos
@@ -112,7 +112,7 @@ export const LateFeeCharts: React.FC<LateFeeChartsProps> = ({ reports }) => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">
-              RD${averageLateFee.toLocaleString()}
+              RD${averageLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-muted-foreground">
               Por préstamo
@@ -127,7 +127,7 @@ export const LateFeeCharts: React.FC<LateFeeChartsProps> = ({ reports }) => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              RD${totalPaid.toLocaleString()}
+              RD${totalPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-muted-foreground">
               En mora cobrada
@@ -154,7 +154,7 @@ export const LateFeeCharts: React.FC<LateFeeChartsProps> = ({ reports }) => {
                     <span className="text-sm font-medium capitalize">{type}</span>
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-600">{stats.count} préstamos</span>
-                      <Badge variant="outline">RD${stats.total.toLocaleString()}</Badge>
+                      <Badge variant="outline">RD${stats.total.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Badge>
                     </div>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
@@ -193,7 +193,7 @@ export const LateFeeCharts: React.FC<LateFeeChartsProps> = ({ reports }) => {
                       <span className="text-sm font-medium">{range}</span>
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-gray-600">{stats.count} préstamos</span>
-                        <Badge variant="outline">RD${stats.total.toLocaleString()}</Badge>
+                        <Badge variant="outline">RD${stats.total.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Badge>
                       </div>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2">
@@ -232,7 +232,7 @@ export const LateFeeCharts: React.FC<LateFeeChartsProps> = ({ reports }) => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-bold text-red-600">RD${report.current_late_fee.toLocaleString()}</div>
+                  <div className="font-bold text-red-600">RD${report.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   <div className="text-sm text-gray-600">{report.days_overdue} días vencidos</div>
                 </div>
               </div>

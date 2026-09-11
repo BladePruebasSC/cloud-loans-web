@@ -322,9 +322,10 @@ export const LateFeeReports: React.FC = () => {
       ...filteredReports.map(report => [
         report.client_name,
         report.client_dni,
-        report.loan_amount.toLocaleString(),
-        report.remaining_balance.toLocaleString(),
-        report.current_late_fee.toLocaleString(),
+        // Con punto decimal y sin separador de miles: dentro de un CSV la coma partiría la celda.
+        Number(report.loan_amount || 0).toFixed(2),
+        Number(report.remaining_balance || 0).toFixed(2),
+        Number(report.current_late_fee || 0).toFixed(2),
         report.days_overdue.toString(),
         `${report.late_fee_rate}%`,
         report.late_fee_calculation_type,
@@ -386,7 +387,7 @@ export const LateFeeReports: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              RD${totalLateFee.toLocaleString()}
+              RD${totalLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-muted-foreground">
               {filteredReports.length} préstamos
@@ -416,7 +417,7 @@ export const LateFeeReports: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">
-              RD${averageLateFee.toLocaleString()}
+              RD${averageLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-muted-foreground">
               Por préstamo
@@ -446,7 +447,7 @@ export const LateFeeReports: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              RD${totalLateFeePaid.toLocaleString()}
+              RD${totalLateFeePaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-muted-foreground">
               En mora cobrada
@@ -605,11 +606,11 @@ export const LateFeeReports: React.FC = () => {
                           </div>
                           <div>
                             <span className="text-gray-600 text-xs">Monto:</span>
-                            <div className="font-medium text-sm">RD${report.loan_amount.toLocaleString()}</div>
+                            <div className="font-medium text-sm">RD${report.loan_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                           </div>
                           <div>
                             <span className="text-gray-600 text-xs">Balance:</span>
-                            <div className="font-medium text-sm">RD${report.remaining_balance.toLocaleString()}</div>
+                            <div className="font-medium text-sm">RD${report.remaining_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                           </div>
                           <div>
                             <span className="text-gray-600 text-xs">Días Vencidos:</span>
@@ -621,7 +622,7 @@ export const LateFeeReports: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <div className="text-2xl font-bold text-red-600 mb-2">
-                          RD${report.current_late_fee.toLocaleString()}
+                          RD${report.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="flex gap-2">
                           <Button
@@ -674,11 +675,11 @@ export const LateFeeReports: React.FC = () => {
                     </div>
                     <div>
                       <span className="text-gray-600">Monto Préstamo:</span>
-                      <div className="font-medium">RD${selectedReport.loan_amount.toLocaleString()}</div>
+                      <div className="font-medium">RD${selectedReport.loan_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                     <div>
                       <span className="text-gray-600">Balance Restante:</span>
-                      <div className="font-medium">RD${selectedReport.remaining_balance.toLocaleString()}</div>
+                      <div className="font-medium">RD${selectedReport.remaining_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                   </div>
                 </CardContent>
@@ -693,7 +694,7 @@ export const LateFeeReports: React.FC = () => {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <span className="text-gray-600">Mora Actual:</span>
-                      <div className="font-medium text-red-600 text-lg">RD${selectedReport.current_late_fee.toLocaleString()}</div>
+                      <div className="font-medium text-red-600 text-lg">RD${selectedReport.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                     <div>
                       <span className="text-gray-600">Días Vencidos:</span>
@@ -713,7 +714,7 @@ export const LateFeeReports: React.FC = () => {
                     </div>
                     <div>
                       <span className="text-gray-600">Mora Pagada:</span>
-                      <div className="font-medium text-green-600">RD${selectedReport.total_late_fee_paid.toLocaleString()}</div>
+                      <div className="font-medium text-green-600">RD${selectedReport.total_late_fee_paid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                     <div>
                       <span className="text-gray-600">Próximo Pago:</span>

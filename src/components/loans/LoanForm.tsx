@@ -69,7 +69,7 @@ const replaceTemplateVariablesForLoan = (content: string, loanData: any, company
     '{cliente_dni}': client?.dni || 'N/A',
     '{empresa_nombre}': companySettings?.company_name || 'LA EMPRESA',
     '{monto}': formatCurrency(loanData.amount),
-    '{monto_numeros}': (loanData.amount || 0).toLocaleString('es-DO'),
+    '{monto_numeros}': (loanData.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
     '{tasa_interes}': String(loanData.interest_rate || 0),
     '{plazo}': String(loanData.term_months || 0),
     '{cuota_mensual}': formatCurrency(loanData.monthly_payment),
@@ -542,7 +542,7 @@ export const generateDocumentPDF = async (docType: string, loanData: any, formDa
       yPos += 15;
       
       // Texto principal
-      const pagareText = `Por medio del presente documento, yo ${client?.full_name || 'N/A'}, con cédula de identidad No. ${client?.dni || 'N/A'}, me comprometo a pagar incondicionalmente a la orden de ${companySettings?.company_name || 'LA EMPRESA'}, la cantidad de ${formatCurrency(loanData.amount)} (${(loanData.amount || 0).toLocaleString('es-DO')} pesos dominicanos).`;
+      const pagareText = `Por medio del presente documento, yo ${client?.full_name || 'N/A'}, con cédula de identidad No. ${client?.dni || 'N/A'}, me comprometo a pagar incondicionalmente a la orden de ${companySettings?.company_name || 'LA EMPRESA'}, la cantidad de ${formatCurrency(loanData.amount)} (${(loanData.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} pesos dominicanos).`;
       yPos = addText(pagareText, margin, yPos, pageWidth - (margin * 2), 11);
       yPos += 10;
       
@@ -1393,12 +1393,12 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     if (min !== null && min !== undefined && watchedAmount < min) {
       form.setError('amount', {
         type: 'manual',
-        message: `El monto mínimo permitido es RD$${min.toLocaleString()}`
+        message: `El monto mínimo permitido es RD$${min.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       });
     } else if (max !== null && max !== undefined && watchedAmount > max) {
       form.setError('amount', {
         type: 'manual',
-        message: `El monto máximo permitido es RD$${max.toLocaleString()}`
+        message: `El monto máximo permitido es RD$${max.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       });
     } else {
       form.clearErrors('amount');
@@ -2303,18 +2303,18 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     // Validar límites de monto y plazo según configuración de la empresa
     if (companySettings) {
       if (companySettings.min_loan_amount !== null && companySettings.min_loan_amount !== undefined && data.amount < companySettings.min_loan_amount) {
-        toast.error(`El monto mínimo permitido es RD$${companySettings.min_loan_amount.toLocaleString()}`);
+        toast.error(`El monto mínimo permitido es RD$${companySettings.min_loan_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
         form.setError('amount', {
           type: 'manual',
-          message: `El monto mínimo permitido es RD$${companySettings.min_loan_amount.toLocaleString()}`
+          message: `El monto mínimo permitido es RD$${companySettings.min_loan_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
         });
         return;
       }
       if (companySettings.max_loan_amount !== null && companySettings.max_loan_amount !== undefined && data.amount > companySettings.max_loan_amount) {
-        toast.error(`El monto máximo permitido es RD$${companySettings.max_loan_amount.toLocaleString()}`);
+        toast.error(`El monto máximo permitido es RD$${companySettings.max_loan_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
         form.setError('amount', {
           type: 'manual',
-          message: `El monto máximo permitido es RD$${companySettings.max_loan_amount.toLocaleString()}`
+          message: `El monto máximo permitido es RD$${companySettings.max_loan_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
         });
         return;
       }
@@ -2878,12 +2878,12 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
                                     if (min !== null && min !== undefined && currentValue < min) {
                                       form.setError('amount', {
                                         type: 'manual',
-                                        message: `El monto mínimo permitido es RD$${min.toLocaleString()}`
+                                        message: `El monto mínimo permitido es RD$${min.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                       });
                                     } else if (max !== null && max !== undefined && currentValue > max) {
                                       form.setError('amount', {
                                         type: 'manual',
-                                        message: `El monto máximo permitido es RD$${max.toLocaleString()}`
+                                        message: `El monto máximo permitido es RD$${max.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                       });
                                     } else {
                                       form.clearErrors('amount');

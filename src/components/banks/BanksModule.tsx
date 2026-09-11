@@ -900,7 +900,7 @@ const BanksModule = () => {
             <div class="amount-section">
               <div class="total-amount" style="color: ${transactionTypeColor};">
                 ${transaction.type === 'income' ? '+' : transaction.type === 'expense' ? '-' : '↔'} 
-                $${transaction.amount.toLocaleString()}
+                $${transaction.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -966,7 +966,7 @@ const BanksModule = () => {
                 <DollarSign className="h-4 w-4 text-green-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">${totalBalance.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-green-600">${totalBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                 <p className="text-xs text-muted-foreground">Disponible</p>
               </CardContent>
             </Card>
@@ -977,7 +977,7 @@ const BanksModule = () => {
                 <TrendingUp className="h-4 w-4 text-green-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">${monthlyIncome.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-green-600">${monthlyIncome.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                 <p className="text-xs text-muted-foreground">Este mes</p>
               </CardContent>
             </Card>
@@ -988,7 +988,7 @@ const BanksModule = () => {
                 <ArrowUpDown className="h-4 w-4 text-red-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-red-600">${monthlyExpenses.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-red-600">${monthlyExpenses.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                 <p className="text-xs text-muted-foreground">Este mes</p>
               </CardContent>
             </Card>
@@ -1028,7 +1028,7 @@ const BanksModule = () => {
                             <div>
                               <span className="font-medium">Saldo:</span>{' '}
                               <span className="font-bold text-lg text-green-600">
-                                ${account.balance.toLocaleString()}
+                                ${account.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </span>
                             </div>
                             <div>
@@ -1228,7 +1228,7 @@ const BanksModule = () => {
                           }`}>
                             {transaction.type === 'income' ? '+' : 
                              transaction.type === 'expense' ? '-' : '↔'}
-                            ${transaction.amount.toLocaleString()}
+                            ${transaction.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
                           <div className="flex gap-2 mt-2 justify-end">
                             <Button
@@ -1306,7 +1306,7 @@ const BanksModule = () => {
                           ${transactions
                             .filter(t => t.type === 'income')
                             .reduce((sum, t) => sum + t.amount, 0)
-                            .toLocaleString()}
+                            .toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
                       </div>
                       <TrendingUp className="h-8 w-8 text-green-600 opacity-50" />
@@ -1322,7 +1322,7 @@ const BanksModule = () => {
                           ${transactions
                             .filter(t => t.type === 'expense')
                             .reduce((sum, t) => sum + t.amount, 0)
-                            .toLocaleString()}
+                            .toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
                       </div>
                       <TrendingUp className="h-8 w-8 text-red-600 opacity-50 rotate-180" />
@@ -1335,7 +1335,7 @@ const BanksModule = () => {
                       <div>
                         <p className="text-sm text-gray-600">Balance Total</p>
                         <p className="text-2xl font-bold text-blue-600">
-                          ${totalBalance.toLocaleString()}
+                          ${totalBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
                       </div>
                       <DollarSign className="h-8 w-8 text-blue-600 opacity-50" />
@@ -1358,7 +1358,7 @@ const BanksModule = () => {
                           <div className="text-right">
                             <div className="font-semibold">{categoryTransactions.length} movimientos</div>
                             <div className={`text-sm ${total >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              ${Math.abs(total).toLocaleString()}
+                              ${Math.abs(total).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                           </div>
                         </div>
@@ -1381,15 +1381,15 @@ const BanksModule = () => {
                           <div className="grid grid-cols-3 gap-2 text-sm">
                             <div>
                               <div className="text-gray-600">Ingresos</div>
-                              <div className="font-semibold text-green-600">${income.toLocaleString()}</div>
+                              <div className="font-semibold text-green-600">${income.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                             </div>
                             <div>
                               <div className="text-gray-600">Egresos</div>
-                              <div className="font-semibold text-red-600">${expense.toLocaleString()}</div>
+                              <div className="font-semibold text-red-600">${expense.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                             </div>
                             <div>
                               <div className="text-gray-600">Balance</div>
-                              <div className="font-semibold">${account.balance.toLocaleString()}</div>
+                              <div className="font-semibold">${account.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                             </div>
                           </div>
                         </div>
@@ -1459,7 +1459,7 @@ const BanksModule = () => {
                           <div className="bg-blue-50 p-4 rounded-lg">
                             <Label className="text-xs text-gray-600 mb-1 block">Saldo en Sistema</Label>
                             <div className="text-2xl font-bold text-blue-600">
-                              ${systemBalance.toLocaleString()}
+                              ${systemBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                             <p className="text-xs text-gray-500 mt-1">
                               Calculado automáticamente
@@ -1473,7 +1473,7 @@ const BanksModule = () => {
                                   {new Date(account.last_reconciled_date).toLocaleDateString()}
                                 </div>
                                 <p className="text-xs text-gray-500 mt-1">
-                                  Saldo: ${account.last_reconciled_balance?.toLocaleString() || '0'}
+                                  Saldo: ${account.last_reconciled_balance?.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0'}
                                 </p>
                               </>
                             ) : (
@@ -1546,7 +1546,7 @@ const BanksModule = () => {
                                     }`}>
                                       {trans.type === 'income' ? '+' : 
                                        trans.type === 'expense' ? '-' : '↔'}
-                                      ${trans.amount.toLocaleString()}
+                                      ${trans.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </span>
                                     <Button
                                       size="sm"
@@ -1621,20 +1621,20 @@ const BanksModule = () => {
                                   </div>
                                 </div>
                                 <Badge variant={recon.difference === 0 ? 'default' : 'destructive'}>
-                                  {recon.difference === 0 ? 'Coincide' : `Diferencia: ${recon.difference >= 0 ? '+' : ''}$${Math.abs(recon.difference).toLocaleString()}`}
+                                  {recon.difference === 0 ? 'Coincide' : `Diferencia: ${recon.difference >= 0 ? '+' : ''}$${Math.abs(recon.difference).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                                 </Badge>
                               </div>
                               <div className="grid grid-cols-2 gap-4 mt-3 text-sm">
                                 <div>
                                   <span className="text-gray-600">Saldo Sistema:</span>
                                   <span className="ml-2 font-semibold text-blue-600">
-                                    ${recon.system_balance.toLocaleString()}
+                                    ${recon.system_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </span>
                                 </div>
                                 <div>
                                   <span className="text-gray-600">Saldo Banco:</span>
                                   <span className="ml-2 font-semibold">
-                                    ${recon.bank_balance.toLocaleString()}
+                                    ${recon.bank_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </span>
                                 </div>
                               </div>
@@ -1653,7 +1653,7 @@ const BanksModule = () => {
                                           'text-blue-600'
                                         }`}>
                                           {trans.type === 'income' ? '+' : trans.type === 'expense' ? '-' : '↔'}
-                                          ${trans.amount.toLocaleString()}
+                                          ${trans.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </span>
                                       </div>
                                     ))}
@@ -2208,7 +2208,7 @@ const BanksModule = () => {
                     <div className="bg-blue-50 p-4 rounded-lg">
                       <Label className="text-xs text-gray-600 mb-1 block">Saldo en Sistema</Label>
                       <div className="text-2xl font-bold text-blue-600">
-                        ${systemBalance.toLocaleString()}
+                        ${systemBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <p className="text-xs text-gray-500 mt-1">
                         Calculado automáticamente desde las transacciones registradas
@@ -2240,7 +2240,7 @@ const BanksModule = () => {
                     <div className={`text-2xl font-bold ${
                       difference === 0 ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      {difference >= 0 ? '+' : ''}${difference.toLocaleString()}
+                      {difference >= 0 ? '+' : ''}${difference.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
                       {difference === 0 
@@ -2268,7 +2268,7 @@ const BanksModule = () => {
                             <span className={`font-semibold ${
                               trans.type === 'income' ? 'text-green-600' : 'text-red-600'
                             }`}>
-                              {trans.type === 'income' ? '+' : '-'}${trans.amount.toLocaleString()}
+                              {trans.type === 'income' ? '+' : '-'}${trans.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                           </div>
                         ))}
@@ -2336,7 +2336,7 @@ const BanksModule = () => {
               <div className="p-4 bg-gray-50 rounded-lg">
                 <div className="text-sm space-y-1">
                   <div><strong>Descripción:</strong> {transactionToPrint.description}</div>
-                  <div><strong>Monto:</strong> ${transactionToPrint.amount.toLocaleString()}</div>
+                  <div><strong>Monto:</strong> ${transactionToPrint.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   <div><strong>Fecha:</strong> {new Date(transactionToPrint.transaction_date).toLocaleDateString()}</div>
                 </div>
               </div>

@@ -805,7 +805,7 @@ const MapModule = () => {
                           </Badge>
                         </div>
                         <div className="mt-2 text-xs text-muted-foreground flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-                          <span>Balance: ${entry.remaining_balance.toLocaleString()}</span>
+                          <span>Balance: ${entry.remaining_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           <span>Próximo pago: {new Date(entry.next_payment_date).toLocaleDateString()}</span>
                         </div>
                       </button>
@@ -865,11 +865,11 @@ const MapModule = () => {
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Monto original</span>
-                        <span className="font-semibold">${selectedAddress.amount.toLocaleString()}</span>
+                        <span className="font-semibold">${selectedAddress.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Balance pendiente</span>
-                        <span className="font-semibold text-blue-600">${selectedAddress.remaining_balance.toLocaleString()}</span>
+                        <span className="font-semibold text-blue-600">${selectedAddress.remaining_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-muted-foreground">Próximo pago</span>

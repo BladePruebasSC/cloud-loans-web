@@ -468,19 +468,19 @@ export const GlobalLateFeeConfig: React.FC<GlobalLateFeeConfigProps> = ({ onConf
                     <div className="grid grid-cols-3 gap-4 text-center">
                       <div className="p-3 bg-blue-50 rounded-lg">
                         <div className="text-lg font-bold text-blue-700">
-                          ${(100000 * config.default_late_fee_rate / 100).toLocaleString()}
+                          ${(100000 * config.default_late_fee_rate / 100).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="text-sm text-blue-600">Por día</div>
                       </div>
                       <div className="p-3 bg-orange-50 rounded-lg">
                         <div className="text-lg font-bold text-orange-700">
-                          ${(100000 * config.default_late_fee_rate / 100 * 7).toLocaleString()}
+                          ${(100000 * config.default_late_fee_rate / 100 * 7).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="text-sm text-orange-600">Por semana</div>
                       </div>
                       <div className="p-3 bg-red-50 rounded-lg">
                         <div className="text-lg font-bold text-red-700">
-                          ${(100000 * config.default_late_fee_rate / 100 * 30).toLocaleString()}
+                          ${(100000 * config.default_late_fee_rate / 100 * 30).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="text-sm text-red-600">Por mes</div>
                       </div>

@@ -165,7 +165,7 @@ export const DocumentsModule = () => {
   const selectLoan = (loan: Loan) => {
     setSelectedLoan(loan);
     const clientName = loan.clients?.full_name || 'Sin cliente';
-    const loanInfo = `${clientName} - RD$${loan.amount.toLocaleString()}`;
+    const loanInfo = `${clientName} - RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     setLoanSearch(loanInfo);
     setShowLoanDropdown(false);
   };
@@ -468,7 +468,7 @@ export const DocumentsModule = () => {
   const selectLoanForGeneration = (loan: Loan) => {
     setSelectedLoanForGeneration(loan);
     const clientName = loan.clients?.full_name || 'Sin cliente';
-    const loanInfo = `${clientName} - RD$${loan.amount.toLocaleString()}`;
+    const loanInfo = `${clientName} - RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     setLoanSearchForGeneration(loanInfo);
     setShowLoanDropdownForGeneration(false);
     checkAvailableDocuments(loan.id);
@@ -637,7 +637,7 @@ export const DocumentsModule = () => {
               setShowGenerateDialog(true);
               setSelectedLoanForGeneration(selectedLoan);
               if (selectedLoan) {
-                setLoanSearchForGeneration(`${selectedLoan.clients?.full_name || 'Sin cliente'} - RD$${selectedLoan.amount.toLocaleString()}`);
+                setLoanSearchForGeneration(`${selectedLoan.clients?.full_name || 'Sin cliente'} - RD$${selectedLoan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
                 checkAvailableDocuments(selectedLoan.id);
               }
             }}
@@ -695,7 +695,7 @@ export const DocumentsModule = () => {
                   >
                     <div>
                       <div className="font-medium">
-                        {loan.clients?.full_name || 'Sin cliente'} - RD${loan.amount.toLocaleString()}
+                        {loan.clients?.full_name || 'Sin cliente'} - RD${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div className="text-sm text-gray-500">
                         {loan.clients?.dni && `DNI: ${loan.clients.dni}`} 
@@ -713,7 +713,7 @@ export const DocumentsModule = () => {
             <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between">
               <div>
                 <div className="font-medium text-blue-900">
-                  {selectedLoan.clients?.full_name || 'Sin cliente'} - RD${selectedLoan.amount.toLocaleString()}
+                  {selectedLoan.clients?.full_name || 'Sin cliente'} - RD${selectedLoan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="text-sm text-blue-700">
                   {selectedLoan.clients?.dni && `DNI: ${selectedLoan.clients.dni}`}
@@ -1306,7 +1306,7 @@ export const DocumentsModule = () => {
                       >
                         <div>
                           <div className="font-medium">
-                            {loan.clients?.full_name || 'Sin cliente'} - RD${loan.amount.toLocaleString()}
+                            {loan.clients?.full_name || 'Sin cliente'} - RD${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
                           <div className="text-sm text-gray-500">
                             {loan.clients?.dni && `DNI: ${loan.clients.dni}`} 
@@ -1323,7 +1323,7 @@ export const DocumentsModule = () => {
               {selectedLoanForGeneration && (
                 <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
                   <div className="font-medium text-blue-900">
-                    {selectedLoanForGeneration.clients?.full_name || 'Sin cliente'} - RD${selectedLoanForGeneration.amount.toLocaleString()}
+                    {selectedLoanForGeneration.clients?.full_name || 'Sin cliente'} - RD${selectedLoanForGeneration.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
               )}

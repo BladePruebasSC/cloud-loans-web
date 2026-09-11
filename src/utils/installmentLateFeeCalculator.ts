@@ -9,6 +9,7 @@ import {
 } from './frequencyUtils';
 import { supabase } from '@/integrations/supabase/client';
 import { spendLateFeeCredit } from './lateFeeWaiver';
+import { buildIndefiniteInterestResolver, type CapitalPaymentLike } from './indefiniteInterest';
 
 // ----------------------------------------------------------------------------
 // TRAZA DEL CÁLCULO (apagada por defecto)
@@ -67,7 +68,22 @@ export interface LoanData {
 export interface PreloadedLateFeeData {
   installments?: any[] | null;
   payments?: any[] | null;
+  /**
+   * Abonos a capital del préstamo. Solo los usan los INDEFINIDOS, cuya cuota cambia tras un
+   * abono. Si no se pasan (`undefined`) se consultan; un arreglo vacío significa "no tiene".
+   */
+  capitalPayments?: CapitalPaymentLike[] | null;
 }
+
+const dateOnlyIso = (v: unknown) => String(v ?? '').split('T')[0];
+
+/** Días de calendario desde `fromIso` hasta `calculationDate` (nunca negativos). */
+const daysSinceIso = (fromIso: string, calculationDate: Date): number => {
+  const [y, m, d] = fromIso.split('-').map(Number);
+  if (!y || !m || !d) return 0;
+  const from = new Date(y, m - 1, d);
+  return Math.max(0, Math.floor((calculationDate.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)));
+};
 
 /**
  * Obtiene el desglose de mora usando las cuotas de la tabla installments
@@ -171,6 +187,37 @@ export const getLateFeeBreakdownFromInstallments = async (
     const amortizationType = String(loan.amortization_type || '').toLowerCase();
     const isIndefinite = amortizationType === 'indefinite';
 
+    // Abonos a capital: en un indefinido cambian la cuota de los períodos posteriores al abono.
+    let capitalPayments: CapitalPaymentLike[] = [];
+    if (isIndefinite) {
+      if (preloaded?.capitalPayments !== undefined) {
+        capitalPayments = preloaded.capitalPayments || [];
+      } else {
+        const { data, error } = await supabase
+          .from('capital_payments')
+          .select('amount, capital_before, capital_after, created_at')
+          .eq('loan_id', loanId);
+        if (error) console.error('Error obteniendo abonos a capital:', error);
+        capitalPayments = (data || []) as CapitalPaymentLike[];
+      }
+    }
+
+    // CONDONACIÓN DE MORA Y DÍAS DE ATRASO (2026-09-10): "cuando se elimina la mora no se están
+    // eliminando los días atrasados, elimínalos junto a la mora aunque la cuota esté vencida".
+    // "Eliminar Mora" anota en `late_fee_waived_at` el día en que dejó la mora de la cuota en cero,
+    // y desde ese día se vuelven a contar sus días de atraso. La mora sigue saliendo del crédito
+    // `late_fee_paid`, así que a partir del día siguiente vuelve a crecer desde cero, igual que
+    // los días. En un indefinido la condonación es del préstamo entero (ver `spendLateFeeCredit`):
+    // vale la fecha más reciente de sus filas regulares.
+    const loanWaivedAt = isIndefinite
+      ? installments
+          .filter(inst => !(Math.abs(Number(inst?.interest_amount || 0)) < 0.01 && Number(inst?.principal_amount || 0) > 0.01))
+          .reduce((acc: string, inst: any) => {
+            const w = dateOnlyIso(inst?.late_fee_waived_at);
+            return w && w > acc ? w : acc;
+          }, '')
+      : '';
+
     // ------------------------------------------------------------------------
     // CARGOS: asignación de pagos propia (corrección 2026-08-28)
     // ------------------------------------------------------------------------
@@ -240,30 +287,45 @@ export const getLateFeeBreakdownFromInstallments = async (
       const base = Number(
         lastNonCharge?.interest_amount || lastNonCharge?.total_amount || lastNonCharge?.amount || loan.monthly_payment || 0
       );
-      return { frequency, first, dates, base };
+      // Tras un abono a capital la fila guardada conserva el interés de ANTES, y ese `base` se
+      // aplicaba a todos los períodos: la mora y el interés pendiente seguían con la cuota vieja.
+      // Con abonos, cada período toma la cuota vigente en su fecha.
+      const interestFor: (dueIso: string) => number = capitalPayments.length > 0
+        ? buildIndefiniteInterestResolver({
+            amount: loan.amount,
+            interestRate: loan.interest_rate,
+            frequency,
+            currentInterest: loan.monthly_payment,
+            capitalPayments,
+          })
+        : () => base;
+      return { frequency, first, dates, base, interestFor };
     })();
 
     /** Interés efectivamente pagado de cada período (0..base). */
     const paidPerPeriod = new Map<string, number>();
-    if (indefinitePeriods && indefinitePeriods.base > 0.01) {
-      const base = indefinitePeriods.base;
+    if (indefinitePeriods && (indefinitePeriods.base > 0.01 || capitalPayments.length > 0)) {
       const gridDates = new Set(indefinitePeriods.dates);
       let pool = 0; // pagos de interés cuyo due_date no cae en ningún período (fechas "clamp", etc.)
       for (const p of payments || []) {
         if (isChargePayment(p)) continue; // los abonos a cargos no son interés
         const interestField = Number(p.interest_amount || 0);
+        const principalField = Number(p.principal_amount || 0);
         const amt = Number(p.amount || 0);
+        const due = dateOnly(p.due_date);
+        // Sin interés NI capital = pago de cuota guardado sin desglose: todo es interés (mismo
+        // criterio que `computeLoanBalanceBreakdown`).
         const value = interestField > 0.01
           ? interestField
-          : (amt > 0.01 && amt <= base * 1.25 ? amt : 0);
+          : (amt > 0.01 && (principalField < 0.01 || amt <= indefinitePeriods.interestFor(due) * 1.25) ? amt : 0);
         if (value <= 0.01) continue;
-        const due = dateOnly(p.due_date);
         if (due && gridDates.has(due)) paidPerPeriod.set(due, (paidPerPeriod.get(due) || 0) + value);
         else pool += value;
       }
-      // Cascada cronológica: cada período se cubre hasta `base`; el excedente pasa al siguiente.
+      // Cascada cronológica: cada período se cubre hasta su cuota; el excedente pasa al siguiente.
       let carry = pool;
       for (const d of indefinitePeriods.dates) {
+        const base = indefinitePeriods.interestFor(d);
         let paid = paidPerPeriod.get(d) || 0;
         if (paid > base) {
           carry += paid - base;
@@ -461,7 +523,14 @@ export const getLateFeeBreakdownFromInstallments = async (
         // recargo de esos primeros días, no el hecho de que la cuota esté vencida. Antes se
         // restaba de `daysOverdue`, así que una cuota vencida ayer con 2 días de gracia se
         // mostraba como "0 días vencidos": falso, y encima ocultaba el atraso al cobrador.
-        daysOverdue = Math.max(0, daysSinceDue);
+        //
+        // La CONDONACIÓN sí los reinicia: tras "Eliminar Mora" se cuentan desde ese día.
+        const waivedAt = (isIndefinite && !thisRowIsCharge)
+          ? loanWaivedAt
+          : dateOnlyIso(installment.late_fee_waived_at);
+        daysOverdue = waivedAt && waivedAt > dueDateOnly
+          ? daysSinceIso(waivedAt, calculationDate)
+          : Math.max(0, daysSinceDue);
         const feeDays = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
 
         debugLog(`🔍 getLateFeeBreakdownFromInstallments: Cuota ${installment.installment_number}:`, {
@@ -603,9 +672,7 @@ export const getLateFeeBreakdownFromInstallments = async (
         applyLateFeeCredit();
         return { totalLateFee, breakdown };
       }
-      const baseAmount = indefinitePeriods.base;
-
-      debugLog(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - baseAmount=${baseAmount}, períodos=${indefinitePeriods.dates.length}`);
+      debugLog(`🔍 getLateFeeBreakdownFromInstallments: Generación dinámica - base=${indefinitePeriods.base}, períodos=${indefinitePeriods.dates.length}, abonos=${capitalPayments.length}`);
 
       for (let idx = 0; idx < indefinitePeriods.dates.length; idx++) {
         const installmentNum = idx + 1;
@@ -623,6 +690,8 @@ export const getLateFeeBreakdownFromInstallments = async (
         const existingInstallment = breakdown.find(item => item.dueDate === dueDateStr && !item.isCharge);
 
         if (!existingInstallment) {
+          // La cuota de ESTE período: tras un abono a capital no es la misma para todos.
+          const baseAmount = indefinitePeriods.interestFor(dueDateStr);
           // Estado del período según los pagos realmente asignados (ver rejilla arriba).
           // `remainingInterest` permite que un pago PARCIAL se refleje en la antigüedad.
           const periodPaidHere = paidPerPeriod.get(dueDateStr) || 0;
@@ -631,8 +700,11 @@ export const getLateFeeBreakdownFromInstallments = async (
 
           const daysSinceDue = Math.floor((calculationDate.getTime() - installmentDate.getTime()) / (1000 * 60 * 60 * 24));
           // Igual que en la rama de las cuotas guardadas: los días de atraso son los reales;
-          // la gracia solo decide cuántos generan mora.
-          const daysOverdueForInstallment = Math.max(0, daysSinceDue);
+          // la gracia solo decide cuántos generan mora. Tras condonar la mora se cuentan desde
+          // el día de la condonación.
+          const daysOverdueForInstallment = loanWaivedAt && loanWaivedAt > dueDateStr
+            ? daysSinceIso(loanWaivedAt, calculationDate)
+            : Math.max(0, daysSinceDue);
           const feeDaysForInstallment = Math.max(0, daysSinceDue - (loan.grace_period_days || 0));
 
           let lateFeeForInstallment = 0;

@@ -779,7 +779,7 @@ export const CarterasModule = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              ${displayStats.totalValue.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              ${displayStats.totalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <p className="text-xs text-muted-foreground">
               {displayStats.monthlyGrowth > 0 ? '+' : ''}{displayStats.monthlyGrowth}% este mes
@@ -869,7 +869,7 @@ export const CarterasModule = () => {
                       </div>
                       <div className="text-right">
                         <div className="font-bold">
-                          ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                         <div className="text-sm text-green-600 flex items-center justify-end">
                         <TrendingUp className="h-4 w-4 mr-1" />
@@ -965,7 +965,7 @@ export const CarterasModule = () => {
                               <div>
                                 <p className="text-gray-500">Valor Total</p>
                                 <p className="font-semibold">
-                                  ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                  ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </p>
                               </div>
                               <div>
@@ -1079,7 +1079,7 @@ export const CarterasModule = () => {
               </CardHeader>
               <CardContent>
                 <p className="text-3xl font-bold">
-                  ${displayStats.totalValue.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  ${displayStats.totalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
                   {filteredPortfolios.filter(p => p.status === 'active').length} cartera(s) activa(s)
@@ -1167,7 +1167,7 @@ export const CarterasModule = () => {
                                   {percentage.toFixed(1)}%
                                 </span>
                                 <p className="text-xs text-gray-500">
-                                  ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                  ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </p>
                               </div>
                             </div>
@@ -1321,7 +1321,7 @@ export const CarterasModule = () => {
                               </div>
                               <div className="text-right">
                                 <p className="text-sm font-semibold">
-                                  ${totalPaid.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} / ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                  ${totalPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </p>
                                 <p className="text-xs text-gray-500">
                                   {paidPercentage.toFixed(1)}% pagado
@@ -1388,7 +1388,7 @@ export const CarterasModule = () => {
                               <p className="font-semibold">{portfolio.name}</p>
                             </div>
                             <p className="text-xs text-gray-500">
-                              {portfolio.loanCount} préstamos • ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                              {portfolio.loanCount} préstamos • ${portfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </p>
                           </div>
                           <div className="text-right">
@@ -1422,7 +1422,7 @@ export const CarterasModule = () => {
                 <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
                   <p className="text-sm text-blue-600 font-medium mb-1">Capital Total</p>
                   <p className="text-2xl font-bold text-blue-900">
-                    ${displayStats.totalValue.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    ${displayStats.totalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                   <p className="text-xs text-blue-600 mt-1">
                     Valor de todos los préstamos
@@ -1431,7 +1431,7 @@ export const CarterasModule = () => {
                 <div className="p-4 bg-green-50 rounded-lg border border-green-200">
                   <p className="text-sm text-green-600 font-medium mb-1">Capital Pagado</p>
                   <p className="text-2xl font-bold text-green-900">
-                    ${(displayStats.totalValue - filteredPortfolios.reduce((sum, p) => sum + p.remainingBalance, 0)).toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    ${(displayStats.totalValue - filteredPortfolios.reduce((sum, p) => sum + p.remainingBalance, 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                   <p className="text-xs text-green-600 mt-1">
                     {displayStats.totalValue > 0 
@@ -1442,7 +1442,7 @@ export const CarterasModule = () => {
                 <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
                   <p className="text-sm text-orange-600 font-medium mb-1">Capital Pendiente</p>
                   <p className="text-2xl font-bold text-orange-900">
-                    ${filteredPortfolios.reduce((sum, p) => sum + p.remainingBalance, 0).toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    ${filteredPortfolios.reduce((sum, p) => sum + p.remainingBalance, 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                   <p className="text-xs text-orange-600 mt-1">
                     Por cobrar
@@ -1662,13 +1662,13 @@ export const CarterasModule = () => {
                 <div className="p-3 border rounded-lg">
                   <p className="text-xs text-gray-500 mb-1">Valor Total</p>
                   <p className="text-xl font-bold">
-                    ${selectedPortfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    ${selectedPortfolio.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="p-3 border rounded-lg">
                   <p className="text-xs text-gray-500 mb-1">Capital Pendiente</p>
                   <p className="text-xl font-bold">
-                    ${selectedPortfolio.remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    ${selectedPortfolio.remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="p-3 border rounded-lg">
@@ -1701,7 +1701,7 @@ export const CarterasModule = () => {
                             </div>
                             <div className="text-right">
                               <p className="font-semibold">
-                                ${Number(loan.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                ${Number(loan.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </p>
                               <p className="text-sm text-gray-500">
                                 {loan.interest_rate}% • {loan.status}
@@ -1806,10 +1806,10 @@ export const CarterasModule = () => {
                         </div>
                         <div className="text-right">
                           <p className="font-semibold">
-                            ${Number(loan.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                            ${Number(loan.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </p>
                           <p className="text-sm text-gray-500">
-                            {loan.interest_rate}% • Balance: ${Number(loan.remaining_balance || 0).toLocaleString('es-DO', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                            {loan.interest_rate}% • Balance: ${Number(loan.remaining_balance || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </p>
                         </div>
                       </div>

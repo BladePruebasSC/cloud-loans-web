@@ -30,6 +30,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 import { addHours } from 'date-fns';
 import { formatDateStringForSantoDomingo, createDateInSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { getFrequencyRateFactor } from '@/utils/frequencyUtils';
+import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 
 interface Payment {
   id: string;
@@ -352,7 +353,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Obtener abonos a capital
       const { data: capitalPaymentsData, error: capitalPaymentsError } = await supabase
         .from('capital_payments')
-        .select('amount')
+        .select('amount, capital_before, capital_after, created_at')
         .eq('loan_id', loanId);
       
       if (capitalPaymentsError) {
@@ -739,8 +740,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Para indefinidos: capital + interés pendiente + cargos - pagos de capital/cargos (NO pagos de interés)
       let finalRemainingBalance: number;
       if (isIndefinite) {
-        // Calcular interés pendiente (similar a calculatePendingInterestForIndefinite)
-        const interestPerPayment = (loanData.amount || 0) * ((loanData.interest_rate || 0) / 100);
+        // Capital vigente: lo prestado menos los abonos (el monto prestado ya no se rebaja).
+        const capitalVigenteRB = resolveIndefiniteCapital(
+          loanData.amount, (capitalPaymentsData || []) as CapitalPaymentLike[],
+        ).currentCapital;
+        // Calcular interés pendiente (similar a calculatePendingInterestForIndefinite): la cuota vigente.
+        const interestPerPayment = Number(loanData.monthly_payment) > 0.005
+          ? Number(loanData.monthly_payment)
+          : capitalVigenteRB * ((loanData.interest_rate || 0) / 100);
         const startDateStr = loanData.start_date?.split('T')[0];
         let pendingInterest = 0;
         
@@ -827,7 +834,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         // Solo restar pagos de capital/cargos, NO pagos de interés
         const totalPaidCapital = (paymentsData || []).reduce((sum, p) => sum + (Number(p.principal_amount) || 0), 0);
         
-        finalRemainingBalance = Math.round((Math.max(0, loanData.amount + pendingInterest + totalChargesAmount - totalPaidCapital)) * 100) / 100;
+        finalRemainingBalance = Math.round((Math.max(0, capitalVigenteRB + pendingInterest + totalChargesAmount - totalPaidCapital)) * 100) / 100;
         
         // CORRECCIÓN: Priorizar valor de BD si está disponible y la diferencia es pequeña (por redondeo)
         if (loanData.remaining_balance !== null && loanData.remaining_balance !== undefined) {
@@ -1266,43 +1273,26 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
       // Para indefinidos: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
       // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
-      const addPeriodForCap = (iso: string, f: string) => {
-        const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
-        if (!yy || !mm || !dd) return iso;
-        const base = new Date(yy, mm - 1, dd);
-        const dt = new Date(base);
-        switch (String(f || 'monthly').toLowerCase()) {
-          case 'daily': dt.setDate(dt.getDate() + 1); break;
-          case 'weekly': dt.setDate(dt.getDate() + 7); break;
-          case 'biweekly': dt.setDate(dt.getDate() + 14); break;
-          default: dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate()); break;
-        }
-        return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
-      };
+      // Regla compartida con "Ver cuotas", el pago avanzado, la mora y el balance.
       const { data: capitalPaymentsForSchedule } = await supabase
         .from('capital_payments')
-        .select('capital_before, capital_after, created_at')
+        .select('amount, capital_before, capital_after, created_at')
         .eq('loan_id', loanData.id)
         .order('created_at', { ascending: true });
-      const frequencyForCap = String((loanData as any)?.payment_frequency || 'monthly');
+      const interestForDueShared = buildIndefiniteInterestResolver({
+        amount: principal,
+        interestRate,
+        frequency: String((loanData as any)?.payment_frequency || 'monthly'),
+        currentInterest: currentPeriodPayment,
+        capitalPayments: (capitalPaymentsForSchedule || []) as CapitalPaymentLike[],
+      });
       const getExpectedForDueDate = (dueDate: string): number => {
         if (!dueDate) return currentPeriodPayment;
         // Priorizar total_amount de BD si fue actualizado por abono a capital
         // (ya filtrado: solo valores <= currentPeriodPayment * 1.05)
         const dbAmt = dbAmountByDueDateForSchedule.get(dueDate);
         if (dbAmt && dbAmt > 0.01) return dbAmt;
-        if (!capitalPaymentsForSchedule || capitalPaymentsForSchedule.length === 0) return currentPeriodPayment;
-        // rateRatio = currentPeriodPayment / capital_actual: ya incorpora la frecuencia.
-        // capital_before * rateRatio devuelve el monto correcto para la frecuencia del préstamo.
-        const rateRatioForSchedule = principal > 0.01 ? currentPeriodPayment / principal : (interestRate / 100);
-        for (const cp of capitalPaymentsForSchedule) {
-          const createdDate = (cp as any).created_at ? String((cp as any).created_at).split('T')[0] : null;
-          if (!createdDate) continue;
-          const cutoff = addPeriodForCap(createdDate, frequencyForCap);
-          if (dueDate <= cutoff) return round2(Number((cp as any).capital_before) * rateRatioForSchedule);
-        }
-        const last = capitalPaymentsForSchedule[capitalPaymentsForSchedule.length - 1];
-        return round2(Number((last as any).capital_after) * rateRatioForSchedule);
+        return interestForDueShared(dueDate);
       };
 
       const dueKeyOf = (d: any) => (String(d || '').split('T')[0] || '').trim() || null;
@@ -1608,9 +1598,10 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       }
 
       // Compute remaining balance dynamically: current principal + sum of all unpaid interest periods
-      const currentPrincipal = capitalPaymentsForSchedule && capitalPaymentsForSchedule.length > 0
-        ? round2(Number(capitalPaymentsForSchedule[capitalPaymentsForSchedule.length - 1].capital_after))
-        : principal;
+      // Capital vigente: lo prestado menos los abonos (el monto prestado ya no se rebaja).
+      const currentPrincipal = resolveIndefiniteCapital(
+        principal, (capitalPaymentsForSchedule || []) as CapitalPaymentLike[],
+      ).currentCapital;
       const unpaidInterestTotal = round2(regularRows.filter((r: any) => !r.isPaid).reduce((s: number, r: any) => s + r.monthlyPayment, 0));
       remainingBalanceNow = round2(currentPrincipal + unpaidInterestTotal);
       for (const r of chargeRows) r.remainingBalance = remainingBalanceNow;
@@ -1753,8 +1744,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         }
       }
       
-      // SEGUNDO: Procesar cuotas regulares (de interés)
-      const interestPerPayment = (loanData.amount * loanData.interest_rate) / 100;
+      // SEGUNDO: Procesar cuotas regulares (de interés). La cuota vigente, no la del monto
+      // prestado: tras un abono a capital es menor.
+      const interestPerPayment = Number(loanData.monthly_payment) > 0.005
+        ? Number(loanData.monthly_payment)
+        : (loanData.amount * loanData.interest_rate) / 100;
       let accumulatedInterest = 0;
       let paymentIndex = 0;
       let firstPaymentDateForInstallment: string | null = null;
@@ -2222,7 +2216,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           }
         } else {
           // Para cuotas regulares de interés, verificar que el interés acumulado sea suficiente
-        const interestPerPayment = (loanData.amount * loanData.interest_rate) / 100;
+        const interestPerPayment = Number(loanData.monthly_payment) > 0.005
+          ? Number(loanData.monthly_payment)
+          : (loanData.amount * loanData.interest_rate) / 100;
         if (interestPaidForThisInstallment >= interestPerPayment * 0.99) {
           paymentStatus = 'paid';
           if (foundPayment && !displayPaidDate) {

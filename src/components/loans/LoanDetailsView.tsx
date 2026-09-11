@@ -38,6 +38,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { resolveIndefiniteCapital } from '@/utils/indefiniteInterest';
 import { LoanCollectionCard } from '@/components/legal/LoanCollectionCard';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { computeInstallmentLateFee } from '@/utils/lateFeeWaiver';
@@ -195,7 +196,9 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     try {
       const { data, error } = await supabase
         .from('capital_payments')
-        .select('amount, created_at')
+        // `capital_after` hace falta para reconocer los préstamos a los que la versión anterior
+        // ya les rebajó el monto prestado (ver `resolveIndefiniteCapital`).
+        .select('amount, capital_before, capital_after, created_at')
         .eq('loan_id', loanId);
       if (error) throw error;
       setCapitalPayments(data || []);
@@ -369,7 +372,11 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
       // ✅ Usar cálculo centralizado (incluye: due_date inválido, pagos parciales y overpay rollover)
       const round2 = (n: number) => Math.round((Number(n || 0) * 100)) / 100;
       const breakdown = await getLoanBalanceBreakdown(supabase as any, loan as any);
-      const pending = round2(Math.max(0, round2(Number(breakdown.baseBalance || 0) - Number(loan.amount || 0))));
+      // El capital ya no es `loan.amount` (el monto prestado no baja con los abonos): el desglose
+      // devuelve el interés por separado.
+      const pending = round2(Math.max(0, Number(
+        breakdown.interestPending ?? round2(Number(breakdown.baseBalance || 0) - Number(loan.amount || 0))
+      )));
       setPendingInterestForIndefinite(pending);
     } catch (error) {
       console.error('❌ Error calculando interés pendiente para préstamo indefinido en LoanDetailsView:', error);
@@ -1139,10 +1146,11 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   // IMPORTANTE: NO redondear hasta el final para evitar errores de redondeo acumulados
   let capitalPendingFromRegular: number;
   if (loan.amortization_type === 'indefinite') {
-    // CORRECCIÓN: Para préstamos indefinidos, el capital pendiente es directamente loan.amount
-    // porque loan.amount ya refleja el capital después de los abonos (se actualiza en LoanUpdateForm)
-    // No necesitamos restar totalCapitalPayments porque loan.amount ya está actualizado
-    capitalPendingFromRegular = loan.amount;
+    // El capital pendiente de un indefinido es lo prestado MENOS los abonos a capital.
+    // (Hasta 2026-09-10 el abono rebajaba `loan.amount` y aquí se leía tal cual; ahora el monto
+    // prestado no cambia. `resolveIndefiniteCapital` reconoce los préstamos que aún lo tienen
+    // rebajado para no restar el abono dos veces.)
+    capitalPendingFromRegular = resolveIndefiniteCapital(loan.amount, capitalPayments).currentCapital;
   } else {
     // ✅ CORRECCIÓN: NO depender del split (principal_amount/interest_amount) guardado en pagos,
     // porque tras un abono a capital los splits pueden quedar “viejos” para la nueva tabla.
@@ -1609,7 +1617,10 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
                         <span className="text-gray-600">Monto Prestado:</span>
-                        <div className="font-semibold">RD {loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        <div className="font-semibold">RD {(loan.amortization_type === 'indefinite'
+                          ? resolveIndefiniteCapital(loan.amount, capitalPayments).lentAmount
+                          : Number(loan.amount || 0)
+                        ).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div>
                         <span className="text-gray-600">Cuotas:</span>

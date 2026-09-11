@@ -357,12 +357,12 @@ export const ReportsModule = () => {
             </div>
             <table class="details">
               <tr><th>Concepto</th><th>Monto</th></tr>
-              <tr><td>Pago Principal</td><td>$${payment.principal_amount.toLocaleString()}</td></tr>
-              <tr><td>Intereses</td><td>$${payment.interest_amount.toLocaleString()}</td></tr>
-              ${payment.late_fee > 0 ? `<tr><td>Mora</td><td>$${payment.late_fee.toLocaleString()}</td></tr>` : ''}
+              <tr><td>Pago Principal</td><td>$${payment.principal_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>
+              <tr><td>Intereses</td><td>$${payment.interest_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>
+              ${payment.late_fee > 0 ? `<tr><td>Mora</td><td>$${payment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>` : ''}
             </table>
             <div class="total">
-              Total Pagado: $${payment.amount.toLocaleString()}
+              Total Pagado: $${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
           </body>
         </html>
@@ -448,9 +448,9 @@ export const ReportsModule = () => {
             <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-green-600">RD${totalLoanAmount.toLocaleString()}</div>
+            <div className="text-2xl sm:text-3xl font-bold text-green-600">RD${totalLoanAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              Balance: RD${reportData.loans.reduce((sum, loan) => sum + (loan.remaining_balance || 0), 0).toLocaleString()}
+              Balance: RD${reportData.loans.reduce((sum, loan) => sum + (loan.remaining_balance || 0), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
           </CardContent>
         </Card>
@@ -461,7 +461,7 @@ export const ReportsModule = () => {
             <Receipt className="h-4 w-4 text-purple-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl sm:text-3xl font-bold text-purple-600">RD${totalPayments.toLocaleString()}</div>
+            <div className="text-2xl sm:text-3xl font-bold text-purple-600">RD${totalPayments.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">
               {reportData.payments.length} transacciones
             </p>
@@ -613,15 +613,15 @@ export const ReportsModule = () => {
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Monto:</span> 
-                              <span className="text-xs sm:text-sm">${loan.amount.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Balance:</span> 
-                              <span className="text-xs sm:text-sm">${loan.remaining_balance.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${loan.remaining_balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Cuota:</span> 
-                              <span className="text-xs sm:text-sm">${loan.monthly_payment.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${loan.monthly_payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Tasa:</span> 
@@ -712,15 +712,15 @@ export const ReportsModule = () => {
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 text-sm text-gray-600">
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Monto:</span> 
-                              <span className="text-xs sm:text-sm">${payment.amount.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Principal:</span> 
-                              <span className="text-xs sm:text-sm">${payment.principal_amount.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${payment.principal_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Interés:</span> 
-                              <span className="text-xs sm:text-sm">${payment.interest_amount.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${payment.interest_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Fecha:</span> 
@@ -729,7 +729,7 @@ export const ReportsModule = () => {
                           </div>
                           {payment.late_fee > 0 && (
                             <div className="text-sm text-red-600">
-                              <strong>Mora:</strong> ${payment.late_fee.toLocaleString()}
+                              <strong>Mora:</strong> ${payment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                           )}
                         </div>
@@ -794,7 +794,7 @@ export const ReportsModule = () => {
                 </div>
                 <div className="text-center p-4 bg-purple-50 rounded-lg">
                   <div className="text-2xl font-bold text-purple-600">
-                    ${filteredClients.reduce((sum, c) => sum + (c.monthly_income || 0), 0).toLocaleString()}
+                    ${filteredClients.reduce((sum, c) => sum + (c.monthly_income || 0), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <div className="text-sm text-gray-600">Ingresos Totales</div>
                 </div>
@@ -826,7 +826,7 @@ export const ReportsModule = () => {
                           </div>
                           <div className="flex flex-col sm:flex-row sm:items-center">
                             <span className="font-medium text-xs sm:text-sm">Ingresos:</span> 
-                            <span className="text-xs sm:text-sm">${(client.monthly_income || 0).toLocaleString()}</span>
+                            <span className="text-xs sm:text-sm">${(client.monthly_income || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                         </div>
                       </div>
@@ -858,26 +858,26 @@ export const ReportsModule = () => {
                     <div className="flex justify-between items-center">
                       <span className="text-sm sm:text-base">Intereses cobrados:</span>
                       <span className="font-semibold text-green-600 text-sm sm:text-base">
-                        ${totalInterest.toLocaleString()}
+                        ${totalInterest.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm sm:text-base">Pagos recibidos:</span>
                       <span className="font-semibold text-sm sm:text-base">
-                        ${totalPayments.toLocaleString()}
+                        ${totalPayments.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm sm:text-base">Moras cobradas:</span>
                       <span className="font-semibold text-orange-600 text-sm sm:text-base">
-                        ${reportData.payments.reduce((sum, p) => sum + (p.late_fee || 0), 0).toLocaleString()}
+                        ${reportData.payments.reduce((sum, p) => sum + (p.late_fee || 0), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="border-t pt-2 mt-2">
                       <div className="flex justify-between items-center">
                         <span className="text-sm sm:text-base font-semibold">Total Ingresos:</span>
                         <span className="font-bold text-green-600 text-sm sm:text-base">
-                          ${(totalInterest + reportData.payments.reduce((sum, p) => sum + (p.late_fee || 0), 0)).toLocaleString()}
+                          ${(totalInterest + reportData.payments.reduce((sum, p) => sum + (p.late_fee || 0), 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                     </div>
@@ -893,20 +893,20 @@ export const ReportsModule = () => {
                     <div className="flex justify-between items-center">
                       <span className="text-sm sm:text-base">Gastos operativos:</span>
                       <span className="font-semibold text-red-600 text-sm sm:text-base">
-                        ${totalExpenses.toLocaleString()}
+                        ${totalExpenses.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm sm:text-base">Capital prestado:</span>
                       <span className="font-semibold text-sm sm:text-base">
-                        ${totalLoanAmount.toLocaleString()}
+                        ${totalLoanAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="border-t pt-2 mt-2">
                       <div className="flex justify-between items-center">
                         <span className="text-sm sm:text-base font-semibold">Total Egresos:</span>
                         <span className="font-bold text-red-600 text-sm sm:text-base">
-                          ${(totalExpenses + totalLoanAmount).toLocaleString()}
+                          ${(totalExpenses + totalLoanAmount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                     </div>
@@ -918,7 +918,7 @@ export const ReportsModule = () => {
                 <div className="flex justify-between text-lg font-bold">
                   <span>Ganancia Neta:</span>
                   <span className={netProfit >= 0 ? 'text-green-600' : 'text-red-600'}>
-                    ${netProfit.toLocaleString()}
+                    ${netProfit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
@@ -954,7 +954,7 @@ export const ReportsModule = () => {
                     <div className="flex justify-between items-center">
                       <span className="text-sm sm:text-base">Préstamo promedio:</span>
                       <span className="font-semibold text-sm sm:text-base">
-                        ${Math.round(averageLoanAmount).toLocaleString()}
+                        ${(averageLoanAmount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
@@ -987,7 +987,7 @@ export const ReportsModule = () => {
                     <div className="flex justify-between items-center">
                       <span className="text-sm sm:text-base">Pago promedio:</span>
                       <span className="font-semibold text-sm sm:text-base">
-                        ${Math.round(averagePaymentAmount).toLocaleString()}
+                        ${(averagePaymentAmount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
@@ -1042,21 +1042,21 @@ export const ReportsModule = () => {
                 <div className="border rounded-lg">
                   <div className="grid grid-cols-2 gap-4 p-3 border-b">
                     <span>Pago Principal:</span>
-                    <span className="font-medium">${selectedPayment.principal_amount.toLocaleString()}</span>
+                    <span className="font-medium">${selectedPayment.principal_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-4 p-3 border-b">
                     <span>Intereses:</span>
-                    <span className="font-medium">${selectedPayment.interest_amount.toLocaleString()}</span>
+                    <span className="font-medium">${selectedPayment.interest_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   {selectedPayment.late_fee > 0 && (
                     <div className="grid grid-cols-2 gap-4 p-3 border-b">
                       <span>Mora:</span>
-                      <span className="font-medium text-red-600">${selectedPayment.late_fee.toLocaleString()}</span>
+                      <span className="font-medium text-red-600">${selectedPayment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                   )}
                   <div className="grid grid-cols-2 gap-4 p-3 bg-gray-50 font-bold">
                     <span>Total:</span>
-                    <span>${selectedPayment.amount.toLocaleString()}</span>
+                    <span>${selectedPayment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </div>

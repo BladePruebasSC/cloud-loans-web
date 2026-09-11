@@ -165,7 +165,7 @@ export const ClientsModule = () => {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${totalIncome.toLocaleString()}</div>
+            <div className="text-2xl font-bold">${totalIncome.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <p className="text-xs text-muted-foreground">Ingresos mensuales</p>
           </CardContent>
         </Card>
@@ -282,7 +282,7 @@ export const ClientsModule = () => {
                             {client.monthly_income && (
                               <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                                 <DollarSign className="h-3 w-3 sm:h-4 sm:w-4" />
-                                <span className="text-xs sm:text-sm">${client.monthly_income.toLocaleString()}</span>
+                                <span className="text-xs sm:text-sm">${client.monthly_income.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                               </div>
                             )}
 
@@ -402,7 +402,7 @@ export const ClientsModule = () => {
                 {selectedClient.monthly_income && (
                   <div>
                     <label className="text-sm font-medium text-gray-500">Ingresos Mensuales</label>
-                    <p className="text-lg">${selectedClient.monthly_income.toLocaleString()}</p>
+                    <p className="text-lg">${selectedClient.monthly_income.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                 )}
                 {selectedClient.credit_score && (

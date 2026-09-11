@@ -13,7 +13,7 @@ import {
   RefreshCw, DollarSign, CreditCard, UserPlus, Zap, Phone, MessageSquare, ArrowRight, AlertTriangle,
   Clock, CheckCircle2, TrendingUp, TrendingDown, Activity, Users, Gavel, Target, Briefcase, Package,
   ShoppingCart, Scale, FileText, BarChart3, MapPin, HandHeart, Building2, ChevronRight, CalendarDays,
-  ArrowUpRight, Wallet, ShieldCheck, PencilLine, Trash2,
+  ArrowUpRight, Wallet, ShieldCheck, PencilLine, Trash2, PiggyBank,
 } from 'lucide-react';
 
 const MONTH_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -39,11 +39,12 @@ const SEVERITY_STYLE: Record<PendingItem['severity'], { dot: string; badge: stri
   info: { dot: 'bg-blue-500', badge: 'bg-blue-50 text-blue-700 border-blue-200' },
 };
 const ACTIVITY_ICON: Record<ActivityItem['kind'], any> = {
-  payment: DollarSign, loan: CreditCard, client: UserPlus, contact: MessageSquare,
+  payment: DollarSign, capital_payment: PiggyBank, loan: CreditCard, client: UserPlus, contact: MessageSquare,
   loan_update: PencilLine, deletion: Trash2,
 };
 const ACTIVITY_STYLE: Record<ActivityItem['kind'], string> = {
   payment: 'bg-green-100 text-green-700', loan: 'bg-blue-100 text-blue-700',
+  capital_payment: 'bg-teal-100 text-teal-700',
   client: 'bg-purple-100 text-purple-700', contact: 'bg-slate-100 text-slate-700',
   loan_update: 'bg-amber-100 text-amber-700',
   // Lo eliminado va en rojo a propósito: es lo que más importa poder repasar después.
@@ -54,7 +55,9 @@ export const HomeModule: React.FC = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const P = usePortfolioData();
-  const { portfolio, cashflow, agenda, pending, activity, onboarding, clientStats, todayIso } = P;
+  const { portfolio, cashflow, agenda, pending, activity, onboarding, clientStats, todayIso, capitalToday, capitalMonth } = P;
+  /** Pagos de cuotas de hoy (los abonos a capital se cuentan en el cobrado, pero se nombran aparte). */
+  const paymentsTodayCount = Math.max(0, cashflow.today.count - capitalToday.count);
   const [trackingFor, setTrackingFor] = useState<{ loanId: string; clientName: string } | null>(null);
   const [showAllPending, setShowAllPending] = useState(false);
 
@@ -166,14 +169,22 @@ export const HomeModule: React.FC = () => {
             icon={Wallet} label="Cobrado hoy" tone="bg-emerald-100 text-emerald-700"
             value={formatCurrency(cashflow.today.collected)}
             sub={
-              collectedTodayVsYesterday === null
-                ? `${cashflow.today.count} pago${cashflow.today.count === 1 ? '' : 's'}`
-                : (
-                  <span className={`inline-flex items-center gap-1 ${collectedTodayVsYesterday >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                    {collectedTodayVsYesterday >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                    {Math.abs(collectedTodayVsYesterday).toFixed(0)}% vs ayer
+              <>
+                {collectedTodayVsYesterday === null
+                  ? `${paymentsTodayCount} pago${paymentsTodayCount === 1 ? '' : 's'}`
+                  : (
+                    <span className={`inline-flex items-center gap-1 ${collectedTodayVsYesterday >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {collectedTodayVsYesterday >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                      {Math.abs(collectedTodayVsYesterday).toFixed(2)}% vs ayer
+                    </span>
+                  )}
+                {/* Un abono a capital es dinero cobrado, pero no es un pago de cuota: se dice aparte. */}
+                {capitalToday.count > 0 && (
+                  <span className="block text-teal-700 font-medium">
+                    Incluye {capitalToday.count === 1 ? 'un abono' : `${capitalToday.count} abonos`} a capital: {formatCurrency(capitalToday.amount)}
                   </span>
-                )
+                )}
+              </>
             }
           />
           <DayTile
@@ -199,7 +210,7 @@ export const HomeModule: React.FC = () => {
           />
           <DayTile
             icon={ShieldCheck} label="Cartera al día" tone="bg-violet-100 text-violet-700"
-            value={`${portfolio.healthPct.toFixed(0)}%`}
+            value={`${portfolio.healthPct.toFixed(2)}%`}
             sub={`${formatCurrency(portfolio.currentBalance)} de ${formatCurrency(portfolio.activeBalance)}`}
             onClick={() => navigate('/dashboard')}
           />
@@ -424,6 +435,13 @@ export const HomeModule: React.FC = () => {
                   { label: 'Mora acumulada (recargos)', value: formatCurrency(portfolio.lateFeeTotal), cls: portfolio.lateFeeTotal > 0 ? 'text-red-600' : '' },
                   { label: 'Clientes con préstamo', value: `${clientStats.withLoan} de ${clientStats.total}` },
                   { label: 'Cobrado este mes', value: formatCurrency(cashflow.month.collected), cls: 'text-emerald-700' },
+                  ...(capitalMonth.count > 0
+                    ? [{
+                        label: `Abonos a capital este mes (${capitalMonth.count})`,
+                        value: formatCurrency(capitalMonth.amount),
+                        cls: 'text-teal-700',
+                      }]
+                    : []),
                 ].map(r => (
                   <div key={r.label} className="flex items-center justify-between">
                     <span className="text-slate-500">{r.label}</span>

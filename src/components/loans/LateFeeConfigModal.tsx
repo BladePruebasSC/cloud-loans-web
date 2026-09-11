@@ -284,7 +284,7 @@ export const LateFeeConfigModal: React.FC<LateFeeConfigModalProps> = ({
                   <div className="text-center p-4 bg-blue-50 rounded-lg">
                     <Clock className="h-6 w-6 mx-auto mb-2 text-blue-600" />
                     <div className="text-lg font-bold text-blue-700">
-                      ${preview.dailyFee.toLocaleString()}
+                      ${preview.dailyFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div className="text-sm text-blue-600">Por día</div>
                   </div>
@@ -292,7 +292,7 @@ export const LateFeeConfigModal: React.FC<LateFeeConfigModalProps> = ({
                   <div className="text-center p-4 bg-orange-50 rounded-lg">
                     <AlertTriangle className="h-6 w-6 mx-auto mb-2 text-orange-600" />
                     <div className="text-lg font-bold text-orange-700">
-                      ${preview.weeklyFee.toLocaleString()}
+                      ${preview.weeklyFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div className="text-sm text-orange-600">Por semana</div>
                   </div>
@@ -300,7 +300,7 @@ export const LateFeeConfigModal: React.FC<LateFeeConfigModalProps> = ({
                   <div className="text-center p-4 bg-red-50 rounded-lg">
                     <DollarSign className="h-6 w-6 mx-auto mb-2 text-red-600" />
                     <div className="text-lg font-bold text-red-700">
-                      ${preview.monthlyFee.toLocaleString()}
+                      ${preview.monthlyFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div className="text-sm text-red-600">Por mes</div>
                   </div>

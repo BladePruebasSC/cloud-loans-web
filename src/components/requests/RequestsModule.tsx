@@ -852,7 +852,7 @@ const RequestsModule = () => {
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-4 text-xs sm:text-sm text-gray-600">
                             <div className="flex items-center">
                               <DollarSign className="h-3 w-3 mr-1 flex-shrink-0" />
-                              <span className="truncate">Solicita: ${request.requested_amount.toLocaleString()}</span>
+                              <span className="truncate">Solicita: ${request.requested_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex items-center">
                               <Clock className="h-3 w-3 mr-1 flex-shrink-0" />
@@ -2806,7 +2806,7 @@ const RequestsModule = () => {
                   Solicitud de {requestToDelete.clients?.full_name}
                 </h4>
                 <p className="text-sm text-gray-600">
-                  Monto: ${requestToDelete.requested_amount.toLocaleString()}
+                  Monto: ${requestToDelete.requested_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
                 <p className="text-sm text-gray-600">
                   Fecha: {new Date(requestToDelete.created_at).toLocaleDateString()}

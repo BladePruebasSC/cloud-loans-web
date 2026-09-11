@@ -418,7 +418,7 @@ const Notifications: React.FC = () => {
               id: `late_fee_critical_${loan.id}`,
               type: 'late_fee_critical',
               title: 'Mora Crítica',
-              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString()} (${daysOverdue} días vencidos)`,
+              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${daysOverdue} días vencidos)`,
               priority: 'high',
               dueDate: loan.next_payment_date,
               loanId: loan.id,
@@ -433,7 +433,7 @@ const Notifications: React.FC = () => {
               id: `late_fee_high_${loan.id}`,
               type: 'late_fee_high',
               title: 'Mora Alta',
-              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString()} (${daysOverdue} días vencidos)`,
+              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${daysOverdue} días vencidos)`,
               priority: 'high',
               dueDate: loan.next_payment_date,
               loanId: loan.id,
@@ -448,7 +448,7 @@ const Notifications: React.FC = () => {
               id: `late_fee_accumulated_${loan.id}`,
               type: 'late_fee_accumulated',
               title: 'Mora Acumulada',
-              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString()} (${daysOverdue} días vencidos)`,
+              message: `${clientName} tiene una mora de RD$${lateFeeAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${daysOverdue} días vencidos)`,
               priority: 'medium',
               dueDate: loan.next_payment_date,
               loanId: loan.id,
@@ -504,7 +504,7 @@ const Notifications: React.FC = () => {
           }));
           (brokenPromises || []).forEach((p: any) => notificationsList.push({
             id: `legal-promise-${p.id}`, type: 'legal_promise_broken', title: '💔 Promesa de pago incumplida',
-            message: `${nameOf(p.case_id)} prometió RD$${Number(p.amount).toLocaleString()} para el ${p.promised_date}`, priority: 'high', dueDate: p.promised_date, caseId: p.case_id, clientName: nameOf(p.case_id), amount: Number(p.amount),
+            message: `${nameOf(p.case_id)} prometió RD$${Number(p.amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} para el ${p.promised_date}`, priority: 'high', dueDate: p.promised_date, caseId: p.case_id, clientName: nameOf(p.case_id), amount: Number(p.amount),
           }));
           (openCases || []).forEach((c: any) => {
             if (c.next_action_at && dayDiff(c.next_action_at) <= 0 && !['paid', 'suspended'].includes(c.status)) {
@@ -752,7 +752,7 @@ const Notifications: React.FC = () => {
                             {notification.amount && (
                               <div className="flex items-center gap-1">
                                 <DollarSign className="h-3 w-3" />
-                                ${notification.amount.toLocaleString()}
+                                ${notification.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </div>
                             )}
                           </div>

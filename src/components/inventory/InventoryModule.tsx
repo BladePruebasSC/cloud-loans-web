@@ -2401,7 +2401,7 @@ const InventoryModule = () => {
             <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">${totalValue.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-green-600">${totalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <p className="text-xs text-muted-foreground">Valor del inventario</p>
           </CardContent>
         </Card>
@@ -2973,7 +2973,7 @@ const InventoryModule = () => {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-600">
-                  ${sales.reduce((sum, s) => sum + calculateSaleTotalWithTax(s), 0).toLocaleString()}
+                  ${sales.reduce((sum, s) => sum + calculateSaleTotalWithTax(s), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <p className="text-xs text-muted-foreground">Total vendido</p>
               </CardContent>
@@ -3439,7 +3439,7 @@ const InventoryModule = () => {
                   </div>
                   <div className="flex justify-between">
                     <span>Valor total del inventario:</span>
-                    <span className="font-semibold">${totalValue.toLocaleString()}</span>
+                    <span className="font-semibold">${totalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Productos con stock bajo:</span>
@@ -3519,7 +3519,7 @@ const InventoryModule = () => {
                   <div className="flex justify-between">
                     <span>Monto total vendido:</span>
                     <span className="font-semibold text-green-600">
-                      ${sales.reduce((sum, s) => sum + calculateSaleTotalWithTax(s), 0).toLocaleString()}
+                      ${sales.reduce((sum, s) => sum + calculateSaleTotalWithTax(s), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="flex justify-between">

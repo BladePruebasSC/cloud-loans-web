@@ -22,12 +22,14 @@ import {
 } from '@/utils/dateUtils';
 import {
   addPeriodsToDate,
+  addPeriodsToIsoDate,
   formatDateLocalIso,
   getFrequencyLabel,
   getFrequencyRateFactor,
   getLateFeePeriodDays,
   parseIsoDateLocal,
 } from '@/utils/frequencyUtils';
+import { resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 import {
   computeInstallmentLateFee,
   distributeLateFeeWaiver,
@@ -231,6 +233,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   const [loanPayments, setLoanPayments] = useState<RawPayment[]>([]);
   /** Abonos DIRECTOS a capital: estos sí reducen el capital a repartir. */
   const [totalCapitalPaid, setTotalCapitalPaid] = useState(0);
+  /** Abonos a capital del préstamo: el capital vigente de un indefinido se deduce de ellos. */
+  const [capitalPaymentRows, setCapitalPaymentRows] = useState<CapitalPaymentLike[]>([]);
   /**
    * Pagos eliminados por la última extensión de plazo, para dejar constancia en el historial
    * del préstamo. Es una ref y no estado porque se escribe y se lee dentro del mismo guardado.
@@ -260,6 +264,20 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
   });
   const [penaltyAmount, setPenaltyAmount] = useState<number>(0);
   const [originalPendingCapital, setOriginalPendingCapital] = useState<number>(0); // Capital pendiente original antes del abono
+
+  /**
+   * INDEFINIDOS: interés de un período por cada peso de capital vigente.
+   *
+   * Se deduce de la cuota actual (`monthly_payment`) para respetar cómo se calculó la cuota del
+   * préstamo. Antes el abono calculaba la cuota nueva como `capital × tasa / 100`, sin el factor
+   * de la frecuencia: un indefinido quincenal o semanal pasaba a cobrar la tasa de un MES.
+   */
+  const indefiniteInterestRatio = (capitalBase: number): number => {
+    const cuota = Number(loan.monthly_payment) || 0;
+    return cuota > 0.005 && capitalBase > 0.005
+      ? cuota / capitalBase
+      : ((Number(loan.interest_rate) || 0) / 100) * getFrequencyRateFactor(loan.payment_frequency);
+  };
   const [showPreviewTable, setShowPreviewTable] = useState(false);
   const [previewInstallments, setPreviewInstallments] = useState<any[]>([]);
   /** Próximo pago calculado desde installments + payments al abrir (misma lógica que Detalles). */
@@ -348,12 +366,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         supabase.from('payments')
           .select('amount, principal_amount, interest_amount, due_date, superseded_at')
           .eq('loan_id', loan.id),
-        supabase.from('capital_payments').select('amount').eq('loan_id', loan.id),
+        supabase.from('capital_payments').select('amount, capital_before, capital_after, created_at').eq('loan_id', loan.id),
       ]);
 
       if (error) throw error;
       setInstallments(data || []);
       setLoanPayments((payRows || []) as RawPayment[]);
+      setCapitalPaymentRows((capitalRows || []) as CapitalPaymentLike[]);
       setTotalCapitalPaid(
         (capitalRows || []).reduce((sum, cp) => sum + (Number(cp.amount) || 0), 0)
       );
@@ -465,7 +484,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               // IMPORTANTE: si por algún motivo la lista de cuotas contiene “cargos” inconsistentes
               // (ej. de otro estado/trigger) y el remaining_balance de BD no los refleja,
               // priorizamos BD para evitar inflar el capital pendiente.
-              const baseCapital = round2(Number(loan.amount || 0));
+              // Capital vigente: lo prestado menos los abonos (el monto prestado ya no se rebaja).
+              const baseCapital = round2(resolveIndefiniteCapital(loan.amount, capitalPaymentRows).currentCapital);
               const maxNonPrincipal = round2(Math.max(0, Number(remainingFromDb) - baseCapital));
 
               // Si los cargos detectados exceden lo que “cabe” en remaining_balance - capital base,
@@ -482,9 +502,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               interestPending = round2(Math.max(0, Number(remainingFromDb) - capitalPending));
             } else {
               // Fallback: calcular interés pendiente dinámicamente (asegurando que siempre haya 1 cuota pendiente)
-              const interestPerPayment = (Number(loan.amount || 0) * Number(loan.interest_rate || 0)) / 100;
+              const capitalVigente = resolveIndefiniteCapital(loan.amount, capitalPaymentRows).currentCapital;
+              const interestPerPayment = Number(loan.monthly_payment) > 0.005
+                ? Number(loan.monthly_payment)
+                : (capitalVigente * Number(loan.interest_rate || 0)) / 100;
               // En fallback, los cargos se consideran capital pendiente si existen
-              capitalPending = round2(Number(loan.amount || 0) + unpaidChargesAmountRaw);
+              capitalPending = round2(capitalVigente + unpaidChargesAmountRaw);
 
               if (loan.start_date && interestPerPayment > 0) {
                 const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
@@ -607,7 +630,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         totalToSettle: 0
       });
     }
-  }, [isOpen, loan.id, loan.amount, loan.remaining_balance, freshRemainingBalance, loan.amortization_type, loan.interest_rate, loan.start_date, installments, currentLateFee, updateType]);
+  }, [isOpen, loan.id, loan.amount, loan.remaining_balance, freshRemainingBalance, loan.amortization_type, loan.interest_rate, loan.start_date, installments, currentLateFee, updateType, capitalPaymentRows]);
 
   // Calcular interés pendiente para préstamos indefinidos
   useEffect(() => {
@@ -643,7 +666,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // Obtener todos los abonos a capital anteriores
           const { data: capitalPayments, error: capitalPaymentsError } = await supabase
             .from('capital_payments')
-            .select('amount')
+            .select('amount, capital_before, capital_after, created_at')
             .eq('loan_id', loan.id);
 
           if (capitalPaymentsError) throw capitalPaymentsError;
@@ -683,10 +706,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           // Los cargos NO deben influir en capital pendiente (los cargos no cambian con abonos a capital).
           let calculatedPendingCapital: number;
           if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
-            // CORRECCIÓN: Para préstamos indefinidos, el capital pendiente es directamente loan.amount
-            // porque loan.amount ya refleja el capital después de los abonos (se actualiza en LoanUpdateForm cuando se hace un abono)
+            // Capital pendiente de un indefinido = lo prestado MENOS los abonos a capital.
+            // (Hasta 2026-09-10 el abono rebajaba `loan.amount`; ahora el monto prestado no cambia.)
             // No incluir cargos aquí.
-            calculatedPendingCapital = Math.round((loan.amount) * 100) / 100;
+            calculatedPendingCapital = resolveIndefiniteCapital(
+              loan.amount, (capitalPayments || []) as CapitalPaymentLike[],
+            ).currentCapital;
           } else {
             // Calcular cargos pendientes (NO deben incluirse en el capital disponible para abono a capital)
             // Nota: normalmente los cargos tienen un due_date distinto a las cuotas regulares, así que podemos
@@ -793,8 +818,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         
         if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
           // Para préstamos indefinidos, el interés se recalcula con el nuevo capital
-          const newInterestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
-          const currentInterestPerPayment = (loan.amount * loan.interest_rate) / 100;
+          const ratio = indefiniteInterestRatio(originalPendingCapital);
+          const newInterestPerPayment = Math.round(newPendingCapital * ratio * 100) / 100;
+          const currentInterestPerPayment = Math.round(originalPendingCapital * ratio * 100) / 100;
           
           setCapitalPaymentPreview({
             newPendingCapital,
@@ -921,7 +947,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
     if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
       // Para préstamos indefinidos: solo interés. Si no hay cuotas regulares en BD, generar futuras con nuevo monto.
-      const newInterestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
+      const newInterestPerPayment = Math.round(newPendingCapital * indefiniteInterestRatio(originalPendingCapital) * 100) / 100;
       let previewInsts: any[] = [];
 
       if (unpaidRegularInstallments.length > 0) {
@@ -1095,8 +1121,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         return;
       }
 
-      // Calcular interés por cuota para préstamos indefinidos
-      const interestPerPayment = (loan.amount * loan.interest_rate) / 100;
+      // Calcular interés por cuota para préstamos indefinidos: la cuota vigente. `loan.amount` es el
+      // monto prestado, que ya no baja con los abonos a capital.
+      const interestPerPayment = Number(loan.monthly_payment) > 0.005
+        ? Number(loan.monthly_payment)
+        : (loan.amount * loan.interest_rate) / 100;
 
       // Calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
       const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
@@ -1611,7 +1640,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // CORRECCIÓN: Para préstamos indefinidos, el interés pendiente se recalcula con el nuevo capital
             // Nuevo interés por cuota = (capitalAfter * interés) / 100
             // El interés pendiente típicamente es 1 cuota (la próxima cuota pendiente)
-            const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+            const newInterestPerPayment = Math.round(capitalAfter * indefiniteInterestRatio(originalPendingCapital) * 100) / 100;
             // Para préstamos indefinidos, típicamente hay 1 cuota pendiente de interés
             // Balance = Capital Pendiente + Interés Pendiente (nuevo) + Cargos no pagados
             newBalance = capitalAfter + newInterestPerPayment + unpaidChargesAmount;
@@ -1878,7 +1907,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             <div class="section">
               <div class="section-title">DETALLES DEL PRÉSTAMO</div>
               <div class="info-row">
-                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+                <span>Monto Original: RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
                 <span>Tasa de Interés: ${loan.interest_rate}%</span>
@@ -1899,14 +1928,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             <div class="amount-section">
               <div class="section-title">DESGLOSE DEL PAGO</div>
               <div class="info-row">
-                <span>Pago a Principal: RD$${(payment.principal_amount || 0).toLocaleString()}</span>
+                <span>Pago a Principal: RD$${(payment.principal_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
-                <span>Pago a Intereses: RD$${(payment.interest_amount || 0).toLocaleString()}</span>
+                <span>Pago a Intereses: RD$${(payment.interest_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              ${(payment.late_fee || 0) > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${(payment.late_fee || 0).toLocaleString()}</span></div>` : ''}
+              ${(payment.late_fee || 0) > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${(payment.late_fee || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
               <div class="total-amount">
-                TOTAL: RD$${payment.amount.toLocaleString()}
+                TOTAL: RD$${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -2154,7 +2183,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             <div class="section">
               <div class="section-title">DETALLES DEL PRÉSTAMO</div>
               <div class="info-row">
-                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+                <span>Monto Original: RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
                 <span>Tasa de Interés: ${loan.interest_rate}%</span>
@@ -2167,18 +2196,18 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 <span>Fecha: ${capitalPayment.paymentDate}</span>
               </div>
               <div class="info-row">
-                <span>Capital pendiente antes: RD$${capitalPayment.capitalBefore.toLocaleString()}</span>
+                <span>Capital pendiente antes: RD$${capitalPayment.capitalBefore.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
-                <span>Monto del abono: RD$${capitalPayment.amount.toLocaleString()}</span>
+                <span>Monto del abono: RD$${capitalPayment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               ${capitalPayment.penaltyAmount > 0 ? `
                 <div class="info-row">
-                  <span>Penalidad aplicada: RD$${capitalPayment.penaltyAmount.toLocaleString()}</span>
+                  <span>Penalidad aplicada: RD$${capitalPayment.penaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               ` : ''}
               <div class="info-row">
-                <span>Capital pendiente después: RD$${capitalPayment.capitalAfter.toLocaleString()}</span>
+                <span>Capital pendiente después: RD$${capitalPayment.capitalAfter.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
                 <span>Configuración de cuotas: ${capitalPayment.keepInstallments ? 'Mantener número de cuotas (reducir monto)' : 'Reducir número de cuotas (mantener monto)'}</span>
@@ -2192,11 +2221,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
             <div class="amount-section">
               <div class="total-amount">
-                TOTAL ABONADO: RD$${(capitalPayment.amount + (capitalPayment.penaltyAmount || 0)).toLocaleString()}
+                TOTAL ABONADO: RD$${(capitalPayment.amount + (capitalPayment.penaltyAmount || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               ${lastCapitalPaymentData.remainingBalance !== undefined ? `
                 <div style="text-align: center; margin-top: 10px; font-size: ${format.includes('POS') ? '10px' : '14px'};">
-                  Balance restante: RD$${lastCapitalPaymentData.remainingBalance.toLocaleString()}
+                  Balance restante: RD$${lastCapitalPaymentData.remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               ` : ''}
             </div>
@@ -2807,7 +2836,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             ...(isIndefinite ? {} : { term_months: nextInstallmentNumber }), // no tocar term_months en indefinidos
           };
 
-          console.log(`✅ Nueva cuota ${nextInstallmentNumber} creada con cargo de RD$${data.amount.toLocaleString()}`);
+          console.log(`✅ Nueva cuota ${nextInstallmentNumber} creada con cargo de RD$${data.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
           console.log(`🔍 Balance actualizado - currentBalance: ${calculatedValues.currentBalance}, newBalance: ${calculatedValues.newBalance}, cargo: ${data.amount}`);
           break;
           
@@ -3175,19 +3204,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
             // Validar que los montos no excedan los pendientes
             if (capitalPayment > settleBreakdown.capitalPending) {
-              toast.error(`El capital a pagar no puede exceder RD$${settleBreakdown.capitalPending.toLocaleString()}`);
+              toast.error(`El capital a pagar no puede exceder RD$${settleBreakdown.capitalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
               setLoading(false);
               return;
             }
 
             if (interestPayment > settleBreakdown.interestPending) {
-              toast.error(`El interés a pagar no puede exceder RD$${settleBreakdown.interestPending.toLocaleString()}`);
+              toast.error(`El interés a pagar no puede exceder RD$${settleBreakdown.interestPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
               setLoading(false);
               return;
             }
 
             if (lateFeePayment > settleBreakdown.lateFeePending) {
-              toast.error(`La mora a pagar no puede exceder RD$${settleBreakdown.lateFeePending.toLocaleString()}`);
+              toast.error(`La mora a pagar no puede exceder RD$${settleBreakdown.lateFeePending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
               setLoading(false);
               return;
             }
@@ -3273,7 +3302,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 payment_date: paymentDate,
                 payment_method: data.payment_method || 'cash',
                 reference_number: data.reference_number,
-                notes: data.notes || `Saldado - Capital: RD$${principalPayment.toLocaleString()}, Interés: RD$${actualInterestPayment.toLocaleString()}, Mora: RD$${actualLateFeePayment.toLocaleString()} - ${getAdjustmentReasonLabel(data.adjustment_reason)}`,
+                notes: data.notes || `Saldado - Capital: RD$${principalPayment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Interés: RD$${actualInterestPayment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, Mora: RD$${actualLateFeePayment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} - ${getAdjustmentReasonLabel(data.adjustment_reason)}`,
                 status: 'completed',
                 created_by: createdBy,
                 company_id: companyId,
@@ -3529,7 +3558,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }
             
             if (lateFeeToRemove > currentLateFeeValue) {
-              toast.error(`No se puede eliminar más mora de la disponible. Mora actual: RD$${currentLateFeeValue.toLocaleString()}`);
+              toast.error(`No se puede eliminar más mora de la disponible. Mora actual: RD$${currentLateFeeValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
               setLoading(false);
               return;
             }
@@ -3649,6 +3678,49 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 }
 
                 console.log(`✅ Cuota ${installments.find((i: any) => i.id === update.id)?.installment_number}: eliminando ${update.added.toFixed(2)} de mora`);
+              }
+
+              // DÍAS DE ATRASO (2026-09-10): "cuando se elimina la mora no se están eliminando los
+              // días atrasados, elimínalos junto a la mora aunque la cuota esté vencida". Se anota el
+              // día de la condonación en las cuotas que quedan sin mora, y desde ahí se vuelven a
+              // contar sus días (ver `installmentLateFeeCalculator` y `overdueFromDues`).
+              //   · Si se quita TODA la mora, en todas las cuotas ya vencidas (en un indefinido, en
+              //     sus filas regulares: la condonación es del préstamo entero).
+              //   · Si se quita una parte, solo en las cuotas cuya mora quedó cubierta del todo: las
+              //     demás conservan sus días, porque conservan su mora.
+              const waivedTodayIso = getCurrentDateStringForSantoDomingo();
+              const esCargo = (inst: any) =>
+                Math.abs(Number(inst?.interest_amount || 0)) < 0.01 && Number(inst?.principal_amount || 0) > 0.01;
+              const waivedIds = new Set<string>();
+              if (lateFeeToRemove + 0.005 >= currentLateFeeValue) {
+                for (const inst of installments as any[]) {
+                  const due = String(inst?.due_date || '').split('T')[0];
+                  if (isIndefiniteLoan ? !esCargo(inst) || (due && due < waivedTodayIso) : (due && due < waivedTodayIso)) {
+                    waivedIds.add(inst.id);
+                  }
+                }
+              } else {
+                for (const update of waiverUpdates) {
+                  const target = waiverTargets.find(r => r.id === update.id);
+                  if (target && target.pendingLateFee > 0.005 && update.added + 0.005 >= target.pendingLateFee) {
+                    waivedIds.add(update.id);
+                  }
+                }
+              }
+              if (waivedIds.size > 0) {
+                const { error: waivedAtError } = await supabase
+                  .from('installments')
+                  .update({ late_fee_waived_at: waivedTodayIso } as any)
+                  .in('id', Array.from(waivedIds));
+                if (waivedAtError) {
+                  // La mora YA quedó eliminada: solo falla el reinicio de los días. Casi siempre es
+                  // porque la base aún no tiene la columna.
+                  console.error('No se pudieron reiniciar los días de atraso:', waivedAtError);
+                  toast.warning(
+                    'La mora se eliminó, pero los días de atraso no se pudieron reiniciar. ' +
+                    'Falta aplicar en Supabase la migración 20260911000000_capital_payments_keep_amount_and_waiver_days.sql.'
+                  );
+                }
               }
 
               // Actualizar el campo current_late_fee en el préstamo
@@ -3817,9 +3889,14 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
             if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
               // CORRECCIÓN: Para préstamos indefinidos, las cuotas solo tienen interés (sin capital)
-              // Cuando se reduce el capital base con un abono, el interés DEBE reducirse proporcionalmente
-              // Por lo tanto, debemos actualizar TODAS las cuotas pendientes con el nuevo interés
-              const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
+              // Cuando se reduce el capital base con un abono, el interés DEBE reducirse proporcionalmente.
+              // La cuota nueva sale de la proporción cuota/capital vigente (respeta la frecuencia).
+              const newInterestPerPayment = Math.round(capitalAfter * indefiniteInterestRatio(capitalBefore) * 100) / 100;
+              // El período en curso conserva la cuota de antes: se devengó con el capital anterior.
+              // Es la regla "abono + 1 período" de `buildIndefiniteInterestResolver`.
+              const cutoffCuotaVieja = addPeriodsToIsoDate(
+                getCurrentDateStringForSantoDomingo(), 1, loan.payment_frequency || 'monthly'
+              );
               
               // Obtener todas las cuotas regulares pendientes (excluyendo cargos)
               const unpaidRegularInstallments = installments.filter(inst => {
@@ -3828,10 +3905,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 return !inst.is_paid && !isCharge; // Solo cuotas regulares no pagadas
               });
               
-              // IMPORTANTE: Actualizar el interés de TODAS las cuotas pendientes
+              // IMPORTANTE: Actualizar el interés de las cuotas pendientes POSTERIORES al período en curso.
               // En préstamos indefinidos, el interés depende directamente del capital base
               // Si el capital se reduce, el interés de las cuotas pendientes también debe reducirse
               for (const installment of unpaidRegularInstallments) {
+                if (String(installment.due_date || '').split('T')[0] <= cutoffCuotaVieja) continue;
                 await supabase
                   .from('installments')
                   .update({
@@ -3871,7 +3949,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 const chargeDueDate = inst.due_date?.split('T')[0];
                 
                 if (!chargeDueDate) {
-                  return sum + Math.round(Number(chargeAmount));
+                  return sum + Math.round(Number(chargeAmount) * 100) / 100;
                 }
                 
                 const chargesWithSameDate = allCharges.filter(c => c.due_date?.split('T')[0] === chargeDueDate)
@@ -3899,7 +3977,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 }
                 
                 const remainingChargeAmount = Math.max(0, chargeAmount - principalPaidForThisCharge);
-                return sum + Math.round(remainingChargeAmount);
+                return sum + Math.round(remainingChargeAmount * 100) / 100;
               }, 0);
               
               // CORRECCIÓN: Para préstamos indefinidos, el capital pendiente es el capital base (amount)
@@ -3914,17 +3992,31 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                   Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
                   return !inst.is_paid && !isCharge;
                 })
-                .reduce((sum, inst) => sum + Math.round(inst.interest_amount || 0), 0);
+                .reduce((sum, inst) => sum + Math.round((inst.interest_amount || 0) * 100) / 100, 0);
               
-              // Para préstamos indefinidos: Balance = Capital base + Interés pendiente + Cargos pendientes
-              // El capital pendiente es el capital base (capitalAfter) porque no hay capital en las cuotas
-              const newBalance = Math.round((capitalAfter + interestPendingFromInstallments + unpaidChargesAmount) * 100) / 100;
-              
+              // Balance = capital vigente + interés pendiente (período por período, con la cuota que
+              // corresponde a cada fecha) + cargos pendientes. Es el MISMO cálculo de la tarjeta del
+              // listado y de Detalles, ya con el abono registrado y la cuota nueva.
+              let newBalance = Math.round((capitalAfter + interestPendingFromInstallments + unpaidChargesAmount) * 100) / 100;
+              try {
+                const trasElAbono = await getLoanBalanceBreakdown(supabase as any, {
+                  ...(loan as any),
+                  monthly_payment: newInterestPerPayment,
+                });
+                newBalance = trasElAbono.totalBalance;
+              } catch (balanceError) {
+                console.error('No se pudo recalcular el balance tras el abono (se usa la estimación):', balanceError);
+              }
+
               // IMPORTANTE: Actualizar monthly_payment para reflejar el nuevo interés
               // En préstamos indefinidos, monthly_payment = interés mensual (no hay capital en la cuota)
+              //
+              // `amount` NO se toca (2026-09-10): "cuando se hace un abono a capital el monto prestado
+              // no debe bajar, el balance pendiente sí". Antes se reescribía con el capital restante y
+              // el monto prestado se perdía para siempre. El capital vigente se deduce de los abonos
+              // (`resolveIndefiniteCapital`), igual que en los préstamos a plazo fijo.
               loanUpdates = {
-                amount: capitalAfter, // Actualizar el capital base
-                monthly_payment: Math.round(newInterestPerPayment * 100) / 100, // Actualizar cuota mensual con nuevo interés
+                monthly_payment: newInterestPerPayment, // Actualizar cuota mensual con nuevo interés
                 remaining_balance: newBalance
               };
               
@@ -4752,7 +4844,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       }
 
       const message = updateType === 'remove_late_fee' 
-        ? `Mora eliminada exitosamente. Nueva mora: RD$${((currentLateFee || 0) - (data.late_fee_amount || 0)).toLocaleString()}`
+        ? `Mora eliminada exitosamente. Nueva mora: ${formatCurrency(Math.max(0, (currentLateFee || 0) - (data.late_fee_amount || 0)))}`
         : actionMessages[updateType] || 'Préstamo actualizado exitosamente';
       
       toast.success(message);
@@ -6208,7 +6300,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       <>
                         <div className="flex justify-between">
                           <span className="text-gray-600">Monto del Cargo:</span>
-                          <span className="font-semibold text-blue-600">${form.watch('amount')?.toLocaleString()}</span>
+                          <span className="font-semibold text-blue-600">${form.watch('amount')?.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                         {form.watch('charge_date') && (
                           <>
@@ -6431,19 +6523,19 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                       <>
                         <div className="flex justify-between">
                           <span className="text-gray-600">Mora Actual:</span>
-                          <span className="font-semibold text-red-600">RD${currentLateFee.toLocaleString()}</span>
+                          <span className="font-semibold text-red-600">RD${currentLateFee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                         {form.watch('late_fee_amount') && form.watch('late_fee_amount')! > 0 && (
                           <>
                             <div className="flex justify-between">
                               <span className="text-gray-600">Mora a Eliminar:</span>
-                              <span className="font-semibold text-blue-600">-RD${form.watch('late_fee_amount')?.toLocaleString()}</span>
+                              <span className="font-semibold text-blue-600">-RD${form.watch('late_fee_amount')?.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <hr className="my-2" />
                             <div className="flex justify-between">
                               <span className="text-gray-600">Nueva Mora:</span>
                               <span className="font-bold text-lg text-green-600">
-                                RD${Math.max(0, currentLateFee - (form.watch('late_fee_amount') || 0)).toLocaleString()}
+                                RD${Math.max(0, currentLateFee - (form.watch('late_fee_amount') || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </span>
                             </div>
                           </>
@@ -6524,11 +6616,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Monto Original:</span>
-                  <span className="font-semibold">${loan.amount.toLocaleString()}</span>
+                  <span className="font-semibold">${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Cuota Mensual:</span>
-                  <span className="font-semibold">${loan.monthly_payment.toLocaleString()}</span>
+                  <span className="font-semibold">${loan.monthly_payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Próximo Pago:</span>

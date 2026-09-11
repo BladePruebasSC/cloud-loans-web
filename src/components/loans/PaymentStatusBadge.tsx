@@ -84,10 +84,10 @@ export const PaymentStatusBadge: React.FC<PaymentStatusBadgeProps> = ({
     return (
       <div className="flex flex-col gap-1">
         <Badge variant="secondary" className="text-xs">
-          Pagado: ${paymentStatus.currentPaymentPaid.toLocaleString()}
+          Pagado: ${paymentStatus.currentPaymentPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </Badge>
         <Badge variant="destructive" className="text-xs">
-          Falta: ${paymentStatus.currentPaymentRemaining.toLocaleString()}
+          Falta: ${paymentStatus.currentPaymentRemaining.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </Badge>
       </div>
     );
@@ -99,7 +99,7 @@ export const PaymentStatusBadge: React.FC<PaymentStatusBadgeProps> = ({
 
   return (
     <Badge variant="outline" className="text-xs">
-      Falta: ${paymentStatus.currentPaymentRemaining.toLocaleString()}
+      Falta: ${paymentStatus.currentPaymentRemaining.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
     </Badge>
   );
 };

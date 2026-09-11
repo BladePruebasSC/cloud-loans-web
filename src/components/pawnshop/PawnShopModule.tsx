@@ -198,7 +198,7 @@ const PaymentFormContent: React.FC<PaymentFormContentProps> = ({
       <div className="mb-4 p-4 bg-gray-50 rounded-lg space-y-2">
         <p><strong>Artículo:</strong> {transaction.product_name}</p>
         <p><strong>Cliente:</strong> {transaction.clients?.full_name}</p>
-        <p><strong>Monto prestado inicial:</strong> ${Number(transaction.loan_amount).toLocaleString()}</p>
+        <p><strong>Monto prestado inicial:</strong> ${Number(transaction.loan_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
       </div>
 
       {loading ? (
@@ -213,7 +213,7 @@ const PaymentFormContent: React.FC<PaymentFormContentProps> = ({
             <CardContent className="space-y-3">
               <div className="flex justify-between">
                 <span className="text-gray-600">Capital Pendiente:</span>
-                <span className="font-semibold">${currentPrincipal.toLocaleString()}</span>
+                <span className="font-semibold">${currentPrincipal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Interés Acumulado:</span>
@@ -1489,7 +1489,7 @@ export const PawnShopModule = () => {
 
       if (updateError) throw updateError;
 
-      toast.success(`Cargo de $${chargeFormData.amount.toLocaleString()} agregado exitosamente`);
+      toast.success(`Cargo de $${chargeFormData.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} agregado exitosamente`);
       
       // Disparar evento para recargar el historial si está abierto
       window.dispatchEvent(new CustomEvent('pawnHistoryRefresh', { 
@@ -2886,7 +2886,7 @@ export const PawnShopModule = () => {
             <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">${totalLoanAmount.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-green-600">${totalLoanAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <p className="text-xs text-muted-foreground">Monto activo</p>
           </CardContent>
         </Card>
@@ -2897,7 +2897,7 @@ export const PawnShopModule = () => {
             <Package className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-600">${totalEstimatedValue.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-blue-600">${totalEstimatedValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             <p className="text-xs text-muted-foreground">En garantía</p>
           </CardContent>
         </Card>
@@ -2984,11 +2984,11 @@ export const PawnShopModule = () => {
                             </div>
                             <div className="flex items-center gap-2">
                               <DollarSign className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
-                              <span><strong>Préstamo:</strong> ${Number(transaction.loan_amount).toLocaleString()}</span>
+                              <span><strong>Préstamo:</strong> ${Number(transaction.loan_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <Package className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
-                              <span><strong>Valor Estimado:</strong> ${Number(transaction.estimated_value).toLocaleString()}</span>
+                              <span><strong>Valor Estimado:</strong> ${Number(transaction.estimated_value).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex items-center gap-2">
                               <Calendar className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
@@ -3208,8 +3208,8 @@ export const PawnShopModule = () => {
                           </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
                             <div><strong>Cliente:</strong> {transaction.clients?.full_name || 'N/A'}</div>
-                            <div><strong>Préstamo:</strong> ${Number(transaction.loan_amount).toLocaleString()}</div>
-                            <div><strong>Valor:</strong> ${Number(transaction.estimated_value).toLocaleString()}</div>
+                            <div><strong>Préstamo:</strong> ${Number(transaction.loan_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            <div><strong>Valor:</strong> ${Number(transaction.estimated_value).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                             <div><strong>Vence:</strong> {formatDateTimeWithOffset(transaction.due_date)}</div>
                           </div>
                         </div>
@@ -3311,11 +3311,11 @@ export const PawnShopModule = () => {
                     </div>
                     <div className="flex justify-between">
                       <span>Total prestado (activo):</span>
-                      <span className="font-semibold">${totalLoanAmount.toLocaleString()}</span>
+                      <span className="font-semibold">${totalLoanAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Valor en garantía:</span>
-                      <span className="font-semibold">${totalEstimatedValue.toLocaleString()}</span>
+                      <span className="font-semibold">${totalEstimatedValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Total transacciones:</span>
@@ -3325,16 +3325,16 @@ export const PawnShopModule = () => {
                       <span>Promedio de préstamo:</span>
                       <span className="font-semibold">
                         ${transactions.length > 0 
-                          ? Math.round(transactions.reduce((sum, t) => sum + Number(t.loan_amount), 0) / transactions.length).toLocaleString()
-                          : '0'}
+                          ? (transactions.reduce((sum, t) => sum + Number(t.loan_amount), 0) / transactions.length).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '0.00'}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span>Préstamo más alto:</span>
                       <span className="font-semibold text-green-600">
                         ${transactions.length > 0 
-                          ? Math.max(...transactions.map(t => Number(t.loan_amount))).toLocaleString()
-                          : '0'}
+                          ? Math.max(...transactions.map(t => Number(t.loan_amount))).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : '0.00'}
                       </span>
                     </div>
                   </div>
@@ -3402,32 +3402,32 @@ export const PawnShopModule = () => {
                     <div className="flex justify-between">
                       <span>Total prestado (histórico):</span>
                       <span className="font-semibold">
-                        ${transactions.filter(t => t.status !== 'deleted').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                        ${transactions.filter(t => t.status !== 'deleted').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span>Valor recuperado (redimidas):</span>
                       <span className="font-semibold text-green-600">
-                        ${transactions.filter(t => t.status === 'redeemed').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                        ${transactions.filter(t => t.status === 'redeemed').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span>Valor en pérdidas:</span>
                       <span className="font-semibold text-red-600">
-                        ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                        ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span>Valor garantía recuperada:</span>
                       <span className="font-semibold text-blue-600">
-                        ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + Number(t.estimated_value), 0).toLocaleString()}
+                        ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + Number(t.estimated_value), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="border-t pt-2 mt-2">
                       <div className="flex justify-between">
                         <span>Ganancia estimada (garantías):</span>
                         <span className="font-semibold text-green-600">
-                          ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + (Number(t.estimated_value) - Number(t.loan_amount)), 0).toLocaleString()}
+                          ${transactions.filter(t => t.status === 'forfeited').reduce((sum, t) => sum + (Number(t.estimated_value) - Number(t.loan_amount)), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                     </div>
@@ -3461,7 +3461,7 @@ export const PawnShopModule = () => {
                         <div className="flex justify-between">
                           <span>Monto total vencido:</span>
                           <span className="font-semibold text-red-600">
-                            ${expired.reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                            ${expired.reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
                         {expired.length > 0 && (
@@ -3471,7 +3471,7 @@ export const PawnShopModule = () => {
                               {expired.slice(0, 5).map((t) => (
                                 <div key={t.id} className="flex justify-between text-sm">
                                   <span className="truncate">{t.product_name}</span>
-                                  <span className="font-semibold">${Number(t.loan_amount).toLocaleString()}</span>
+                                  <span className="font-semibold">${Number(t.loan_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                               ))}
                             </div>
@@ -3507,7 +3507,7 @@ export const PawnShopModule = () => {
                         <div className="flex justify-between">
                           <span>Monto a vencer:</span>
                           <span className="font-semibold text-yellow-600">
-                            ${upcoming.reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString()}
+                            ${upcoming.reduce((sum, t) => sum + Number(t.loan_amount), 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
                         {upcoming.length > 0 && (
@@ -3563,8 +3563,8 @@ export const PawnShopModule = () => {
                                 <span className="text-sm text-gray-600">{stats.count} transacciones</span>
                               </div>
                               <div className="flex justify-between text-sm text-gray-600">
-                                <span>Total prestado: ${stats.totalLoan.toLocaleString()}</span>
-                                <span>Valor: ${stats.totalValue.toLocaleString()}</span>
+                                <span>Total prestado: ${stats.totalLoan.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                <span>Valor: ${stats.totalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                               </div>
                             </div>
                           ))
@@ -3606,7 +3606,7 @@ export const PawnShopModule = () => {
                                 <span className="text-sm text-gray-600">{stats.count} transacciones</span>
                               </div>
                               <div className="text-sm text-gray-600">
-                                Total prestado: ${stats.totalLoan.toLocaleString()}
+                                Total prestado: ${stats.totalLoan.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </div>
                             </div>
                           ))
@@ -4015,7 +4015,7 @@ export const PawnShopModule = () => {
               <div className="p-3 bg-gray-50 rounded">
                 <div className="text-sm">Artículo: <strong>{selectedTransaction.product_name}</strong></div>
                 <div className="text-sm">Cliente: <strong>{selectedTransaction.clients?.full_name || 'N/A'}</strong></div>
-                <div className="text-sm">Monto Actual: <strong>${Number(selectedTransaction.loan_amount).toLocaleString()}</strong></div>
+                <div className="text-sm">Monto Actual: <strong>${Number(selectedTransaction.loan_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
               </div>
               
               <div>
@@ -4149,8 +4149,8 @@ export const PawnShopModule = () => {
                       <p><strong>Artículo:</strong> {selectedTransaction.product_name}</p>
                     </div>
                     <div>
-                      <p><strong>Préstamo:</strong> ${Number(selectedTransaction.loan_amount).toLocaleString()}</p>
-                      <p><strong>Valor Estimado:</strong> ${Number(selectedTransaction.estimated_value).toLocaleString()}</p>
+                      <p><strong>Préstamo:</strong> ${Number(selectedTransaction.loan_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p><strong>Valor Estimado:</strong> ${Number(selectedTransaction.estimated_value).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -4223,7 +4223,7 @@ export const PawnShopModule = () => {
                                     <div className="flex items-center gap-3 mb-2">
                                       <TrendingUp className="h-5 w-5 text-blue-600" />
                                       <h3 className="font-semibold text-lg">
-                                        ${Number(charge.amount || 0).toLocaleString()}
+                                        ${Number(charge.amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                       </h3>
                                       <Badge className="bg-blue-500">Cargo</Badge>
                                     </div>
@@ -4271,7 +4271,7 @@ export const PawnShopModule = () => {
                                         </h3>
                                       ) : (
                                         <h3 className="font-semibold text-lg">
-                                          ${Number(payment.amount).toLocaleString()}
+                                          ${Number(payment.amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </h3>
                                       )}
                                       <Badge className={
@@ -4646,14 +4646,14 @@ export const PawnShopModule = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div className="text-center p-4 bg-green-50 rounded-lg">
                       <div className="text-2xl font-bold text-green-600">
-                        ${Number(selectedTransaction.loan_amount).toLocaleString()}
+                        ${Number(selectedTransaction.loan_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div className="text-sm text-gray-600">Monto del Préstamo</div>
                     </div>
                     
                     <div className="text-center p-4 bg-blue-50 rounded-lg">
                       <div className="text-2xl font-bold text-blue-600">
-                        ${Number(selectedTransaction.estimated_value).toLocaleString()}
+                        ${Number(selectedTransaction.estimated_value).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div className="text-sm text-gray-600">Valor Estimado</div>
                     </div>
@@ -4744,7 +4744,7 @@ export const PawnShopModule = () => {
                             <div>
                               <span className="text-sm font-medium text-gray-600">Diferencia (Valor - Préstamo):</span>
                               <div className="text-lg font-semibold">
-                                ${(estimatedValue - loanAmount).toLocaleString()}
+                                ${(estimatedValue - loanAmount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </div>
                             </div>
                             <div>
@@ -5069,7 +5069,7 @@ export const PawnShopModule = () => {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="text-center p-4 bg-blue-50 rounded-lg">
                       <div className="text-2xl font-bold text-blue-600">
-                        ${interestPreviewData.principal.toLocaleString()}
+                        ${interestPreviewData.principal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div className="text-sm text-gray-600">Capital Pendiente</div>
                     </div>
@@ -5339,7 +5339,7 @@ export const PawnShopModule = () => {
                     </div>
                     <div>
                       <span className="font-medium text-gray-600">Monto del Préstamo:</span>
-                      <div className="font-semibold">RD${Number(selectedTransaction.loan_amount).toLocaleString()}</div>
+                      <div className="font-semibold">RD${Number(selectedTransaction.loan_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                     <div>
                       <span className="font-medium text-gray-600">Tasa de Interés:</span>
@@ -5347,7 +5347,7 @@ export const PawnShopModule = () => {
                     </div>
                     <div>
                       <span className="font-medium text-gray-600">Valor Estimado:</span>
-                      <div className="font-semibold">RD${Number(selectedTransaction.estimated_value).toLocaleString()}</div>
+                      <div className="font-semibold">RD${Number(selectedTransaction.estimated_value).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                   </div>
                 </CardContent>
@@ -5384,16 +5384,16 @@ export const PawnShopModule = () => {
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-gray-600">Pago a Interés:</span>
-                        <span className="font-semibold">RD${Number(selectedPayment.interest_payment || 0).toLocaleString()}</span>
+                        <span className="font-semibold">RD${Number(selectedPayment.interest_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">Pago a Capital:</span>
-                        <span className="font-semibold">RD${Number(selectedPayment.principal_payment || 0).toLocaleString()}</span>
+                        <span className="font-semibold">RD${Number(selectedPayment.principal_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <hr className="my-2" />
                       <div className="flex justify-between text-lg font-bold text-green-600">
                         <span>TOTAL:</span>
-                        <span>RD${Number(selectedPayment.amount).toLocaleString()}</span>
+                        <span>RD${Number(selectedPayment.amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     </div>
                   </div>
@@ -5412,16 +5412,16 @@ export const PawnShopModule = () => {
                         <div className="space-y-2">
                           <div className="flex justify-between">
                             <span className="text-gray-600">Capital Pendiente:</span>
-                            <span className="font-semibold">RD${remainingBalance.toLocaleString()}</span>
+                            <span className="font-semibold">RD${remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-gray-600">Interés Pendiente:</span>
-                            <span className="font-semibold">RD${remainingInterest.toLocaleString()}</span>
+                            <span className="font-semibold">RD${remainingInterest.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                           <hr className="my-2" />
                           <div className="flex justify-between text-lg font-bold text-red-600">
                             <span>Total Pendiente:</span>
-                            <span>RD${totalPending.toLocaleString()}</span>
+                            <span>RD${totalPending.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                         </div>
                       </div>

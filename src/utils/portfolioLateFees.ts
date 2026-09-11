@@ -72,6 +72,11 @@ export const computeLateFeesByLoan = async (
   installmentsByLoan: Map<string, any[]>,
   paymentsByLoan: Map<string, any[]>,
   calculationDate: Date = getCurrentDateInSantoDomingo(),
+  /**
+   * Abonos a capital por préstamo. Cambian la cuota de los indefinidos; sin ellos el motor los
+   * consultaría uno a uno. Un préstamo ausente del mapa se trata como "sin abonos".
+   */
+  capitalPaymentsByLoan?: Map<string, any[]>,
 ): Promise<Map<string, number>> => {
   const result = new Map<string, number>();
 
@@ -88,7 +93,12 @@ export const computeLateFeesByLoan = async (
           id,
           toLateFeeLoanData(loan),
           calculationDate,
-          { installments, payments: paymentsByLoan.get(id) || [] },
+          {
+            installments,
+            payments: paymentsByLoan.get(id) || [],
+            // `undefined` haría que el motor los consultara: aquí ya se sabe cuáles hay.
+            capitalPayments: capitalPaymentsByLoan ? (capitalPaymentsByLoan.get(id) || []) : undefined,
+          },
         );
         return [id, Math.round((breakdown?.totalLateFee || 0) * 100) / 100] as const;
       } catch (error) {
@@ -123,21 +133,34 @@ export const fetchLateFeesForLoans = async (
 
   const installmentsByLoan = new Map<string, any[]>();
   const paymentsByLoan = new Map<string, any[]>();
+  const capitalPaymentsByLoan = new Map<string, any[]>();
 
   try {
     for (let i = 0; i < ids.length; i += CHUNK) {
       const slice = ids.slice(i, i + CHUNK);
-      const [instRes, payRes] = await Promise.all([
+      const [instRes, payRes, capRes] = await Promise.all([
+        // `*` en vez de una lista de columnas: incluye `late_fee_waived_at` cuando la migración
+        // que la crea ya se aplicó, sin romper la consulta en una base que aún no la tiene.
         supabase.from('installments')
-          .select('id, loan_id, installment_number, due_date, amount, total_amount, principal_amount, interest_amount, paid_amount, late_fee_paid, is_paid')
+          .select('*')
           .in('loan_id', slice),
         supabase.from('payments')
           .select('id, loan_id, amount, principal_amount, interest_amount, payment_date, due_date')
+          .in('loan_id', slice),
+        supabase.from('capital_payments')
+          .select('loan_id, amount, capital_before, capital_after, created_at')
           .in('loan_id', slice),
       ]);
 
       if (instRes.error) throw instRes.error;
       if (payRes.error) throw payRes.error;
+      if (capRes.error) console.error('Error leyendo abonos a capital para la mora:', capRes.error);
+      for (const row of capRes.data || []) {
+        const lid = String((row as any).loan_id || '');
+        if (!lid) continue;
+        const list = capitalPaymentsByLoan.get(lid);
+        if (list) list.push(row); else capitalPaymentsByLoan.set(lid, [row]);
+      }
 
       for (const row of instRes.data || []) {
         const lid = String((row as any).loan_id || '');
@@ -157,5 +180,5 @@ export const fetchLateFeesForLoans = async (
     return new Map();
   }
 
-  return computeLateFeesByLoan(loans, installmentsByLoan, paymentsByLoan, calculationDate);
+  return computeLateFeesByLoan(loans, installmentsByLoan, paymentsByLoan, calculationDate, capitalPaymentsByLoan);
 };

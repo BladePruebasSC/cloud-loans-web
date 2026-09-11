@@ -337,8 +337,9 @@ export const StatisticsModule = () => {
     return new Intl.NumberFormat('es-DO', {
       style: 'currency',
       currency: 'DOP',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
+      // Siempre con centavos: redondeado a pesos no cuadraba con la ficha del préstamo.
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
     }).format(amount);
   };
 

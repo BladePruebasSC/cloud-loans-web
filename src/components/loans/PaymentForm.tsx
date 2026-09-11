@@ -44,13 +44,23 @@ import {
  * En un préstamo diario de 10,000 al 0.83% mensual, eso mostraba RD$83.00 de "interés fijo
  * por cuota" cuando la cuota real cobra RD$2.77: treinta veces más. Y "Capital por Cuota"
  * salía por diferencia (836.11 − 83.00 = 753.11) en vez de los 833.34 reales.
+ *
+ * En un INDEFINIDO la cuota es `monthly_payment`: el interés sobre el capital VIGENTE, que el
+ * abono a capital actualiza. `amount` es el monto prestado y no baja con los abonos (2026-09-10),
+ * así que calcular sobre él volvería a cobrar la cuota de antes del abono.
  */
 const interestPerInstallment = (loan?: {
   amount?: number | null;
   interest_rate?: number | null;
   payment_frequency?: string | null;
-} | null): number =>
-  (Number(loan?.amount) || 0) * getPeriodRate(Number(loan?.interest_rate) || 0, loan?.payment_frequency);
+  amortization_type?: string | null;
+  monthly_payment?: number | null;
+} | null): number => {
+  if (String(loan?.amortization_type || '').toLowerCase() === 'indefinite' && Number(loan?.monthly_payment) > 0.005) {
+    return Number(loan?.monthly_payment);
+  }
+  return (Number(loan?.amount) || 0) * getPeriodRate(Number(loan?.interest_rate) || 0, loan?.payment_frequency);
+};
 import { toast } from 'sonner';
 import { ArrowLeft, DollarSign, AlertTriangle, Printer, Download } from 'lucide-react';
 import { Search, User } from 'lucide-react';
@@ -434,7 +444,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             <div class="section">
               <div class="section-title">DETALLES DEL PRÉSTAMO</div>
               <div class="info-row">
-                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+                <span>Monto Original: RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
                 <span>Tasa de Interés: ${loan.interest_rate}%</span>
@@ -455,14 +465,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             <div class="amount-section">
               <div class="section-title">DESGLOSE DEL PAGO</div>
               <div class="info-row">
-                <span>Pago a Principal: RD$${(lastPaymentData.principalPayment || payment.principal_amount || 0).toLocaleString()}</span>
+                <span>Pago a Principal: RD$${(lastPaymentData.principalPayment || payment.principal_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
-                <span>Pago a Intereses: RD$${(lastPaymentData.interestAmount || payment.interest_amount || 0).toLocaleString()}</span>
+                <span>Pago a Intereses: RD$${(lastPaymentData.interestAmount || payment.interest_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              ${(lastPaymentData.lateFeeAmount || payment.late_fee || 0) > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${(lastPaymentData.lateFeeAmount || payment.late_fee || 0).toLocaleString()}</span></div>` : ''}
+              ${(lastPaymentData.lateFeeAmount || payment.late_fee || 0) > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${(lastPaymentData.lateFeeAmount || payment.late_fee || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
               <div class="total-amount">
-                TOTAL: RD$${payment.amount.toLocaleString()}
+                TOTAL: RD$${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -700,7 +710,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             <div class="section">
               <div class="section-title">DETALLES DEL PRÉSTAMO</div>
               <div class="info-row">
-                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+                <span>Monto Original: RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
                 <span>Tasa de Interés: ${loan.interest_rate}%</span>
@@ -721,14 +731,14 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
             <div class="amount-section">
               <div class="section-title">DESGLOSE DEL PAGO</div>
               <div class="info-row">
-                <span>Pago a Principal: RD$${(payment.principal_amount || 0).toLocaleString()}</span>
+                <span>Pago a Principal: RD$${(payment.principal_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
-                <span>Pago a Intereses: RD$${(payment.interest_amount || 0).toLocaleString()}</span>
+                <span>Pago a Intereses: RD$${(payment.interest_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              ${payment.late_fee > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${payment.late_fee.toLocaleString()}</span></div>` : ''}
+              ${payment.late_fee > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${payment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
               <div class="total-amount">
-                TOTAL: RD$${payment.amount.toLocaleString()}
+                TOTAL: RD$${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -1964,6 +1974,24 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     const regularInst =
       (instRows || []).find(r => Math.abs(Number(r.interest_amount || 0)) >= 0.01) ||
       (instRows || [])[0];
+
+    // INDEFINIDOS: los períodos generados no tienen fila en `installments`, así que aquí no se
+    // encontraba "la cuota": interés esperado 0, capital esperado 0, y el pago se guardaba con
+    // interés 0 y capital 0 (en el historial: "Pago de $3,000 · Principal: $0 · Interés: $0").
+    // Esos pagos no contaban como interés en el saldo de la base. En un indefinido la cuota es
+    // interés puro —el capital solo baja con un abono a capital—, así que todo el pago es interés.
+    if (!regularInst && String(selectedLoan.amortization_type || '').toLowerCase() === 'indefinite') {
+      const monto = round2(amount);
+      const cuota = round2(interestPerInstallment(selectedLoan));
+      const pagadoAntes = round2((payRows || []).reduce((s, p) => s + (Number(p.amount || 0) || 0), 0));
+      return {
+        interestPayment: monto,
+        principalPayment: 0,
+        monthlyInterestAmount: cuota,
+        remainingInterest: Math.max(0, round2(cuota - pagadoAntes - monto)),
+        alreadyPaidInterest: Math.min(cuota, pagadoAntes),
+      };
+    }
 
     const expectedInterest = round2(Number(regularInst?.interest_amount || 0));
     const expectedPrincipal = round2(Number(regularInst?.principal_amount || 0));
@@ -3679,7 +3707,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Interés Ya Pagado:</span>
                     <span className="font-semibold text-gray-600">
-                      RD${paymentDistribution.alreadyPaidInterest.toLocaleString()}
+                      RD${paymentDistribution.alreadyPaidInterest.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
@@ -3687,7 +3715,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-600">Interés Pendiente:</span>
                     <span className="font-semibold text-red-600">
-                      RD${paymentDistribution.remainingInterest.toLocaleString()}
+                      RD${paymentDistribution.remainingInterest.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
@@ -3701,7 +3729,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                           <div className="flex justify-between">
                             <span>Pagado:</span>
                             <span className="font-semibold text-green-600">
-                              ${paymentStatus.currentPaymentPaid.toLocaleString()}
+                              ${paymentStatus.currentPaymentPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                           </div>
                           <div className="flex justify-between">

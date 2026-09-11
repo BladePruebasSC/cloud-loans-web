@@ -1,12 +1,42 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getCurrentDateStringForSantoDomingo } from './dateUtils';
 import { addPeriodsToIsoDate, getFirstDueDateIso } from './frequencyUtils';
+import {
+  buildIndefiniteInterestResolver, resolveIndefiniteCapital, sumCapitalPayments,
+  type CapitalPaymentLike,
+} from './indefiniteInterest';
 
 export type LoanBalanceBreakdown = {
   baseBalance: number; // capital + interés (SIN cargos)
   pendingCharges: number; // cargos pendientes
   totalBalance: number; // baseBalance + pendingCharges (SIN mora)
+  /** Capital que queda por pagar, sin interés ni cargos. */
+  capitalPending?: number;
+  /** Interés pendiente (en indefinidos: los períodos devengados hasta el que está en curso). */
+  interestPending?: number;
 };
+
+export interface LoanBalanceLoan {
+  id: string;
+  /** Monto PRESTADO. No cambia con los abonos a capital. */
+  amount: number;
+  interest_rate?: number;
+  term_months?: number;
+  amortization_type?: string;
+  next_payment_date?: string;
+  start_date?: string;
+  first_payment_date?: string;
+  payment_frequency?: string;
+  monthly_payment?: number;
+  remaining_balance?: number;
+}
+
+/** Filas ya leídas de `payments`, `installments` y `capital_payments` de UN préstamo. */
+export interface LoanBalanceData {
+  payments: any[] | null | undefined;
+  installments: any[] | null | undefined;
+  capitalPayments: CapitalPaymentLike[] | null | undefined;
+}
 
 const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
 
@@ -29,54 +59,30 @@ const isChargeInst = (inst: any) => {
 const addPeriod = (iso: string, frequency: string): string =>
   addPeriodsToIsoDate(iso, 1, frequency);
 
-export async function getLoanBalanceBreakdown(
-  supabase: SupabaseClient,
-  loan: {
-    id: string;
-    amount: number;
-    interest_rate?: number;
-    term_months?: number;
-    amortization_type?: string;
-    next_payment_date?: string;
-    start_date?: string;
-    first_payment_date?: string;
-    payment_frequency?: string;
-  }
-): Promise<LoanBalanceBreakdown> {
+/**
+ * Balance pendiente de un préstamo a partir de sus datos YA LEÍDOS. No consulta la base.
+ *
+ * Es el cálculo de la tarjeta del listado, Detalles y el formulario de pago. Vive separado de
+ * la consulta (2026-09-10) para que el INICIO lo use con los datos que ya carga: antes el
+ * inicio sumaba las cuotas pendientes —con su redondeo de cuota a cuota— mientras la ficha
+ * partía del monto prestado, y el mismo préstamo decía una cifra en cada pantalla.
+ */
+export function computeLoanBalanceBreakdown(
+  loan: LoanBalanceLoan,
+  data: LoanBalanceData,
+  todayIso: string = getCurrentDateStringForSantoDomingo(),
+): LoanBalanceBreakdown {
   const amort = String(loan?.amortization_type || '').toLowerCase();
-
-  // Payments
-  const { data: payments, error: paymentsError } = await supabase
-    .from('payments')
-    .select('amount, due_date, interest_amount, principal_amount')
-    .eq('loan_id', loan.id);
-  if (paymentsError) {
-    const fallback = round2(Number((loan as any)?.remaining_balance || 0));
-    return { baseBalance: fallback, pendingCharges: 0, totalBalance: fallback };
-  }
-
-  // Installments
-  const { data: installments, error: installmentsError } = await supabase
-    .from('installments')
-    .select('due_date, installment_number, principal_amount, interest_amount, total_amount, amount, is_paid, id')
-    .eq('loan_id', loan.id);
-  if (installmentsError) {
-    const fallback = round2(Number((loan as any)?.remaining_balance || 0));
-    return { baseBalance: fallback, pendingCharges: 0, totalBalance: fallback };
-  }
-
-  // Capital payments
-  const { data: capitalPayments } = await supabase
-    .from('capital_payments')
-    .select('amount')
-    .eq('loan_id', loan.id);
-  const totalCapitalPayments = round2((capitalPayments || []).reduce((s: number, cp: any) => s + (Number(cp?.amount) || 0), 0));
+  const payments = data.payments || [];
+  const installments = data.installments || [];
+  const capitalPayments = data.capitalPayments || [];
+  const totalCapitalPayments = sumCapitalPayments(capitalPayments);
 
   // Paid by due_date (sum of payment.amount) - para cuotas regulares
   const paidByDue = new Map<string, number>();
   // Pagos aplicados a cargos: solo pagos con interest_amount ~ 0 (igual que LoanDetailsView)
   const paidToChargesByDue = new Map<string, number>();
-  for (const p of payments || []) {
+  for (const p of payments) {
     const due = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
     if (!due) continue;
     const amt = round2(Number((p as any).amount) || 0);
@@ -87,7 +93,7 @@ export async function getLoanBalanceBreakdown(
   }
 
   // Pending charges: sumar todos los cargos menos lo pagado (distribuir pagos por due_date entre cargos con misma fecha)
-  const chargeInstallments = (installments || [])
+  const chargeInstallments = installments
     .filter((inst: any) => isChargeInst(inst))
     .map((inst: any) => ({
       due: inst?.due_date ? String(inst.due_date).split('T')[0] : null,
@@ -139,7 +145,7 @@ export async function getLoanBalanceBreakdown(
   if (amort === 'indefinite') {
     // Due dates de cargos: no contar esos pagos como interés (evita balance/interest pendiente incorrectos)
     const chargeDueDates = new Set<string>();
-    for (const inst of installments || []) {
+    for (const inst of installments) {
       if (isChargeInst(inst)) {
         const d = (inst as any)?.due_date ? String((inst as any).due_date).split('T')[0] : null;
         if (d) chargeDueDates.add(d);
@@ -153,26 +159,41 @@ export async function getLoanBalanceBreakdown(
     const firstDueFromStart = startIso ? getFirstDueDateIso(startIso, freq) : null;
     const tol = 0.05;
 
-    const interestPerPayment =
-      round2(Number((loan as any)?.monthly_payment || 0)) > 0.01
-        ? round2(Number((loan as any)?.monthly_payment))
-        : round2((Number(loan.amount || 0) * (Number(loan.interest_rate || 0) / 100)) || 0);
+    // ABONOS A CAPITAL (2026-09-10). El capital es lo prestado MENOS los abonos —`loans.amount`
+    // ya no se rebaja—, y la cuota de cada período depende de su fecha: la del período en que se
+    // hizo el abono se devengó con el capital de antes; las siguientes, con el nuevo. Antes se
+    // usaba `monthly_payment` (la cuota NUEVA) para todos, así que los períodos ya cobrados con
+    // la cuota vieja parecían pagados de más.
+    const { currentCapital } = resolveIndefiniteCapital(loan.amount, capitalPayments);
+    const interestFor = buildIndefiniteInterestResolver({
+      amount: loan.amount,
+      interestRate: loan.interest_rate,
+      frequency: freq,
+      currentInterest: loan.monthly_payment,
+      capitalPayments,
+    });
 
     const paidByDueValid = new Map<string, number>();
     let invalidPaidTotal = 0;
 
-    for (const p of payments || []) {
+    for (const p of payments) {
       const rawDue = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
       if (!rawDue) continue;
       // No contar pagos a cargos (solo principal) como interés: evita que balance pendiente baje de más
       if (chargeDueDates.has(rawDue) && (Number((p as any).interest_amount || 0) || 0) < 0.01) continue;
 
       const interestField = Number((p as any).interest_amount || 0) || 0;
+      const principalField = Number((p as any).principal_amount || 0) || 0;
       const amt = Number((p as any).amount || 0) || 0;
+      const expected = interestFor(rawDue);
+      // Un pago sin interés NI capital es un pago de cuota guardado sin desglose (lo hacía el pago
+      // normal en los períodos generados): todo es interés. El tope de 1.25 cuotas solo aplica a
+      // los que traen capital, que podrían ser otra cosa. Sin esto, una cuota pagada por
+      // adelantado con la cuota de antes del abono se ignoraba entera.
       const paidValue =
         interestField > 0.01
           ? interestField
-          : (amt > 0.01 && interestPerPayment > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
+          : (amt > 0.01 && expected > 0.01 && (principalField < 0.01 || amt <= (expected * 1.25)) ? amt : 0);
       if (paidValue <= 0.01) continue;
 
       if (firstDueFromStart && rawDue < firstDueFromStart) {
@@ -186,7 +207,7 @@ export async function getLoanBalanceBreakdown(
     let partialDue: string | null = null;
     for (const [due, paid] of paidByDueValid.entries()) {
       if (paid <= 0.01) continue;
-      if (paid + tol < interestPerPayment) {
+      if (paid + tol < interestFor(due)) {
         partialDue = !partialDue || due < partialDue ? due : partialDue;
       } else {
         fullyPaid.push(due);
@@ -205,12 +226,16 @@ export async function getLoanBalanceBreakdown(
     // ✅ Normalizar “overpay” en cuotas ya saldadas:
     // si por bug un pago cae en un due_date antiguo (ej. 02-mar ya pagado) y lo sobrepasa,
     // mover el excedente a la cuota activa (para que "Falta" baje correctamente).
-    if (activeDue && interestPerPayment > 0.01) {
+    // También es lo que pasa con un período pagado por adelantado con la cuota vieja y que,
+    // tras el abono, vale menos: lo cobrado de más se acredita a la cuota activa.
+    if (activeDue) {
       let rollover = 0;
       for (const [due, paid] of paidByDueValid.entries()) {
         if (due >= activeDue) continue;
-        const capped = round2(Math.min(paid, interestPerPayment));
-        const overflow = round2(Math.max(0, paid - interestPerPayment));
+        const expected = interestFor(due);
+        if (expected <= 0.01) continue;
+        const capped = round2(Math.min(paid, expected));
+        const overflow = round2(Math.max(0, paid - expected));
         if (overflow > 0.01) {
           rollover = round2(rollover + overflow);
           paidByDueValid.set(due, capped);
@@ -231,8 +256,7 @@ export async function getLoanBalanceBreakdown(
     // (`new Date()`), no de Santo Domingo. Todo el resto del sistema (mora, estado de cuenta)
     // usa la fecha de Santo Domingo, así que en las horas de la noche el saldo pendiente y la
     // mora podían referirse a días distintos y no cuadrar entre pantallas.
-    const todayIso = getCurrentDateStringForSantoDomingo();
-
+    //
     // CAMBIO SOLICITADO (2026-08-28): "Interés pend. hoy" debe incluir TAMBIÉN el interés de la
     // cuota EN CURSO —la que ya está pendiente pero cuya fecha de vencimiento aún no llegó—, no
     // solo el de los períodos ya vencidos.
@@ -248,12 +272,12 @@ export async function getLoanBalanceBreakdown(
     // por antigüedad (que reconcilia su total contra este valor y coloca la diferencia en el rango
     // "Al día (aún no vence)") y la tabla de cuotas.
     let totalPendingInterest = 0;
-    if (firstDueFromStart && interestPerPayment > 0.01) {
+    if (firstDueFromStart) {
       let currentDue = firstDueFromStart;
-      while (true) {
+      for (let guard = 0; guard < 100000; guard++) { // tope de seguridad
         const isNotDueYet = currentDue > todayIso;
         const paid = round2(paidByDueValid.get(currentDue) || 0);
-        const unpaid = round2(Math.max(0, round2(interestPerPayment - paid)));
+        const unpaid = round2(Math.max(0, round2(interestFor(currentDue) - paid)));
         totalPendingInterest = round2(totalPendingInterest + unpaid);
         // Se incluye el período en curso (el primero que aún no vence) y se detiene ahí:
         // los períodos posteriores todavía no se han devengado.
@@ -262,19 +286,24 @@ export async function getLoanBalanceBreakdown(
       }
     }
     // Respaldo: en un préstamo indefinido siempre hay al menos un período devengándose, así que
-    // nunca debe mostrarse RD$0 de interés pendiente.
-    if (totalPendingInterest <= 0.01 && interestPerPayment > 0.01) {
-      totalPendingInterest = interestPerPayment;
+    // nunca debe mostrarse RD$0 de interés pendiente. Es el de la cuota activa, descontando lo
+    // que ya tenga abonado (un excedente acreditado, por ejemplo).
+    if (totalPendingInterest <= 0.01 && activeDue) {
+      const remainingActive = round2(Math.max(0, interestFor(activeDue) - (paidByDueValid.get(activeDue) || 0)));
+      totalPendingInterest = remainingActive > 0.01 ? remainingActive : interestFor(addPeriod(activeDue, freq));
     }
 
-    const baseBalance = round2((Number(loan.amount || 0)) + totalPendingInterest);
+    const baseBalance = round2(currentCapital + totalPendingInterest);
     const totalBalance = round2(baseBalance + pendingCharges);
-    return { baseBalance, pendingCharges, totalBalance };
+    return {
+      baseBalance, pendingCharges, totalBalance,
+      capitalPending: round2(currentCapital), interestPending: round2(totalPendingInterest),
+    };
   }
 
   // Fixed-term: base = capital pendiente + interés pendiente (sin cargos)
   const capitalPaidRegular = round2(
-    (installments || [])
+    installments
       .filter((inst: any) => !isChargeInst(inst))
       .reduce((sum: number, inst: any) => {
         const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
@@ -290,7 +319,7 @@ export async function getLoanBalanceBreakdown(
   const capitalPending = round2(Math.max(0, round2(Number(loan.amount || 0) - capitalPaidRegular - totalCapitalPayments)));
 
   const interestPending = round2(
-    (installments || [])
+    installments
       .filter((inst: any) => !isChargeInst(inst))
       .reduce((sum: number, inst: any) => {
         const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
@@ -304,6 +333,38 @@ export async function getLoanBalanceBreakdown(
 
   const baseBalance = round2(capitalPending + interestPending);
   const totalBalance = round2(baseBalance + pendingCharges);
-  return { baseBalance, pendingCharges, totalBalance };
+  return { baseBalance, pendingCharges, totalBalance, capitalPending, interestPending };
 }
 
+export async function getLoanBalanceBreakdown(
+  supabase: SupabaseClient,
+  loan: LoanBalanceLoan
+): Promise<LoanBalanceBreakdown> {
+  const fallback = () => {
+    const value = round2(Number((loan as any)?.remaining_balance || 0));
+    return { baseBalance: value, pendingCharges: 0, totalBalance: value };
+  };
+
+  const [paymentsRes, installmentsRes, capitalRes] = await Promise.all([
+    supabase
+      .from('payments')
+      .select('amount, due_date, interest_amount, principal_amount')
+      .eq('loan_id', loan.id),
+    supabase
+      .from('installments')
+      .select('due_date, installment_number, principal_amount, interest_amount, total_amount, amount, is_paid, id')
+      .eq('loan_id', loan.id),
+    supabase
+      .from('capital_payments')
+      .select('amount, capital_before, capital_after, created_at')
+      .eq('loan_id', loan.id),
+  ]);
+
+  if (paymentsRes.error || installmentsRes.error) return fallback();
+
+  return computeLoanBalanceBreakdown(loan, {
+    payments: paymentsRes.data,
+    installments: installmentsRes.data,
+    capitalPayments: (capitalRes.data || []) as CapitalPaymentLike[],
+  });
+}

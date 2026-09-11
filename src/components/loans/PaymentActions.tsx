@@ -523,8 +523,12 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       let updatedPaidInstallments: number[] = [];
 
       if (loanData.amortization_type === 'indefinite') {
-        // Para préstamos indefinidos, calcular basándose en el interés pagado
-        const interestPerPayment = (loanData.amount * loanData.interest_rate) / 100;
+        // Para préstamos indefinidos, calcular basándose en el interés pagado.
+        // La cuota es `monthly_payment` (interés sobre el capital vigente): `amount` es el monto
+        // prestado y no baja con los abonos a capital.
+        const interestPerPayment = Number(loanData.monthly_payment) > 0.005
+          ? Number(loanData.monthly_payment)
+          : (loanData.amount * loanData.interest_rate) / 100;
         let paidInstallmentsCount = 0;
         let currentInstallmentInterestPaid = 0;
         
@@ -1157,7 +1161,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                 <span>Préstamo ID: ${loan.id.slice(0, 8).toUpperCase()}</span>
               </div>
               <div class="info-row">
-                <span>Monto Original: RD$${loan.amount.toLocaleString()}</span>
+                <span>Monto Original: RD$${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
                 <span>Tasa de Interés: ${loan.interest_rate}%</span>
@@ -1184,14 +1188,14 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             <div class="amount-section">
               <div class="section-title">DESGLOSE DEL PAGO</div>
               <div class="info-row">
-                <span>Pago a Principal: RD$${payment.principal_amount.toLocaleString()}</span>
+                <span>Pago a Principal: RD$${payment.principal_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div class="info-row">
-                <span>Pago a Intereses: RD$${payment.interest_amount.toLocaleString()}</span>
+                <span>Pago a Intereses: RD$${payment.interest_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
-              ${payment.late_fee > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${payment.late_fee.toLocaleString()}</span></div>` : ''}
+              ${payment.late_fee > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${payment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
               <div class="total-amount">
-                TOTAL: RD$${payment.amount.toLocaleString()}
+                TOTAL: RD$${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -1541,7 +1545,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                     </div>
                     <div>
                       <span className="font-medium text-gray-600">Monto Original:</span>
-                      <div className="font-semibold">RD${loan.amount.toLocaleString()}</div>
+                      <div className="font-semibold">RD${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                     <div>
                       <span className="font-medium text-gray-600">Tasa de Interés:</span>
@@ -1591,22 +1595,22 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-gray-600">Pago a Principal:</span>
-                        <span className="font-semibold">RD${payment.principal_amount.toLocaleString()}</span>
+                        <span className="font-semibold">RD${payment.principal_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">Pago a Intereses:</span>
-                        <span className="font-semibold">RD${(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0))).toLocaleString()}</span>
+                        <span className="font-semibold">RD${(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0))).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       {payment.late_fee > 0 && (
                         <div className="flex justify-between">
                           <span className="text-gray-600">Cargo por Mora:</span>
-                          <span className="font-semibold text-red-600">RD${payment.late_fee.toLocaleString()}</span>
+                          <span className="font-semibold text-red-600">RD${payment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                       <hr className="my-2" />
                       <div className="flex justify-between text-lg font-bold text-green-600">
                         <span>TOTAL:</span>
-                        <span>RD${(payment.amount + (payment.late_fee || 0)).toLocaleString()}</span>
+                        <span>RD${(payment.amount + (payment.late_fee || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     </div>
                   </div>

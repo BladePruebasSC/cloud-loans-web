@@ -978,7 +978,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                 <div className="flex-1">
                                   <div className="flex items-center gap-3 mb-2">
                                     <Receipt className={`h-4 w-4 ${payment.status === 'completed' ? 'text-green-600' : 'text-yellow-600'}`} />
-                                    <span className="font-semibold">Pago de ${payment.amount.toLocaleString()}</span>
+                                    <span className="font-semibold">Pago de ${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
                                       {payment.status === 'completed' ? 'Completado' : ((payment.interest_amount || 0) < 0.01 ? 'Parcial' : 'Pendiente')}
                                     </Badge>
@@ -992,10 +992,10 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                       <span className="font-medium">Fecha:</span> {formatPaymentDateTime(payment)}
                                     </div>
                                     <div>
-                                      <span className="font-medium">Principal:</span> ${payment.principal_amount.toLocaleString()}
+                                      <span className="font-medium">Principal:</span> ${payment.principal_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </div>
                                     <div>
-                                      <span className="font-medium">Interés:</span> ${payment.interest_amount.toLocaleString()}
+                                      <span className="font-medium">Interés:</span> ${payment.interest_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </div>
                                     <div>
                                       <span className="font-medium">Método:</span> {getPaymentMethodLabel(payment.payment_method)}
@@ -1015,7 +1015,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
                                   {payment.late_fee > 0 && (
                                     <div className="text-sm text-red-600 mt-2">
-                                      <span className="font-medium">Mora:</span> ${payment.late_fee.toLocaleString()}
+                                      <span className="font-medium">Mora:</span> ${payment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </div>
                                   )}
 
@@ -1270,7 +1270,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                             >
                               <div className="flex items-center gap-3 mb-2">
                                 <TrendingDown className="h-4 w-4 text-red-600" />
-                                <span className="font-semibold">Mora Eliminada: RD${entry.amount?.toLocaleString()}</span>
+                                <span className="font-semibold">Mora Eliminada: RD${entry.amount?.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 <Badge variant="outline" className="bg-red-100 text-red-800">Eliminación de Mora</Badge>
                               </div>
                               
@@ -1549,7 +1549,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                     {entry.change_type === 'add_charge' ? 'Monto del Cargo:' :
                                      entry.change_type === 'remove_late_fee' ? 'Mora Eliminada:' :
                                      'Monto:'} 
-                                  </span> ${entry.amount.toLocaleString()}
+                                  </span> ${entry.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>
                               )}
                             </>
@@ -1601,13 +1601,13 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                         {/* Información específica para eliminar mora */}
                         {entry.change_type === 'remove_late_fee' && oldValues && oldValues.current_late_fee !== undefined && (
                           <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Mora Anterior:</span> RD${oldValues.current_late_fee.toLocaleString()}
+                            <span className="font-medium">Mora Anterior:</span> RD${oldValues.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
                         )}
 
                         {entry.change_type === 'remove_late_fee' && newValues && newValues.current_late_fee !== undefined && (
                           <div className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium">Mora Nueva:</span> RD${newValues.current_late_fee.toLocaleString()}
+                            <span className="font-medium">Mora Nueva:</span> RD${newValues.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
                         )}
 
@@ -1617,16 +1617,16 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                             <span className="font-medium">Valores Anteriores:</span>
                             <ul className="list-disc list-inside ml-4 text-gray-600">
                                 {oldValues && typeof oldValues === 'object' && oldValues.balance !== null && oldValues.balance !== undefined && (
-                                  <li>Balance: ${oldValues.balance.toLocaleString()}</li>
+                                  <li>Balance: ${oldValues.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</li>
                               )}
                                 {oldValues && oldValues.payment && (
-                                  <li>Cuota: ${oldValues.payment.toLocaleString()}</li>
+                                  <li>Cuota: ${oldValues.payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</li>
                               )}
                                 {oldValues && oldValues.rate && (
                                   <li>Tasa: {oldValues.rate}%</li>
                               )}
                                 {oldValues && oldValues.current_late_fee !== undefined && entry.change_type !== 'remove_late_fee' && (
-                                  <li>Mora: RD${oldValues.current_late_fee.toLocaleString()}</li>
+                                  <li>Mora: RD${oldValues.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</li>
                                 )}
                                 {(!oldValues || (typeof oldValues === 'object' && Object.keys(oldValues).length === 0)) && (
                                   <li className="text-gray-400">Sin valores anteriores</li>
@@ -1637,16 +1637,16 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                             <span className="font-medium">Valores Nuevos:</span>
                             <ul className="list-disc list-inside ml-4 text-gray-600">
                                 {newValues && typeof newValues === 'object' && newValues.balance !== null && newValues.balance !== undefined && (
-                                  <li>Balance: ${newValues.balance.toLocaleString()}</li>
+                                  <li>Balance: ${newValues.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</li>
                               )}
                                 {newValues && newValues.payment && (
-                                  <li>Cuota: ${newValues.payment.toLocaleString()}</li>
+                                  <li>Cuota: ${newValues.payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</li>
                               )}
                                 {newValues && newValues.rate && (
                                   <li>Tasa: {newValues.rate}%</li>
                               )}
                                 {newValues && newValues.current_late_fee !== undefined && entry.change_type !== 'remove_late_fee' && (
-                                  <li>Mora: RD${newValues.current_late_fee.toLocaleString()}</li>
+                                  <li>Mora: RD${newValues.current_late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</li>
                                 )}
                                 {(!newValues || (typeof newValues === 'object' && Object.keys(newValues).length === 0)) && (
                                   <li className="text-gray-400">Sin valores nuevos</li>

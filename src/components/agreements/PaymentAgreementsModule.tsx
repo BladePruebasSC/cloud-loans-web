@@ -460,7 +460,7 @@ export const PaymentAgreementsModule = () => {
                 <TrendingUp className="h-4 w-4 text-purple-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-purple-600">${totalSavings.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-purple-600">${totalSavings.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                 <p className="text-xs text-muted-foreground">Reducción mensual</p>
               </CardContent>
             </Card>
@@ -538,19 +538,19 @@ export const PaymentAgreementsModule = () => {
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Monto Préstamo:</span> 
-                              <span className="text-xs sm:text-sm">${agreement.loan_amount.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${agreement.loan_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Cuota Original:</span> 
-                              <span className="text-xs sm:text-sm">${agreement.original_payment.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${agreement.original_payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Cuota Acordada:</span> 
-                              <span className="text-xs sm:text-sm text-green-600 font-semibold"> ${agreement.agreed_payment_amount.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm text-green-600 font-semibold"> ${agreement.agreed_payment_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Ahorro:</span> 
-                              <span className="text-xs sm:text-sm text-purple-600 font-semibold"> ${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm text-purple-600 font-semibold"> ${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Frecuencia:</span> 
@@ -670,15 +670,15 @@ export const PaymentAgreementsModule = () => {
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4 text-sm text-gray-600 mb-2">
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Cuota actual:</span> 
-                              <span className="text-xs sm:text-sm">${agreement.original_payment.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${agreement.original_payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Cuota propuesta:</span> 
-                              <span className="text-xs sm:text-sm">${agreement.agreed_payment_amount.toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${agreement.agreed_payment_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Ahorro:</span> 
-                              <span className="text-xs sm:text-sm">${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString()}</span>
+                              <span className="text-xs sm:text-sm">${(agreement.original_payment - agreement.agreed_payment_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row sm:items-center">
                               <span className="font-medium text-xs sm:text-sm">Período:</span> 
@@ -753,12 +753,12 @@ export const PaymentAgreementsModule = () => {
                 <div className="space-y-4">
                   <div className="flex justify-between">
                     <span>Ahorro total mensual:</span>
-                    <span className="font-semibold text-purple-600">${totalSavings.toLocaleString()}</span>
+                    <span className="font-semibold text-purple-600">${totalSavings.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Promedio de reducción:</span>
                     <span className="font-semibold">
-                      ${agreements.length > 0 ? Math.round(totalSavings / agreements.length).toLocaleString() : 0}
+                      ${agreements.length > 0 ? (totalSavings / agreements.length).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 0}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -852,7 +852,7 @@ export const PaymentAgreementsModule = () => {
                 <SelectContent>
                   {loans.map((loan) => (
                     <SelectItem key={loan.id} value={loan.id}>
-                      {loan.clients?.full_name} - ${loan.amount.toLocaleString()} (Cuota: ${loan.monthly_payment.toLocaleString()})
+                      {loan.clients?.full_name} - ${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Cuota: ${loan.monthly_payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                     </SelectItem>
                   ))}
                 </SelectContent>

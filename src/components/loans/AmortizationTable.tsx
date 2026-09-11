@@ -400,7 +400,7 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
           <body>
             <div class="header">
               <h1>Tabla de Amortización</h1>
-              <p>Monto: $${amount.toLocaleString()} | Tasa: ${toAnnualRate(calculateAdjustedInterestRate()).toFixed(2)}% anual (${calculateAdjustedInterestRate().toFixed(2)}% mensual) | Plazo: ${term} {getFrequencyInfo().label} | Tipo: ${amortizationType === 'simple' ? 'Simple' : amortizationType === 'german' ? 'Alemán' : amortizationType === 'american' ? 'Americano' : 'Indefinido'}</p>
+              <p>Monto: $${amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | Tasa: ${toAnnualRate(calculateAdjustedInterestRate()).toFixed(2)}% anual (${calculateAdjustedInterestRate().toFixed(2)}% mensual) | Plazo: ${term} {getFrequencyInfo().label} | Tipo: ${amortizationType === 'simple' ? 'Simple' : amortizationType === 'german' ? 'Alemán' : amortizationType === 'american' ? 'Americano' : 'Indefinido'}</p>
               ${fixedPaymentEnabled ? `<p>Cuota Fija: $${fixedPaymentAmount}</p>` : ''}
             </div>
             <table>
@@ -419,19 +419,19 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                   <tr>
                     <td>${typeof row.installment === 'string' ? row.installment : `${row.installment}/${term}`}</td>
                     <td>${row.date}</td>
-                    <td>$${row.interest.toLocaleString()}</td>
-                    <td>$${row.principal.toLocaleString()}</td>
-                    <td>$${row.payment.toLocaleString()}</td>
-                    <td>$${row.remainingBalance.toLocaleString()}</td>
+                    <td>$${row.interest.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td>$${row.principal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td>$${row.payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td>$${row.remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   </tr>
                 `).join('')}
               </tbody>
             </table>
             ${amortizationType !== 'indefinite' ? `
             <div class="totals">
-              <p>Total Intereses: $${sortedData.reduce((sum, row) => sum + row.interest, 0).toLocaleString()}</p>
-              <p>Total Capital: $${sortedData.reduce((sum, row) => sum + row.principal, 0).toLocaleString()}</p>
-              <p>Total a Pagar: $${sortedData.reduce((sum, row) => sum + row.payment, 0).toLocaleString()}</p>
+              <p>Total Intereses: $${sortedData.reduce((sum, row) => sum + row.interest, 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p>Total Capital: $${sortedData.reduce((sum, row) => sum + row.principal, 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              <p>Total a Pagar: $${sortedData.reduce((sum, row) => sum + row.payment, 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
             ` : ''}
           </body>
@@ -713,19 +713,19 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                   </div>
                   <div>
                     <span className="text-gray-600 font-medium">Interés:</span>
-                    <div className="font-semibold text-red-600">${row.interest.toLocaleString()}</div>
+                    <div className="font-semibold text-red-600">${row.interest.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                   <div>
                     <span className="text-gray-600 font-medium">Capital:</span>
-                    <div className="font-semibold text-blue-600">${row.principal.toLocaleString()}</div>
+                    <div className="font-semibold text-blue-600">${row.principal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                   <div>
                     <span className="text-gray-600 font-medium">A Pagar:</span>
-                    <div className="font-semibold text-green-600">${row.payment.toLocaleString()}</div>
+                    <div className="font-semibold text-green-600">${row.payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                   <div>
                     <span className="text-gray-600 font-medium">Restante:</span>
-                    <div className="font-semibold">${row.remainingBalance.toLocaleString()}</div>
+                    <div className="font-semibold">${row.remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                   </div>
                 </div>
               </div>
@@ -798,10 +798,10 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
                   <tr key={index} className="hover:bg-gray-50">
                     <td className="border p-2 lg:p-3 text-xs lg:text-sm">{typeof row.installment === 'string' ? row.installment : `${row.installment}/${term}`}</td>
                     <td className="border p-2 lg:p-3 text-xs lg:text-sm">{row.date}</td>
-                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.interest.toLocaleString()}</td>
-                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.principal.toLocaleString()}</td>
-                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.payment.toLocaleString()}</td>
-                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.remainingBalance.toLocaleString()}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.interest.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.principal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="border p-2 lg:p-3 text-xs lg:text-sm">${row.remainingBalance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   </tr>
                 ))}
               </tbody>
@@ -815,15 +815,15 @@ export const AmortizationTable = ({ isOpen, onClose, loanData }: AmortizationTab
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-center">
               <div>
                 <span className="text-xs sm:text-sm text-gray-600">INTERES:</span>
-                <div className="font-bold text-sm sm:text-base text-red-600">${totalInterest.toLocaleString()}</div>
+                <div className="font-bold text-sm sm:text-base text-red-600">${totalInterest.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
               </div>
               <div>
                 <span className="text-xs sm:text-sm text-gray-600">CAPITAL:</span>
-                <div className="font-bold text-sm sm:text-base text-blue-600">${totalPrincipal.toLocaleString()}</div>
+                <div className="font-bold text-sm sm:text-base text-blue-600">${totalPrincipal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
               </div>
               <div>
                 <span className="text-xs sm:text-sm text-gray-600">A PAGAR:</span>
-                <div className="font-bold text-sm sm:text-base text-green-600">${totalPayment.toLocaleString()}</div>
+                <div className="font-bold text-sm sm:text-base text-green-600">${totalPayment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
               </div>
             </div>
           </div>

@@ -2437,7 +2437,7 @@ Fecha: {fecha_actual}`
               <CardContent className="space-y-4">
                 <div className="text-center">
                   <div className="text-3xl font-bold text-green-600">
-                    ${calculatedPayment.toLocaleString()}
+                    ${calculatedPayment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <p className="text-gray-600">Cuota mensual</p>
                 </div>
@@ -2445,7 +2445,7 @@ Fecha: {fecha_actual}`
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span>Monto del préstamo:</span>
-                    <span>${loanAmount.toLocaleString()}</span>
+                    <span>${loanAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Tasa de interés:</span>
@@ -2457,11 +2457,11 @@ Fecha: {fecha_actual}`
                   </div>
                   <div className="flex justify-between">
                     <span>Total a pagar:</span>
-                    <span>${(calculatedPayment * termMonths).toLocaleString()}</span>
+                    <span>${(calculatedPayment * termMonths).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Total de intereses:</span>
-                    <span>${((calculatedPayment * termMonths) - loanAmount).toLocaleString()}</span>
+                    <span>${((calculatedPayment * termMonths) - loanAmount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </CardContent>
@@ -2523,7 +2523,7 @@ Fecha: {fecha_actual}`
                 <DollarSign className="h-4 w-4 text-red-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-red-600">${totalExpenses.toLocaleString()}</div>
+                <div className="text-2xl font-bold text-red-600">${totalExpenses.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                 <p className="text-xs text-muted-foreground">Total gastado</p>
               </CardContent>
             </Card>
@@ -2534,7 +2534,7 @@ Fecha: {fecha_actual}`
                 <Calendar className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">${monthlyExpenses.toLocaleString()}</div>
+                <div className="text-2xl font-bold">${monthlyExpenses.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                 <p className="text-xs text-muted-foreground">Gastos del mes</p>
               </CardContent>
             </Card>
@@ -2584,7 +2584,7 @@ Fecha: {fecha_actual}`
                           </div>
                           <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
                             <div>
-                              <span className="font-medium">Monto:</span> ${expense.amount.toLocaleString()}
+                              <span className="font-medium">Monto:</span> ${expense.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                             <div>
                               <span className="font-medium">Fecha:</span> {new Date(expense.expense_date).toLocaleDateString()}
@@ -2701,11 +2701,11 @@ Fecha: {fecha_actual}`
                   </div>
                   <div className="flex justify-between">
                     <span>Monto total:</span>
-                    <span className="font-semibold">${filteredTotalExpenses.toLocaleString()}</span>
+                    <span className="font-semibold">${filteredTotalExpenses.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Gastos en período:</span>
-                    <span className="font-semibold">${filteredPeriodExpenses.toLocaleString()}</span>
+                    <span className="font-semibold">${filteredPeriodExpenses.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Promedio por gasto:</span>
@@ -2731,7 +2731,7 @@ Fecha: {fecha_actual}`
                       <div key={category} className="space-y-1">
                         <div className="flex justify-between text-sm">
                         <span className="truncate">{category}</span>
-                          <span className="font-semibold">${categoryTotal.toLocaleString()} ({percentage}%)</span>
+                          <span className="font-semibold">${categoryTotal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({percentage}%)</span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div 
@@ -2778,7 +2778,7 @@ Fecha: {fecha_actual}`
                           <td className="p-2">
                             <Badge variant="secondary">{expense.category}</Badge>
                           </td>
-                          <td className="p-2 text-right font-semibold">${expense.amount.toLocaleString()}</td>
+                          <td className="p-2 text-right font-semibold">${expense.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           <td className="p-2">
                             <Badge variant={expense.status === 'approved' ? 'default' : 'secondary'}>
                               {expense.status === 'approved' ? 'Aprobado' : expense.status}
@@ -2790,7 +2790,7 @@ Fecha: {fecha_actual}`
                     <tfoot>
                       <tr className="border-t font-bold">
                         <td colSpan={3} className="p-2 text-right">Total:</td>
-                        <td className="p-2 text-right">${filteredTotalExpenses.toLocaleString()}</td>
+                        <td className="p-2 text-right">${filteredTotalExpenses.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td></td>
                       </tr>
                     </tfoot>
@@ -3245,15 +3245,15 @@ Fecha: {fecha_actual}`
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span>Capital inicial:</span>
-                  <span className="font-medium">${simpleInterest.principal.toLocaleString()}</span>
+                  <span className="font-medium">${simpleInterest.principal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Interés ganado:</span>
-                  <span className="font-medium text-green-600">${simpleInterest.result.toLocaleString()}</span>
+                  <span className="font-medium text-green-600">${simpleInterest.result.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between border-t pt-2">
                   <span>Monto total:</span>
-                  <span className="font-bold text-lg">${(simpleInterest.principal + simpleInterest.result).toLocaleString()}</span>
+                  <span className="font-bold text-lg">${(simpleInterest.principal + simpleInterest.result).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               </div>
             </div>
@@ -3312,15 +3312,15 @@ Fecha: {fecha_actual}`
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span>Inversión inicial:</span>
-                  <span className="font-medium">${profitability.initialInvestment.toLocaleString()}</span>
+                  <span className="font-medium">${profitability.initialInvestment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Valor final:</span>
-                  <span className="font-medium">${profitability.finalValue.toLocaleString()}</span>
+                  <span className="font-medium">${profitability.finalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Ganancia total:</span>
-                  <span className="font-medium text-green-600">${(profitability.finalValue - profitability.initialInvestment).toLocaleString()}</span>
+                  <span className="font-medium text-green-600">${(profitability.finalValue - profitability.initialInvestment).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between border-t pt-2">
                   <span>Rentabilidad anualizada:</span>
@@ -3396,7 +3396,7 @@ Fecha: {fecha_actual}`
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span>Cantidad original:</span>
-                  <span className="font-medium">{currency.amount.toLocaleString()} {currency.fromCurrency}</span>
+                  <span className="font-medium">{currency.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency.fromCurrency}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Tasa de cambio:</span>
@@ -3404,7 +3404,7 @@ Fecha: {fecha_actual}`
                 </div>
                 <div className="flex justify-between border-t pt-2">
                   <span>Resultado:</span>
-                  <span className="font-bold text-lg">{currency.result.toLocaleString()} {currency.toCurrency}</span>
+                  <span className="font-bold text-lg">{currency.result.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency.toCurrency}</span>
                 </div>
               </div>
             </div>

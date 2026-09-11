@@ -8,10 +8,27 @@ import {
   topRiskLoans, addDaysIso, isActiveLoan, overdueFromDues,
   type LoanLike, type PaymentLike, type SaleLike, type OverdueFacts,
 } from '@/utils/portfolioMetrics';
-import { computeInstallmentDues } from '@/utils/installmentDues';
+import { computeInstallmentDues, type IndefiniteSchedule } from '@/utils/installmentDues';
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import { activityInstant } from '@/utils/activityTime';
 import { computeLateFeesByLoan } from '@/utils/portfolioLateFees';
+import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import {
+  buildIndefiniteInterestResolver, capitalPaymentDateIso, type CapitalPaymentLike,
+} from '@/utils/indefiniteInterest';
+import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
+
+const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
+
+/** Agrupa filas por `loan_id`. */
+const groupByLoan = <T extends { loan_id: string }>(rows: T[]): Map<string, T[]> => {
+  const out = new Map<string, T[]>();
+  for (const row of rows) {
+    const list = out.get(row.loan_id);
+    if (list) list.push(row); else out.set(row.loan_id, [row]);
+  }
+  return out;
+};
 
 // ============================================================================
 // Datos de cartera — fuente única para INICIO y DASHBOARD
@@ -86,6 +103,14 @@ export interface InstallmentLike {
   interest_amount: number | null;
   paid_amount: number | null;
   is_paid: boolean | null;
+  /** Día en que se condonó toda su mora: sus días de atraso se cuentan desde ahí. */
+  late_fee_waived_at?: string | null;
+}
+
+/** Fila de `capital_payments`. */
+export interface CapitalPaymentRow extends CapitalPaymentLike {
+  id: string;
+  loan_id: string;
 }
 
 /** Fila de `loan_history`: todo cambio hecho sobre un préstamo. */
@@ -100,7 +125,7 @@ export interface LoanHistoryLike {
 
 export interface ActivityItem {
   id: string;
-  kind: 'payment' | 'loan' | 'client' | 'contact' | 'loan_update' | 'deletion';
+  kind: 'payment' | 'capital_payment' | 'loan' | 'client' | 'contact' | 'loan_update' | 'deletion';
   at: string;          // ISO datetime o fecha
   title: string;
   subtitle?: string;
@@ -142,6 +167,7 @@ export const usePortfolioData = () => {
   const [tracking, setTracking] = useState<TrackingLike[]>([]);
   const [installments, setInstallments] = useState<InstallmentLike[]>([]);
   const [loanHistory, setLoanHistory] = useState<LoanHistoryLike[]>([]);
+  const [capitalPayments, setCapitalPayments] = useState<CapitalPaymentRow[]>([]);
   const [deletedLoans, setDeletedLoans] = useState<LoanLike[]>([]);
   const [promises, setPromises] = useState<any[]>([]);
   const [legalTasks, setLegalTasks] = useState<any[]>([]);
@@ -205,7 +231,7 @@ export const usePortfolioData = () => {
       const activeLoanIds = loanRows.filter(l => isActiveLoan(l.status)).map(l => l.id);
 
       // Pagos y seguimientos por préstamo (ver nota de arriba sobre `created_by`)
-      const [paymentRows, trackingRows, installmentRows, historyRows] = await Promise.all([
+      const [paymentRows, trackingRows, installmentRows, historyRows, capitalRows] = await Promise.all([
         fetchInChunks<PaymentLike>(
           ids => supabase.from('payments')
             // `due_date` y `superseded_at` hacen falta para repartir los pagos entre cuotas
@@ -223,9 +249,12 @@ export const usePortfolioData = () => {
         fetchInChunks<InstallmentLike>(
           ids => supabase.from('installments')
             // `late_fee_paid` es donde queda anotada la mora cobrada o CONDONADA: sin ella, el
-            // cálculo de mora de esta pantalla ignoraría las condonaciones.
-            .select('id, loan_id, installment_number, due_date, amount, total_amount, principal_amount, interest_amount, paid_amount, late_fee_paid, is_paid')
-            .in('loan_id', ids),
+            // cálculo de mora de esta pantalla ignoraría las condonaciones. Y `late_fee_waived_at`
+            // el día de la condonación, desde el que se cuentan los días de atraso. Se pide `*`
+            // porque esa columna llega con una migración: nombrarla rompería la consulta entera
+            // en una base que todavía no la tenga.
+            .select('*')
+            .in('loan_id', ids) as any,
           activeLoanIds, 'cuotas'
         ),
         // Cambios sobre los préstamos: extensiones, cargos, abonos a capital, ediciones,
@@ -238,11 +267,22 @@ export const usePortfolioData = () => {
             .limit(200),
           allLoanIds, 'historial de préstamos'
         ),
+        // Abonos a capital: viven en su propia tabla, no en `payments`. Sin ellos el inicio no
+        // se enteraba de que se hubiera hecho uno (2026-09-10: "que en el inicio diga si se hizo
+        // un abono a capital"), ni los contaba como dinero cobrado, ni podía calcular el capital
+        // vigente de un indefinido.
+        fetchInChunks<CapitalPaymentRow>(
+          ids => supabase.from('capital_payments')
+            .select('id, loan_id, amount, capital_before, capital_after, created_at')
+            .in('loan_id', ids) as any,
+          loanIds, 'abonos a capital'
+        ),
       ]);
       setPayments(paymentRows);
       setTracking(trackingRows);
       setInstallments(installmentRows);
       setLoanHistory(historyRows);
+      setCapitalPayments(capitalRows);
 
       // Módulo legal: opcional. Si las tablas no existen, el panel sigue funcionando.
       const soon = addDaysIso(todayIso, 3);
@@ -279,57 +319,96 @@ export const usePortfolioData = () => {
   }, [user, companyId, load]);
 
   // ---------------- derivaciones ----------------
+  const installmentsByLoan = useMemo(() => groupByLoan(installments), [installments]);
+  const paymentsByLoan = useMemo(() => groupByLoan(payments), [payments]);
+  const capitalPaymentsByLoan = useMemo(() => groupByLoan(capitalPayments), [capitalPayments]);
+
   /**
-   * Atraso y saldo REALES de cada préstamo, calculados desde sus cuotas.
+   * Balance pendiente de cada préstamo con el MISMO cálculo que la tarjeta del listado y
+   * Detalles (`computeLoanBalanceBreakdown`), sobre los datos que este hook ya trae.
    *
-   * Va PRIMERO porque de aquí salen las demás derivaciones: no se puede referenciar en las
-   * dependencias de un `useMemo` anterior, porque ese array se evalúa en su propia línea.
+   * FALLO REPORTADO (2026-09-10): "en el préstamo dice un monto pero luego en el inicio cambia
+   * por el redondeo". El inicio sumaba lo pendiente CUOTA POR CUOTA —cada una con su redondeo de
+   * centavos— y en los indefinidos leía `loans.remaining_balance`, que calcula la base con otra
+   * fórmula; la ficha parte del monto prestado. Tres cálculos para lo mismo nunca dan igual.
+   */
+  const balanceByLoan = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const loan of loans) {
+      if (!isActiveLoan(loan.status)) continue;
+      const rows = installmentsByLoan.get(loan.id);
+      if (!rows) continue; // sin cuotas leídas se conserva `remaining_balance`
+      const breakdown = computeLoanBalanceBreakdown(loan as any, {
+        installments: rows,
+        payments: paymentsByLoan.get(loan.id) || [],
+        capitalPayments: capitalPaymentsByLoan.get(loan.id) || [],
+      }, todayIso);
+      out.set(loan.id, breakdown.totalBalance);
+    }
+    return out;
+  }, [loans, installmentsByLoan, paymentsByLoan, capitalPaymentsByLoan, todayIso]);
+
+  /**
+   * Atraso REAL de cada préstamo, calculado desde sus cuotas; el saldo es el de la ficha.
    *
    * No se usa `next_payment_date` ni `remaining_balance`: los mantienen triggers y bastaba
    * con que uno no hubiera corrido para que el inicio mostrara días y montos viejos. Las
    * cuotas y los pagos son el dato de origen y no pueden quedarse desfasados.
    *
-   * SALVO EN LOS PRÉSTAMOS INDEFINIDOS, donde las cuotas NO son el dato de origen: solo
-   * existe UNA fila en `installments` (la que crea `generateOriginalInstallments` con
-   * `installment_number = 1`) y los períodos siguientes se generan sobre la marcha, porque un
-   * préstamo sin vencimiento no tiene un número de cuotas que escribir.
-   *
-   * Derivar el saldo de esa única fila daba el interés de un período —RD$3,150 en un préstamo
-   * de 105,000— en vez del saldo real; y en cuanto esa fila se pagaba, el préstamo se quedaba
-   * sin cuotas pendientes, desaparecía de la agenda y aportaba cero a la cartera. Por eso
-   * estos préstamos "no se reconocían" en el inicio.
-   *
-   * Para ellos se cae al respaldo (`remaining_balance` / `next_payment_date`), que la función
-   * SQL `calculate_loan_remaining_balance` sí calcula por períodos devengados. Es la misma
-   * separación que hace `getLoanBalanceBreakdown`, que tiene una rama entera para indefinidos.
+   * Los INDEFINIDOS guardan UNA sola fila en `installments`; sus demás períodos se generan con
+   * la misma rejilla del pago avanzado (`computeInstallmentDues` con agenda), con la cuota que
+   * corresponde a cada fecha tras un abono a capital. Antes se dejaban fuera y caían a las
+   * columnas de `loans`. Su saldo NO sale de las cuotas —serían solo intereses—, sino de
+   * `balanceByLoan`, que suma el capital.
    */
   const overdueFactsByLoan = useMemo(() => {
     const facts = new Map<string, OverdueFacts>();
-    if (installments.length === 0) return facts;
-
-    const esIndefinido = (loan: LoanLike) =>
-      String(loan.amortization_type || '').toLowerCase() === 'indefinite';
-
-    const byLoan = new Map<string, InstallmentLike[]>();
-    for (const inst of installments) {
-      const list = byLoan.get(inst.loan_id);
-      if (list) list.push(inst); else byLoan.set(inst.loan_id, [inst]);
-    }
-    const paymentsByLoan = new Map<string, PaymentLike[]>();
-    for (const p of payments) {
-      const list = paymentsByLoan.get(p.loan_id);
-      if (list) list.push(p); else paymentsByLoan.set(p.loan_id, [p]);
-    }
-
     for (const loan of loans) {
-      if (esIndefinido(loan)) continue;   // sus cuotas no describen la deuda: ver nota arriba
-      const rows = byLoan.get(loan.id);
+      const rows = installmentsByLoan.get(loan.id);
       if (!rows) continue;
-      const dues = computeInstallmentDues(rows as never, (paymentsByLoan.get(loan.id) || []) as never);
-      facts.set(loan.id, overdueFromDues(dues, todayIso, Number(loan.grace_period_days) || 0));
+
+      let schedule: IndefiniteSchedule | null = null;
+      if (String(loan.amortization_type || '').toLowerCase() === 'indefinite') {
+        if (!loan.start_date) continue;
+        const frequency = String(loan.payment_frequency || 'monthly');
+        const abonos = capitalPaymentsByLoan.get(loan.id) || [];
+        schedule = {
+          startDate: String(loan.start_date),
+          frequency,
+          todayIso,
+          periodInterest: Number(loan.monthly_payment) || undefined,
+          interestForDue: abonos.length > 0
+            ? buildIndefiniteInterestResolver({
+                amount: loan.amount,
+                interestRate: loan.interest_rate,
+                frequency,
+                currentInterest: loan.monthly_payment,
+                capitalPayments: abonos,
+              })
+            : undefined,
+        };
+      }
+
+      const dues = computeInstallmentDues(rows as never, (paymentsByLoan.get(loan.id) || []) as never, schedule);
+      const loanFacts = overdueFromDues(dues, todayIso, Number(loan.grace_period_days) || 0);
+      const balance = balanceByLoan.get(loan.id);
+      facts.set(loan.id, balance !== undefined ? { ...loanFacts, pendingAmount: balance } : loanFacts);
     }
     return facts;
-  }, [installments, payments, loans, todayIso]);
+  }, [loans, installmentsByLoan, paymentsByLoan, capitalPaymentsByLoan, balanceByLoan, todayIso]);
+
+  /**
+   * Los préstamos con el balance de la ficha en `remaining_balance`. Todo lo que el inicio y el
+   * dashboard derivan de esa columna (agenda, riesgo, listas) enseña así el mismo número que el
+   * préstamo.
+   */
+  const loansForMetrics = useMemo(
+    () => loans.map(l => {
+      const balance = balanceByLoan.get(l.id);
+      return balance === undefined ? l : { ...l, remaining_balance: balance };
+    }),
+    [loans, balanceByLoan],
+  );
 
   /**
    * MORA de cada préstamo, calculada desde las cuotas con el MISMO motor que el detalle del
@@ -354,38 +433,57 @@ export const usePortfolioData = () => {
       return;
     }
 
-    const byLoan = new Map<string, InstallmentLike[]>();
-    for (const inst of installments) {
-      const list = byLoan.get(inst.loan_id);
-      if (list) list.push(inst); else byLoan.set(inst.loan_id, [inst]);
-    }
-    const paysByLoan = new Map<string, PaymentLike[]>();
-    for (const p of payments) {
-      const list = paysByLoan.get(p.loan_id);
-      if (list) list.push(p); else paysByLoan.set(p.loan_id, [p]);
-    }
-
     const activos = loans.filter(l => isActiveLoan(l.status));
-    computeLateFeesByLoan(activos as never, byLoan as never, paysByLoan as never)
+    computeLateFeesByLoan(
+      activos as never, installmentsByLoan as never, paymentsByLoan as never, undefined,
+      capitalPaymentsByLoan as never,
+    )
       .then(map => { if (!cancelled) setLateFeeByLoan(map); })
       .catch(err => console.error('Error calculando la mora de la cartera:', err));
 
     return () => { cancelled = true; };
-  }, [loans, installments, payments]);
+  }, [loans, installments, installmentsByLoan, paymentsByLoan, capitalPaymentsByLoan]);
+
+  /**
+   * Los abonos a capital como COBROS. Son dinero que entra —capital recuperado—, aunque vivan en
+   * su propia tabla: sin esto "Cobrado hoy" y "Cobrado este mes" no los contaban.
+   */
+  const capitalAsPayments = useMemo<PaymentLike[]>(() => capitalPayments.map(cp => ({
+    id: `cp-${cp.id}`,
+    loan_id: cp.loan_id,
+    amount: round2(Number(cp.amount) || 0),
+    principal_amount: round2(Number(cp.amount) || 0),
+    interest_amount: 0,
+    late_fee: 0,
+    payment_date: capitalPaymentDateIso(cp.created_at),
+    payment_time_local: cp.created_at ?? null,
+    created_by: null,
+  })), [capitalPayments]);
+  const cashflowPayments = useMemo(() => [...payments, ...capitalAsPayments], [payments, capitalAsPayments]);
+
+  /** Abonos a capital de hoy y del mes, para decirlo en el inicio. */
+  const capitalToday = useMemo(() => {
+    const hoy = capitalAsPayments.filter(p => p.payment_date === todayIso);
+    return { count: hoy.length, amount: round2(hoy.reduce((s, p) => s + (Number(p.amount) || 0), 0)) };
+  }, [capitalAsPayments, todayIso]);
+  const capitalMonth = useMemo(() => {
+    const mes = capitalAsPayments.filter(p => String(p.payment_date || '').slice(0, 7) === todayIso.slice(0, 7));
+    return { count: mes.length, amount: round2(mes.reduce((s, p) => s + (Number(p.amount) || 0), 0)) };
+  }, [capitalAsPayments, todayIso]);
 
   const portfolio = useMemo(
-    () => computePortfolioSnapshot(loans, todayIso, overdueFactsByLoan, lateFeeByLoan),
-    [loans, todayIso, overdueFactsByLoan, lateFeeByLoan],
+    () => computePortfolioSnapshot(loansForMetrics, todayIso, overdueFactsByLoan, lateFeeByLoan),
+    [loansForMetrics, todayIso, overdueFactsByLoan, lateFeeByLoan],
   );
-  const cashflow = useMemo(() => computeCashflow(payments, sales, todayIso), [payments, sales, todayIso]);
+  const cashflow = useMemo(() => computeCashflow(cashflowPayments, sales, todayIso), [cashflowPayments, sales, todayIso]);
   const recovery = useMemo(() => computeRecovery(loans, cashflow), [loans, cashflow]);
 
   const agenda = useMemo(
-    () => computeTodayAgenda(loans, todayIso, overdueFactsByLoan),
-    [loans, todayIso, overdueFactsByLoan],
+    () => computeTodayAgenda(loansForMetrics, todayIso, overdueFactsByLoan),
+    [loansForMetrics, todayIso, overdueFactsByLoan],
   );
-  const riskLoans = useMemo(() => topRiskLoans(loans, todayIso, 8), [loans, todayIso]);
-  const series12 = useMemo(() => buildMonthlySeries(payments, sales, loans, todayIso, 12), [payments, sales, loans, todayIso]);
+  const riskLoans = useMemo(() => topRiskLoans(loansForMetrics, todayIso, 8), [loansForMetrics, todayIso]);
+  const series12 = useMemo(() => buildMonthlySeries(cashflowPayments, sales, loans, todayIso, 12), [cashflowPayments, sales, loans, todayIso]);
   const series6 = useMemo(() => series12.slice(-6), [series12]);
 
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
@@ -499,12 +597,33 @@ export const usePortfolioData = () => {
         // empatados y por debajo de cualquier cosa que sí tuviera hora.
         id: `p-${p.id}`, kind: 'payment', at: String(p.payment_time_local || p.payment_date),
         title: `Pago de ${nameOfLoan(p.loan_id)}`,
+        // Con centavos: redondeados a pesos enteros no cuadraban con el recibo ni con la ficha.
         subtitle: [
-          Number(p.principal_amount) ? `capital ${Math.round(Number(p.principal_amount)).toLocaleString('es-DO')}` : '',
-          Number(p.interest_amount) ? `interés ${Math.round(Number(p.interest_amount)).toLocaleString('es-DO')}` : '',
-          Number(p.late_fee) ? `mora ${Math.round(Number(p.late_fee)).toLocaleString('es-DO')}` : '',
+          Number(p.principal_amount) ? `capital ${formatCurrencyNumber(Number(p.principal_amount))}` : '',
+          Number(p.interest_amount) ? `interés ${formatCurrencyNumber(Number(p.interest_amount))}` : '',
+          Number(p.late_fee) ? `mora ${formatCurrencyNumber(Number(p.late_fee))}` : '',
         ].filter(Boolean).join(' · ') || undefined,
-        amount: Number(p.amount) || 0, loanId: p.loan_id,
+        amount: round2(Number(p.amount) || 0), loanId: p.loan_id,
+      });
+    }
+
+    // ---- Abonos a capital -------------------------------------------------
+    // Salen de `capital_payments`, que es donde se registran, con su monto y el capital antes y
+    // después. La entrada de `loan_history` del mismo abono se omite más abajo para no listarlo
+    // dos veces.
+    const prestamosConAbono = new Set(capitalPayments.map(cp => cp.loan_id));
+    for (const cp of capitalPayments) {
+      const at = String(cp.created_at || '');
+      if (!at) continue;
+      const antes = Number(cp.capital_before);
+      const despues = Number(cp.capital_after);
+      items.push({
+        id: `cp-${cp.id}`, kind: 'capital_payment', at,
+        title: `Abono a capital · ${nameOfLoan(cp.loan_id)}`,
+        subtitle: Number.isFinite(antes) && Number.isFinite(despues) && antes > 0
+          ? `capital ${formatCurrency(antes)} → ${formatCurrency(despues)}`
+          : undefined,
+        amount: round2(Number(cp.amount) || 0), loanId: cp.loan_id,
       });
     }
     for (const l of loans) {
@@ -601,6 +720,8 @@ export const usePortfolioData = () => {
       // Sin tipo reconocido no se inventa un título: se omite antes que llenar la lista de
       // "Ajuste de balance" genéricos que no dicen nada.
       if (!match) continue;
+      // El abono ya salió arriba desde `capital_payments`, con su monto.
+      if (tipo === 'capital_payment' && prestamosConAbono.has(h.loan_id)) continue;
 
       // El detalle va tras el primer ":"; se recorta para que quepa en una línea.
       const detalle = desc.replace(/^[^:]*:\s*/, '').split('. Notas:')[0].trim();
@@ -625,7 +746,7 @@ export const usePortfolioData = () => {
     // mismo día. Comparar instantes trata a las dos formas por igual (una fecha suelta se sitúa
     // al mediodía, que es lo único razonable cuando no se guardó la hora).
     return items.sort((a, b) => activityInstant(b.at) - activityInstant(a.at)).slice(0, 20);
-  }, [payments, loans, clients, tracking, loanHistory, deletedLoans, loanById, clientById]);
+  }, [payments, capitalPayments, loans, clients, tracking, loanHistory, deletedLoans, loanById, clientById]);
 
   const onboarding = useMemo(() => ({
     companyConfigured,
@@ -643,9 +764,11 @@ export const usePortfolioData = () => {
 
   return {
     loading, refreshing, lastUpdated, todayIso, companyName, can,
-    loans, clients, payments, sales, tracking, legalCases,
+    // Con el balance de la ficha en `remaining_balance` (ver `loansForMetrics`).
+    loans: loansForMetrics, clients, payments, sales, tracking, legalCases,
     portfolio, cashflow, recovery, agenda, riskLoans, series6, series12,
     pending, activity, onboarding, clientStats, lateFeeByLoan,
+    capitalPayments, capitalToday, capitalMonth,
     refresh: () => load(true),
   };
 };

@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner';
 import { formatCurrencyNumber } from '@/lib/utils';
 import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
+import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 
 interface Installment {
   id: string;
@@ -763,41 +764,22 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
 
           // Monto de cuota vigente: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
           // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
-          const addPeriodIsoForCap = (iso: string, f: string) => {
-            const [yy, mm, dd] = String(iso || '').split('T')[0].split('-').map(Number);
-            if (!yy || !mm || !dd) return iso;
-            const base = new Date(yy, mm - 1, dd);
-            const dt = new Date(base);
-            switch (String(f || 'monthly').toLowerCase()) {
-              case 'daily': dt.setDate(dt.getDate() + 1); break;
-              case 'weekly': dt.setDate(dt.getDate() + 7); break;
-              case 'biweekly': dt.setDate(dt.getDate() + 14); break;
-              default: dt.setFullYear(dt.getFullYear(), dt.getMonth() + 1, dt.getDate()); break;
-            }
-            return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
-          };
+          // La regla vive en `buildIndefiniteInterestResolver` y es la MISMA del pago avanzado, la
+          // mora y el balance: antes cada pantalla tenía su copia y el pago avanzado ninguna.
+          const interestForDueShared = buildIndefiniteInterestResolver({
+            amount: Number(loanInfo?.amount || 0),
+            interestRate: Number(loanInfo?.interest_rate || 0),
+            frequency: String(loanInfo?.payment_frequency || 'monthly'),
+            currentInterest: interestPerPayment,
+            capitalPayments: (capitalPaymentsDataRaw || []) as CapitalPaymentLike[],
+          });
           const getExpectedForDueDate = (dueDate: string): number => {
             if (!dueDate) return interestPerPayment;
             // Priorizar el total_amount de BD si fue actualizado por abono a capital
             // (ya filtrado en la carga: solo se guardaron valores <= interestPerPayment * 1.05)
             const dbAmt = dbAmountByDueDate.get(dueDate);
             if (dbAmt && dbAmt > 0.01) return dbAmt;
-            if (!capitalPaymentsDataRaw || capitalPaymentsDataRaw.length === 0) return interestPerPayment;
-            // Relación tasa/capital actual, ya ajustada a la frecuencia (interestPerPayment = monthly_payment).
-            // Ej: quincenal 5%/año → interestPerPayment=$1,235; amount=$49,400 → ratio=0.025
-            // Así capital_before*ratio da el monto correcto para la frecuencia, no el mensual crudo.
-            const rateRatio = (loanInfo?.amount && Number(loanInfo.amount) > 0.01)
-              ? interestPerPayment / Number(loanInfo.amount)
-              : (Number(loanInfo?.interest_rate || 0) / 100);
-            const freq = String(loanInfo?.payment_frequency || 'monthly');
-            for (const cp of capitalPaymentsDataRaw) {
-              const createdDate = (cp as any).created_at ? String((cp as any).created_at).split('T')[0] : null;
-              if (!createdDate) continue;
-              const cutoff = addPeriodIsoForCap(createdDate, freq);
-              if (dueDate <= cutoff) return round2(Number((cp as any).capital_before) * rateRatio);
-            }
-            const last = capitalPaymentsDataRaw[capitalPaymentsDataRaw.length - 1];
-            return round2(Number((last as any).capital_after) * rateRatio);
+            return interestForDueShared(dueDate);
           };
 
           // Conjunto de due_dates de cargos (evita mezclar pagos de cargos con cuotas regulares)
@@ -1349,8 +1331,15 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     
     if (isIndefinite) {
       // Para préstamos indefinidos: Total = Capital Original + Interés total + Todos los cargos
-      // El capital original es loanInfo.amount (que es el actual) + los abonos realizados
-      const originalCapital = loanInfo.amount + totalCapitalPayments;
+      // `loanInfo.amount` es el monto PRESTADO (ya no baja con los abonos); el capital vigente es
+      // lo prestado menos los abonos. `resolveIndefiniteCapital` también reconoce los préstamos a
+      // los que la versión anterior ya les rebajó el monto.
+      const { lentAmount: originalCapital, currentCapital } = resolveIndefiniteCapital(
+        loanInfo.amount, capitalPayments as CapitalPaymentLike[],
+      );
+      // Redondeo a CENTAVOS: antes cada monto se redondeaba a pesos enteros (`Math.round`), y el
+      // total de esta tabla no cuadraba con el de la ficha ni con el del inicio.
+      const r2 = (v: unknown) => Math.round((Number(v) || 0) * 100) / 100;
       
       // Calcular todos los cargos (cuotas con interest_amount = 0 y principal_amount = total_amount)
       // IMPORTANTE: Redondear cada valor individual ANTES de sumar para evitar diferencias de redondeo
@@ -1362,7 +1351,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           const chargeAmount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
             ? (inst as any).total_amount
             : (inst.amount || 0);
-          return sum + Math.round(Number(chargeAmount));
+          return sum + (Math.round(Number(chargeAmount) * 100) / 100);
         }
         return sum;
       }, 0);
@@ -1376,13 +1365,13 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           const interestAmount = (inst as any).interest_amount !== undefined && (inst as any).interest_amount !== null
             ? (inst as any).interest_amount
             : (inst.interest_amount || 0);
-          return sum + Math.round(Number(interestAmount));
+          return sum + r2(interestAmount);
         }
         return sum;
       }, 0);
       
       // Total a pagar = Capital Original + Intereses (pagados y pendientes) + Cargos
-      totalAmount = Math.round(originalCapital) + interestTotal + chargesTotal;
+      totalAmount = r2(originalCapital + interestTotal + chargesTotal);
       
       // Total pagado: usar los pagos reales + abonos a capital
       totalPaid = Math.round((totalPaidFromPayments + totalCapitalPayments) * 100) / 100;
@@ -1396,9 +1385,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           return isCharge && !inst.is_paid;
         })
         .reduce((sum, inst) => {
-          const total = Math.round(Number((inst as any).total_amount || inst.amount || 0));
-          const paid = Math.round(Number((inst as any).paid_amount || 0));
-          return sum + Math.max(0, total - paid);
+          const total = r2((inst as any).total_amount || inst.amount || 0);
+          const paid = r2((inst as any).paid_amount || 0);
+          return r2(sum + Math.max(0, total - paid));
         }, 0);
       
       const unpaidInterestTotal = installments
@@ -1408,9 +1397,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                           (inst as any).principal_amount > 0;
           return !isCharge && !inst.is_paid;
         })
-        .reduce((sum, inst) => sum + Math.round(Number((inst as any).interest_amount || 0)), 0);
-      
-      balancePending = Math.round(loanInfo.amount) + unpaidInterestTotal + unpaidChargesAmountIndefinite;
+        .reduce((sum, inst) => r2(sum + r2((inst as any).interest_amount || 0)), 0);
+
+      balancePending = r2(currentCapital + unpaidInterestTotal + unpaidChargesAmountIndefinite);
     } else {
       // Para préstamos con plazo definido: calcular el total correctamente
       // IMPORTANTE: Usar total_amount del préstamo como base (sin redondear) y sumar solo los cargos
@@ -1431,7 +1420,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               ? (inst as any).total_amount
               : (inst.amount || 0);
             // Redondear cada valor individual antes de sumar
-            return sum + Math.round(Number(chargeAmount));
+            return sum + (Math.round(Number(chargeAmount) * 100) / 100);
           }
           return sum;
         }, 0);
@@ -1445,8 +1434,8 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             const amount = (inst as any).total_amount !== undefined && (inst as any).total_amount !== null
               ? (inst as any).total_amount
               : (inst.amount || 0);
-            // Redondear cada valor individual antes de sumar
-            return sum + Math.round(Number(amount));
+            // Redondear cada valor individual a centavos antes de sumar
+            return sum + Math.round(Number(amount) * 100) / 100;
           }
           return sum;
         }, 0);
@@ -1480,7 +1469,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
               ? (inst as any).total_amount
               : (inst.amount || 0);
             // Redondear cada valor individual antes de sumar
-            return sum + Math.round(Number(chargeAmount));
+            return sum + (Math.round(Number(chargeAmount) * 100) / 100);
           }
           return sum;
         }, 0);
@@ -1502,7 +1491,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             ? (inst as any).total_amount
             : (inst.amount || 0);
           // Redondear cada valor individual antes de sumar
-          return sum + Math.round(Number(amount));
+          return sum + Math.round(Number(amount) * 100) / 100;
         }, 0);
       
       const paidChargesTotal = installments
@@ -1517,7 +1506,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             ? (inst as any).total_amount
             : (inst.amount || 0);
           // Redondear cada valor individual antes de sumar
-          return sum + Math.round(Number(chargeAmount));
+          return sum + (Math.round(Number(chargeAmount) * 100) / 100);
         }, 0);
       
       // CORRECCIÓN: Si tenemos totalPaidFromPayments (calculado desde pagos reales), usarlo
@@ -1556,7 +1545,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         const chargeDueDate = inst.due_date?.split('T')[0];
         if (!chargeDueDate) {
           // Si no tiene fecha, usar el monto completo si no está pagado
-          return sum + (inst.is_paid ? 0 : Math.round(Number(chargeAmount)));
+          return sum + (inst.is_paid ? 0 : (Math.round(Number(chargeAmount) * 100) / 100));
         }
         
         // Obtener cargos con la misma fecha para distribuir pagos correctamente
@@ -1587,7 +1576,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         
         const remainingChargeAmount = Math.max(0, chargeAmount - principalPaidForThisCharge);
         // Redondear cada valor individual antes de sumar
-        return sum + Math.round(remainingChargeAmount);
+        return sum + Math.round(remainingChargeAmount * 100) / 100;
       }, 0);
       
       // CORRECCIÓN: Calcular capital pendiente e interés pendiente por separado
