@@ -14,7 +14,7 @@
 -- `collection_tracking` (módulo de Seguimiento de Cobro) como bitácora única.
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS public.client_crm_profiles (
+CREATE TABLE IF NOT EXISTS public.client_crm_profiles (agreg
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id         UUID NOT NULL UNIQUE REFERENCES public.clients(id) ON DELETE CASCADE,
   -- Dueño de la empresa (mismo valor que clients.user_id / loans.loan_officer_id)
