@@ -1152,6 +1152,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         .from('payments')
         .select('id, amount, principal_amount, interest_amount, due_date, payment_date')
         .eq('loan_id', loanId)
+        // Los pagos anulados por una extensión de plazo ya no se aplican a ninguna cuota: sumarlos
+        // en "Total Pagado" inflaba la cifra y el total dejaba de cuadrar con las cuotas.
+        .is('superseded_at', null)
         .order('payment_date', { ascending: true });
 
       if (!paymentsError && payments) {
@@ -1643,25 +1646,11 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
       // El capital pendiente de las cuotas regulares NO incluye los cargos, entonces se suman por separado
       balancePending = Math.round((unpaidCapitalFromRegular + unpaidInterestFromRegular + unpaidChargesAmount) * 100) / 100;
       
-      // CORRECCIÓN: Priorizar valor de BD para balancePending si está disponible
-      if (loanInfo.remaining_balance !== null && loanInfo.remaining_balance !== undefined) {
-        const diff = Math.abs(balancePending - loanInfo.remaining_balance);
-        // Si la diferencia es pequeña (menos de 5 pesos), usar el valor de la BD como fuente de verdad
-        if (diff < 5) {
-          balancePending = Math.round(loanInfo.remaining_balance * 100) / 100;
-        }
-      }
-      
-      // Asegurar que totalAmount = totalPaid + balancePending para consistencia
-      // Esto corrige cualquier diferencia por redondeo acumulativo
-      // IMPORTANTE: Redondear a 2 decimales para evitar errores de redondeo
-      // Total = Pagado + Pendiente (preferir remaining_balance de BD si existe)
-      const pendingFromDb = (loanInfo.remaining_balance !== null && loanInfo.remaining_balance !== undefined)
-        ? Number(loanInfo.remaining_balance)
-        : balancePending;
-      const recalculatedTotalAmount = Math.round((totalPaid + pendingFromDb) * 100) / 100;
-      totalAmount = recalculatedTotalAmount;
-      
+      // Lo pendiente es lo que suman las CUOTAS de esta misma tabla, sin mezclarlo con
+      // `loans.remaining_balance`: esa columna la calcula la base con otra fórmula y, cuando no
+      // coincidía, la tabla acababa diciendo un total que sus propias filas no sostenían.
+      // El "Total a Pagar" se arma al final, ya con el pendiente y lo pagado.
+
       console.log('🔍 InstallmentsTable - Cálculo detallado de balance:', {
         loanId,
         unpaidCapitalFromRegular,
@@ -1756,38 +1745,20 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
   const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
   let totalPending = isLoanSettled ? 0 : Math.max(0, round2(balancePending));
 
-  // ✅ Plazo fijo: El TOTAL y el BALANCE deben incluir cargos y evitar desfaces por redondeo
-  // (ej. 20,333 * 12 = 243,996 vs total_amount = 244,000).
-  // Usar `loanInfo.total_amount` (o fórmula) como base y sumar cargos.
-  if (loanInfo && String(loanInfo?.amortization_type || '').toLowerCase() !== 'indefinite') {
-    const isCharge = (inst: any) =>
-      Math.abs(Number((inst as any).interest_amount || 0)) < 0.01 &&
-      Number((inst as any).principal_amount || 0) > 0 &&
-      Math.abs(Number((inst as any).principal_amount || 0) - Number((inst as any).total_amount ?? inst.amount ?? 0)) < 0.01;
-
-    const chargesTotal = round2(
-      (installments || []).filter(isCharge).reduce((s, inst: any) => s + (Number(inst.total_amount ?? inst.amount ?? 0) || 0), 0)
-    );
-
-    let baseLoanTotal = Number((loanInfo as any).total_amount || 0) || 0;
-    if (!(baseLoanTotal > 0)) {
-      const term = Number(loanInfo.term_months || 0) || 0;
-      const totalInterest = Number(loanInfo.amount || 0) * (Number(loanInfo.interest_rate || 0) / 100) * term;
-      baseLoanTotal = Number(loanInfo.amount || 0) + totalInterest;
-    }
-    baseLoanTotal = round2(baseLoanTotal);
-
-    // Total pagado ya incluye abonos a capital en esta pantalla
-    const paid = round2(totalPaid);
-    totalAmount = round2(baseLoanTotal + chargesTotal);
-    totalPending = isLoanSettled ? 0 : Math.max(0, round2(totalAmount - paid));
-    balancePending = totalPending;
-  }
-
-  // CORRECCIÓN: El "Total a Pagar" debe ser consistente:
-  // Total a pagar = Total pagado + Total pendiente
-  // (El total pagado incluye abonos a capital; el total pendiente se calcula desde total_amount/cargos/pagos)
-  totalAmount = Math.round((totalPaid + totalPending) * 100) / 100;
+  // FALLO REPORTADO (2026-09-11): "el total a pagar y el total pagado... según los montos ya está
+  // saldado pero le faltan 2 por pagar". En un préstamo a plazo fijo con ABONO A CAPITAL, aquí se
+  // hacía `total a pagar = loans.total_amount + cargos` y `pendiente = total − pagado`. Pero el
+  // abono a capital REESCRIBE `total_amount` con las cuotas ya recalculadas (el capital abonado
+  // sale de ahí) mientras que "Total Pagado" SÍ suma el abono: el abono se contaba dos veces, el
+  // pendiente daba 0 y la tabla decía "100% pagado" con dos cuotas por cobrar.
+  //
+  // Ahora los tres números salen de lo mismo que enseñan las filas:
+  //   Total Pendiente = lo que falta de las cuotas y cargos de esta tabla (`balancePending`)
+  //   Total Pagado    = los pagos recibidos + los abonos a capital
+  //   Total a Pagar   = Pagado + Pendiente
+  // El abono a capital cuenta en las dos primeras cifras porque es un pago más: aparece como una
+  // fila de la tabla y su importe ya no está en las cuotas que redujo.
+  totalAmount = round2(totalPaid + totalPending);
   
   console.log('🔍 InstallmentsTable - Cálculo de totales finales:', {
     loanId,

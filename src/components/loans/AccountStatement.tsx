@@ -31,7 +31,7 @@ import { addHours } from 'date-fns';
 import { formatDateStringForSantoDomingo, createDateInSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { getFrequencyRateFactor } from '@/utils/frequencyUtils';
 import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
-import { interleaveCapitalPayments, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
+import { interleaveCapitalPayments, toCapitalPaymentEntries, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
 import { PiggyBank } from 'lucide-react';
 
 /** "Capital: RD$150,000.00 → RD$100,000.00 · motivo" de un abono a capital. */
@@ -1060,6 +1060,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     const amortizationType = String(loanData.amortization_type || 'simple').toLowerCase();
     const interestRate = Number(loanData.interest_rate || 0);
 
+    // Abonos a capital del préstamo: hacen falta en las dos ramas (la cuota de los indefinidos y
+    // el capital pendiente de los plazo fijo), así que se leen una sola vez.
+    const { data: abonosDelPrestamo } = await supabase
+      .from('capital_payments')
+      .select('id, amount, capital_before, capital_after, adjustment_reason, created_at')
+      .eq('loan_id', loanData.id)
+      .order('created_at', { ascending: true });
+
     // CORRECCIÓN CRÍTICA (auditoría 2026-08-28): las ramas francés/alemán/americano de esta
     // función usaban `interestRate / 100` como tasa del período, es decir, la tasa MENSUAL sin
     // ajustar por la frecuencia de pago. En un préstamo quincenal el estado de cuenta mostraba
@@ -1287,11 +1295,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Para indefinidos: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
       // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
       // Regla compartida con "Ver cuotas", el pago avanzado, la mora y el balance.
-      const { data: capitalPaymentsForSchedule } = await supabase
-        .from('capital_payments')
-        .select('amount, capital_before, capital_after, created_at')
-        .eq('loan_id', loanData.id)
-        .order('created_at', { ascending: true });
+      const capitalPaymentsForSchedule = abonosDelPrestamo;
       const interestForDueShared = buildIndefiniteInterestResolver({
         amount: principal,
         interestRate,
@@ -2473,7 +2477,51 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const numB = typeof b.installment === 'number' ? b.installment : parseInt(b.installment.toString().split('/')[0]) || 0;
       return numA - numB;
     });
-    
+
+    // ------------------------------------------------------------------------
+    // CAPITAL PENDIENTE (columna de la derecha)
+    // ------------------------------------------------------------------------
+    // FALLO REPORTADO (2026-09-11): "en capital pendiente los montos comenzaron a alocarse después
+    // del abono a capital: uno dice 65,000, otro sube a 91". La columna era
+    // `(capital + todos los cargos) − (capital cobrado + cargos cobrados)`, y tenía tres problemas:
+    //   · no restaba NUNCA los abonos a capital, así que tras un abono de 50,000 todas las filas
+    //     siguientes quedaban 50,000 por encima;
+    //   · acumulaba el capital por NÚMERO de cuota mientras los cargos iban por FECHA, así que la
+    //     fila de un cargo (que lleva el último número) salía con un saldo fuera de orden;
+    //   · solo descontaba lo ya COBRADO, así que las cuotas pendientes repetían todas la misma
+    //     cifra en vez de ir bajando hasta cero.
+    //
+    // Ahora es un saldo de CAPITAL que baja en orden cronológico: el capital de cada cuota y cada
+    // abono el día en que se hizo. Termina en 0 en la última cuota. Un CARGO no amortiza capital
+    // (su monto sale en su propia fila), así que conserva el saldo de la fila anterior.
+    if (!isIndefinite) {
+      const r2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
+      const abonos = toCapitalPaymentEntries(abonosDelPrestamo as any);
+      let saldoCapital = r2(principal);
+      let siguienteAbono = 0;
+
+      for (const fila of sortedSchedule) {
+        const due = String(fila.dueDate || '').split('T')[0];
+        while (
+          siguienteAbono < abonos.length &&
+          abonos[siguienteAbono].dateIso && due &&
+          abonos[siguienteAbono].dateIso < due
+        ) {
+          saldoCapital = r2(saldoCapital - abonos[siguienteAbono].amount);
+          siguienteAbono++;
+        }
+
+        const esCargo =
+          Math.abs(Number(fila.interestPayment || 0)) < 0.01 &&
+          Number(fila.principalPayment || 0) > 0.01 &&
+          Math.abs(Number(fila.principalPayment || 0) - Number(fila.monthlyPayment || 0)) < 0.01;
+        if (!esCargo) {
+          saldoCapital = r2(saldoCapital - Number(fila.principalPayment || 0));
+        }
+        fila.remainingBalance = Math.max(0, saldoCapital);
+      }
+    }
+
     return sortedSchedule;
   };
 
