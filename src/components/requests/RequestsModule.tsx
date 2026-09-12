@@ -547,7 +547,10 @@ const RequestsModule = () => {
       purpose: request.purpose || '',
       // Campos de préstamo
       interest_rate: (request.interest_rate || 0).toString(),
-      term_months: (request.term_months || companySettings?.min_term_months || 6).toString(),
+      // Un indefinido no tiene plazo: se conserva el 0 en vez de rellenar el mínimo configurado.
+      term_months: (request.amortization_type === 'indefinite'
+        ? 0
+        : (request.term_months || companySettings?.min_term_months || 6)).toString(),
       loan_type: request.loan_type || 'personal',
       amortization_type: request.amortization_type || 'simple',
       payment_frequency: request.payment_frequency || 'monthly',
@@ -932,7 +935,10 @@ const RequestsModule = () => {
                                     income_verification: request.income_verification || '',
                                     collateral_description: request.collateral_description || '',
                                     interest_rate: request.interest_rate || 0,
-                                    term_months: request.term_months || companySettings?.min_term_months || 6,
+                                    // Un indefinido no tiene plazo: se conserva el 0.
+                                    term_months: request.amortization_type === 'indefinite'
+                                      ? 0
+                                      : (request.term_months || companySettings?.min_term_months || 6),
                                     loan_type: request.loan_type || 'personal',
                                     amortization_type: request.amortization_type || 'simple',
                                     payment_frequency: request.payment_frequency || 'monthly',
@@ -1856,13 +1862,23 @@ const RequestsModule = () => {
                       <Input
                         id="edit_term_months"
                         type="number"
-                        value={editFormData.term_months === 0 ? '' : editFormData.term_months}
+                        // Igual que en el formulario nuevo: un indefinido no tiene plazo.
+                        value={editFormData.amortization_type === 'indefinite'
+                          ? 0
+                          : (editFormData.term_months === 0 ? '' : editFormData.term_months)}
                         onChange={(e) => setEditFormData({
                           ...editFormData,
                           term_months: e.target.value === '' ? 0 : Number(e.target.value),
                         })}
                         placeholder="0"
+                        disabled={editFormData.amortization_type === 'indefinite'}
+                        className={editFormData.amortization_type === 'indefinite' ? 'bg-gray-100 text-gray-500' : undefined}
                       />
+                      {editFormData.amortization_type === 'indefinite' && (
+                        <p className="mt-1 text-xs text-gray-500">
+                          Un préstamo indefinido no tiene plazo.
+                        </p>
+                      )}
                     </div>
                     <div>
                       <Label htmlFor="edit_loan_type">Tipo de Préstamo</Label>
@@ -1881,7 +1897,16 @@ const RequestsModule = () => {
                     </div>
                     <div>
                       <Label htmlFor="edit_amortization_type">Tipo de Amortización</Label>
-                      <Select value={editFormData.amortization_type} onValueChange={(value) => setEditFormData({...editFormData, amortization_type: value})}>
+                      <Select
+                        value={editFormData.amortization_type}
+                        onValueChange={(value) => setEditFormData({
+                          ...editFormData,
+                          amortization_type: value,
+                          term_months: value === 'indefinite'
+                            ? 0
+                            : (editFormData.term_months || companySettings?.min_term_months || 6),
+                        })}
+                      >
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
@@ -2523,7 +2548,9 @@ const RequestsModule = () => {
                   variant="outline"
                   className="h-7 text-xs bg-white/10 border-white/30 text-white hover:bg-white/20"
                   onClick={() => {
-                    if (!formData.requested_amount || !formData.interest_rate || !formData.term_months) {
+                    // En un indefinido no hay plazo que exigir.
+                    const faltaPlazo = formData.amortization_type !== 'indefinite' && !formData.term_months;
+                    if (!formData.requested_amount || !formData.interest_rate || faltaPlazo) {
                       toast.error('Completa monto, tasa e interés primero');
                       return;
                     }
@@ -2564,20 +2591,34 @@ const RequestsModule = () => {
                   {/* Sin unidad a propósito. El plazo va en PERÍODOS de la frecuencia elegida
                       —12 con frecuencia quincenal son 12 quincenas—, así que poner "meses"
                       era engañoso y poner la unidad variable resultaba ruidoso. */}
-                  <Label htmlFor="term_months">Plazo *</Label>
+                  <Label htmlFor="term_months">
+                    Plazo {formData.amortization_type === 'indefinite' ? '' : '*'}
+                  </Label>
                   <Input
                     id="term_months"
                     type="number"
+                    // INDEFINIDO: sin plazo. Se muestra 0 y el campo queda bloqueado; antes seguía
+                    // vacío y OBLIGATORIO, así que el navegador paraba el envío con "Completa este
+                    // campo" en un préstamo que por definición no tiene plazo.
                     // El 0 va como marcador de posición, no como valor: escrito de verdad
                     // había que borrarlo antes de teclear, y quedaba un "10" al escribir "1".
-                    value={formData.term_months === 0 ? '' : formData.term_months}
+                    value={formData.amortization_type === 'indefinite'
+                      ? 0
+                      : (formData.term_months === 0 ? '' : formData.term_months)}
                     onChange={(e) => setFormData({
                       ...formData,
                       term_months: e.target.value === '' ? 0 : Number(e.target.value),
                     })}
                     placeholder="0"
-                    required
+                    required={formData.amortization_type !== 'indefinite'}
+                    disabled={formData.amortization_type === 'indefinite'}
+                    className={formData.amortization_type === 'indefinite' ? 'bg-gray-100 text-gray-500' : undefined}
                   />
+                  {formData.amortization_type === 'indefinite' && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Un préstamo indefinido no tiene plazo: se cobra interés hasta que se salde el capital.
+                    </p>
+                  )}
                 </div>
                 
                 <div>
@@ -2598,7 +2639,18 @@ const RequestsModule = () => {
                 
                 <div>
                   <Label htmlFor="amortization_type">Tipo de Amortización *</Label>
-                  <Select value={formData.amortization_type} onValueChange={(value) => setFormData({...formData, amortization_type: value})}>
+                  <Select
+                    value={formData.amortization_type}
+                    onValueChange={(value) => setFormData({
+                      ...formData,
+                      amortization_type: value,
+                      // Al elegir INDEFINIDO el plazo se pone en 0 (y el campo se bloquea); al
+                      // volver a un tipo con plazo se recupera el mínimo configurado.
+                      term_months: value === 'indefinite'
+                        ? 0
+                        : (formData.term_months || companySettings?.min_term_months || 6),
+                    })}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar tipo" />
                     </SelectTrigger>
@@ -2748,7 +2800,9 @@ const RequestsModule = () => {
                 type="button"
                 variant="outline"
                 onClick={() => {
-                  if (!formData.requested_amount || !formData.interest_rate || !formData.term_months) {
+                  // En un indefinido no hay plazo que exigir.
+                  const faltaPlazo = formData.amortization_type !== 'indefinite' && !formData.term_months;
+                  if (!formData.requested_amount || !formData.interest_rate || faltaPlazo) {
                     toast.error('Completa monto, tasa e interés primero');
                     return;
                   }
