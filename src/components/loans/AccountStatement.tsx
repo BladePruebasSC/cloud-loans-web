@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -32,6 +32,7 @@ import { formatDateStringForSantoDomingo, createDateInSantoDomingo, getCurrentDa
 import { getFrequencyRateFactor } from '@/utils/frequencyUtils';
 import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 import { interleaveCapitalPayments, toCapitalPaymentEntries, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
+import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { PiggyBank } from 'lucide-react';
 
 /** "Capital: RD$150,000.00 → RD$100,000.00 · motivo" de un abono a capital. */
@@ -119,6 +120,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   const [methodFilter, setMethodFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  /** Abono a capital elegido para ver su recibo (un abono también es un cobro). */
+  const [selectedCapitalPayment, setSelectedCapitalPayment] = useState<CapitalPaymentEntry | null>(null);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
   const [currentLateFee, setCurrentLateFee] = useState(0);
   const [amortizationPeriod, setAmortizationPeriod] = useState('all');
@@ -283,6 +286,36 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
     setFilteredPayments(filtered);
   }, [payments, searchTerm, statusFilter, methodFilter, dateFilter]);
+
+  /**
+   * Pagos y ABONOS A CAPITAL juntos, en orden cronológico.
+   *
+   * PEDIDO (2026-09-11): "en los recibos debe salir un recibo sobre el abono a capital que no
+   * sale". El historial de esta pantalla solo listaba `payments`, y los abonos viven en otra
+   * tabla: no aparecían por ninguna parte y no había forma de imprimir su comprobante.
+   */
+  const movimientos = useMemo(() => {
+    const instante = (v: unknown) => {
+      const t = Date.parse(String(v || ''));
+      return Number.isFinite(t) ? t : 0;
+    };
+    const items: Array<
+      | { kind: 'payment'; at: number; payment: Payment }
+      | { kind: 'capital'; at: number; abono: CapitalPaymentEntry }
+    > = [
+      ...filteredPayments.map(p => ({
+        kind: 'payment' as const,
+        at: instante((p as any).payment_time_local || p.payment_date),
+        payment: p,
+      })),
+      ...toCapitalPaymentEntries(capitalPaymentRows as any).map(abono => ({
+        kind: 'capital' as const,
+        at: instante(abono.dateIso),
+        abono,
+      })),
+    ];
+    return items.sort((a, b) => a.at - b.at);
+  }, [filteredPayments, capitalPaymentRows]);
 
   // Calcular tabla de amortización cuando se cargan los datos del préstamo y las cuotas
   useEffect(() => {
@@ -939,6 +972,27 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         finalRemainingBalance = round2(baseRemaining + round2(unpaidChargesAmount));
       }
       
+      // ------------------------------------------------------------------------
+      // BALANCE PENDIENTE (el de "Información del Préstamo")
+      // ------------------------------------------------------------------------
+      // FALLO REPORTADO (2026-09-11): "en estado de cuenta, balance pendiente en datos da un monto
+      // erróneo". Esta pantalla tenía su PROPIA fórmula: en un préstamo a plazo fijo partía de
+      // `total_amount` —que el abono a capital ya reescribe SIN el capital abonado— y volvía a
+      // restar los abonos, así que el abono se descontaba DOS VECES; y en los indefinidos hacía un
+      // conteo de períodos aparte. Ahora se usa el MISMO cálculo que la ficha del préstamo, la
+      // tarjeta del listado y el inicio, con los datos que esta pantalla ya trajo.
+      //
+      // El cálculo de arriba se conserva solo como respaldo por si este fallara.
+      try {
+        finalRemainingBalance = computeLoanBalanceBreakdown(loanData as any, {
+          payments: paymentsData,
+          installments: installmentsData,
+          capitalPayments: (capitalPaymentsData || []) as any,
+        }).totalBalance;
+      } catch (balanceError) {
+        console.error('AccountStatement: no se pudo calcular el balance compartido:', balanceError);
+      }
+
       // Actualizar el loan con el balance que incluye cargos
       setLoan(prev => ({
         ...prev,
@@ -2588,6 +2642,70 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     setShowReceiptModal(true);
   };
 
+  /** Recibo imprimible de un ABONO A CAPITAL (el equivalente al recibo de un pago). */
+  const printCapitalReceipt = (abono: CapitalPaymentEntry) => {
+    if (!loan || !abono) return;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Recibo de Abono a Capital - ${loan.clients.full_name}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .header { text-align: center; margin-bottom: 30px; }
+            .header h1 { color: #0f766e; margin: 0; }
+            .header h2 { color: #666; margin: 5px 0; }
+            .info table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+            .info td { padding: 6px; border-bottom: 1px solid #eee; }
+            .info td:first-child { font-weight: bold; width: 45%; }
+            .detalle { background: #f0fdfa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .detalle h3 { margin-top: 0; color: #0f766e; }
+            .detalle table { width: 100%; }
+            .detalle td { padding: 5px; }
+            .total { font-weight: bold; font-size: 1.15em; border-top: 2px solid #0f766e; }
+            .footer { margin-top: 30px; text-align: center; color: #666; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>RECIBO DE ABONO A CAPITAL</h1>
+            <h2>${loan.clients.full_name}</h2>
+            <p>Cédula: ${loan.clients.dni} | Fecha: ${formatDate(abono.dateIso)}</p>
+          </div>
+
+          <div class="info">
+            <table>
+              <tr><td>Monto prestado:</td><td>${formatCurrency(loan.amount)}</td></tr>
+              <tr><td>Tasa de interés:</td><td>${loan.interest_rate}%</td></tr>
+              ${abono.capitalBefore !== null ? `<tr><td>Capital pendiente antes:</td><td>${formatCurrency(abono.capitalBefore)}</td></tr>` : ''}
+              ${abono.capitalAfter !== null ? `<tr><td>Capital pendiente después:</td><td>${formatCurrency(abono.capitalAfter)}</td></tr>` : ''}
+              ${abono.reason ? `<tr><td>Razón:</td><td>${abono.reason}</td></tr>` : ''}
+            </table>
+          </div>
+
+          <div class="detalle">
+            <h3>Detalle del Abono</h3>
+            <table>
+              <tr><td>Fecha:</td><td>${formatDate(abono.dateIso)}</td></tr>
+              <tr class="total"><td>Monto abonado a capital:</td><td>${formatCurrency(abono.amount)}</td></tr>
+            </table>
+          </div>
+
+          <div class="footer">
+            <p>Este documento es un comprobante oficial de abono a capital.</p>
+            <p>Generado el ${formatDate(statementDate)}</p>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.print();
+  };
+
   const printReceipt = (payment: Payment) => {
     if (!loan || !payment) return;
 
@@ -3456,11 +3574,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 </div>
               </CardHeader>
               <CardContent>
-                {filteredPayments.length === 0 ? (
+                {movimientos.length === 0 ? (
                   <div className="text-center py-8">
                     <DollarSign className="h-12 w-12 mx-auto mb-4 text-gray-400" />
                     <p className="text-gray-600">
-                      {payments.length === 0 
+                      {payments.length === 0
                         ? "No se han registrado pagos para este préstamo"
                         : "No se encontraron pagos con los filtros aplicados"
                       }
@@ -3470,7 +3588,34 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                   <div className="overflow-x-auto">
                     {/* Vista móvil */}
                     <div className="block md:hidden space-y-3">
-                      {filteredPayments.map((payment) => (
+                      {movimientos.map((mov) => mov.kind === 'capital' ? (
+                        <div key={mov.abono.key} className="border border-teal-200 rounded-lg p-4 bg-teal-50">
+                          <div className="flex justify-between items-start mb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-lg text-teal-800">{formatDate(mov.abono.dateIso)}</span>
+                              <Badge variant="outline" className="border-teal-300 bg-teal-100 text-teal-800">
+                                <PiggyBank className="h-3 w-3 mr-1" />
+                                Abono a capital
+                              </Badge>
+                            </div>
+                            <div className="font-bold text-teal-700">{formatCurrency(mov.abono.amount)}</div>
+                          </div>
+                          {abonoDetalle(mov.abono) && (
+                            <div className="text-sm text-teal-800">{abonoDetalle(mov.abono)}</div>
+                          )}
+                          <div className="mt-3 pt-2 border-t">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setSelectedCapitalPayment(mov.abono)}
+                              className="w-full"
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              Ver Recibo
+                            </Button>
+                          </div>
+                        </div>
+                      ) : ((payment: Payment) => (
                         <div key={payment.id} className="border rounded-lg p-4 bg-white">
                           <div className="flex justify-between items-start mb-3">
                             <div className="flex items-center gap-2">
@@ -3527,7 +3672,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                             </Button>
                           </div>
                         </div>
-                      ))}
+                      ))(mov.payment))}
                     </div>
 
                     {/* Vista desktop */}
@@ -3547,7 +3692,33 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredPayments.map((payment) => (
+                          {movimientos.map((mov) => mov.kind === 'capital' ? (
+                            <tr key={mov.abono.key} className="border-b bg-teal-50">
+                              <td className="p-3 text-teal-800">{formatDate(mov.abono.dateIso)}</td>
+                              <td className="p-3 font-semibold text-teal-700">{formatCurrency(mov.abono.amount)}</td>
+                              <td className="p-3 text-teal-700">{formatCurrency(mov.abono.amount)}</td>
+                              <td className="p-3 text-gray-400">—</td>
+                              <td className="p-3 text-gray-400">—</td>
+                              <td className="p-3 text-teal-800">Abono a capital</td>
+                              <td className="p-3">
+                                <Badge variant="outline" className="border-teal-300 bg-teal-100 text-teal-800">
+                                  <PiggyBank className="h-3 w-3 mr-1" />
+                                  Abono
+                                </Badge>
+                              </td>
+                              <td className="p-3 text-xs text-teal-800">{abonoDetalle(mov.abono) || '-'}</td>
+                              <td className="p-3">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setSelectedCapitalPayment(mov.abono)}
+                                >
+                                  <Eye className="h-4 w-4 mr-1" />
+                                  Recibo
+                                </Button>
+                              </td>
+                            </tr>
+                          ) : ((payment: Payment) => (
                             <tr key={payment.id} className="border-b hover:bg-gray-50">
                               <td className="p-3">{formatDateTime(payment)}</td>
                               <td className="p-3 font-semibold text-green-600">
@@ -3570,7 +3741,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                                 </Button>
                               </td>
                             </tr>
-                          ))}
+                          ))(mov.payment))}
                         </tbody>
                       </table>
                     </div>
@@ -3686,6 +3857,101 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                     Cerrar
                   </Button>
                   <Button onClick={() => printReceipt(selectedPayment)}>
+                    <Printer className="h-4 w-4 mr-2" />
+                    Imprimir Recibo
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Recibo de un ABONO A CAPITAL */}
+      {selectedCapitalPayment && (
+        <Dialog open={!!selectedCapitalPayment} onOpenChange={(open) => { if (!open) setSelectedCapitalPayment(null); }}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <PiggyBank className="h-5 w-5 text-teal-700" />
+                Recibo de Abono a Capital
+                {loan && (
+                  <span className="text-sm font-normal text-gray-600">
+                    - {loan.clients.full_name}
+                  </span>
+                )}
+              </DialogTitle>
+            </DialogHeader>
+
+            {loan && (
+              <div className="space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Información del Cliente</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-600">Cliente:</span>
+                        <div className="font-semibold">{loan.clients.full_name}</div>
+                      </div>
+                      <div>
+                        <span className="text-gray-600">Cédula:</span>
+                        <div className="font-semibold">{loan.clients.dni}</div>
+                      </div>
+                      <div>
+                        <span className="text-gray-600">Fecha del abono:</span>
+                        <div className="font-semibold">{formatDate(selectedCapitalPayment.dateIso)}</div>
+                      </div>
+                      <div>
+                        <span className="text-gray-600">Monto prestado:</span>
+                        <div className="font-semibold">{formatCurrency(loan.amount)}</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Detalle del Abono</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Monto abonado a capital:</span>
+                        <span className="font-bold text-lg text-teal-700">
+                          {formatCurrency(selectedCapitalPayment.amount)}
+                        </span>
+                      </div>
+                      {selectedCapitalPayment.capitalBefore !== null && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Capital pendiente antes:</span>
+                          <span className="font-semibold">{formatCurrency(selectedCapitalPayment.capitalBefore)}</span>
+                        </div>
+                      )}
+                      {selectedCapitalPayment.capitalAfter !== null && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Capital pendiente después:</span>
+                          <span className="font-semibold">{formatCurrency(selectedCapitalPayment.capitalAfter)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedCapitalPayment.reason && (
+                      <div className="mt-4 pt-4 border-t">
+                        <span className="text-gray-600 font-medium">Razón:</span>
+                        <p className="mt-1 text-sm">{selectedCapitalPayment.reason}</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setSelectedCapitalPayment(null)}>
+                    <X className="h-4 w-4 mr-2" />
+                    Cerrar
+                  </Button>
+                  <Button onClick={() => printCapitalReceipt(selectedCapitalPayment)}>
                     <Printer className="h-4 w-4 mr-2" />
                     Imprimir Recibo
                   </Button>
