@@ -16,6 +16,7 @@ import { PasswordVerificationDialog } from '@/components/common/PasswordVerifica
 import { AmortizationTable } from '@/components/loans/AmortizationTable';
 import { fromAnnualRate, toAnnualRate, getFrequencyLabel } from '@/utils/frequencyUtils';
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
+import { describeSupabaseError } from '@/utils/supabaseErrors';
 import {
   FileText,
   Plus,
@@ -504,7 +505,12 @@ const RequestsModule = () => {
         ...formData,
         user_id: user.id,
         // Mapear late_fee_enabled a late_fee para compatibilidad
-        late_fee: formData.late_fee_enabled
+        late_fee: formData.late_fee_enabled,
+        // Un préstamo INDEFINIDO no tiene plazo: se guarda NULL, no 0. La tabla tiene un
+        // `CHECK (term_months > 0)` y el 0 hacía que la base rechazara la solicitud entera
+        // (error 400 al crear). La migración 20260912000000 también admite el 0, pero así la
+        // solicitud se guarda aunque esa migración todavía no esté aplicada.
+        term_months: formData.amortization_type === 'indefinite' ? null : formData.term_months,
       };
 
       // Remover late_fee_enabled del objeto ya que se mapea a late_fee
@@ -534,8 +540,10 @@ const RequestsModule = () => {
       resetForm();
       fetchRequests();
     } catch (error) {
+      // El motivo va en el aviso: un "Error al crear solicitud" a secas obligaba a abrir la
+      // consola del navegador para enterarse de qué rechazó la base.
       console.error('Error creating request:', error);
-      toast.error('Error al crear solicitud');
+      toast.error(describeSupabaseError(error, 'Error al crear solicitud'));
     }
   };
 
@@ -1718,7 +1726,10 @@ const RequestsModule = () => {
                     income_verification: editFormData.income_verification,
                     collateral_description: editFormData.collateral_description,
                     interest_rate: editFormData.interest_rate,
-                    term_months: editFormData.term_months,
+                    // Un indefinido no tiene plazo: NULL, no 0 (ver `CHECK (term_months > 0)`).
+                    term_months: editFormData.amortization_type === 'indefinite'
+                      ? null
+                      : editFormData.term_months,
                     loan_type: editFormData.loan_type,
                     amortization_type: editFormData.amortization_type,
                     payment_frequency: editFormData.payment_frequency,
