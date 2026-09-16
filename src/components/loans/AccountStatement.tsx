@@ -1359,8 +1359,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
       const getExpectedForDueDate = (dueDate: string): number => {
         if (!dueDate) return currentPeriodPayment;
-        // Priorizar total_amount de BD si fue actualizado por abono a capital
-        // (ya filtrado: solo valores <= currentPeriodPayment * 1.05)
+        // Con ABONOS manda la regla por fecha, no lo que quedó guardado en la fila.
+        if ((capitalPaymentsForSchedule || []).length > 0) return interestForDueShared(dueDate);
+        // Sin abonos, el total_amount de BD es el monto real de esa cuota.
         const dbAmt = dbAmountByDueDateForSchedule.get(dueDate);
         if (dbAmt && dbAmt > 0.01) return dbAmt;
         return interestForDueShared(dueDate);
@@ -2129,8 +2130,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         : (isCharge && realInstallment 
             ? realInstallment.principal_amount 
             : installmentData.principalPayment);
-      const originalInterest = isCharge 
-        ? 0 
+      const originalInterest = isCharge
+        ? 0
         : (realInstallment && realInstallment.interest_amount !== undefined && realInstallment.interest_amount !== null
             ? realInstallment.interest_amount
             : installmentData.interestPayment);

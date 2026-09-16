@@ -3892,11 +3892,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               // Cuando se reduce el capital base con un abono, el interés DEBE reducirse proporcionalmente.
               // La cuota nueva sale de la proporción cuota/capital vigente (respeta la frecuencia).
               const newInterestPerPayment = Math.round(capitalAfter * indefiniteInterestRatio(capitalBefore) * 100) / 100;
-              // El período en curso conserva la cuota de antes: se devengó con el capital anterior.
-              // Es la regla "abono + 1 período" de `buildIndefiniteInterestResolver`.
-              const cutoffCuotaVieja = addPeriodsToIsoDate(
-                getCurrentDateStringForSantoDomingo(), 1, loan.payment_frequency || 'monthly'
-              );
+              // Las cuotas que vencen HASTA hoy conservan su monto (se devengaron con el capital
+              // anterior); las que vencen después pasan a la cuota nueva. Misma regla que
+              // `buildIndefiniteInterestResolver`.
+              const cutoffCuotaVieja = getCurrentDateStringForSantoDomingo();
               
               // Obtener todas las cuotas regulares pendientes (excluyendo cargos)
               const unpaidRegularInstallments = installments.filter(inst => {

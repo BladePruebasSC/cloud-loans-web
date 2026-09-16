@@ -139,6 +139,14 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [isLatestPayment, setIsLatestPayment] = useState(false);
+  /**
+   * Hay un ABONO A CAPITAL registrado después de este pago.
+   *
+   * (2026-09-16) "Me está permitiendo eliminar pagos que se hicieron previo a un abono a capital,
+   * eso no puede ser": el abono se calculó sobre el capital que quedaba TRAS ese pago, así que
+   * borrarlo dejaría el abono apoyado en un historial que ya no existe. Primero se borra el abono.
+   */
+  const [hasLaterCapitalPayment, setHasLaterCapitalPayment] = useState(false);
   /** Ya se sabe si este pago se puede eliminar (evita enseñar un motivo antes de comprobarlo). */
   const [deleteCheckDone, setDeleteCheckDone] = useState(false);
   const [forceDelete, setForceDelete] = useState(false);
@@ -177,6 +185,20 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           setIsLatestPayment(false);
         }
 
+        // ¿Hay un abono a capital registrado DESPUÉS de este pago? Se comparan INSTANTES, no días:
+        // con la fecha suelta ('2026-09-11' = medianoche), un abono hecho esa misma mañana contaba
+        // como posterior a un pago de la tarde y bloqueaba su eliminación sin motivo.
+        if (propioIso) {
+          const { data: laterCapital } = await supabase
+            .from('capital_payments')
+            .select('id')
+            .eq('loan_id', payment.loan_id)
+            .gt('created_at', propioIso)
+            .limit(1);
+          setHasLaterCapitalPayment(!!(laterCapital && laterCapital.length > 0));
+        } else {
+          setHasLaterCapitalPayment(false);
+        }
         setDeleteCheckDone(true);
       } catch (error) {
         console.error('🔍 Error en verificación:', error);
@@ -292,11 +314,29 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       console.log('🗑️ Datos del préstamo obtenidos:', loanData);
 
-      // (2026-09-11) Ya NO se bloquea la eliminación porque haya un abono a capital posterior.
-      // El aviso decía "elimine primero el abono a capital", pero la aplicación no tiene forma de
-      // eliminar un abono: un pago anterior a un abono quedaba sin poder borrarse nunca. Pedido:
-      // "después del abono a capital debe permitirme eliminar pagos". El saldo no depende del
-      // orden: capital pendiente = monto prestado − capital cobrado − abonos, sea cual sea.
+      // VALIDACIÓN: no se elimina un pago si hay un ABONO A CAPITAL posterior. El abono se calculó
+      // sobre el capital que quedaba tras ese pago, así que borrarlo dejaría el abono apoyado en un
+      // historial que ya no existe. Se comparan INSTANTES, no días (ver `paymentInstantIso`): antes
+      // se usaba la fecha del pago y un abono de esa misma mañana bloqueaba un pago de la tarde.
+      const paymentInstant = paymentInstantIso(payment as any);
+      if (paymentInstant) {
+        const { data: laterCapitalPayments, error: capCheckError } = await supabase
+          .from('capital_payments')
+          .select('id, created_at, amount')
+          .eq('loan_id', payment.loan_id)
+          .gt('created_at', paymentInstant)
+          .limit(1);
+
+        if (!capCheckError && laterCapitalPayments && laterCapitalPayments.length > 0) {
+          const capDate = String(laterCapitalPayments[0].created_at).split('T')[0];
+          toast.error(
+            `No se puede eliminar este pago porque hay un abono a capital del ${capDate} que se calculó sobre él. Elimine primero el abono a capital.`
+          );
+          setLoading(false);
+          setShowDeleteModal(false);
+          return;
+        }
+      }
 
       // PASO 2: Eliminar el pago
       console.log('🗑️ ELIMINANDO PAGO...');
@@ -1370,9 +1410,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
               ? 'Comprobando…'
               : loanStatus === 'paid'
                 ? 'El préstamo está saldado'
-                : !isLatestPayment
-                  ? 'Solo se puede eliminar el último pago'
-                  : null;
+                : hasLaterCapitalPayment
+                  ? 'Hay un abono a capital posterior: elimínelo primero'
+                  : !isLatestPayment
+                    ? 'Solo se puede eliminar el último pago'
+                    : null;
             return (
               <DropdownMenuItem
                 disabled={!!motivo}

@@ -777,8 +777,10 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           });
           const getExpectedForDueDate = (dueDate: string): number => {
             if (!dueDate) return interestPerPayment;
-            // Priorizar el total_amount de BD si fue actualizado por abono a capital
-            // (ya filtrado en la carga: solo se guardaron valores <= interestPerPayment * 1.05)
+            // Con ABONOS manda la regla por fecha, no lo que quedó guardado en la fila: si el
+            // abono no llegó a reescribirla, la tabla seguía pidiendo la cuota vieja.
+            if ((capitalPaymentsDataRaw || []).length > 0) return interestForDueShared(dueDate);
+            // Sin abonos, el total_amount de BD es el monto real de esa cuota.
             const dbAmt = dbAmountByDueDate.get(dueDate);
             if (dbAmt && dbAmt > 0.01) return dbAmt;
             return interestForDueShared(dueDate);

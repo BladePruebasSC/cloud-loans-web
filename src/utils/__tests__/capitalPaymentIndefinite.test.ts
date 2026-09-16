@@ -87,15 +87,17 @@ describe('cuota de cada período tras un abono', () => {
     amount: 150000, interestRate: 3, frequency: 'monthly', currentInterest: 3000, capitalPayments: [ABONO],
   });
 
-  it('La cuota del período en que se abonó se queda con el capital de antes', () => {
-    // Abono el 9-sep → corte el 9-oct: la cuota del 1-oct se devengó con 150,000.
+  it('Una cuota vencida ANTES del abono conserva su monto', () => {
+    // La del 1-sep se devengó y se cobró con los 150,000: sigue siendo de 4,500.
     expect(cuotaDe('2026-09-01')).toBe(4500);
-    expect(cuotaDe('2026-10-01')).toBe(4500);
+    expect(cuotaDe('2026-09-09')).toBe(4500); // el mismo día del abono todavía es la vieja
   });
 
-  it('EL CASO REPORTADO: las siguientes ya son de 3,000', () => {
+  it('EL CASO REPORTADO (2026-09-16): lo que vence DESPUÉS del abono ya es de 3,000', () => {
+    // Antes el corte era "abono + 1 período", así que el 1-oct seguía cobrándose a 4,500.
+    expect(cuotaDe('2026-09-10')).toBe(3000);
+    expect(cuotaDe('2026-10-01')).toBe(3000);
     expect(cuotaDe('2026-11-01')).toBe(3000);
-    expect(cuotaDe('2026-12-01')).toBe(3000);
     expect(cuotaDe('2027-01-01')).toBe(3000);
   });
 
@@ -103,7 +105,7 @@ describe('cuota de cada período tras un abono', () => {
     const legado = buildIndefiniteInterestResolver({
       amount: 100000, interestRate: 3, frequency: 'monthly', currentInterest: 3000, capitalPayments: [ABONO],
     });
-    expect(['2026-10-01', '2026-11-01', '2026-12-01'].map(legado)).toEqual([4500, 3000, 3000]);
+    expect(['2026-09-01', '2026-10-01', '2026-11-01'].map(legado)).toEqual([4500, 3000, 3000]);
   });
 
   it('Respeta la frecuencia: en un quincenal la cuota es la mitad de la tasa mensual', () => {
@@ -111,9 +113,8 @@ describe('cuota de cada período tras un abono', () => {
       amount: 150000, interestRate: 3, frequency: 'biweekly', currentInterest: 1500,
       capitalPayments: [{ ...ABONO, created_at: '2026-09-09T19:25:00+00:00' }],
     });
-    // Corte: 9-sep + 14 días = 23-sep.
-    expect(quincenal('2026-09-15')).toBe(2250);
-    expect(quincenal('2026-09-29')).toBe(1500);
+    expect(quincenal('2026-09-01')).toBe(2250);
+    expect(quincenal('2026-09-15')).toBe(1500);
   });
 
   it('La fecha del abono es la de Santo Domingo, no la de UTC', () => {
@@ -133,22 +134,35 @@ describe('pago avanzado de un indefinido con abono', () => {
     expect(diciembre.pending).toBe(1500);
   });
 
-  it('EL CASO REPORTADO: diciembre es de 3,000 y queda saldada', () => {
+  it('EL CASO REPORTADO: las cuotas posteriores al abono son de 3,000', () => {
     const cuotaDe = buildIndefiniteInterestResolver({
       amount: 150000, interestRate: 3, frequency: 'monthly', currentInterest: 3000, capitalPayments: [ABONO],
     });
     const filas = computeInstallmentDues([FILA_GUARDADA], PAGOS, { ...agenda, interestForDue: cuotaDe });
 
     const porFecha = new Map(filas.map(r => [r.dueDate, r]));
-    expect(porFecha.get('2026-10-01')!.total).toBe(4500);
+    expect(porFecha.get('2026-09-01')!.total).toBe(4500); // venció antes del abono
+    expect(porFecha.get('2026-10-01')!.total).toBe(3000);
     expect(porFecha.get('2026-11-01')!.total).toBe(3000);
     expect(porFecha.get('2026-12-01')!.total).toBe(3000);
-    expect(porFecha.get('2026-12-01')!.pending).toBe(0);
+  });
 
-    // Noviembre se pagó por adelantado con la cuota vieja: los 1,500 de más se acreditan a la
-    // próxima cuota, que queda con 1,500 pendientes.
-    const pendientes = filas.filter(r => r.pending > 0.005);
-    expect(pendientes.map(r => [r.dueDate, r.total, r.pending])).toEqual([['2027-01-01', 3000, 1500]]);
+  it('EL CASO REPORTADO (2026-09-16): lo pagado ANTES del abono no se reevalúa', () => {
+    // "Pasó de 6,000 a 4,500 pero tomó los 6,000 pagados antes del abono a capital y tomó que ese
+    // pago debió ser de 4,500, lo que causa que solo deba pagar 3,000 de la segunda cuota."
+    // Con el corte viejo, la cuota del 1-sep —ya cobrada con 150,000— se recalculaba a 3,000 y los
+    // 1,500 de diferencia se acreditaban a la siguiente. La del 1-sep debe seguir siendo de 4,500.
+    const cuotaDe = buildIndefiniteInterestResolver({
+      amount: 150000, interestRate: 3, frequency: 'monthly', currentInterest: 3000, capitalPayments: [ABONO],
+    });
+    const filas = computeInstallmentDues([FILA_GUARDADA], [PAGOS[0]], { ...agenda, interestForDue: cuotaDe });
+
+    const septiembre = filas.find(r => r.dueDate === '2026-09-01')!;
+    expect([septiembre.total, septiembre.paid, septiembre.pending]).toEqual([4500, 4500, 0]);
+
+    // Y la siguiente se debe COMPLETA: no hereda ningún "sobrepago" inventado.
+    const octubre = filas.find(r => r.dueDate === '2026-10-01')!;
+    expect([octubre.total, octubre.pending]).toEqual([3000, 3000]);
   });
 
   it('Una cuota YA GUARDADA toma la cuota de su período, no la que quedó grabada en la fila', () => {
@@ -182,17 +196,20 @@ describe('balance de un indefinido con abono', () => {
   const cuotas = [FILA_GUARDADA];
 
   it('Capital 100,000 + lo que falta de la próxima cuota, igual que el pago avanzado', () => {
+    // 16,500 pagados: 4,500 de la cuota de septiembre (anterior al abono) y 12,000 que alcanzan
+    // para cuatro cuotas nuevas de 3,000 (octubre a enero). Queda el período que se está
+    // devengando: 3,000. Un indefinido nunca tiene 0 de interés pendiente.
     const b = computeLoanBalanceBreakdown(prestamo, { payments: pagos, installments: cuotas, capitalPayments: [ABONO] }, HOY);
     expect(b.capitalPending).toBe(100000);
-    expect(b.interestPending).toBe(1500);
-    expect(b.totalBalance).toBe(101500);
+    expect(b.interestPending).toBe(3000);
+    expect(b.totalBalance).toBe(103000);
   });
 
   it('El mismo resultado con el monto aún rebajado', () => {
     const b = computeLoanBalanceBreakdown({ ...prestamo, amount: 100000 }, {
       payments: pagos, installments: cuotas, capitalPayments: [ABONO],
     }, HOY);
-    expect(b.totalBalance).toBe(101500);
+    expect(b.totalBalance).toBe(103000);
   });
 
   it('Sin abonos no cambia: capital + la cuota en curso', () => {

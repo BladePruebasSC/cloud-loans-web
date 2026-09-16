@@ -4,10 +4,15 @@
 // Un indefinido cobra solo interés: cada período vale `capital vigente × tasa del período`.
 // Cuando el cliente hace un abono a capital la cuota baja, pero NO para todos los períodos:
 //
-//   · la cuota del período en que se hizo el abono conserva el monto anterior (se devengó
-//     con el capital de antes): es la regla "abono + 1 período" que ya aplicaban "Ver cuotas"
-//     y el estado de cuenta;
-//   · los períodos siguientes se cobran con la cuota nueva.
+//   · una cuota que VENCE DESPUÉS del abono se cobra con la cuota nueva;
+//   · una que venció antes (o el mismo día) conserva la anterior: se devengó y se cobró con el
+//     capital de entonces.
+//
+// REGLA CORREGIDA (2026-09-16): antes la cuota vieja se mantenía hasta "fecha del abono + 1
+// período". Con un abono el 14 de septiembre, la cuota del 1 de octubre seguía cobrándose a
+// 6,000 en vez de 4,500; y, peor, la del 1 de septiembre —pagada ANTES del abono— se recalculaba
+// a la nueva, así que los 6,000 ya cobrados parecían un sobrepago de 1,500 que se acreditaba a la
+// cuota siguiente ("solo debía pagar 3,000 de la segunda cuota").
 //
 // FALLO REPORTADO (2026-09-10): "cuando se hace un abono a capital y la cuota se reevalúa, en
 // pago avanzado sigue mostrando la cuota vieja y no la nueva". El pago avanzado, la mora y el
@@ -21,7 +26,7 @@
 // `monto prestado − abonos`. Es lo mismo que ya hacían los préstamos a plazo fijo y la función
 // SQL del balance (20260905000000), que restaba los abonos sobre un monto que ya venía rebajado.
 
-import { addPeriodsToIsoDate, getFrequencyRateFactor } from './frequencyUtils';
+import { getFrequencyRateFactor } from './frequencyUtils';
 
 const round2 = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 100) / 100;
 
@@ -104,9 +109,9 @@ export type InterestForDue = (dueIso: string) => number;
 /**
  * Devuelve el interés de cada período de un indefinido.
  *
- * Sin abonos es siempre la cuota vigente. Con abonos, un período que vence hasta un período
- * después del abono (`fecha del abono + 1 período`) vale el capital de ANTES por la tasa; los
- * siguientes, la cuota vigente. Con varios abonos manda el primero cuyo corte alcance la fecha.
+ * Sin abonos es siempre la cuota vigente. Con abonos, un período que vence HASTA el día del abono
+ * vale el capital de ANTES por la tasa; los que vencen después, la cuota vigente. Con varios
+ * abonos manda el primero cuya fecha alcance el vencimiento.
  */
 export const buildIndefiniteInterestResolver = (input: IndefiniteInterestInput): InterestForDue => {
   const abonos = (input.capitalPayments || [])
@@ -128,7 +133,8 @@ export const buildIndefiniteInterestResolver = (input: IndefiniteInterestInput):
       const fecha = capitalPaymentDateIso(cp.created_at);
       const antes = Number(cp.capital_before);
       return {
-        corte: fecha ? addPeriodsToIsoDate(fecha, 1, input.frequency) : null,
+        // El corte es el DÍA del abono: lo que vence después ya se cobra con el capital nuevo.
+        corte: fecha,
         interesAntes: Number.isFinite(antes) && antes > 0.005 ? round2(antes * ratio) : null,
       };
     })
