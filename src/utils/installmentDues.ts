@@ -177,6 +177,26 @@ export const computeInstallmentDues = (
     const baseFor = (iso: string): number =>
       indefinite.interestForDue ? round2(indefinite.interestForDue(iso)) : base;
 
+    // La cuota de una fila GUARDADA también sale de la agenda cuando hay abonos a capital.
+    //
+    // FALLO REPORTADO (2026-09-15): tras un abono, el pago avanzado seguía pidiendo la cuota vieja
+    // en un período que ya tenía fila en `installments` (el abono solo reescribe las filas
+    // pendientes posteriores al período en curso, y cualquier fallo al hacerlo dejaba el monto
+    // viejo). La cuota de un período la decide su FECHA, no lo que quedó grabado en la fila.
+    // Las cuotas ya PAGADAS conservan su importe: se cobraron con el capital de entonces.
+    if (indefinite.interestForDue) {
+      for (const r of nonCharges) {
+        if (r.isPaid) continue;
+        const cuota = baseFor(r.dueDate);
+        if (cuota > 0.005 && Math.abs(cuota - r.total) > 0.005) {
+          r.total = cuota;
+          r.interest = cuota;
+          r.principal = 0;
+          r.pending = cuota;
+        }
+      }
+    }
+
     // En un indefinido la condonación es del PRÉSTAMO: se anota en la única fila guardada, pero
     // perdona los días de todos los períodos que ya estaban vencidos ese día.
     const waivedAt = (installments || [])

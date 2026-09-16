@@ -69,6 +69,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { generateLoanPaymentReceipt, openWhatsApp } from '@/utils/whatsappReceipt';
 import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { buildIndefiniteInterestResolver, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { AdvancedPaymentPanel } from './AdvancedPaymentPanel';
@@ -192,6 +193,56 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       cancelled = true;
     };
   }, [selectedLoan?.id, (selectedLoan as any)?.amortization_type]);
+
+  /**
+   * Abonos a capital del préstamo seleccionado.
+   *
+   * FALLO REPORTADO (2026-09-15): "cuando haces un abono a capital, la cuota en el formulario de
+   * pago no se actualiza; en pago avanzado sí, pero en el normal no, y el monto que dice no es el
+   * que debería según la cuota". Este formulario usaba UNA cuota fija (`monthly_payment`) para
+   * todos los períodos, mientras que el resto del sistema ya cobra la cuota que corresponde a la
+   * fecha de cada período.
+   */
+  const [capitalPaymentsForLoan, setCapitalPaymentsForLoan] = useState<CapitalPaymentLike[]>([]);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const esIndefinido = String((selectedLoan as any)?.amortization_type || '').toLowerCase() === 'indefinite';
+      if (!selectedLoan?.id || !esIndefinido) {
+        setCapitalPaymentsForLoan([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from('capital_payments')
+        .select('amount, capital_before, capital_after, created_at')
+        .eq('loan_id', selectedLoan.id);
+      if (error) console.error('Error leyendo abonos a capital:', error);
+      if (!cancelled) setCapitalPaymentsForLoan((data || []) as CapitalPaymentLike[]);
+    })();
+    return () => { cancelled = true; };
+  }, [selectedLoan?.id, (selectedLoan as any)?.amortization_type]);
+
+  /**
+   * Cuota que corresponde al período que vence en `dueIso`.
+   *
+   * Misma regla que el pago avanzado, la mora y el balance: tras un abono a capital, el período en
+   * curso conserva la cuota anterior y los siguientes pasan a la nueva. Sin abonos es la cuota
+   * vigente de siempre.
+   */
+  const cuotaDelPeriodo = useCallback((dueIso?: string | null): number => {
+    const cuotaVigente = interestPerInstallment(selectedLoan as any);
+    const due = String(dueIso || '').split('T')[0];
+    if (!selectedLoan || capitalPaymentsForLoan.length === 0 || !due) return cuotaVigente;
+    const resolver = buildIndefiniteInterestResolver({
+      amount: (selectedLoan as any).amount,
+      interestRate: (selectedLoan as any).interest_rate,
+      frequency: (selectedLoan as any).payment_frequency,
+      currentInterest: (selectedLoan as any).monthly_payment,
+      capitalPayments: capitalPaymentsForLoan,
+    });
+    const cuota = resolver(due);
+    return cuota > 0.005 ? cuota : cuotaVigente;
+  }, [selectedLoan, capitalPaymentsForLoan]);
   
   // Ref para evitar recrear listeners innecesariamente
   const realtimeChannelRef = useRef<any>(null);
@@ -1232,7 +1283,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           const paidValue =
             interestField > 0.01
               ? interestField
-              : (amt > 0.01 && amt <= (interestPerPayment * 1.25) ? amt : 0);
+              : (amt > 0.01 && amt <= (cuotaDelPeriodo(rawDue) * 1.25) ? amt : 0);
           if (paidValue <= 0.01) continue;
 
           if (rawDue < firstDueFromStart) {
@@ -1246,7 +1297,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         let partialDue: string | null = null;
         for (const [due, paid] of paidByDueValid.entries()) {
           if (paid <= 0.01) continue;
-          if (paid + tol < interestPerPayment) partialDue = !partialDue || due < partialDue ? due : partialDue;
+          if (paid + tol < cuotaDelPeriodo(due)) partialDue = !partialDue || due < partialDue ? due : partialDue;
           else fullyPaid.push(due);
         }
         const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
@@ -1260,10 +1311,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           let rollover = 0;
           for (const [due, paid] of paidByDueValid.entries()) {
             if (due >= activeDue) continue;
-            const overflow = round2(Math.max(0, paid - interestPerPayment));
+            const cuotaDeEsePeriodo = cuotaDelPeriodo(due);
+            const overflow = round2(Math.max(0, paid - cuotaDeEsePeriodo));
             if (overflow > 0.01) {
               rollover = round2(rollover + overflow);
-              paidByDueValid.set(due, round2(Math.min(paid, interestPerPayment)));
+              paidByDueValid.set(due, round2(Math.min(paid, cuotaDeEsePeriodo)));
             }
           }
           if (rollover > 0.01) {
@@ -1271,13 +1323,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           }
         }
 
-        const remainingRegular = round2(Math.max(0, round2(interestPerPayment - paidActive)));
+        // La cuota de la fecha que toca cobrar, no la cuota "vigente" del préstamo.
+        const remainingRegular = round2(Math.max(0, round2(cuotaDelPeriodo(activeDue) - paidActive)));
         const regularDue = activeDue || null;
+        const siguienteDue = regularDue ? addPeriodIsoForIndefinite(regularDue, freq) : null;
         const regularCandidate =
           regularDue
             ? {
-                dueDate: remainingRegular <= 0.01 ? addPeriodIsoForIndefinite(regularDue, freq) : regularDue,
-                amount: remainingRegular <= 0.01 ? round2(interestPerPayment) : remainingRegular
+                dueDate: remainingRegular <= 0.01 ? (siguienteDue as string) : regularDue,
+                amount: remainingRegular <= 0.01 ? round2(cuotaDelPeriodo(siguienteDue)) : remainingRegular
               }
             : null;
 
@@ -1320,9 +1374,11 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           continue;
         }
         
+        // En un indefinido la cuota la decide la FECHA del período (tras un abono a capital cambia),
+        // no lo que quedó guardado en la fila.
         const instTotalAmount =
-          (isIndefiniteLoan && !chargeCheck && interestPerPayment > 0.01)
-            ? interestPerPayment
+          (isIndefiniteLoan && !chargeCheck && cuotaDelPeriodo(instDueDate) > 0.01)
+            ? cuotaDelPeriodo(instDueDate)
             : ((inst.total_amount ?? ((inst.principal_amount || 0) + (inst.interest_amount || 0))) || 0);
         let instRemainingAmount = instTotalAmount;
         
@@ -1431,8 +1487,6 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
       // ✅ INDEFINIDOS: si no hay cuotas regulares en installments, crear una cuota virtual
       // usando start_date + período y pagos por due_date (SIN usar next_payment_date de BD).
       if (isIndefiniteLoan && !firstUnpaid) {
-        const expectedInterest = interestPerPayment;
-
         // 1) Agrupar pagos por due_date (normalizado)
         const paidByDue = new Map<string, number>();
         for (const p of (allPaymentsForLoan || []) as any[]) {
@@ -1446,7 +1500,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         const fullyPaid: string[] = [];
         let partialDue: string | null = null;
         for (const [due, paid] of paidByDue.entries()) {
-          if (paid + tol < expectedInterest) {
+          if (paid + tol < cuotaDelPeriodo(due)) {
             partialDue = !partialDue || due < partialDue ? due : partialDue;
           } else {
             fullyPaid.push(due);
@@ -1466,6 +1520,8 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
               paidByDue.set(targetDue, (paidByDue.get(targetDue) || 0) + invalidPaidTotal);
             }
           }
+          // La cuota del período al que se va a cobrar (cambia tras un abono a capital).
+          const expectedInterest = cuotaDelPeriodo(targetDue);
           const paidForTarget = paidByDue.get(targetDue) || 0;
           const fallbackRemaining = Math.max(0, expectedInterest - paidForTarget);
 
@@ -1522,7 +1578,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         setNextPaymentInfo(null);
       }
     }
-  }, [selectedLoan]);
+  }, [selectedLoan, cuotaDelPeriodo]);
 
   // EFECTO: Activar animación de carga cuando se selecciona un préstamo
   React.useEffect(() => {
@@ -1982,7 +2038,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     // interés puro —el capital solo baja con un abono a capital—, así que todo el pago es interés.
     if (!regularInst && String(selectedLoan.amortization_type || '').toLowerCase() === 'indefinite') {
       const monto = round2(amount);
-      const cuota = round2(interestPerInstallment(selectedLoan));
+      const cuota = round2(cuotaDelPeriodo(dueKey));
       const pagadoAntes = round2((payRows || []).reduce((s, p) => s + (Number(p.amount || 0) || 0), 0));
       return {
         interestPayment: monto,

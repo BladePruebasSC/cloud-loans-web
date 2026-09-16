@@ -1352,9 +1352,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     totalLoanAmount = correctTotalAmount + totalChargesAmount;
   }
   
-  // Calcular total pagado (solo pagos: capital + interés, NO incluye abonos a capital)
-  // Los abonos a capital son reducciones de capital, no "pagos" en el sentido tradicional
-  const totalPaidForPercentage = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  // TOTAL PAGADO = capital pagado + interés pagado.
+  //
+  // FALLO REPORTADO (2026-09-15): "en detalles el total pagado debe sumar el interés pagado y el
+  // capital pagado y no lo está haciendo". Sumaba SOLO `payments.amount`, así que un abono a
+  // capital —que sí cuenta en "Capital pagado"— quedaba fuera: con 50,000 de capital y 9,000 de
+  // interés, el total decía 9,000. El abono es dinero cobrado, y también cuenta para el
+  // porcentaje pagado del préstamo.
+  const totalPaidForPercentage = Math.round((capitalPaidFromLoan + totalInterestPaid) * 100) / 100;
   
   console.log('🔍 LoanDetailsView - Cálculo de total pagado:', {
     loanId: loan.id,

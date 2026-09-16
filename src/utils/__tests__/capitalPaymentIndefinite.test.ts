@@ -150,6 +150,27 @@ describe('pago avanzado de un indefinido con abono', () => {
     const pendientes = filas.filter(r => r.pending > 0.005);
     expect(pendientes.map(r => [r.dueDate, r.total, r.pending])).toEqual([['2027-01-01', 3000, 1500]]);
   });
+
+  it('Una cuota YA GUARDADA toma la cuota de su período, no la que quedó grabada en la fila', () => {
+    // FALLO REPORTADO (2026-09-15): tras el abono, un período que SÍ tiene fila en `installments`
+    // seguía pidiendo el monto viejo (el abono solo reescribe las filas pendientes posteriores al
+    // período en curso, y si esa escritura no ocurrió, el monto viejo se quedaba).
+    const filaConMontoViejo: RawInstallment = {
+      id: 'fila-dic', installment_number: 2, due_date: '2026-12-01',
+      total_amount: 4500, principal_amount: 0, interest_amount: 4500, paid_amount: 0, is_paid: false,
+    };
+    const cuotaDe = buildIndefiniteInterestResolver({
+      amount: 150000, interestRate: 3, frequency: 'monthly', currentInterest: 3000, capitalPayments: [ABONO],
+    });
+
+    const filas = computeInstallmentDues([FILA_GUARDADA, filaConMontoViejo], [], { ...agenda, interestForDue: cuotaDe });
+    const diciembre = filas.find(r => r.dueDate === '2026-12-01')!;
+
+    expect(diciembre.total).toBe(3000); // antes: 4,500
+    expect(diciembre.pending).toBe(3000);
+    // Una cuota PAGADA conserva su importe: se cobró con el capital de entonces.
+    expect(filas.find(r => r.dueDate === '2026-09-01')!.total).toBe(4500);
+  });
 });
 
 describe('balance de un indefinido con abono', () => {
