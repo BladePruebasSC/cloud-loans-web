@@ -27,6 +27,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { formatCurrencyNumber } from '@/lib/utils';
+import { getFrequencyName } from '@/utils/frequencyUtils';
+import { useLoanPenalties } from '@/hooks/useLoanPenalties';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { getFirstUnpaidDueDate } from '@/utils/nextPaymentDateFromInstallments';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
@@ -539,6 +541,9 @@ export const LoansModule = () => {
   
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
+  // Penalidad acumulada de cada préstamo (abonos con penalidad + cargos por penalización).
+  const loanIdsForPenalties = useMemo(() => (loans || []).map((l: any) => l.id as string), [loans]);
+  const { totals: penaltyTotals } = useLoanPenalties(loanIdsForPenalties);
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();
 
   // Fallback (sin Realtime): cuando `LoanUpdateForm` termina un abono a capital / recalculo de cuotas,
@@ -2645,7 +2650,7 @@ export const LoansModule = () => {
                         </div>
 
                         {/* Información adicional en grid */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 mb-6">
                           {(loan.status === 'paid' || loan.remaining_balance === 0 || !loan.next_payment_date) ? (
                             <div className="text-center p-3 bg-gray-50 rounded-lg">
                               <div className="text-lg font-bold text-gray-800 mb-1">
@@ -2667,7 +2672,10 @@ export const LoansModule = () => {
                               {(loan as any).amortization_type === 'indefinite' ? 'Indefinido' : loan.term_months}
                             </div>
                             <div className="text-xs text-gray-600">
-                              {(loan as any).amortization_type === 'indefinite' ? '' : 'Cuotas'}
+                              {/* Un indefinido no tiene número de cuotas: se dice cada cuánto paga. */}
+                              {(loan as any).amortization_type === 'indefinite'
+                                ? getFrequencyName(loan.payment_frequency)
+                                : 'Cuotas'}
                             </div>
                           </div>
                           
@@ -2684,6 +2692,21 @@ export const LoansModule = () => {
                             </div>
                             <div className="text-xs text-gray-600">Tipo</div>
                           </div>
+
+                          {/* Penalidad acumulada: suma de todas las veces que se aplicó una. */}
+                          {(() => {
+                            const penalty = penaltyTotals.get(loan.id);
+                            return (
+                              <div className={`text-center p-3 rounded-lg ${penalty ? 'bg-orange-50' : 'bg-gray-50'}`}>
+                                <div className={`text-lg font-bold mb-1 ${penalty ? 'text-orange-700' : 'text-gray-800'}`}>
+                                  ${formatCurrencyNumber(penalty?.total || 0)}
+                                </div>
+                                <div className="text-xs text-gray-600">
+                                  Penalidad{penalty && penalty.count > 1 ? ` (${penalty.count} veces)` : ''}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {/* Información de mora - Solo mostrar si el préstamo no está saldado */}
@@ -3083,7 +3106,9 @@ export const LoansModule = () => {
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Plazo:</span> 
                                <span className="text-xs sm:text-sm">
-                                 {(loan as any).amortization_type === 'indefinite' ? 'Indefinido' : `${loan.term_months} meses`}
+                                 {(loan as any).amortization_type === 'indefinite'
+                                   ? `Indefinido · ${getFrequencyName(loan.payment_frequency)}`
+                                   : `${loan.term_months} meses`}
                                </span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
@@ -3095,8 +3120,14 @@ export const LoansModule = () => {
                                <span className="text-xs sm:text-sm">{loan.loan_type}</span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
-                               <span className="font-medium text-xs sm:text-sm">Inicio:</span> 
+                               <span className="font-medium text-xs sm:text-sm">Inicio:</span>
                                <span className="text-xs sm:text-sm">{new Date(loan.start_date).toLocaleDateString()}</span>
+                             </div>
+                             <div className="flex flex-col sm:flex-row sm:items-center">
+                               <span className="font-medium text-xs sm:text-sm">Penalidad:</span>
+                               <span className={`text-xs sm:text-sm ${penaltyTotals.get(loan.id) ? 'text-orange-700 font-medium' : ''}`}>
+                                 ${formatCurrencyNumber(penaltyTotals.get(loan.id)?.total || 0)}
+                               </span>
                              </div>
                            </div>
                          </div>

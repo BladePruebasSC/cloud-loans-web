@@ -2,10 +2,8 @@ import { useEffect, useRef } from 'react';
 import { useAuth } from './useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import {
-  exportToExcelMultiSheet,
-  formatDataForExport
-} from '@/utils/exportUtils';
+import { exportToExcelMultiSheet } from '@/utils/exportUtils';
+import { fetchFullBackup } from '@/utils/backupData';
 
 /**
  * Hook para manejar backups automáticos
@@ -81,60 +79,16 @@ export const useAutoBackup = () => {
  */
 const executeAutoBackup = async (companyId: string, format: 'excel' | 'csv' | 'pdf') => {
   try {
-    // Obtener todos los datos
-    const [
-      { data: clients },
-      { data: loans },
-      { data: payments },
-      { data: inventory },
-      { data: sales },
-      { data: pawnshop },
-      { data: documents },
-      { data: requests },
-      { data: agreements },
-      { data: expenses }
-    ] = await Promise.all([
-      supabase.from('clients').select('*').eq('user_id', companyId),
-      supabase.from('loans').select('*').eq('loan_officer_id', companyId).neq('status', 'deleted'),
-      supabase.from('payments').select('*').eq('created_by', companyId),
-      supabase.from('products').select('*').eq('user_id', companyId),
-      supabase.from('sales').select('*').eq('user_id', companyId),
-      supabase.from('pawn_transactions').select('*').eq('user_id', companyId),
-      supabase.from('documents').select('*').eq('user_id', companyId),
-      supabase.from('loan_requests').select('*').eq('user_id', companyId),
-      supabase.from('payment_agreements').select('*').eq('user_id', companyId),
-      supabase.from('expenses').select('*').eq('created_by', companyId)
-    ]);
-
-    const allData = {
-      clients: formatDataForExport(clients || []),
-      loans: formatDataForExport(loans || []),
-      payments: formatDataForExport(payments || []),
-      inventory: formatDataForExport(inventory || []),
-      sales: formatDataForExport(sales || []),
-      pawnshop: formatDataForExport(pawnshop || []),
-      documents: formatDataForExport(documents || []),
-      requests: formatDataForExport(requests || []),
-      agreements: formatDataForExport(agreements || []),
-      expenses: formatDataForExport(expenses || [])
-    };
+    // El mismo respaldo que "Backup Completo": todas las filas y columnas, con cuotas, abonos y
+    // penalidades. Antes se leían como mucho 1,000 filas por tabla y los pagos de los empleados
+    // quedaban fuera.
+    const sheets = await fetchFullBackup(supabase as any, companyId);
 
     const filename = `backup_automatico_${new Date().toISOString().split('T')[0]}`;
 
     // Solo exportar a Excel para backups automáticos (más eficiente)
     if (format === 'excel') {
-      exportToExcelMultiSheet([
-        { name: 'Clientes', data: allData.clients },
-        { name: 'Préstamos', data: allData.loans },
-        { name: 'Pagos', data: allData.payments },
-        { name: 'Inventario', data: allData.inventory },
-        { name: 'Ventas', data: allData.sales },
-        { name: 'Empeños', data: allData.pawnshop },
-        { name: 'Documentos', data: allData.documents },
-        { name: 'Solicitudes', data: allData.requests },
-        { name: 'Acuerdos', data: allData.agreements },
-        { name: 'Gastos', data: allData.expenses }
-      ], filename);
+      exportToExcelMultiSheet(sheets.map(s => ({ name: s.name, data: s.rows })), filename);
     }
 
     // Nota: Los backups automáticos se descargan automáticamente

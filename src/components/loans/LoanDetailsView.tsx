@@ -38,12 +38,14 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@/utils/dateUtils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
-import { resolveIndefiniteCapital } from '@/utils/indefiniteInterest';
+import { resolveIndefiniteCapital, capitalPaymentDateIso } from '@/utils/indefiniteInterest';
 import { LoanCollectionCard } from '@/components/legal/LoanCollectionCard';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { computeInstallmentLateFee } from '@/utils/lateFeeWaiver';
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import { getLateFeePeriodDays } from '@/utils/frequencyUtils';
+import { useLoanPenalties } from '@/hooks/useLoanPenalties';
+import { PENALTY_SOURCE_LABEL } from '@/utils/loanPenalties';
 
 interface LoanDetailsViewProps {
   loanId: string;
@@ -134,6 +136,10 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [breakdownItems, setBreakdownItems] = useState<Array<{ installment: number; isPaid: boolean; daysOverdue: number }>>([]);
   /** Desglose completo (incluye cuotas dinámicas) para calculateBalanceByAge en préstamos indefinidos */
   const [fullBreakdown, setFullBreakdown] = useState<Array<{ installment: number; dueDate: string; daysOverdue: number; principal: number; lateFee: number; isPaid: boolean; isCharge?: boolean }>>([]);
+
+  // Penalidades del préstamo: cada una y el acumulado (abonos con penalidad, cargos por penalización).
+  const { rows: penaltyRows, totals: penaltyTotalsByLoan } = useLoanPenalties(isOpen && loanId ? [loanId] : []);
+  const penaltyTotal = penaltyTotalsByLoan.get(loanId)?.total || 0;
 
   // Estados para generar documentos
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
@@ -1664,6 +1670,15 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         <div className="font-semibold">RD {totalInterestPaid.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div>
+                        <span className="text-gray-600">Penalidad:</span>
+                        <div className={`font-semibold ${penaltyTotal > 0 ? 'text-orange-600' : ''}`}>
+                          RD {penaltyTotal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {penaltyRows.length > 1 && (
+                            <span className="ml-1 text-xs font-normal text-gray-500">({penaltyRows.length} veces)</span>
+                          )}
+                        </div>
+                      </div>
+                      <div>
                         <span className="text-gray-600">Último pago:</span>
                         <div className="font-semibold">
                           {lastMovement
@@ -1810,6 +1825,64 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Penalidades: cada vez que se aplicó una y el acumulado */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center justify-between">
+                    <span>PENALIDAD</span>
+                    <span className={`text-lg ${penaltyTotal > 0 ? 'text-orange-600' : 'text-gray-500'}`}>
+                      RD {penaltyTotal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {penaltyRows.length === 0 ? (
+                    <p className="text-sm text-gray-500">
+                      Sin penalidades. Se suman aquí las de los abonos a capital con penalidad y los cargos por penalización.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left text-gray-600">
+                            <th className="py-2 pr-3 font-medium">Fecha</th>
+                            <th className="py-2 pr-3 font-medium">Origen</th>
+                            <th className="py-2 pr-3 font-medium">Detalle</th>
+                            <th className="py-2 pr-3 font-medium text-right">Monto</th>
+                            <th className="py-2 font-medium text-right">Acumulado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {penaltyRows.reduce<{ acc: number; rows: React.ReactNode[] }>((out, p) => {
+                            const acc = Math.round((out.acc + p.amount) * 100) / 100;
+                            // `created_at` es un instante UTC: el día es el de Santo Domingo.
+                            const dia = capitalPaymentDateIso(p.created_at);
+                            const fecha = dia ? formatDateStringForSantoDomingo(dia) : '-';
+                            const detalle = p.percentage !== null
+                              ? `${p.percentage}%${p.base_amount !== null ? ` de RD ${p.base_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}`
+                              : (p.description || '-');
+                            out.rows.push(
+                              <tr key={p.id} className="border-b last:border-0">
+                                <td className="py-2 pr-3 whitespace-nowrap">{fecha}</td>
+                                <td className="py-2 pr-3">{PENALTY_SOURCE_LABEL[p.source]}</td>
+                                <td className="py-2 pr-3 text-gray-600">{detalle}</td>
+                                <td className="py-2 pr-3 text-right font-medium">
+                                  RD {p.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2 text-right font-semibold text-orange-600">
+                                  RD {acc.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            );
+                            return { acc, rows: out.rows };
+                          }, { acc: 0, rows: [] }).rows}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
               {/* Cobranza / Legal: etapa, mora, caso, gestiones, promesa, próxima acción */}
               <LoanCollectionCard

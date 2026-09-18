@@ -259,6 +259,22 @@ export const generateFilename = (baseName: string, extension: string = ''): stri
 };
 
 /**
+ * Texto CSV → filas.
+ *
+ * Antes se partía cada línea por comas a lo bruto: una dirección "Calle 5, Los Mina" o una
+ * columna JSON desplazaban todas las columnas siguientes. El lector de SheetJS respeta las
+ * comillas del CSV que genera `exportToCSV`. `raw: true` deja cada valor como texto: sin él la
+ * cédula "00112345678" se convertía en número y perdía los ceros.
+ */
+export const parseCsvText = (text: string): any[] => {
+  const clean = String(text || '').replace(/^﻿/, '');
+  if (!clean.trim()) return [];
+  const workbook = XLSX.read(clean, { type: 'string', raw: true });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true });
+};
+
+/**
  * Lee un archivo CSV y lo convierte a array de objetos
  */
 export const importFromCSV = (file: File): Promise<any[]> => {
@@ -266,24 +282,12 @@ export const importFromCSV = (file: File): Promise<any[]> => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const text = e.target?.result as string;
-        const lines = text.split('\n').filter(line => line.trim());
-        if (lines.length === 0) {
+        const text = String(e.target?.result ?? '');
+        if (!text.replace(/^﻿/, '').trim()) {
           reject(new Error('El archivo CSV está vacío'));
           return;
         }
-
-        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-        const data = lines.slice(1).map(line => {
-          const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-          const obj: any = {};
-          headers.forEach((header, index) => {
-            obj[header] = values[index] || '';
-          });
-          return obj;
-        });
-
-        resolve(data);
+        resolve(parseCsvText(text));
       } catch (error) {
         reject(new Error(`Error al leer CSV: ${error instanceof Error ? error.message : 'Error desconocido'}`));
       }

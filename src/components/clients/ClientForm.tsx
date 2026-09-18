@@ -612,6 +612,41 @@ const ClientForm = () => {
     }
   };
 
+  /**
+   * "Usar esta foto" de la JCE.
+   *
+   * FALLO (2026-09-18, al revisar el respaldo): la foto de la JCE llega como un enlace FIRMADO
+   * del bucket privado `jce-photos` que caduca a los 10 minutos. Se guardaba ese enlace tal cual
+   * en `photo_url`, así que la foto del cliente dejaba de verse ese mismo día y el respaldo
+   * exportaba un enlace muerto. Ahora se descarga y se copia al bucket de documentos, igual que
+   * una foto subida a mano, y lo que se guarda es su enlace permanente.
+   */
+  const adoptJcePhoto = async () => {
+    if (!jcePhoto) return;
+    setUploadingPhoto(true);
+    try {
+      if (!user?.id) throw new Error('Usuario no autenticado');
+      const res = await fetch(jcePhoto);
+      if (!res.ok) throw new Error(`La JCE devolvió ${res.status} al descargar la foto`);
+      const blob = await res.blob();
+      const ext = blob.type.includes('png') ? 'png' : blob.type.includes('webp') ? 'webp' : 'jpg';
+      const filePath = `user-${user.id}/client-photos/jce-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from('documents')
+        .upload(filePath, blob, { upsert: true, contentType: blob.type || 'image/jpeg' });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(filePath);
+      console.log('[cliente] foto de la JCE copiada a', filePath);
+      setFormData(prev => ({ ...prev, photo_url: publicUrl }));
+      setPhotoPreview(publicUrl);
+      toast.success('Foto de la JCE guardada');
+    } catch (error) {
+      console.error('[cliente] no se pudo copiar la foto de la JCE', error);
+      toast.error('No se pudo guardar la foto de la JCE. Vuelve a verificar la cédula o sube la foto a mano.');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const handleAttachmentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1001,8 +1036,8 @@ const ClientForm = () => {
                       <div className="flex gap-2">
                         {jcePhoto && !photoPreview && (
                           <Button type="button" variant="outline" size="sm"
-                            onClick={() => { setPhotoPreview(jcePhoto); setFormData(p => ({ ...p, photo_url: jcePhoto })); }}>
-                            Usar esta foto
+                            disabled={uploadingPhoto} onClick={adoptJcePhoto}>
+                            {uploadingPhoto ? 'Guardando…' : 'Usar esta foto'}
                           </Button>
                         )}
                         <Button type="button" variant="ghost" size="sm" onClick={unlockJceFields}>

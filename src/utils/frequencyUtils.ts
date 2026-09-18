@@ -48,13 +48,15 @@ const FREQUENCIES: Record<PaymentFrequency, {
   lateFeePeriodDays: number;
   label: string;
   labelPlural: string;
+  /** Nombre de la frecuencia tal como se muestra ("Mensual", "Quincenal"…). */
+  name: string;
 }> = {
-  daily: { days: 1, months: null, rateFactor: 1 / 30, lateFeePeriodDays: 1, label: 'día', labelPlural: 'días' },
-  weekly: { days: 7, months: null, rateFactor: 1 / 4, lateFeePeriodDays: 7, label: 'semana', labelPlural: 'semanas' },
-  biweekly: { days: 14, months: null, rateFactor: 1 / 2, lateFeePeriodDays: 14, label: 'quincena', labelPlural: 'quincenas' },
-  monthly: { days: null, months: 1, rateFactor: 1, lateFeePeriodDays: 30, label: 'mes', labelPlural: 'meses' },
-  quarterly: { days: null, months: 3, rateFactor: 3, lateFeePeriodDays: 90, label: 'trimestre', labelPlural: 'trimestres' },
-  yearly: { days: null, months: 12, rateFactor: 12, lateFeePeriodDays: 365, label: 'año', labelPlural: 'años' },
+  daily: { days: 1, months: null, rateFactor: 1 / 30, lateFeePeriodDays: 1, label: 'día', labelPlural: 'días', name: 'Diario' },
+  weekly: { days: 7, months: null, rateFactor: 1 / 4, lateFeePeriodDays: 7, label: 'semana', labelPlural: 'semanas', name: 'Semanal' },
+  biweekly: { days: 14, months: null, rateFactor: 1 / 2, lateFeePeriodDays: 14, label: 'quincena', labelPlural: 'quincenas', name: 'Quincenal' },
+  monthly: { days: null, months: 1, rateFactor: 1, lateFeePeriodDays: 30, label: 'mes', labelPlural: 'meses', name: 'Mensual' },
+  quarterly: { days: null, months: 3, rateFactor: 3, lateFeePeriodDays: 90, label: 'trimestre', labelPlural: 'trimestres', name: 'Trimestral' },
+  yearly: { days: null, months: 12, rateFactor: 12, lateFeePeriodDays: 365, label: 'año', labelPlural: 'años', name: 'Anual' },
 };
 
 /** Normaliza cualquier valor de frecuencia a una de las soportadas ('monthly' por defecto). */
@@ -112,6 +114,14 @@ export const getFrequencyLabel = (frequency?: string | null, plural = true): str
   const info = FREQUENCIES[normalizeFrequency(frequency)];
   return plural ? info.labelPlural : info.label;
 };
+
+/**
+ * Nombre de la frecuencia de pago para mostrar: "Diario", "Semanal", "Quincenal", "Mensual"…
+ * Un préstamo INDEFINIDO no tiene número de cuotas, así que es lo que se enseña bajo
+ * "Indefinido" para saber cada cuánto paga.
+ */
+export const getFrequencyName = (frequency?: string | null): string =>
+  FREQUENCIES[normalizeFrequency(frequency)].name;
 
 /** Devuelve el último día del mes indicado (mes 0-indexado, admite desbordes). */
 const lastDayOfMonth = (year: number, monthIndex: number): number =>

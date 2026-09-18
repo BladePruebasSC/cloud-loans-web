@@ -33,7 +33,7 @@ const PALETTE = ['#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#dc2626', '#0891b2
 export const AnalyticsDashboard: React.FC = () => {
   const navigate = useNavigate();
   const P = usePortfolioData();
-  const { portfolio, cashflow, recovery, series6, series12, riskLoans, clientStats, loans, todayIso, lateFeeByLoan } = P;
+  const { portfolio, cashflow, recovery, series6, series12, riskLoans, clientStats, loans, todayIso, lateFeeByLoan, penaltySummary } = P;
   const [tab, setTab] = useState('resumen');
   const [range, setRange] = useState<6 | 12>(6);
   const series = range === 6 ? series6 : series12;
@@ -108,6 +108,8 @@ export const AnalyticsDashboard: React.FC = () => {
       ['Préstamos activos', portfolio.activeLoans],
       ['Préstamos atrasados', portfolio.overdueLoans],
       ['Recargos por mora acumulados', portfolio.lateFeeTotal],
+      ['Penalidades aplicadas', penaltySummary.allTime.total],
+      ['Penalidades este mes', penaltySummary.month.total],
       [],
       ['Mes', 'Capital', 'Interés', 'Mora', 'POS', 'Cobrado', 'Ingreso', 'Colocado', 'Préstamos'],
       ...series12.map(s => [s.label, s.capital, s.interes, s.mora, s.pos, s.cobrado, s.ingreso, s.colocado, s.prestamos]),
@@ -252,6 +254,11 @@ export const AnalyticsDashboard: React.FC = () => {
                   <div className="pt-3 border-t space-y-2 text-sm">
                     <div className="flex justify-between"><span className="text-slate-500">Ingreso total</span><span className="font-bold text-slate-900">{money(recovery.totalIncome)}</span></div>
                     <div className="flex justify-between"><span className="text-slate-500">Rendimiento sobre capital</span><span className="font-semibold text-emerald-700">{recovery.yieldPct.toFixed(1)}%</span></div>
+                    {/* Penalidades aplicadas (abonos con penalidad, cargos por penalización) */}
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Penalidades aplicadas{penaltySummary.allTime.count > 0 ? ` (${penaltySummary.allTime.count})` : ''}</span>
+                      <span className={`font-semibold ${penaltySummary.allTime.total > 0 ? 'text-orange-600' : 'text-slate-900'}`}>{money(penaltySummary.allTime.total)}</span>
+                    </div>
                   </div>
                 </div>
               </Panel>
@@ -338,7 +345,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <Kpi icon={Wallet} label="Capital colocado" tone="bg-violet-100 text-violet-700" value={money(recovery.capitalLent)} sub={`${portfolio.totalLoans} préstamos en total`} />
               <Kpi icon={CreditCard} label="Saldo por cobrar" tone="bg-blue-100 text-blue-700" value={money(portfolio.activeBalance)} sub={`${portfolio.activeLoans} activos`} />
-              <Kpi icon={Target} label="Préstamos pagados" tone="bg-emerald-100 text-emerald-700" value={String(portfolio.paidLoans)} sub={`${portfolio.pendingLoans} pendientes de iniciar`} />
+              <Kpi icon={Target} label="Préstamos pagados" tone="bg-emerald-100 text-emerald-700" value={String(portfolio.paidLoans)} sub={`${portfolio.pendingLoans} por aprobar (no cuentan en las cifras)`} />
               <Kpi icon={Percent} label="Ticket promedio" tone="bg-amber-100 text-amber-700" value={money(portfolio.avgTicket)} sub="Saldo medio por préstamo activo" />
             </div>
 

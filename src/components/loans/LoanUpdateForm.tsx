@@ -41,6 +41,7 @@ import type { RawPayment } from '@/utils/installmentDues';
 import { formatCurrency } from '@/lib/utils';
 import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { recordLoanPenalty, linkPenaltyToHistory } from '@/utils/loanPenalties';
 import { getFirstUnpaidDueDate } from '@/utils/nextPaymentDateFromInstallments';
 import { 
   Edit, 
@@ -2543,6 +2544,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       // Actualizar el préstamo según el tipo de actualización
       let loanUpdates: any = {};
       let chargePaymentIds: string[] = [];
+      // Penalidad registrada en esta actualización (abono con penalidad o cargo por penalización):
+      // se enlaza con su entrada del historial una vez creada.
+      let recordedPenaltyId: string | null = null;
       // Saldo real antes y después de cobrar cargos.
       //
       // Hacen falta porque los "valores anteriores" del historial se leen de la base MÁS
@@ -2640,15 +2644,28 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             late_fee_paid: 0
           };
 
-          const { error: insertError } = await supabase
+          const { data: insertedChargeRows, error: insertError } = await supabase
             .from('installments')
-            .insert([newChargeInstallment]);
+            .insert([newChargeInstallment])
+            .select('id');
 
           if (insertError) {
             console.error('Error creando nueva cuota de cargo:', insertError);
             toast.error('Error al crear la nueva cuota');
             setLoading(false);
             return;
+          }
+
+          // "Cargo por Penalización": además de ser un cargo, suma a la PENALIDAD del préstamo.
+          if (data.adjustment_reason === 'penalty_fee') {
+            recordedPenaltyId = await recordLoanPenalty(supabase as any, {
+              loan_id: loan.id,
+              amount: data.amount,
+              source: 'charge',
+              installment_id: (insertedChargeRows as any[] | null)?.[0]?.id ?? null,
+              description: 'Cargo por Penalización',
+              created_by: user?.id || companyId,
+            });
           }
 
           // IMPORTANTE: Recalcular balance usando la misma lógica que LoanDetailsView
@@ -3875,7 +3892,20 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             // IMPORTANTE: La penalidad NO se crea como cargo/instalment
             // Se paga junto con el abono a capital, no como una cuota separada
             // El monto total a pagar es: capitalPaymentAmount + calculatedPenaltyAmount
-            // La penalidad se registra solo en las notas del historial y en el recibo
+            // Antes solo quedaba escrita en el historial y el recibo; ahora se GUARDA como monto
+            // en `loan_penalties`, que es lo que suma la "Penalidad" del préstamo (2026-09-18).
+            if (isPenalty && calculatedPenaltyAmount > 0.005) {
+              recordedPenaltyId = await recordLoanPenalty(supabase as any, {
+                loan_id: loan.id,
+                amount: Math.round(calculatedPenaltyAmount * 100) / 100,
+                source: 'capital_payment',
+                percentage: penaltyPercentage,
+                base_amount: capitalBefore,
+                capital_payment_id: capitalPaymentRecord?.id ?? null,
+                description: `Penalidad del abono a capital (${penaltyPercentage}%)`,
+                created_by: user?.id || companyId,
+              });
+            }
 
             // Obtener cuotas pendientes para recalcular (EXCLUIR CARGOS)
             // Los cargos NO se recalculan, solo las cuotas regulares del préstamo
@@ -4516,7 +4546,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             }
 
             const successMessage = isPenalty && calculatedPenaltyAmount > 0
-              ? `Abono a capital de RD$${capitalPaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} registrado exitosamente. Penalidad de RD$${calculatedPenaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} agregada como cargo adicional.`
+              ? `Abono a capital de RD$${capitalPaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} registrado exitosamente. Penalidad de RD$${calculatedPenaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} registrada en el préstamo.`
               : `Abono a capital de RD$${capitalPaymentAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} registrado exitosamente`;
             toast.success(successMessage);
             
@@ -4810,6 +4840,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         } else {
           console.log('✅ Historial guardado exitosamente:', insertedHistory);
           console.log('📊 Historial insertado - ID:', insertedHistory?.[0]?.id);
+          // La penalidad de esta actualización queda enlazada con su entrada del historial.
+          await linkPenaltyToHistory(supabase as any, recordedPenaltyId, insertedHistory?.[0]?.id);
           // Disparar evento inmediatamente después de guardar exitosamente
           if (updateType === 'add_charge' || updateType === 'remove_late_fee' || updateType === 'capital_payment') {
             console.log('🔄 Disparando evento loanHistoryRefresh para:', updateType);
@@ -5526,7 +5558,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                               <div className="space-y-1 leading-none flex-1">
                                 <FormLabel>Penalidad</FormLabel>
                                 <p className="text-xs text-gray-500">
-                                  Aplicar una penalidad como porcentaje del capital pendiente. El monto de la penalidad se agregará como un cargo adicional.
+                                  Aplicar una penalidad como porcentaje del capital pendiente. Se cobra junto con el abono y se suma a la Penalidad acumulada del préstamo.
                                 </p>
                               </div>
                             </FormItem>
@@ -5575,7 +5607,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                                 <div className="text-sm text-orange-800 space-y-1">
                                   <div><strong>Monto de Penalidad:</strong> RD${penaltyAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                                   <div className="text-xs text-orange-700">
-                                    Este monto se agregará como un cargo adicional al préstamo.
+                                    Se cobra junto con el abono y queda registrado en la Penalidad del préstamo.
                                   </div>
                                 </div>
                               </div>

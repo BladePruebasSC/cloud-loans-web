@@ -5,7 +5,7 @@ import { getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { daysBetweenIso } from '@/utils/frequencyUtils';
 import {
   buildMonthlySeries, computeCashflow, computePortfolioSnapshot, computeRecovery, computeTodayAgenda,
-  topRiskLoans, addDaysIso, isActiveLoan, overdueFromDues,
+  topRiskLoans, addDaysIso, isActiveLoan, overdueFromDues, splitLoansForDashboard,
   type LoanLike, type PaymentLike, type SaleLike, type OverdueFacts,
 } from '@/utils/portfolioMetrics';
 import { computeInstallmentDues, type IndefiniteSchedule } from '@/utils/installmentDues';
@@ -17,6 +17,7 @@ import {
   buildIndefiniteInterestResolver, capitalPaymentDateIso, type CapitalPaymentLike,
 } from '@/utils/indefiniteInterest';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
+import { fetchLoanPenalties, summarizePenalties, type LoanPenalty } from '@/utils/loanPenalties';
 
 const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
 
@@ -169,6 +170,9 @@ export const usePortfolioData = () => {
   const [loanHistory, setLoanHistory] = useState<LoanHistoryLike[]>([]);
   const [capitalPayments, setCapitalPayments] = useState<CapitalPaymentRow[]>([]);
   const [deletedLoans, setDeletedLoans] = useState<LoanLike[]>([]);
+  /** Préstamos por aprobar: no entran en ninguna métrica, solo se informa cuántos hay. */
+  const [awaitingApprovalCount, setAwaitingApprovalCount] = useState(0);
+  const [penalties, setPenalties] = useState<LoanPenalty[]>([]);
   const [promises, setPromises] = useState<any[]>([]);
   const [legalTasks, setLegalTasks] = useState<any[]>([]);
   const [legalApprovals, setLegalApprovals] = useState<any[]>([]);
@@ -199,7 +203,7 @@ export const usePortfolioData = () => {
           // La configuración de mora (`late_fee_*`, `term_months`) hace falta para CALCULARLA
           // desde las cuotas: `current_late_fee` es una columna cacheada que nadie mantiene al
           // día y hacía que el inicio siguiera sumando una mora ya condonada.
-          .select('id, client_id, amount, remaining_balance, total_amount, monthly_payment, status, start_date, next_payment_date, term_months, grace_period_days, current_late_fee, late_fee_enabled, late_fee_rate, max_late_fee, late_fee_calculation_type, interest_rate, amortization_type, payment_frequency, collection_stage, created_at, deleted_at, client:client_id(full_name, dni, phone)')
+          .select('id, client_id, amount, remaining_balance, total_amount, monthly_payment, status, start_date, next_payment_date, term_months, grace_period_days, current_late_fee, late_fee_enabled, late_fee_rate, max_late_fee, late_fee_calculation_type, interest_rate, amortization_type, payment_frequency, collection_stage, created_at, deleted_at, deleted_reason, client:client_id(full_name, dni, phone)')
           .eq('loan_officer_id', companyId),
         supabase.from('sales').select('*').eq('user_id', companyId),
       ]);
@@ -213,18 +217,24 @@ export const usePortfolioData = () => {
       setClients((clientsRes.data || []) as ClientLike[]);
       setSales((salesRes.data || []) as SaleLike[]);
 
+      if (loansRes.error) console.error('[portfolio] fallo al leer préstamos:', loansRes.error);
       const allLoanRows = ((loansRes.data || []) as any[]) as LoanLike[];
-      // Las métricas (cartera, agenda, riesgo) SOLO ven los préstamos vivos.
-      const loanRows = allLoanRows.filter(l => !(l as any).deleted_at && l.status !== 'deleted');
-      setLoans(loanRows);
-      setDeletedLoans(allLoanRows.filter(l => (l as any).deleted_at || l.status === 'deleted'));
+      // Las métricas (cartera, agenda, riesgo) SOLO ven los préstamos vivos Y APROBADOS: uno por
+      // aprobar no se ha desembolsado, así que ni es capital colocado ni actividad (2026-09-18).
+      const { live: loanRows, deleted: deletedRows, awaitingApproval } = splitLoansForDashboard(allLoanRows as any[]);
+      console.log('[portfolio] préstamos:', {
+        total: allLoanRows.length, aprobados: loanRows.length, porAprobar: awaitingApproval, borrados: deletedRows.length,
+      });
+      setLoans(loanRows as LoanLike[]);
+      setDeletedLoans(deletedRows as LoanLike[]);
+      setAwaitingApprovalCount(awaitingApproval);
 
       // OJO: los pagos se piden SOLO de los préstamos vivos. Incluir los de un préstamo
       // borrado los metería en el flujo de caja y en "cobrado este mes", que es dinero que la
-      // empresa ya no reconoce. El historial sí se pide de todos, porque es justo donde consta
-      // que ese préstamo se eliminó.
+      // empresa ya no reconoce. El historial sí se pide también de los borrados, porque es justo
+      // donde consta que ese préstamo se eliminó; los que están por aprobar no aportan nada.
       const loanIds = loanRows.map(l => l.id);
-      const allLoanIds = allLoanRows.map(l => l.id);
+      const allLoanIds = [...loanRows, ...deletedRows].map(l => l.id);
 
       // Cuotas SOLO de los préstamos vivos: son las que necesita el atraso y evita traerse
       // el historial entero de la cartera.
@@ -283,6 +293,10 @@ export const usePortfolioData = () => {
       setInstallments(installmentRows);
       setLoanHistory(historyRows);
       setCapitalPayments(capitalRows);
+
+      // Penalidades (abonos con penalidad, cargos por penalización) de los préstamos aprobados.
+      const penaltyResult = await fetchLoanPenalties(supabase as any, loanIds);
+      setPenalties(penaltyResult.rows);
 
       // Módulo legal: opcional. Si las tablas no existen, el panel sigue funcionando.
       const soon = addDaysIso(todayIso, 3);
@@ -471,9 +485,26 @@ export const usePortfolioData = () => {
     return { count: mes.length, amount: round2(mes.reduce((s, p) => s + (Number(p.amount) || 0), 0)) };
   }, [capitalAsPayments, todayIso]);
 
+  /**
+   * PENALIDADES (2026-09-18): lo que se aplicó en abonos a capital con penalidad y cargos por
+   * penalización. Hoy, este mes y el acumulado de los préstamos aprobados.
+   */
+  const penaltySummary = useMemo(() => {
+    const dayOf = (p: LoanPenalty) => capitalPaymentDateIso(p.created_at) || '';
+    return {
+      today: summarizePenalties(penalties.filter(p => dayOf(p) === todayIso)),
+      month: summarizePenalties(penalties.filter(p => dayOf(p).slice(0, 7) === todayIso.slice(0, 7))),
+      allTime: summarizePenalties(penalties),
+    };
+  }, [penalties, todayIso]);
+
   const portfolio = useMemo(
-    () => computePortfolioSnapshot(loansForMetrics, todayIso, overdueFactsByLoan, lateFeeByLoan),
-    [loansForMetrics, todayIso, overdueFactsByLoan, lateFeeByLoan],
+    () => ({
+      ...computePortfolioSnapshot(loansForMetrics, todayIso, overdueFactsByLoan, lateFeeByLoan),
+      // Los por aprobar ya no están en `loans`: el número sale del reparto de la carga.
+      pendingLoans: awaitingApprovalCount,
+    }),
+    [loansForMetrics, todayIso, overdueFactsByLoan, lateFeeByLoan, awaitingApprovalCount],
   );
   const cashflow = useMemo(() => computeCashflow(cashflowPayments, sales, todayIso), [cashflowPayments, sales, todayIso]);
   const recovery = useMemo(() => computeRecovery(loans, cashflow), [loans, cashflow]);
@@ -768,7 +799,7 @@ export const usePortfolioData = () => {
     loans: loansForMetrics, clients, payments, sales, tracking, legalCases,
     portfolio, cashflow, recovery, agenda, riskLoans, series6, series12,
     pending, activity, onboarding, clientStats, lateFeeByLoan,
-    capitalPayments, capitalToday, capitalMonth,
+    capitalPayments, capitalToday, capitalMonth, penalties, penaltySummary,
     refresh: () => load(true),
   };
 };

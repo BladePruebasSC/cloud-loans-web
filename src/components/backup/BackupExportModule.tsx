@@ -35,12 +35,16 @@ import {
   exportToExcel,
   exportToExcelMultiSheet,
   exportToPDF,
-  formatDataForExport,
   importFromCSV,
   importFromExcel,
   importFromExcelMultiSheet,
   validateImportedData
 } from '@/utils/exportUtils';
+import {
+  BACKUP_SHEETS, fetchBackupSheetRows, fetchFullBackup, importClientRows, importLoanRows,
+  restoreLoansWithChildren, serializeRowsForBackup, sheetKeyFromName,
+  type BackupSheetKey, type RestoreContext,
+} from '@/utils/backupData';
 
 type ExportModule = 
   | 'clients'
@@ -159,153 +163,18 @@ export const BackupExportModule = () => {
     setLoading(prev => ({ ...prev, [key]: value }));
   };
 
-  const fetchClients = async () => {
-    const { data, error } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('user_id', companyId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchLoans = async () => {
-    const { data, error } = await supabase
-      .from('loans')
-      .select(`
-        *,
-        clients (
-          full_name,
-          dni,
-          phone
-        )
-      `)
-      .eq('loan_officer_id', companyId)
-      .neq('status', 'deleted')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchPayments = async () => {
-    const { data, error } = await supabase
-      .from('payments')
-      .select(`
-        *,
-        loans (
-          id,
-          amount,
-          clients (
-            full_name,
-            dni
-          )
-        )
-      `)
-      .eq('created_by', companyId)
-      .order('payment_date', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchInventory = async () => {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .eq('user_id', companyId)
-      .order('name', { ascending: true });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchSales = async () => {
-    const { data, error } = await supabase
-      .from('sales')
-      .select('*')
-      .eq('user_id', companyId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchPawnshop = async () => {
-    const { data, error } = await supabase
-      .from('pawn_transactions')
-      .select(`
-        *,
-        clients (
-          full_name,
-          dni
-        )
-      `)
-      .eq('user_id', companyId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchDocuments = async () => {
-    const { data, error } = await supabase
-      .from('documents')
-      .select('*')
-      .eq('user_id', companyId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchRequests = async () => {
-    const { data, error } = await supabase
-      .from('loan_requests')
-      .select(`
-        *,
-        clients (
-          full_name,
-          dni
-        )
-      `)
-      .eq('user_id', companyId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchAgreements = async () => {
-    const { data, error } = await supabase
-      .from('payment_agreements')
-      .select(`
-        *,
-        loans (
-          id,
-          clients (
-            full_name,
-            dni
-          )
-        )
-      `)
-      .eq('user_id', companyId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  };
-
-  const fetchExpenses = async () => {
-    const { data, error } = await supabase
-      .from('expenses')
-      .select('*')
-      .eq('created_by', companyId)
-      .order('expense_date', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
+  /** Cada módulo de esta pantalla y la hoja del respaldo que lo contiene. */
+  const MODULE_EXPORT: Record<Exclude<ExportModule, 'all'>, { key: BackupSheetKey; filename: string; title: string }> = {
+    clients: { key: 'clients', filename: 'clientes', title: 'Lista de Clientes' },
+    loans: { key: 'loans', filename: 'prestamos', title: 'Lista de Préstamos' },
+    payments: { key: 'payments', filename: 'pagos', title: 'Historial de Pagos' },
+    inventory: { key: 'inventory', filename: 'inventario', title: 'Inventario de Productos' },
+    sales: { key: 'sales', filename: 'ventas', title: 'Historial de Ventas' },
+    pawnshop: { key: 'pawnshop', filename: 'empenos', title: 'Transacciones de Empeños' },
+    documents: { key: 'documents', filename: 'documentos', title: 'Lista de Documentos' },
+    requests: { key: 'requests', filename: 'solicitudes', title: 'Solicitudes de Préstamos' },
+    agreements: { key: 'agreements', filename: 'acuerdos', title: 'Acuerdos de Pago' },
+    expenses: { key: 'expenses', filename: 'gastos', title: 'Registro de Gastos' },
   };
 
   const handleExport = async (module: ExportModule, format: 'csv' | 'excel' | 'pdf') => {
@@ -318,75 +187,23 @@ export const BackupExportModule = () => {
     setLoadingState(loadingKey, true);
 
     try {
-      let data: any[] = [];
-      let filename = '';
-      let title = '';
-
-      switch (module) {
-        case 'clients':
-          data = await fetchClients();
-          filename = 'clientes';
-          title = 'Lista de Clientes';
-          break;
-        case 'loans':
-          data = await fetchLoans();
-          filename = 'prestamos';
-          title = 'Lista de Préstamos';
-          break;
-        case 'payments':
-          data = await fetchPayments();
-          filename = 'pagos';
-          title = 'Historial de Pagos';
-          break;
-        case 'inventory':
-          data = await fetchInventory();
-          filename = 'inventario';
-          title = 'Inventario de Productos';
-          break;
-        case 'sales':
-          data = await fetchSales();
-          filename = 'ventas';
-          title = 'Historial de Ventas';
-          break;
-        case 'pawnshop':
-          data = await fetchPawnshop();
-          filename = 'empenos';
-          title = 'Transacciones de Empeños';
-          break;
-        case 'documents':
-          data = await fetchDocuments();
-          filename = 'documentos';
-          title = 'Lista de Documentos';
-          break;
-        case 'requests':
-          data = await fetchRequests();
-          filename = 'solicitudes';
-          title = 'Solicitudes de Préstamos';
-          break;
-        case 'agreements':
-          data = await fetchAgreements();
-          filename = 'acuerdos';
-          title = 'Acuerdos de Pago';
-          break;
-        case 'expenses':
-          data = await fetchExpenses();
-          filename = 'gastos';
-          title = 'Registro de Gastos';
-          break;
-        case 'all':
-          await handleFullBackup(format);
-          setLoadingState(loadingKey, false);
-          return;
-      }
-
-      if (data.length === 0) {
-        toast.warning(`No hay datos para exportar en ${title}`);
-        setLoadingState(loadingKey, false);
+      if (module === 'all') {
+        await handleFullBackup(format);
         return;
       }
 
-      // Formatear datos
-      const formattedData = formatDataForExport(data);
+      const { key, filename, title } = MODULE_EXPORT[module];
+      // Todas las filas (paginadas) y todas las columnas, igual que el respaldo completo.
+      const data = await fetchBackupSheetRows(supabase as any, companyId, key);
+      console.log(`[respaldo] exportando ${title}: ${data.length} filas`);
+
+      if (data.length === 0) {
+        toast.warning(`No hay datos para exportar en ${title}`);
+        return;
+      }
+
+      // Formatear datos (las columnas JSON se conservan para poder volver a importarlas)
+      const formattedData = serializeRowsForBackup(data);
 
       // Exportar según formato
       switch (format) {
@@ -415,71 +232,15 @@ export const BackupExportModule = () => {
     setLoadingState(loadingKey, true);
 
     try {
-      // Obtener todos los datos
-      const [
-        clients,
-        loans,
-        payments,
-        inventory,
-        sales,
-        pawnshop,
-        documents,
-        requests,
-        agreements,
-        expenses
-      ] = await Promise.all([
-        fetchClients(),
-        fetchLoans(),
-        fetchPayments(),
-        fetchInventory(),
-        fetchSales(),
-        fetchPawnshop(),
-        fetchDocuments(),
-        fetchRequests(),
-        fetchAgreements(),
-        fetchExpenses()
-      ]);
-
-      // Log para debugging
-      console.log('📊 Backup completo - Datos obtenidos:', {
-        clients: clients?.length || 0,
-        loans: loans?.length || 0,
-        payments: payments?.length || 0,
-        inventory: inventory?.length || 0,
-        sales: sales?.length || 0,
-        pawnshop: pawnshop?.length || 0,
-        documents: documents?.length || 0,
-        requests: requests?.length || 0,
-        agreements: agreements?.length || 0,
-        expenses: expenses?.length || 0
-      });
-
-      const allData = {
-        clients: formatDataForExport(clients || []),
-        loans: formatDataForExport(loans || []),
-        payments: formatDataForExport(payments || []),
-        inventory: formatDataForExport(inventory || []),
-        sales: formatDataForExport(sales || []),
-        pawnshop: formatDataForExport(pawnshop || []),
-        documents: formatDataForExport(documents || []),
-        requests: formatDataForExport(requests || []),
-        agreements: formatDataForExport(agreements || []),
-        expenses: formatDataForExport(expenses || [])
-      };
+      if (!companyId) throw new Error('No se pudo identificar la empresa');
+      // Todas las tablas, completas (paginadas) y con todas sus columnas: clientes con cédula,
+      // foto, dirección y ubicación; préstamos con sus cuotas, pagos, abonos y penalidades.
+      const sheets = await fetchFullBackup(supabase as any, companyId);
 
       // Filtrar solo las hojas que tienen datos
-      const sheetsWithData = [
-        { name: 'Clientes', data: allData.clients },
-        { name: 'Préstamos', data: allData.loans },
-        { name: 'Pagos', data: allData.payments },
-        { name: 'Inventario', data: allData.inventory },
-        { name: 'Ventas', data: allData.sales },
-        { name: 'Empeños', data: allData.pawnshop },
-        { name: 'Documentos', data: allData.documents },
-        { name: 'Solicitudes', data: allData.requests },
-        { name: 'Acuerdos', data: allData.agreements },
-        { name: 'Gastos', data: allData.expenses }
-      ].filter(sheet => sheet.data.length > 0);
+      const sheetsWithData = sheets
+        .map(s => ({ name: s.name, data: s.rows }))
+        .filter(sheet => sheet.data.length > 0);
 
       if (sheetsWithData.length === 0) {
         toast.warning('No hay datos para exportar en el backup completo');
@@ -500,19 +261,9 @@ export const BackupExportModule = () => {
         case 'csv':
           // Para CSV, exportar cada módulo por separado
           sheetsWithData.forEach((sheet) => {
-            const keyMap: { [key: string]: string } = {
-              'Clientes': 'clientes',
-              'Préstamos': 'prestamos',
-              'Pagos': 'pagos',
-              'Inventario': 'inventario',
-              'Ventas': 'ventas',
-              'Empeños': 'empenos',
-              'Documentos': 'documentos',
-              'Solicitudes': 'solicitudes',
-              'Acuerdos': 'acuerdos',
-              'Gastos': 'gastos'
-            };
-            exportToCSV(sheet.data, `${filename}_${keyMap[sheet.name] || sheet.name.toLowerCase()}`);
+            // "Préstamos" → "prestamos", "Abonos a capital" → "abonos_a_capital"
+            const slug = sheet.name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, '_');
+            exportToCSV(sheet.data, `${filename}_${slug}`);
           });
           toast.success(`Backup completo exportado exitosamente. ${summary}`);
           break;
@@ -611,39 +362,28 @@ export const BackupExportModule = () => {
       let inserted = 0;
       let errors = 0;
 
+      const restoreCtx: RestoreContext = {
+        supabase: supabase as any, companyId, userId: user.id,
+        onProgress: (msg) => toast.loading(`Importando… ${msg}`, { id: 'import-progress' }),
+      };
+      let extraInfo = '';
+
       switch (importModule) {
-        case 'clients':
+        case 'clients': {
           // Validar campos requeridos
-          const clientValidation = validateImportedData(data, ['full_name', 'dni', 'phone']);
+          const clientValidation = validateImportedData(data, ['full_name', 'dni']);
           if (!clientValidation.valid) {
             throw new Error(clientValidation.errors.join(', '));
           }
-          
-          for (const row of data) {
-            try {
-              const { error } = await supabase
-                .from('clients')
-                .upsert({
-                  full_name: row.full_name,
-                  dni: row.dni,
-                  phone: row.phone || '',
-                  email: row.email || null,
-                  address: row.address || null,
-                  city: row.city || null,
-                  user_id: companyId,
-                  updated_at: new Date().toISOString()
-                }, {
-                  onConflict: 'dni'
-                });
-              
-              if (error) throw error;
-              inserted++;
-            } catch (err) {
-              console.error('Error importing client:', err);
-              errors++;
-            }
-          }
+          // TODAS las columnas del archivo: tipo de documento y verificación JCE, foto,
+          // provincia/municipio/distrito/sector, ubicación GPS, trabajo, banco… Antes solo 6.
+          const { result } = await importClientRows(restoreCtx, data);
+          inserted = result.inserted + result.updated;
+          errors = result.errors;
+          if (result.updated > 0) extraInfo = ` (${result.updated} ya existían y se actualizaron)`;
+          if (result.messages.length > 0) console.warn('[respaldo] errores de clientes:', result.messages);
           break;
+        }
 
         case 'expenses':
           const expenseValidation = validateImportedData(data, ['category', 'description', 'amount']);
@@ -706,179 +446,100 @@ export const BackupExportModule = () => {
           }
           break;
 
-        case 'loans':
-          // Validar campos requeridos - hacer validación más flexible
-          // Primero verificar qué columnas están disponibles
-          if (data.length === 0) {
-            throw new Error('El archivo está vacío');
-          }
-          
-          const firstRow = data[0];
-          const availableColumns = Object.keys(firstRow).map(k => k.toLowerCase());
-          
+        case 'loans': {
+          const availableColumns = Object.keys(data[0] || {}).map(k => k.toLowerCase());
           // Detectar si el archivo es de clientes en lugar de préstamos
-          const hasClientColumns = availableColumns.some(col => 
-            ['full_name', 'user_id', 'phone'].includes(col)
-          );
-          const hasLoanColumns = availableColumns.some(col => 
-            ['amount', 'monto', 'interest_rate', 'tasa', 'term_months', 'plazo'].includes(col)
-          );
-          
+          const hasClientColumns = availableColumns.some(col => ['full_name', 'user_id', 'phone'].includes(col));
+          const hasLoanColumns = availableColumns.some(col =>
+            ['amount', 'monto', 'interest_rate', 'tasa', 'term_months', 'plazo'].includes(col));
           if (hasClientColumns && !hasLoanColumns) {
             throw new Error('El archivo parece ser de clientes, no de préstamos. Por favor, selecciona "Clientes" como módulo o exporta los préstamos correctamente.');
           }
-          
-          // Buscar variantes de nombres de columnas
-          const findColumn = (variants: string[]) => {
-            for (const variant of variants) {
-              const found = availableColumns.find(col => col === variant.toLowerCase() || col.includes(variant.toLowerCase()));
-              if (found) {
-                return Object.keys(firstRow).find(k => k.toLowerCase() === found);
-              }
-            }
-            return null;
-          };
-          
-          const dniColumn = findColumn(['clients_dni', 'client_dni', 'dni', 'clients.dni', 'client.dni']);
-          const amountColumn = findColumn(['amount', 'monto']);
-          const interestColumn = findColumn(['interest_rate', 'interestrate', 'tasa', 'tasa_interes']);
-          const termColumn = findColumn(['term_months', 'termmonths', 'plazo', 'term']);
-          
-          console.log('🔍 Columnas encontradas en archivo de préstamos:', {
-            disponibles: availableColumns,
-            dni: dniColumn,
-            amount: amountColumn,
-            interest: interestColumn,
-            term: termColumn
-          });
-          
-          if (!dniColumn || !amountColumn || !interestColumn || !termColumn) {
-            const missing = [];
-            if (!dniColumn) missing.push('DNI del cliente (clients_dni, client_dni, dni)');
-            if (!amountColumn) missing.push('Monto (amount, monto)');
-            if (!interestColumn) missing.push('Tasa de interés (interest_rate, tasa)');
-            if (!termColumn) missing.push('Plazo (term_months, plazo)');
-            throw new Error(`Campos faltantes: ${missing.join(', ')}. Columnas disponibles: ${availableColumns.join(', ')}. Asegúrate de que el archivo sea una exportación de préstamos, no de clientes.`);
-          }
-          
-          for (const row of data) {
-            try {
-              // Buscar cliente por DNI usando la columna encontrada
-              const clientDni = row[dniColumn] || row.client_dni || row.clients_dni || row.dni;
-              if (!clientDni || clientDni === '') {
-                console.error('Error: No se encontró DNI del cliente en la fila');
-                errors++;
-                continue;
-              }
-
-              const { data: client, error: clientError } = await supabase
-                .from('clients')
-                .select('id')
-                .eq('dni', clientDni)
-                .eq('user_id', companyId)
-                .single();
-
-              if (clientError || !client) {
-                console.error(`Error: Cliente con DNI ${clientDni} no encontrado`);
-                errors++;
-                continue;
-              }
-
-              // Preparar datos del préstamo usando las columnas encontradas
-              const amount = parseFloat(row[amountColumn] || row.amount) || 0;
-              const interestRate = parseFloat(row[interestColumn] || row.interest_rate) || 0;
-              const termMonths = parseInt(row[termColumn] || row.term_months) || 1;
-              const monthlyPayment = parseFloat(row.monthly_payment) || 0;
-              const totalAmount = parseFloat(row.total_amount) || amount;
-              const remainingBalance = parseFloat(row.remaining_balance) || totalAmount;
-
-              // Fechas
-              const startDate = row.start_date || row.first_payment_date || new Date().toISOString().split('T')[0];
-              const firstPaymentDate = row.first_payment_date || startDate;
-              const nextPaymentDate = row.next_payment_date || firstPaymentDate;
-              const endDate = row.end_date || (() => {
-                const date = new Date(startDate);
-                date.setMonth(date.getMonth() + termMonths);
-                return date.toISOString().split('T')[0];
-              })();
-
-              const loanData: any = {
-                client_id: client.id,
-                amount: amount,
-                interest_rate: interestRate,
-                term_months: termMonths,
-                loan_type: row.loan_type || 'personal',
-                purpose: row.purpose || row.comments || null,
-                collateral: row.collateral || null,
-                loan_officer_id: companyId,
-                monthly_payment: Math.round(monthlyPayment),
-                total_amount: Math.round(totalAmount),
-                remaining_balance: Math.round(remainingBalance),
-                start_date: startDate,
-                end_date: endDate,
-                next_payment_date: nextPaymentDate,
-                first_payment_date: firstPaymentDate,
-                status: row.status || 'active',
-                guarantor_name: row.guarantor_name || null,
-                guarantor_phone: row.guarantor_phone || null,
-                guarantor_dni: row.guarantor_dni || null,
-                notes: row.notes || null,
-                closing_costs: Math.round(parseFloat(row.closing_costs) || 0),
-                portfolio_id: row.portfolio_id || null,
-                amortization_type: row.amortization_type || 'simple',
-                payment_frequency: row.payment_frequency || 'monthly',
-                minimum_payment_enabled: row.minimum_payment_enabled !== undefined ? row.minimum_payment_enabled : true,
-                minimum_payment_type: row.minimum_payment_type || 'interest',
-                minimum_payment_percentage: parseFloat(row.minimum_payment_percentage) || 100,
-                late_fee_enabled: row.late_fee_enabled !== undefined ? row.late_fee_enabled : false,
-                late_fee_rate: parseFloat(row.late_fee_rate) || 2.0,
-                grace_period_days: parseInt(row.grace_period_days) || 0,
-                max_late_fee: Math.round(parseFloat(row.max_late_fee) || 0),
-                late_fee_calculation_type: row.late_fee_calculation_type || 'daily',
-                add_expense_enabled: row.add_expense_enabled !== undefined ? row.add_expense_enabled : false,
-                fixed_payment_enabled: row.fixed_payment_enabled !== undefined ? row.fixed_payment_enabled : false,
-                fixed_payment_amount: Math.round(parseFloat(row.fixed_payment_amount) || 0),
-                current_late_fee: Math.round(parseFloat(row.current_late_fee) || 0),
-                total_late_fee_paid: Math.round(parseFloat(row.total_late_fee_paid) || 0),
-              };
-
-              const { data: insertedLoan, error: loanError } = await supabase
-                .from('loans')
-                .insert([loanData])
-                .select()
-                .single();
-
-              if (loanError) {
-                console.error('Error importing loan:', loanError);
-                errors++;
-                continue;
-              }
-
-              // Si el préstamo tiene cuotas en los datos importados, intentar importarlas
-              // Por ahora, solo creamos el préstamo sin cuotas (se pueden generar después)
-              inserted++;
-            } catch (err) {
-              console.error('Error importing loan:', err);
-              errors++;
-            }
-          }
+          // Todas las columnas del préstamo, con los montos a 2 decimales (antes se redondeaban a
+          // enteros). Las cuotas y los pagos solo vienen en el Backup Completo.
+          const { result } = await importLoanRows(restoreCtx, data);
+          inserted = result.inserted;
+          errors = result.errors;
+          if (result.skipped > 0) extraInfo = ` (${result.skipped} ya existían y no se duplicaron)`;
+          extraInfo += '. Las cuotas y pagos se restauran con "Importar Backup Completo"';
+          if (result.messages.length > 0) console.warn('[respaldo] errores de préstamos:', result.messages);
           break;
+        }
 
         default:
           throw new Error(`Importación para ${importModule} aún no implementada`);
       }
 
-      toast.success(`Importación completada: ${inserted} registros importados${errors > 0 ? `, ${errors} errores` : ''}`);
+      toast.dismiss('import-progress');
+      toast.success(`Importación completada: ${inserted} registros importados${errors > 0 ? `, ${errors} errores (detalle en la consola)` : ''}${extraInfo}`, { duration: 8000 });
       setShowImportDialog(false);
       setImportFile(null);
       setImportPreview([]);
       setImportModule(null);
     } catch (error: any) {
       console.error('Error importing:', error);
+      toast.dismiss('import-progress');
       toast.error(`Error al importar: ${error.message || 'Error desconocido'}`);
     } finally {
       setLoadingState(loadingKey, false);
     }
+  };
+
+  /** Gastos del archivo (mismo mapeo que la importación por módulo). */
+  const importExpenseRows = async (rows: any[]) => {
+    let inserted = 0;
+    let errors = 0;
+    for (const row of rows) {
+      try {
+        const { error } = await supabase
+          .from('expenses')
+          .insert({
+            category: row.category,
+            description: row.description,
+            amount: parseFloat(row.amount) || 0,
+            expense_date: row.expense_date || new Date().toISOString().split('T')[0],
+            created_by: companyId,
+            status: row.status || 'approved'
+          } as any);
+        if (error) throw error;
+        inserted++;
+      } catch (err) {
+        console.error('Error importing expense:', err);
+        errors++;
+      }
+    }
+    return { inserted, errors };
+  };
+
+  /** Productos del archivo (mismo mapeo que la importación por módulo). */
+  const importInventoryRows = async (rows: any[]) => {
+    let inserted = 0;
+    let errors = 0;
+    for (const row of rows) {
+      try {
+        const { error } = await supabase
+          .from('products')
+          .upsert({
+            name: row.name,
+            sku: row.sku || null,
+            barcode: row.barcode || null,
+            category: row.category || null,
+            brand: row.brand || null,
+            purchase_price: parseFloat(row.purchase_price) || 0,
+            selling_price: parseFloat(row.selling_price) || 0,
+            current_stock: parseFloat(row.current_stock) || 0,
+            user_id: companyId
+          } as any, {
+            onConflict: 'sku'
+          });
+        if (error) throw error;
+        inserted++;
+      } catch (err) {
+        console.error('Error importing product:', err);
+        errors++;
+      }
+    }
+    return { inserted, errors };
   };
 
   const handleImportAll = async () => {
@@ -891,284 +552,79 @@ export const BackupExportModule = () => {
     setLoadingState(loadingKey, true);
 
     try {
-      // Leer todas las hojas del Excel
-      const sheets = await importFromExcelMultiSheet(importFile);
-      
-      // Mapeo de nombres de hojas a módulos
-      const sheetToModule: { [key: string]: ExportModule } = {
-        'Clientes': 'clients',
-        'Préstamos': 'loans',
-        'Pagos': 'payments',
-        'Inventario': 'inventory',
-        'Ventas': 'sales',
-        'Empeños': 'pawnshop',
-        'Documentos': 'documents',
-        'Solicitudes': 'requests',
-        'Acuerdos': 'agreements',
-        'Gastos': 'expenses'
+      // Leer todas las hojas del Excel y reconocerlas (también los nombres de versiones anteriores)
+      const workbook = await importFromExcelMultiSheet(importFile);
+      const sheets: Partial<Record<BackupSheetKey, any[]>> = {};
+      const unknownSheets: string[] = [];
+      for (const [sheetName, rows] of Object.entries(workbook)) {
+        const key = sheetKeyFromName(sheetName);
+        if (!key) { unknownSheets.push(sheetName); continue; }
+        // Una hoja vacía se exporta con una fila "mensaje": no es un dato.
+        sheets[key] = (rows || []).filter((r: any) => !(Object.keys(r).length === 1 && 'mensaje' in r));
+      }
+      console.log('[respaldo] hojas del archivo:', Object.fromEntries(
+        Object.entries(sheets).map(([k, v]) => [k, (v || []).length]),
+      ), unknownSheets.length ? { noReconocidas: unknownSheets } : '');
+
+      const ctx: RestoreContext = {
+        supabase: supabase as any, companyId, userId: user.id,
+        onProgress: (msg) => toast.loading(`Importando… ${msg}`, { id: 'import-progress' }),
       };
 
-      const results: { [module: string]: { inserted: number; errors: number } } = {};
+      const lines: string[] = [];
       let totalInserted = 0;
       let totalErrors = 0;
+      const addLine = (label: string, r: { inserted: number; errors: number; updated?: number; skipped?: number }) => {
+        const parts = [`${r.inserted} importados`];
+        if (r.updated) parts.push(`${r.updated} actualizados`);
+        if (r.skipped) parts.push(`${r.skipped} omitidos`);
+        if (r.errors) parts.push(`${r.errors} errores`);
+        lines.push(`${label}: ${parts.join(', ')}`);
+        totalInserted += r.inserted + (r.updated || 0);
+        totalErrors += r.errors;
+      };
+      const allMessages: string[] = [];
 
-      // Importar cada hoja
-      for (const [sheetName, data] of Object.entries(sheets)) {
-        const module = sheetToModule[sheetName];
-        if (!module || data.length === 0) {
-          continue; // Saltar hojas no reconocidas o vacías
-        }
-
-        let inserted = 0;
-        let errors = 0;
-
-        try {
-          switch (module) {
-            case 'clients':
-              for (const row of data) {
-                try {
-                  const { error } = await supabase
-                    .from('clients')
-                    .upsert({
-                      full_name: row.full_name,
-                      dni: row.dni,
-                      phone: row.phone || '',
-                      email: row.email || null,
-                      address: row.address || null,
-                      city: row.city || null,
-                      user_id: companyId,
-                      updated_at: new Date().toISOString()
-                    }, {
-                      onConflict: 'dni'
-                    });
-                  
-                  if (error) throw error;
-                  inserted++;
-                } catch (err) {
-                  console.error(`Error importing client:`, err);
-                  errors++;
-                }
-              }
-              break;
-
-            case 'expenses':
-              for (const row of data) {
-                try {
-                  const { error } = await supabase
-                    .from('expenses')
-                    .insert({
-                      category: row.category,
-                      description: row.description,
-                      amount: parseFloat(row.amount) || 0,
-                      expense_date: row.expense_date || new Date().toISOString().split('T')[0],
-                      created_by: companyId,
-                      status: 'approved'
-                    });
-                  
-                  if (error) throw error;
-                  inserted++;
-                } catch (err) {
-                  console.error(`Error importing expense:`, err);
-                  errors++;
-                }
-              }
-              break;
-
-            case 'inventory':
-              for (const row of data) {
-                try {
-                  const { error } = await supabase
-                    .from('products')
-                    .upsert({
-                      name: row.name,
-                      sku: row.sku || null,
-                      barcode: row.barcode || null,
-                      category: row.category || null,
-                      brand: row.brand || null,
-                      purchase_price: parseFloat(row.purchase_price) || 0,
-                      selling_price: parseFloat(row.selling_price) || 0,
-                      current_stock: parseFloat(row.current_stock) || 0,
-                      user_id: companyId
-                    }, {
-                      onConflict: 'sku'
-                    });
-                  
-                  if (error) throw error;
-                  inserted++;
-                } catch (err) {
-                  console.error(`Error importing product:`, err);
-                  errors++;
-                }
-              }
-              break;
-
-            case 'loans':
-              // Encontrar columnas disponibles
-              if (data.length === 0) {
-                continue;
-              }
-              
-              const firstLoanRow = data[0];
-              const availableLoanColumns = Object.keys(firstLoanRow).map(k => k.toLowerCase());
-              
-              // Detectar si el archivo es de clientes en lugar de préstamos
-              const hasClientCols = availableLoanColumns.some(col => 
-                ['full_name', 'user_id', 'phone'].includes(col)
-              );
-              const hasLoanCols = availableLoanColumns.some(col => 
-                ['amount', 'monto', 'interest_rate', 'tasa', 'term_months', 'plazo'].includes(col)
-              );
-              
-              if (hasClientCols && !hasLoanCols) {
-                console.warn(`⚠️ La hoja "${sheetName}" parece ser de clientes, no de préstamos. Saltando...`);
-                continue;
-              }
-              
-              const findLoanColumn = (variants: string[]) => {
-                for (const variant of variants) {
-                  const found = availableLoanColumns.find(col => col === variant.toLowerCase() || col.includes(variant.toLowerCase()));
-                  if (found) {
-                    return Object.keys(firstLoanRow).find(k => k.toLowerCase() === found);
-                  }
-                }
-                return null;
-              };
-              
-              const loanDniColumn = findLoanColumn(['clients_dni', 'client_dni', 'dni', 'clients.dni', 'client.dni']);
-              const loanAmountColumn = findLoanColumn(['amount', 'monto']);
-              const loanInterestColumn = findLoanColumn(['interest_rate', 'interestrate', 'tasa', 'tasa_interes']);
-              const loanTermColumn = findLoanColumn(['term_months', 'termmonths', 'plazo', 'term']);
-              
-              // Validar que se encontraron las columnas necesarias
-              if (!loanDniColumn || !loanAmountColumn || !loanInterestColumn || !loanTermColumn) {
-                console.warn(`⚠️ La hoja "${sheetName}" no tiene las columnas necesarias para préstamos. Saltando...`);
-                continue;
-              }
-              
-              for (const row of data) {
-                try {
-                  // Buscar cliente por DNI usando la columna encontrada
-                  const clientDni = loanDniColumn ? row[loanDniColumn] : (row.client_dni || row.clients_dni || row.dni);
-                  if (!clientDni || clientDni === '') {
-                    console.error('Error: No se encontró DNI del cliente en la fila');
-                    errors++;
-                    continue;
-                  }
-
-                  const { data: client, error: clientError } = await supabase
-                    .from('clients')
-                    .select('id')
-                    .eq('dni', clientDni)
-                    .eq('user_id', companyId)
-                    .single();
-
-                  if (clientError || !client) {
-                    console.error(`Error: Cliente con DNI ${clientDni} no encontrado`);
-                    errors++;
-                    continue;
-                  }
-
-                  // Preparar datos del préstamo usando las columnas encontradas
-                  const amount = loanAmountColumn ? parseFloat(row[loanAmountColumn] || row.amount) : (parseFloat(row.amount) || 0);
-                  const interestRate = loanInterestColumn ? parseFloat(row[loanInterestColumn] || row.interest_rate) : (parseFloat(row.interest_rate) || 0);
-                  const termMonths = loanTermColumn ? parseInt(row[loanTermColumn] || row.term_months) : (parseInt(row.term_months) || 1);
-                  const monthlyPayment = parseFloat(row.monthly_payment) || 0;
-                  const totalAmount = parseFloat(row.total_amount) || amount;
-                  const remainingBalance = parseFloat(row.remaining_balance) || totalAmount;
-
-                  // Fechas
-                  const startDate = row.start_date || row.first_payment_date || new Date().toISOString().split('T')[0];
-                  const firstPaymentDate = row.first_payment_date || startDate;
-                  const nextPaymentDate = row.next_payment_date || firstPaymentDate;
-                  const endDate = row.end_date || (() => {
-                    const date = new Date(startDate);
-                    date.setMonth(date.getMonth() + termMonths);
-                    return date.toISOString().split('T')[0];
-                  })();
-
-                  const loanData: any = {
-                    client_id: client.id,
-                    amount: amount,
-                    interest_rate: interestRate,
-                    term_months: termMonths,
-                    loan_type: row.loan_type || 'personal',
-                    purpose: row.purpose || row.comments || null,
-                    collateral: row.collateral || null,
-                    loan_officer_id: companyId,
-                    monthly_payment: Math.round(monthlyPayment),
-                    total_amount: Math.round(totalAmount),
-                    remaining_balance: Math.round(remainingBalance),
-                    start_date: startDate,
-                    end_date: endDate,
-                    next_payment_date: nextPaymentDate,
-                    first_payment_date: firstPaymentDate,
-                    status: row.status || 'active',
-                    guarantor_name: row.guarantor_name || null,
-                    guarantor_phone: row.guarantor_phone || null,
-                    guarantor_dni: row.guarantor_dni || null,
-                    notes: row.notes || null,
-                    closing_costs: Math.round(parseFloat(row.closing_costs) || 0),
-                    portfolio_id: row.portfolio_id || null,
-                    amortization_type: row.amortization_type || 'simple',
-                    payment_frequency: row.payment_frequency || 'monthly',
-                    minimum_payment_enabled: row.minimum_payment_enabled !== undefined ? row.minimum_payment_enabled : true,
-                    minimum_payment_type: row.minimum_payment_type || 'interest',
-                    minimum_payment_percentage: parseFloat(row.minimum_payment_percentage) || 100,
-                    late_fee_enabled: row.late_fee_enabled !== undefined ? row.late_fee_enabled : false,
-                    late_fee_rate: parseFloat(row.late_fee_rate) || 2.0,
-                    grace_period_days: parseInt(row.grace_period_days) || 0,
-                    max_late_fee: Math.round(parseFloat(row.max_late_fee) || 0),
-                    late_fee_calculation_type: row.late_fee_calculation_type || 'daily',
-                    add_expense_enabled: row.add_expense_enabled !== undefined ? row.add_expense_enabled : false,
-                    fixed_payment_enabled: row.fixed_payment_enabled !== undefined ? row.fixed_payment_enabled : false,
-                    fixed_payment_amount: Math.round(parseFloat(row.fixed_payment_amount) || 0),
-                    current_late_fee: Math.round(parseFloat(row.current_late_fee) || 0),
-                    total_late_fee_paid: Math.round(parseFloat(row.total_late_fee_paid) || 0),
-                  };
-
-                  const { data: insertedLoan, error: loanError } = await supabase
-                    .from('loans')
-                    .insert([loanData])
-                    .select()
-                    .single();
-
-                  if (loanError) {
-                    console.error('Error importing loan:', loanError);
-                    errors++;
-                    continue;
-                  }
-
-                  inserted++;
-                } catch (err) {
-                  console.error(`Error importing loan:`, err);
-                  errors++;
-                }
-              }
-              break;
-
-            // Otros módulos se pueden agregar aquí
-            default:
-              console.warn(`Importación para ${module} aún no implementada`);
-          }
-
-          results[sheetName] = { inserted, errors };
-          totalInserted += inserted;
-          totalErrors += errors;
-        } catch (error) {
-          console.error(`Error importing sheet ${sheetName}:`, error);
-          results[sheetName] = { inserted: 0, errors: data.length };
-          totalErrors += data.length;
-        }
+      // 1) Clientes: con TODAS sus columnas (cédula, foto, dirección, ubicación…)
+      let clientIdByOldId = new Map<string, string>();
+      let clientIdByDni = new Map<string, string>();
+      if ((sheets.clients || []).length > 0) {
+        const r = await importClientRows(ctx, sheets.clients!);
+        clientIdByOldId = r.clientIdByOldId;
+        clientIdByDni = r.clientIdByDni;
+        addLine(BACKUP_SHEETS.clients, r.result);
+        allMessages.push(...r.result.messages);
       }
 
-      // Mostrar resumen
-      const summary = Object.entries(results)
-        .map(([sheet, result]) => `${sheet}: ${result.inserted} importados${result.errors > 0 ? `, ${result.errors} errores` : ''}`)
-        .join('\n');
+      // 2) Préstamos con sus cuotas, pagos, abonos a capital, historial y penalidades
+      if ((sheets.loans || []).length > 0) {
+        const r = await restoreLoansWithChildren(ctx, sheets, clientIdByOldId, clientIdByDni);
+        (['loans', 'installments', 'payments', 'capitalPayments', 'history', 'penalties'] as BackupSheetKey[])
+          .forEach(key => {
+            const res = r[key];
+            if (!res) return;
+            addLine(BACKUP_SHEETS[key], res);
+            allMessages.push(...res.messages);
+          });
+      }
 
+      // 3) Gastos e inventario
+      if ((sheets.expenses || []).length > 0) addLine(BACKUP_SHEETS.expenses, await importExpenseRows(sheets.expenses!));
+      if ((sheets.inventory || []).length > 0) addLine(BACKUP_SHEETS.inventory, await importInventoryRows(sheets.inventory!));
+
+      // Lo que el respaldo guarda pero todavía no se restaura
+      const notRestored = (['sales', 'pawnshop', 'documents', 'requests', 'agreements'] as BackupSheetKey[])
+        .filter(key => (sheets[key] || []).length > 0)
+        .map(key => BACKUP_SHEETS[key]);
+      if (notRestored.length > 0) lines.push(`No se restauran (solo quedan en el archivo): ${notRestored.join(', ')}`);
+
+      if (allMessages.length > 0) console.warn('[respaldo] errores de la importación:', allMessages);
+      console.log('[respaldo] importación completa:', lines);
+
+      toast.dismiss('import-progress');
       toast.success(
-        `Importación completa finalizada:\n${summary}\n\nTotal: ${totalInserted} registros importados${totalErrors > 0 ? `, ${totalErrors} errores` : ''}`,
-        { duration: 8000 }
+        `Importación completa finalizada:\n${lines.join('\n')}\n\nTotal: ${totalInserted} registros${totalErrors > 0 ? `, ${totalErrors} errores (detalle en la consola)` : ''}`,
+        { duration: 12000 }
       );
 
       setShowImportAllDialog(false);
@@ -1177,6 +633,7 @@ export const BackupExportModule = () => {
       setImportModule(null);
     } catch (error: any) {
       console.error('Error importing all:', error);
+      toast.dismiss('import-progress');
       toast.error(`Error al importar: ${error.message || 'Error desconocido'}`);
     } finally {
       setLoadingState(loadingKey, false);
@@ -1291,8 +748,9 @@ export const BackupExportModule = () => {
                   <div>
                     <p className="font-semibold text-blue-900 mb-1">Información del Backup</p>
                     <p className="text-sm text-blue-700">
-                      El backup completo incluye: Clientes, Préstamos, Pagos, Inventario, Ventas, 
-                      Empeños, Documentos, Solicitudes, Acuerdos y Gastos.
+                      El backup completo incluye: Clientes (con cédula, verificación JCE, foto, dirección
+                      y ubicación GPS), Préstamos con sus Cuotas, Pagos, Abonos a capital, Penalidades e
+                      Historial, Inventario, Ventas, Empeños, Documentos, Solicitudes, Acuerdos y Gastos.
                     </p>
                     <p className="text-sm text-blue-600 mt-2">
                       <strong>Recomendación:</strong> Realiza backups regulares para proteger tus datos.
@@ -1411,7 +869,8 @@ export const BackupExportModule = () => {
                     Importar Backup Completo (Excel)
                   </Button>
                   <p className="text-xs text-gray-600 mt-2 text-center">
-                    Requiere un archivo Excel con hojas: Clientes, Préstamos, Pagos, etc.
+                    Restaura clientes (todos sus datos), préstamos con sus cuotas, pagos, abonos a capital,
+                    penalidades e historial, gastos e inventario. Un préstamo que ya existe no se duplica.
                   </p>
                 </CardContent>
               </Card>

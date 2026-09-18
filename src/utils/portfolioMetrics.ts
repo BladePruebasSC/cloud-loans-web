@@ -94,6 +94,50 @@ export const isActiveLoan = (status: string | null | undefined) =>
   status === 'active' || status === 'overdue';
 
 /**
+ * Préstamo creado pero TODAVÍA NO APROBADO (`status = 'pending'`).
+ *
+ * CAMBIO SOLICITADO (2026-09-18): "si un préstamo no está aprobado no puede afectar el dashboard
+ * de inicio, deben afectar después de ser aprobados". Un préstamo por aprobar no se ha
+ * desembolsado: no es capital colocado, ni un préstamo de la cartera, ni actividad.
+ */
+export const isAwaitingApproval = (status: string | null | undefined) =>
+  String(status || '').toLowerCase() === 'pending';
+
+/**
+ * Motivo con el que "Cancelar" borra un préstamo PENDIENTE (LoansModule.handleCancelLoan). Ese
+ * botón solo existe mientras el préstamo está por aprobar, así que un borrado con este motivo es
+ * un préstamo que nunca llegó a aprobarse.
+ */
+export const CANCELLED_BEFORE_APPROVAL_REASON = 'Cancelado por administrador';
+
+/**
+ * Parte los préstamos para el inicio y el dashboard:
+ *  · `live`: aprobados y no borrados — los únicos que entran en las métricas;
+ *  · `deleted`: borrados que SÍ llegaron a estar aprobados (su eliminación es actividad);
+ *  · `awaitingApproval`: cuántos esperan aprobación (solo se informa el número).
+ */
+export const splitLoansForDashboard = <T extends { status?: string | null; deleted_at?: string | null; deleted_reason?: string | null }>(
+  loans: T[],
+): { live: T[]; deleted: T[]; awaitingApproval: number } => {
+  const live: T[] = [];
+  const deleted: T[] = [];
+  let awaitingApproval = 0;
+  for (const l of loans) {
+    const isDeleted = !!l.deleted_at || l.status === 'deleted';
+    if (isDeleted) {
+      if (l.deleted_reason !== CANCELLED_BEFORE_APPROVAL_REASON) deleted.push(l);
+      continue;
+    }
+    if (isAwaitingApproval(l.status)) {
+      awaitingApproval++;
+      continue;
+    }
+    live.push(l);
+  }
+  return { live, deleted, awaitingApproval };
+};
+
+/**
  * Días de atraso de un préstamo HOY.
  *
  * LOS DÍAS DE GRACIA NO SE DESCUENTAN AQUÍ. La gracia perdona la MORA de esos días, no el

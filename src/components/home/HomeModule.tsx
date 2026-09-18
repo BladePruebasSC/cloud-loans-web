@@ -55,7 +55,7 @@ export const HomeModule: React.FC = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const P = usePortfolioData();
-  const { portfolio, cashflow, agenda, pending, activity, onboarding, clientStats, todayIso, capitalToday, capitalMonth } = P;
+  const { portfolio, cashflow, agenda, pending, activity, onboarding, clientStats, todayIso, capitalToday, capitalMonth, penaltySummary } = P;
   /** Pagos de cuotas de hoy (los abonos a capital se cuentan en el cobrado, pero se nombran aparte). */
   const paymentsTodayCount = Math.max(0, cashflow.today.count - capitalToday.count);
   const [trackingFor, setTrackingFor] = useState<{ loanId: string; clientName: string } | null>(null);
@@ -182,6 +182,11 @@ export const HomeModule: React.FC = () => {
                 {capitalToday.count > 0 && (
                   <span className="block text-teal-700 font-medium">
                     Incluye {capitalToday.count === 1 ? 'un abono' : `${capitalToday.count} abonos`} a capital: {formatCurrency(capitalToday.amount)}
+                  </span>
+                )}
+                {penaltySummary.today.count > 0 && (
+                  <span className="block text-orange-600 font-medium">
+                    Penalidades aplicadas hoy: {formatCurrency(penaltySummary.today.total)}
                   </span>
                 )}
               </>
@@ -442,6 +447,17 @@ export const HomeModule: React.FC = () => {
                         cls: 'text-teal-700',
                       }]
                     : []),
+                  // Penalidades aplicadas (abonos con penalidad, cargos por penalización).
+                  {
+                    label: `Penalidades este mes${penaltySummary.month.count > 0 ? ` (${penaltySummary.month.count})` : ''}`,
+                    value: formatCurrency(penaltySummary.month.total),
+                    cls: penaltySummary.month.total > 0 ? 'text-orange-600' : '',
+                  },
+                  {
+                    label: 'Penalidad acumulada',
+                    value: formatCurrency(penaltySummary.allTime.total),
+                    cls: penaltySummary.allTime.total > 0 ? 'text-orange-600' : '',
+                  },
                 ].map(r => (
                   <div key={r.label} className="flex items-center justify-between">
                     <span className="text-slate-500">{r.label}</span>
