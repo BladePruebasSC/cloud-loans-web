@@ -42,6 +42,7 @@ import {
   type GMapsMap, type LatLng,
 } from '@/utils/googleMaps';
 import type { RawInstallment, RawPayment } from '@/utils/installmentDues';
+import { computeLateFeesByLoan } from '@/utils/portfolioLateFees';
 
 const CLIENT_FIELDS =
   'id, full_name, phone, address, sector, municipality, province, latitude, longitude, location_note, collection_route';
@@ -63,6 +64,8 @@ export const CollectionRouteModule = () => {
   const [loans, setLoans] = useState<RouteLoan[]>([]);
   const [installments, setInstallments] = useState<(RawInstallment & { loan_id: string })[]>([]);
   const [payments, setPayments] = useState<(RawPayment & { loan_id: string })[]>([]);
+  /** Mora calculada por préstamo (manda sobre la columna cacheada `current_late_fee`). */
+  const [lateFeeByLoan, setLateFeeByLoan] = useState<Map<string, number>>(new Map());
 
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<GMapsMap | null>(null);
@@ -87,7 +90,9 @@ export const CollectionRouteModule = () => {
       const [{ data: clientRows }, { data: loanRows }] = await Promise.all([
         supabase.from('clients').select(CLIENT_FIELDS).eq('user_id', companyId),
         supabase.from('loans')
-          .select('id, client_id, status, remaining_balance, current_late_fee')
+          // La configuración de mora hace falta para CALCULARLA: `current_late_fee` es una
+          // columna cacheada que puede estar vieja (ver displayedLateFee.ts).
+          .select('id, client_id, status, remaining_balance, current_late_fee, amount, next_payment_date, start_date, term_months, payment_frequency, amortization_type, interest_rate, monthly_payment, late_fee_enabled, late_fee_rate, grace_period_days, max_late_fee, late_fee_calculation_type')
           .eq('loan_officer_id', companyId)
           .in('status', ['active', 'overdue']),
       ]);
@@ -99,6 +104,7 @@ export const CollectionRouteModule = () => {
       // fuera lo que registró un empleado — el mismo error que ya se corrigió en el panel.
       let instRows: (RawInstallment & { loan_id: string })[] = [];
       let payRows: (RawPayment & { loan_id: string })[] = [];
+      let capRows: Array<{ loan_id: string } & Record<string, any>> = [];
 
       if (loanIds.length > 0) {
         // Supabase limita el tamaño de un `in(...)`; se trocea para carteras grandes.
@@ -107,23 +113,45 @@ export const CollectionRouteModule = () => {
 
         const results = await Promise.all(chunks.map(chunk => Promise.all([
           supabase.from('installments')
-            .select('id, loan_id, installment_number, due_date, total_amount, principal_amount, interest_amount, paid_amount, is_paid')
+            // `*`: la mora necesita `late_fee_paid` (lo cobrado o CONDONADO) y `late_fee_waived_at`.
+            .select('*')
             .in('loan_id', chunk),
           supabase.from('payments')
-            .select('loan_id, amount, principal_amount, interest_amount, due_date, superseded_at')
+            .select('id, loan_id, amount, principal_amount, interest_amount, late_fee, payment_date, payment_time_local, due_date, superseded_at')
+            .in('loan_id', chunk),
+          supabase.from('capital_payments')
+            .select('id, loan_id, amount, capital_before, capital_after, created_at')
             .in('loan_id', chunk),
         ])));
 
-        for (const [inst, pay] of results) {
+        for (const [inst, pay, cap] of results) {
           instRows = instRows.concat((inst.data ?? []) as (RawInstallment & { loan_id: string })[]);
           payRows = payRows.concat((pay.data ?? []) as (RawPayment & { loan_id: string })[]);
+          capRows = capRows.concat((cap.data ?? []) as any[]);
         }
+      }
+
+      // Mora de cada préstamo con el MISMO motor que la ficha del préstamo y "Mora Actual".
+      const group = <T extends { loan_id: string }>(rows: T[]) => {
+        const m = new Map<string, T[]>();
+        for (const r of rows) (m.get(r.loan_id) ?? m.set(r.loan_id, []).get(r.loan_id)!).push(r);
+        return m;
+      };
+      const fees = await computeLateFeesByLoan(
+        loanList as any[], group(instRows), group(payRows), undefined, group(capRows),
+      ).catch(err => { console.error('[ruta] no se pudo calcular la mora:', err); return new Map<string, number>(); });
+      const stale = loanList.filter(l => fees.has(l.id)
+        && Math.abs((Number(l.current_late_fee) || 0) - (fees.get(l.id) || 0)) > 0.01);
+      if (stale.length > 0) {
+        console.log('[ruta] mora recalculada (la columna current_late_fee estaba vieja):',
+          stale.map(l => ({ loanId: l.id, columna: l.current_late_fee, calculada: fees.get(l.id) })));
       }
 
       setClients((clientRows ?? []) as RouteClient[]);
       setLoans(loanList);
       setInstallments(instRows);
       setPayments(payRows);
+      setLateFeeByLoan(fees);
     } catch (error) {
       console.error('Error cargando la ruta de cobro', error);
       toast.error('No se pudo cargar la ruta de cobro');
@@ -146,8 +174,8 @@ export const CollectionRouteModule = () => {
   // -------------------------------------------------------------------------
   const baseStops = useMemo(() => buildRouteStops({
     clients, loans, installments, payments, dateIso,
-    routeFilter, includeOverdueOnly: includeOverdue,
-  }), [clients, loans, installments, payments, dateIso, routeFilter, includeOverdue]);
+    routeFilter, includeOverdueOnly: includeOverdue, lateFeeByLoan,
+  }), [clients, loans, installments, payments, dateIso, routeFilter, includeOverdue, lateFeeByLoan]);
 
   const stops = useMemo(
     () => (optimized ? orderByProximity(baseStops, origin) : baseStops),

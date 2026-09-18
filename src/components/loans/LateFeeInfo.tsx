@@ -44,6 +44,11 @@ interface LateFeeInfoProps {
   paid_installments?: number[]; // Cuotas que han sido pagadas
   start_date?: string; // Fecha de inicio del préstamo (CRÍTICO para el cálculo correcto)
   amortization_type?: string; // Tipo de amortización (indefinite, simple, etc.)
+  /**
+   * Avisa de la mora calculada. La tarjeta la usa para "Balance Total Pendiente", así las dos
+   * casillas enseñan SIEMPRE la misma mora (antes cada una tenía su dato y no cuadraban).
+   */
+  onCalculated?: (lateFee: number) => void;
 }
 
 export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
@@ -64,7 +69,8 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
   monthly_payment,
   paid_installments,
   start_date,
-  amortization_type
+  amortization_type,
+  onCalculated,
 }) => {
   const [showDetails, setShowDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -290,10 +296,13 @@ export const LateFeeInfo: React.FC<LateFeeInfoProps> = ({
       console.log('🔍 LateFeeInfo: Días de atraso:', daysOverdue);
       console.log('🔍 LateFeeInfo: Total mora:', breakdown.totalLateFee);
       
+      // Con centavos exactos: es la cifra que también suma "Balance Total Pendiente".
+      const lateFee = Math.round((Number(breakdown.totalLateFee) || 0) * 100) / 100;
+      onCalculated?.(lateFee);
       return {
         days_overdue: daysOverdue,
-        late_fee_amount: breakdown.totalLateFee,
-        total_late_fee: breakdown.totalLateFee
+        late_fee_amount: lateFee,
+        total_late_fee: lateFee
       };
     } catch (error) {
       console.error('Error calculando mora en LateFeeInfo:', error);

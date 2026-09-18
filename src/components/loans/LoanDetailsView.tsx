@@ -1288,10 +1288,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   // Usar la mora del breakdown (misma lógica que LateFeeInfo/tarjeta) cuando esté disponible.
   // Si no, usar current_late_fee del DB; si está en 0, calcular desde cuotas como fallback.
   let effectiveLateFee: number;
-  if (isLoanSettled) {
+  if (isLoanSettled || !loan.late_fee_enabled) {
+    // Mora DESHABILITADA: 0. Antes caía a `current_late_fee`, una columna cacheada que podía
+    // conservar una mora vieja, y la sumaba a "A saldar" (ver displayedLateFee.ts).
     effectiveLateFee = 0;
   } else if (breakdownLateFee !== null) {
-    effectiveLateFee = breakdownLateFee;
+    effectiveLateFee = Math.round(breakdownLateFee * 100) / 100;
   } else {
     effectiveLateFee = loan.current_late_fee || 0;
 

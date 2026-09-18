@@ -93,6 +93,13 @@ export interface BuildRouteInput {
   routeFilter?: string;
   /** Incluir clientes que solo tienen atraso (sin cuota que venza hoy) */
   includeOverdueOnly?: boolean;
+  /**
+   * Mora CALCULADA por préstamo (motor de mora, con condonaciones y pagos). Manda sobre
+   * `loans.current_late_fee`, una columna cacheada que puede estar vieja: el cobrador veía una
+   * mora que ya se había pagado o condonado (2026-09-18). Un préstamo ausente del mapa usa la
+   * columna, que es mejor que dar 0 y esconder una mora real.
+   */
+  lateFeeByLoan?: Map<string, number>;
 }
 
 const LOAN_ACTIVE = new Set(['active', 'overdue']);
@@ -157,7 +164,7 @@ export const buildRouteStops = (input: BuildRouteInput): RouteStop[] => {
     if (dueToday <= 0.005 && overdue <= 0.005) continue;
     if (dueToday <= 0.005 && !includeOverdueOnly) continue;
 
-    const lateFee = round2(Number(loan.current_late_fee || 0));
+    const lateFee = round2(Number(input.lateFeeByLoan?.get(String(loan.id)) ?? loan.current_late_fee ?? 0));
     const detail: RouteLoanDetail = {
       loanId: loan.id,
       dueToday: round2(dueToday),

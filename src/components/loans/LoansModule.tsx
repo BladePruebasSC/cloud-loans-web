@@ -29,6 +29,7 @@ import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurre
 import { formatCurrencyNumber } from '@/lib/utils';
 import { getFrequencyName } from '@/utils/frequencyUtils';
 import { useLoanPenalties } from '@/hooks/useLoanPenalties';
+import { resolveDisplayedLateFee, totalWithLateFee, lateFeeColumnNeedsSync } from '@/utils/displayedLateFee';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { getFirstUnpaidDueDate } from '@/utils/nextPaymentDateFromInstallments';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
@@ -89,6 +90,8 @@ export const LoansModule = () => {
   const [statementStatusFilter, setStatementStatusFilter] = useState('all');
   const [statementAmountFilter, setStatementAmountFilter] = useState('all');
   const [dynamicLateFees, setDynamicLateFees] = useState<{[key: string]: number}>({});
+  /** Ya terminó la primera carga de moras: a partir de ahí se calculan las que falten. */
+  const [lateFeesHydrated, setLateFeesHydrated] = useState(false);
   const [pendingInterestForIndefinite, setPendingInterestForIndefinite] = useState<{[key: string]: number}>({});
   const [paidInstallmentsCountForIndefinite, setPaidInstallmentsCountForIndefinite] = useState<{[key: string]: number}>({});
   const [loanAgreements, setLoanAgreements] = useState<{[key: string]: any[]}>({});
@@ -1327,6 +1330,7 @@ export const LoansModule = () => {
     await Promise.all(targetLoans.map(async (loan: any) => {
       if (loan.late_fee_enabled) {
         lateFeeUpdates[loan.id] = await calculateCurrentLateFee(loan);
+        syncLateFeeColumn(loan, lateFeeUpdates[loan.id]);
       }
       if (String(loan.amortization_type || '').toLowerCase() === 'indefinite') {
         const result = await calculatePendingInterestForIndefinite(loan);
@@ -1445,10 +1449,61 @@ export const LoansModule = () => {
       const breakdown = await getLateFeeBreakdownFromInstallments(loan.id, loanDataForCalculation as any);
       return Math.round((breakdown.totalLateFee || 0) * 100) / 100;
     } catch (error) {
-      console.error('Error calculando mora actual:', error);
-      return loan.current_late_fee || 0;
+      // No se cae a `current_late_fee`: es una columna cacheada que puede estar vieja y era la
+      // que hacía que "Balance Total Pendiente" no cuadrara con "Mora Actual" (ver
+      // displayedLateFee.ts). "Mora Actual" también da 0 si el cálculo falla.
+      console.error('[mora] error calculando la mora de la tarjeta:', loan.id, error);
+      return 0;
     }
   };
+
+  // La columna cacheada `loans.current_late_fee` la leen la ruta de cobro, las notificaciones,
+  // los reportes, el CRM y el módulo legal. Si la mora recién calculada ya no coincide con ella
+  // (se pagó o se condonó, pasaron días, se deshabilitó), se corrige. Solo en el momento de
+  // calcular —con las cuotas y pagos recién leídos—, nunca desde un valor guardado en pantalla que
+  // podría ser de antes de un pago. Máximo una vez por minuto y préstamo, como la autocorrección
+  // de `remaining_balance`.
+  const lastLateFeeSyncRef = useRef<Record<string, number>>({});
+  const syncLateFeeColumn = (loan: any, computedFee: number) => {
+    if (loan?.status !== 'active' && loan?.status !== 'overdue') return;
+    const displayed = resolveDisplayedLateFee({
+      lateFeeEnabled: loan.late_fee_enabled, status: loan.status, computed: computedFee,
+    });
+    if (!lateFeeColumnNeedsSync(loan.current_late_fee, displayed)) return;
+    const now = Date.now();
+    if (now - (lastLateFeeSyncRef.current[loan.id] || 0) < 60_000) return;
+    lastLateFeeSyncRef.current[loan.id] = now;
+    supabase.from('loans').update({ current_late_fee: displayed }).eq('id', loan.id)
+      .then(({ error }) => {
+        if (error) console.error('[mora] no se pudo corregir current_late_fee:', loan.id, error);
+        else console.log('[mora] current_late_fee corregida:', { loanId: loan.id, antes: loan.current_late_fee, ahora: displayed });
+      });
+  };
+
+  /**
+   * "Balance Pendiente" de la tarjeta (sin mora). `null` mientras se calcula.
+   *
+   * Es la MISMA base que usa "Balance Total Pendiente": antes cada casilla tenía su propia copia
+   * de este cálculo, con respaldos distintos mientras cargaba.
+   */
+  const pendingBalanceForCard = (loan: any): number | null => {
+    if (loan.status === 'paid') return 0;
+    const isIndefinite = String(loan.amortization_type || '').toLowerCase() === 'indefinite';
+    const calculatedTotal = calculatedRemainingBalances[loan.id];
+    if (calculatedTotal !== undefined) return calculatedTotal;
+    // Indefinidos: el balance sale del desglose (capital tras abonos + interés + cargos). Sin él
+    // no hay respaldo fiable —`loans.amount` es lo PRESTADO, no el capital tras los abonos—.
+    if (isIndefinite) return null;
+    // Plazo fijo: NO mostrar el valor de la BD mientras hidrata (puede estar viejo).
+    if (!balancesHydrated && calculatedBaseBalances[loan.id] === undefined) return null;
+    if (loan.remaining_balance !== null && loan.remaining_balance !== undefined) return Number(loan.remaining_balance);
+    return Number(loan.amount || 0);
+  };
+
+  /** Mora de la tarjeta: la misma cifra que "Mora Actual". `null` mientras se calcula. */
+  const lateFeeForCard = (loan: any): number | null => resolveDisplayedLateFee({
+    lateFeeEnabled: loan.late_fee_enabled, status: loan.status, computed: dynamicLateFees[loan.id],
+  });
 
   // Función para actualizar las moras dinámicas
   const updateDynamicLateFees = async () => {
@@ -1575,15 +1630,17 @@ export const LoansModule = () => {
 
     // Solo calcular para préstamos que tienen mora habilitada
     const loansWithLateFee = loans.filter(loan => loan.late_fee_enabled);
-    
+
     if (loansWithLateFee.length === 0) {
       setDynamicLateFees({});
+      setLateFeesHydrated(true);
       return;
     }
     
     // Ejecutar en paralelo pero en background
     const calculations = loansWithLateFee.map(async (loan) => {
       const currentLateFee = await calculateCurrentLateFee(loan);
+      syncLateFeeColumn(loan, currentLateFee);
       return { loanId: loan.id, lateFee: currentLateFee };
     });
     
@@ -1592,8 +1649,9 @@ export const LoansModule = () => {
     results.forEach(({ loanId, lateFee }) => {
       newLateFees[loanId] = lateFee;
     });
-    
+
     setDynamicLateFees(newLateFees);
+    setLateFeesHydrated(true);
   }, [loans?.length, indefiniteNextPaySignature]);
 
   const updatePendingInterestForIndefiniteMemo = useCallback(async () => {
@@ -1655,7 +1713,28 @@ export const LoansModule = () => {
       setTimeout(executeUpdates, 500);
     }
   }, [loansSignature, updateDynamicLateFeesMemo, updatePendingInterestForIndefiniteMemo]); // Solo cuando cambie la firma
-  
+
+  // Mora que FALTA en la tarjeta: un préstamo nuevo, o uno cuya mora se invalidó tras un abono o
+  // una actualización de cuotas (`invalidateLoanCaches`). Antes se quedaba sin valor y la tarjeta
+  // sumaba la columna vieja `current_late_fee`; ahora se calcula aquí.
+  const inFlightLateFeeRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!lateFeesHydrated || !loans?.length) return;
+    const missing = loans.filter((l: any) =>
+      l.late_fee_enabled && l.status !== 'paid' && l.status !== 'deleted'
+      && dynamicLateFees[l.id] === undefined && !inFlightLateFeeRef.current.has(l.id));
+    missing.forEach((loan: any) => {
+      inFlightLateFeeRef.current.add(loan.id);
+      calculateCurrentLateFee(loan)
+        .then(fee => {
+          console.log('[mora] calculada para la tarjeta:', { loanId: loan.id, fee });
+          setDynamicLateFees(prev => (prev[loan.id] !== undefined ? prev : { ...prev, [loan.id]: fee }));
+          syncLateFeeColumn(loan, fee);
+        })
+        .finally(() => inFlightLateFeeRef.current.delete(loan.id));
+    });
+  }, [lateFeesHydrated, loans, dynamicLateFees]);
+
   // Constante para el texto del botón Editar
   const EDIT_BUTTON_TEXT = 'Actualizar';
 
@@ -2544,40 +2623,8 @@ export const LoansModule = () => {
                           <div className="text-center p-4 bg-gradient-to-br from-red-50 to-rose-50 rounded-xl border border-red-100">
                             <div className="text-2xl font-bold text-red-700 mb-1">
                               {(() => {
-                                const amortizationTypeLower = ((loan.amortization_type || '') as string).toLowerCase();
-                                const isIndefinite = amortizationTypeLower === 'indefinite';
-                                const calculatedBase = calculatedBaseBalances[loan.id];
-                                const calculatedTotal = calculatedRemainingBalances[loan.id];
-                                const db = loan.remaining_balance;
-
-                                // En préstamos a plazo fijo: NO mostrar BD "stale" mientras hidrata
-                                if (!isIndefinite && !balancesHydrated && calculatedBase === undefined) {
-                                  return 'Cargando...';
-                                }
-
-                                const value = (() => {
-                                  if (isIndefinite) {
-                                    // ✅ Capital Pendiente = capital + interés pendiente + cargos (igual que Detalles)
-                                    if (calculatedTotal !== undefined) return calculatedTotal;
-                                    // Si ya tenemos breakdown (cargos calculados), usar fórmula
-                                    const pendingCharges = calculatedPendingCharges[loan.id];
-                                    if (pendingCharges !== undefined) {
-                                      const basePlusInterest = (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
-                                      return Math.round((basePlusInterest + pendingCharges) * 100) / 100;
-                                    }
-                                    // Sin breakdown aún: no mostrar 105000 sin cargos
-                                    return null;
-                                  }
-
-                                  // ✅ Plazo fijo: incluir cargos en Capital Pendiente (totalBalance)
-                                  if (calculatedTotal !== undefined) return calculatedTotal;
-                                  // Último fallback
-                                  if (db !== null && db !== undefined) return Number(db);
-                                  return loan.amount || 0;
-                                })();
-
-                                if (value === null || value === undefined) return 'Cargando...';
-                                return `$${formatCurrencyNumber(value)}`;
+                                const value = pendingBalanceForCard(loan);
+                                return value === null ? 'Cargando...' : `$${formatCurrencyNumber(value)}`;
                               })()}
                             </div>
                             <div className="text-sm text-red-600 font-medium">Balance Pendiente</div>
@@ -2594,36 +2641,11 @@ export const LoansModule = () => {
                             <div className="text-2xl font-bold text-purple-700 mb-1">
                               {(() => {
                                 if (loan.status === 'paid') return `$${formatCurrencyNumber(0)}`;
-
-                                const amortizationTypeLower = ((loan.amortization_type || '') as string).toLowerCase();
-                                const isIndefinite = amortizationTypeLower === 'indefinite';
-                                const calculatedBase = calculatedBaseBalances[loan.id];
-                                const calculatedTotal = calculatedRemainingBalances[loan.id];
-                                const db = loan.remaining_balance;
-
-                                // En préstamos a plazo fijo: NO mostrar BD "stale" mientras hidrata
-                                if (!isIndefinite && !balancesHydrated && calculatedBase === undefined) {
-                                  return 'Cargando...';
-                                }
-                                // Indefinidos: esperar total con cargos para no mostrar 105000
-                                if (isIndefinite && calculatedTotal === undefined && calculatedPendingCharges[loan.id] === undefined) {
-                                  return 'Cargando...';
-                                }
-
-                                const base = (() => {
-                                  // ✅ Balance Total Pendiente = Capital Pendiente (incluye cargos) + Mora
-                                  if (calculatedTotal !== undefined) return calculatedTotal;
-                                  if (isIndefinite) {
-                                    const basePlusInterest = (loan.amount || 0) + (pendingInterestForIndefinite[loan.id] || 0);
-                                    const charges = calculatedPendingCharges[loan.id] ?? 0;
-                                    return Math.round((basePlusInterest + charges) * 100) / 100;
-                                  }
-                                  if (db !== null && db !== undefined) return Number(db);
-                                  return loan.amount || 0;
-                                })();
-
-                                const total = Math.round((Number(base) + (dynamicLateFees[loan.id] || loan.current_late_fee || 0)) * 100) / 100;
-                                return `$${formatCurrencyNumber(total)}`;
+                                // Balance Total = el MISMO "Balance Pendiente" + la MISMA mora de "Mora
+                                // Actual". Antes sumaba `mora || current_late_fee`: con mora 0 caía a la
+                                // columna cacheada y el total no cuadraba (ver displayedLateFee.ts).
+                                const total = totalWithLateFee(pendingBalanceForCard(loan), lateFeeForCard(loan));
+                                return total === null ? 'Cargando...' : `$${formatCurrencyNumber(total)}`;
                               })()}
                             </div>
                             <div className="text-sm text-purple-600 font-medium">Balance Total Pendiente</div>
@@ -2730,6 +2752,9 @@ export const LoansModule = () => {
                             paid_installments={loan.paid_installments || []} // Usar cuotas pagadas de la base de datos
                             start_date={loan.start_date} // CRÍTICO: Fecha de inicio del préstamo
                             amortization_type={(loan as any).amortization_type}
+                            // La mora que muestra "Mora Actual" es la que suma "Balance Total Pendiente"
+                            onCalculated={(fee) => setDynamicLateFees(prev =>
+                              prev[loan.id] === fee ? prev : { ...prev, [loan.id]: fee })}
                           />
                         )}
 
@@ -3083,12 +3108,13 @@ export const LoansModule = () => {
                              <div className="flex flex-col sm:flex-row sm:items-center">
                                <span className="font-medium text-xs sm:text-sm">Balance:</span> 
                                <span className="text-xs sm:text-sm">${formatCurrencyNumber(
-                                 // CORRECCIÓN: Priorizar valor de BD si está disponible (es más confiable que el cálculo dinámico)
-                                 (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-                                   ? loan.remaining_balance
-                                   : (calculatedRemainingBalances[loan.id] !== undefined
-                                       ? calculatedRemainingBalances[loan.id]
-                                       : loan.amount || 0)
+                                 // El MISMO "Balance Pendiente" de la tarjeta. Antes esta vista priorizaba
+                                 // `remaining_balance` de la BD y la tarjeta el cálculo: el mismo préstamo
+                                 // decía dos balances según la vista. Mientras calcula, la BD.
+                                 pendingBalanceForCard(loan)
+                                   ?? (loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                                     ? Number(loan.remaining_balance)
+                                     : Number(loan.amount || 0))
                                )}</span>
                              </div>
                              <div className="flex flex-col sm:flex-row sm:items-center">
