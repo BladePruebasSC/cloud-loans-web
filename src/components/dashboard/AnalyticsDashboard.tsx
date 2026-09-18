@@ -17,8 +17,9 @@ import {
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import {
   RefreshCw, TrendingUp, TrendingDown, Wallet, CreditCard, AlertTriangle, Users, PiggyBank,
-  ArrowLeft, Percent, Target, ShieldCheck, Download, Activity,
+  ArrowLeft, Percent, Target, ShieldCheck, Download, Activity, ShieldAlert, CalendarDays, Receipt,
 } from 'lucide-react';
+import { PENALTY_SOURCE_LABEL } from '@/utils/loanPenalties';
 
 const compact = (v: number) =>
   Math.abs(v) >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M`
@@ -33,7 +34,7 @@ const PALETTE = ['#2563eb', '#16a34a', '#f59e0b', '#7c3aed', '#dc2626', '#0891b2
 export const AnalyticsDashboard: React.FC = () => {
   const navigate = useNavigate();
   const P = usePortfolioData();
-  const { portfolio, cashflow, recovery, series6, series12, riskLoans, clientStats, loans, todayIso, lateFeeByLoan, penaltySummary } = P;
+  const { portfolio, cashflow, recovery, series6, series12, riskLoans, clientStats, loans, todayIso, lateFeeByLoan, penaltySummary, penaltyItems } = P;
   const [tab, setTab] = useState('resumen');
   const [range, setRange] = useState<6 | 12>(6);
   const series = range === 6 ? series6 : series12;
@@ -111,8 +112,12 @@ export const AnalyticsDashboard: React.FC = () => {
       ['Penalidades aplicadas', penaltySummary.allTime.total],
       ['Penalidades este mes', penaltySummary.month.total],
       [],
-      ['Mes', 'Capital', 'Interés', 'Mora', 'POS', 'Cobrado', 'Ingreso', 'Colocado', 'Préstamos'],
-      ...series12.map(s => [s.label, s.capital, s.interes, s.mora, s.pos, s.cobrado, s.ingreso, s.colocado, s.prestamos]),
+      ['Mes', 'Capital', 'Interés', 'Mora', 'POS', 'Cobrado', 'Ingreso', 'Penalidad', 'Colocado', 'Préstamos'],
+      ...series12.map(s => [s.label, s.capital, s.interes, s.mora, s.pos, s.cobrado, s.ingreso, s.penalidad, s.colocado, s.prestamos]),
+      [],
+      ['Penalidades', 'Fecha', 'Cliente', 'Origen', 'Detalle', 'Monto'],
+      ...penaltyItems.map(p => ['', p.date, p.clientName, PENALTY_SOURCE_LABEL[p.source],
+        p.percentage !== null ? `${p.percentage}%` : (p.description || ''), p.amount]),
     ];
     const csv = '﻿' + rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
@@ -209,6 +214,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <TabsTrigger value="cartera">Cartera</TabsTrigger>
             <TabsTrigger value="cobranza">Cobranza y morosidad</TabsTrigger>
             <TabsTrigger value="clientes">Clientes</TabsTrigger>
+            <TabsTrigger value="penalidades">Penalidades</TabsTrigger>
           </TabsList>
 
           {/* ---------------- RESUMEN FINANCIERO ---------------- */}
@@ -254,11 +260,56 @@ export const AnalyticsDashboard: React.FC = () => {
                   <div className="pt-3 border-t space-y-2 text-sm">
                     <div className="flex justify-between"><span className="text-slate-500">Ingreso total</span><span className="font-bold text-slate-900">{money(recovery.totalIncome)}</span></div>
                     <div className="flex justify-between"><span className="text-slate-500">Rendimiento sobre capital</span><span className="font-semibold text-emerald-700">{recovery.yieldPct.toFixed(1)}%</span></div>
-                    {/* Penalidades aplicadas (abonos con penalidad, cargos por penalización) */}
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Penalidades aplicadas{penaltySummary.allTime.count > 0 ? ` (${penaltySummary.allTime.count})` : ''}</span>
-                      <span className={`font-semibold ${penaltySummary.allTime.total > 0 ? 'text-orange-600' : 'text-slate-900'}`}>{money(penaltySummary.allTime.total)}</span>
-                    </div>
+                  </div>
+                </div>
+              </Panel>
+
+              {/* Apartado de PENALIDADES: abonos a capital con penalidad y cargos por penalización */}
+              <Panel title="Penalidades" subtitle="Aplicadas en abonos a capital y cargos por penalización"
+                action={<Button size="sm" variant="outline" onClick={() => setTab('penalidades')}>Ver detalle</Button>}>
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-xs text-slate-500">Total aplicado</p>
+                    <p className="text-3xl font-bold text-orange-600 leading-tight">{money(penaltySummary.allTime.total)}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {penaltySummary.allTime.count} {penaltySummary.allTime.count === 1 ? 'penalidad' : 'penalidades'}
+                      {' · '}este mes {money(penaltySummary.month.total)}
+                    </p>
+                  </div>
+                  {[
+                    { label: PENALTY_SOURCE_LABEL.capital_payment, data: penaltySummary.bySource.capital_payment, color: 'bg-orange-500' },
+                    { label: PENALTY_SOURCE_LABEL.charge, data: penaltySummary.bySource.charge, color: 'bg-amber-400' },
+                  ].map(r => {
+                    const p = penaltySummary.allTime.total > 0 ? (r.data.total / penaltySummary.allTime.total) * 100 : 0;
+                    return (
+                      <div key={r.label}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-slate-600">{r.label} ({r.data.count})</span>
+                          <span className="font-semibold text-slate-900">{money(r.data.total)}</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                          <div className={`h-full ${r.color} rounded-full`} style={{ width: `${p}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="pt-3 border-t">
+                    <p className="text-xs font-medium text-slate-500 mb-2">Últimas</p>
+                    {penaltyItems.length === 0 ? (
+                      <p className="text-sm text-slate-400">Sin penalidades aplicadas.</p>
+                    ) : (
+                      <ul className="space-y-1.5 text-sm">
+                        {penaltyItems.slice(0, 4).map(p => (
+                          <li key={p.id} className="flex justify-between gap-2">
+                            <span className="truncate text-slate-700">
+                              {p.clientName}
+                              <span className="text-slate-400"> · {p.date ? formatDateStringForSantoDomingo(p.date) : '—'}</span>
+                            </span>
+                            <span className="font-semibold text-orange-600 shrink-0">{money(p.amount)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </div>
               </Panel>
@@ -316,8 +367,8 @@ export const AnalyticsDashboard: React.FC = () => {
                       <th className="text-left py-2">Mes</th><th className="text-right py-2">Capital</th>
                       <th className="text-right py-2">Interés</th><th className="text-right py-2">Mora</th>
                       <th className="text-right py-2">POS</th><th className="text-right py-2">Cobrado</th>
-                      <th className="text-right py-2">Ingreso</th><th className="text-right py-2">Colocado</th>
-                      <th className="text-right py-2">Préstamos</th>
+                      <th className="text-right py-2">Ingreso</th><th className="text-right py-2">Penalidad</th>
+                      <th className="text-right py-2">Colocado</th><th className="text-right py-2">Préstamos</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -330,6 +381,7 @@ export const AnalyticsDashboard: React.FC = () => {
                         <td className="py-2 text-right">{money(s.pos)}</td>
                         <td className="py-2 text-right font-semibold">{money(s.cobrado)}</td>
                         <td className="py-2 text-right font-semibold text-emerald-700">{money(s.ingreso)}</td>
+                        <td className="py-2 text-right text-orange-600">{money(s.penalidad)}</td>
                         <td className="py-2 text-right text-violet-700">{money(s.colocado)}</td>
                         <td className="py-2 text-right">{s.prestamos}</td>
                       </tr>
@@ -527,6 +579,83 @@ export const AnalyticsDashboard: React.FC = () => {
                   <p className="text-xs text-slate-500 mt-1">oportunidades de recolocación</p>
                 </div>
               </div>
+            </Panel>
+          </TabsContent>
+
+          {/* ---------------- PENALIDADES ---------------- */}
+          <TabsContent value="penalidades" className="space-y-5">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <Kpi icon={ShieldAlert} label="Penalidad total aplicada" tone="bg-orange-100 text-orange-700"
+                value={money(penaltySummary.allTime.total)}
+                sub={`${penaltySummary.allTime.count} ${penaltySummary.allTime.count === 1 ? 'penalidad' : 'penalidades'}`} />
+              <Kpi icon={CalendarDays} label="Este mes" tone="bg-amber-100 text-amber-700"
+                value={money(penaltySummary.month.total)}
+                sub={`${penaltySummary.month.count} este mes · hoy ${money(penaltySummary.today.total)}`} />
+              <Kpi icon={PiggyBank} label="En abonos a capital" tone="bg-orange-100 text-orange-700"
+                value={money(penaltySummary.bySource.capital_payment.total)}
+                sub={`${penaltySummary.bySource.capital_payment.count} abono${penaltySummary.bySource.capital_payment.count === 1 ? '' : 's'} con penalidad`} />
+              <Kpi icon={Receipt} label="Cargos por penalización" tone="bg-amber-100 text-amber-700"
+                value={money(penaltySummary.bySource.charge.total)}
+                sub={`${penaltySummary.bySource.charge.count} cargo${penaltySummary.bySource.charge.count === 1 ? '' : 's'}`} />
+            </div>
+
+            <Panel title="Penalidades por mes" subtitle="Monto aplicado cada mes"
+              action={<Badge variant="outline" className="bg-slate-50">{range} meses</Badge>}>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={series}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={compact} />
+                  <Tooltip formatter={(v: number) => [money(v), 'Penalidad']} />
+                  <Bar dataKey="penalidad" name="Penalidad" fill="#ea580c" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Panel>
+
+            <Panel title="Detalle de penalidades" subtitle="Cada penalidad aplicada, de la más reciente a la más antigua">
+              {penaltyItems.length === 0 ? (
+                <p className="text-sm text-slate-500 py-8 text-center">
+                  Sin penalidades. Aparecen al hacer un abono a capital con penalidad o al agregar un "Cargo por Penalización".
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-xs uppercase text-slate-500 border-b">
+                      <tr>
+                        <th className="text-left py-2">Fecha</th><th className="text-left py-2">Cliente</th>
+                        <th className="text-left py-2">Origen</th><th className="text-left py-2">Detalle</th>
+                        <th className="text-right py-2">Monto</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {penaltyItems.map(p => (
+                        <tr key={p.id} className="border-b last:border-0 hover:bg-slate-50">
+                          <td className="py-2 whitespace-nowrap">{p.date ? formatDateStringForSantoDomingo(p.date) : '—'}</td>
+                          <td className="py-2 font-medium">{p.clientName}</td>
+                          <td className="py-2">{PENALTY_SOURCE_LABEL[p.source]}</td>
+                          <td className="py-2 text-slate-500">
+                            {p.percentage !== null
+                              ? `${p.percentage}%${p.base_amount !== null ? ` de ${money(p.base_amount)}` : ''}`
+                              : (p.description || '—')}
+                          </td>
+                          <td className="py-2 text-right font-semibold text-orange-600">{money(p.amount)}</td>
+                          <td className="py-2 text-right">
+                            <Button size="sm" variant="ghost" className="h-8"
+                              onClick={() => navigate(`/prestamos?action=details&loanId=${p.loan_id}`)}>Ver préstamo</Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t font-semibold">
+                        <td className="py-2" colSpan={4}>Total</td>
+                        <td className="py-2 text-right text-orange-600">{money(penaltySummary.allTime.total)}</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
             </Panel>
           </TabsContent>
         </Tabs>

@@ -495,8 +495,20 @@ export const usePortfolioData = () => {
       today: summarizePenalties(penalties.filter(p => dayOf(p) === todayIso)),
       month: summarizePenalties(penalties.filter(p => dayOf(p).slice(0, 7) === todayIso.slice(0, 7))),
       allTime: summarizePenalties(penalties),
+      // Por origen: abonos a capital con penalidad y cargos por penalización
+      bySource: {
+        capital_payment: summarizePenalties(penalties.filter(p => p.source === 'capital_payment')),
+        charge: summarizePenalties(penalties.filter(p => p.source === 'charge')),
+        other: summarizePenalties(penalties.filter(p => p.source === 'other')),
+      },
     };
   }, [penalties, todayIso]);
+
+  /** Penalidades con su día en Santo Domingo, para la serie mensual. */
+  const penaltyPoints = useMemo(
+    () => penalties.map(p => ({ date: capitalPaymentDateIso(p.created_at), amount: p.amount })),
+    [penalties],
+  );
 
   const portfolio = useMemo(
     () => ({
@@ -514,11 +526,27 @@ export const usePortfolioData = () => {
     [loansForMetrics, todayIso, overdueFactsByLoan],
   );
   const riskLoans = useMemo(() => topRiskLoans(loansForMetrics, todayIso, 8), [loansForMetrics, todayIso]);
-  const series12 = useMemo(() => buildMonthlySeries(cashflowPayments, sales, loans, todayIso, 12), [cashflowPayments, sales, loans, todayIso]);
+  const series12 = useMemo(
+    () => buildMonthlySeries(cashflowPayments, sales, loans, todayIso, 12, penaltyPoints),
+    [cashflowPayments, sales, loans, todayIso, penaltyPoints],
+  );
   const series6 = useMemo(() => series12.slice(-6), [series12]);
 
   const clientById = useMemo(() => new Map(clients.map(c => [c.id, c])), [clients]);
   const loanById = useMemo(() => new Map(loans.map(l => [l.id, l])), [loans]);
+
+  /** Cada penalidad con su cliente y su día, de la más reciente a la más antigua. */
+  const penaltyItems = useMemo(() => penalties
+    .map(p => {
+      const loan = loanById.get(p.loan_id);
+      return {
+        ...p,
+        date: capitalPaymentDateIso(p.created_at) || '',
+        clientName: loan?.client?.full_name || clientById.get(loan?.client_id || '')?.full_name || 'Cliente',
+      };
+    })
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
+  [penalties, loanById, clientById]);
 
   /** Última gestión de cobro por préstamo (para saber a quién no se ha contactado). */
   const lastContactByLoan = useMemo(() => {
@@ -799,7 +827,7 @@ export const usePortfolioData = () => {
     loans: loansForMetrics, clients, payments, sales, tracking, legalCases,
     portfolio, cashflow, recovery, agenda, riskLoans, series6, series12,
     pending, activity, onboarding, clientStats, lateFeeByLoan,
-    capitalPayments, capitalToday, capitalMonth, penalties, penaltySummary,
+    capitalPayments, capitalToday, capitalMonth, penalties, penaltySummary, penaltyItems,
     refresh: () => load(true),
   };
 };

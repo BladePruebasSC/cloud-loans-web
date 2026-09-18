@@ -613,6 +613,14 @@ export interface MonthlyPoint {
   ingreso: number;  // interés + mora + POS
   colocado: number; // capital desembolsado ese mes
   prestamos: number;
+  /** Penalidades aplicadas ese mes (abonos con penalidad, cargos por penalización) */
+  penalidad: number;
+}
+
+/** Penalidad para la serie mensual: su día en Santo Domingo ('YYYY-MM-DD') y su monto. */
+export interface PenaltyPoint {
+  date: string | null;
+  amount: number;
 }
 
 const MONTH_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -629,7 +637,12 @@ export const buildMonthlySeries = (
   sales: SaleLike[],
   loans: LoanLike[],
   todayIso: string,
-  months = 6
+  months = 6,
+  /**
+   * Penalidades del período. Van en su propia columna: NO se suman al cobrado ni al ingreso,
+   * porque la de un cargo por penalización se cobra después, como pago del cargo.
+   */
+  penalties: PenaltyPoint[] = [],
 ): MonthlyPoint[] => {
   const keys: string[] = [];
   let k = monthKey(todayIso);
@@ -640,9 +653,14 @@ export const buildMonthlySeries = (
   const index = new Map<string, MonthlyPoint>(
     keys.map(key => [key, {
       key, label: monthLabel(key),
-      capital: 0, interes: 0, mora: 0, pos: 0, cobrado: 0, ingreso: 0, colocado: 0, prestamos: 0,
+      capital: 0, interes: 0, mora: 0, pos: 0, cobrado: 0, ingreso: 0, colocado: 0, prestamos: 0, penalidad: 0,
     }])
   );
+  for (const p of penalties) {
+    if (!p?.date) continue;
+    const point = index.get(monthKey(p.date));
+    if (point) point.penalidad += Number(p.amount) || 0;
+  }
 
   for (const p of payments) {
     const point = index.get(monthKey(dateOnly(p.payment_date)));
@@ -680,6 +698,7 @@ export const buildMonthlySeries = (
       cobrado: round2(p.cobrado),
       ingreso: round2(p.interes + p.mora + p.pos),
       colocado: round2(p.colocado),
+      penalidad: round2(p.penalidad),
     };
   });
 };

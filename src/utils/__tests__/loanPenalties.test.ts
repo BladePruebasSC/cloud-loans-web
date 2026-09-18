@@ -148,6 +148,22 @@ describe('dashboard: préstamos por aprobar', () => {
   });
 });
 
+describe('dashboard: penalidades por mes', () => {
+  it('Cada penalidad cae en su mes y NO se suma al cobrado ni al ingreso', () => {
+    const serie = buildMonthlySeries([], [], [], '2026-09-18', 3, [
+      { date: '2026-09-02', amount: 3000 },
+      { date: '2026-09-15', amount: 1500.5 },
+      { date: '2026-08-31', amount: 3749.5 },
+      { date: '2026-01-10', amount: 999 }, // fuera del rango
+      { date: null, amount: 50 },           // sin fecha: se ignora
+    ]);
+    expect(serie.map(s => [s.key, s.penalidad])).toEqual([
+      ['2026-07', 0], ['2026-08', 3749.5], ['2026-09', 4500.5],
+    ]);
+    expect(serie.every(s => s.cobrado === 0 && s.ingreso === 0)).toBe(true);
+  });
+});
+
 describe('indefinidos: nombre de la frecuencia', () => {
   it('Se muestra bajo "Indefinido"', () => {
     expect(getFrequencyName('monthly')).toBe('Mensual');

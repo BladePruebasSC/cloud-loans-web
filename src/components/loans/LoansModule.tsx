@@ -1888,6 +1888,10 @@ export const LoansModule = () => {
           setSelectedLoanForTracking(targetLoan);
           setShowCollectionTracking(true);
           toast.success(`Abriendo formulario de seguimiento para ${targetLoan.client?.full_name}`);
+        } else if (action === 'details') {
+          // Abrir los Detalles del préstamo (p. ej. desde las penalidades del dashboard)
+          setSelectedLoan(targetLoan);
+          setShowDetailsView(true);
         }
         }, 100);
       } else if (!loading) {
