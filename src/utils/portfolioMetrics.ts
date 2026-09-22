@@ -49,6 +49,8 @@ export interface PaymentLike {
   principal_amount: number | null;
   interest_amount: number | null;
   late_fee?: number | null;
+  /** Descuento del pago: se acreditó la cuota completa, pero entró menos dinero. */
+  discount_amount?: number | null;
   payment_date: string | null;
   /**
    * Instante real del cobro. `payment_date` es solo la FECHA, así que la actividad reciente no
@@ -428,16 +430,18 @@ export interface CashflowTotals {
   capital: number;
   interest: number;
   lateFee: number;
-  /** capital + interés + mora efectivamente recibidos */
+  /** Dinero que entró de verdad: lo acreditado menos los descuentos */
   collected: number;
   pos: number;
-  /** Ingreso real del negocio: interés + mora + POS (el capital es recuperación, no ingreso) */
+  /** Ingreso real del negocio: interés + mora + POS − descuentos (el capital es recuperación) */
   income: number;
+  /** Descuentos concedidos en los pagos del período */
+  discount: number;
   count: number;
 }
 
 const emptyTotals = (): CashflowTotals => ({
-  capital: 0, interest: 0, lateFee: 0, collected: 0, pos: 0, income: 0, count: 0,
+  capital: 0, interest: 0, lateFee: 0, collected: 0, pos: 0, income: 0, discount: 0, count: 0,
 });
 
 const addPayment = (t: CashflowTotals, p: PaymentLike) => {
@@ -445,11 +449,14 @@ const addPayment = (t: CashflowTotals, p: PaymentLike) => {
   const interest = Number(p.interest_amount) || 0;
   const lateFee = Number(p.late_fee) || 0;
   const amount = Number(p.amount) || 0;
+  // Lo perdonado no entró en la caja, aunque la cuota se haya acreditado completa (2026-09-22).
+  const discount = Number(p.discount_amount) || 0;
   t.capital += capital;
   t.interest += interest;
   t.lateFee += lateFee;
-  // `amount` es el total recibido; si viniera vacío se reconstruye por componentes
-  t.collected += amount > 0 ? amount : capital + interest + lateFee;
+  t.discount += discount;
+  // `amount` es el total acreditado; si viniera vacío se reconstruye por componentes
+  t.collected += (amount > 0 ? amount : capital + interest + lateFee) - discount;
   t.count++;
 };
 
@@ -459,7 +466,8 @@ const seal = (t: CashflowTotals): CashflowTotals => ({
   lateFee: round2(t.lateFee),
   collected: round2(t.collected),
   pos: round2(t.pos),
-  income: round2(t.interest + t.lateFee + t.pos),
+  income: round2(t.interest + t.lateFee + t.pos - t.discount),
+  discount: round2(t.discount),
   count: t.count,
 });
 
@@ -615,6 +623,8 @@ export interface MonthlyPoint {
   prestamos: number;
   /** Penalidades aplicadas ese mes (abonos con penalidad, cargos por penalización) */
   penalidad: number;
+  /** Descuentos concedidos en los pagos de ese mes */
+  descuento: number;
 }
 
 /** Penalidad para la serie mensual: su día en Santo Domingo ('YYYY-MM-DD') y su monto. */
@@ -653,7 +663,8 @@ export const buildMonthlySeries = (
   const index = new Map<string, MonthlyPoint>(
     keys.map(key => [key, {
       key, label: monthLabel(key),
-      capital: 0, interes: 0, mora: 0, pos: 0, cobrado: 0, ingreso: 0, colocado: 0, prestamos: 0, penalidad: 0,
+      capital: 0, interes: 0, mora: 0, pos: 0, cobrado: 0, ingreso: 0, colocado: 0, prestamos: 0,
+      penalidad: 0, descuento: 0,
     }])
   );
   for (const p of penalties) {
@@ -669,10 +680,13 @@ export const buildMonthlySeries = (
     const interes = Number(p.interest_amount) || 0;
     const mora = Number(p.late_fee) || 0;
     const amount = Number(p.amount) || 0;
+    const descuento = Number(p.discount_amount) || 0;
     point.capital += capital;
     point.interes += interes;
     point.mora += mora;
-    point.cobrado += amount > 0 ? amount : capital + interes + mora;
+    point.descuento += descuento;
+    // Lo perdonado no entró en la caja.
+    point.cobrado += (amount > 0 ? amount : capital + interes + mora) - descuento;
   }
   for (const s of sales) {
     if (s.status && s.status !== 'completed') continue;
@@ -696,9 +710,10 @@ export const buildMonthlySeries = (
       mora: round2(p.mora),
       pos: round2(p.pos),
       cobrado: round2(p.cobrado),
-      ingreso: round2(p.interes + p.mora + p.pos),
+      ingreso: round2(p.interes + p.mora + p.pos - p.descuento),
       colocado: round2(p.colocado),
       penalidad: round2(p.penalidad),
+      descuento: round2(p.descuento),
     };
   });
 };

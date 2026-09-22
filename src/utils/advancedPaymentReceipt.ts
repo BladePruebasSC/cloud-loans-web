@@ -60,6 +60,10 @@ export interface AdvancedReceiptData {
   totalApplied: number;
   totalPrincipal: number;
   totalInterest: number;
+  /** Descuento aplicado: lo acreditado menos esto es lo que entregó el cliente. */
+  discountAmount?: number;
+  discountPercentage?: number | null;
+  discountReason?: string | null;
   /** Saldo del préstamo tras el pago. `null` si no se pudo leer. */
   balanceAfter: number | null;
   /** Lo que sigue pendiente de las cuotas cobradas en este recibo */
@@ -239,7 +243,20 @@ export const buildAdvancedPaymentReceipt = (
         </div>
       </div>
 
-      <div class="total-amount">TOTAL RECIBIDO: ${money(data.totalApplied)}</div>
+      ${(data.discountAmount || 0) > 0.005 ? `
+        <div class="section" style="margin-top:6px;">
+          <div class="info-row"><span>Subtotal</span><span>${money(data.totalApplied)}</span></div>
+          <div class="info-row">
+            <span>Descuento${data.discountPercentage ? ` (${data.discountPercentage}%)` : ''}</span>
+            <span>-${money(data.discountAmount || 0)}</span>
+          </div>
+          ${data.discountReason ? `<div class="info-row"><span>Motivo</span><span>${esc(data.discountReason)}</span></div>` : ''}
+        </div>
+      ` : ''}
+
+      <div class="total-amount">TOTAL RECIBIDO: ${money(
+        Math.max(0, Math.round((data.totalApplied - (data.discountAmount || 0)) * 100) / 100),
+      )}</div>
 
       <div class="section" style="margin-top:10px;">
         <div class="info-row"><span>Aplicado a capital</span><span>${money(data.totalPrincipal)}</span></div>

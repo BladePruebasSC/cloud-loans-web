@@ -46,6 +46,7 @@ import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import { getLateFeePeriodDays } from '@/utils/frequencyUtils';
 import { useLoanPenalties } from '@/hooks/useLoanPenalties';
 import { PENALTY_SOURCE_LABEL } from '@/utils/loanPenalties';
+import { paymentCashReceived, paymentsDiscountTotal } from '@/utils/paymentDiscount';
 
 interface LoanDetailsViewProps {
   loanId: string;
@@ -136,6 +137,12 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   const [breakdownItems, setBreakdownItems] = useState<Array<{ installment: number; isPaid: boolean; daysOverdue: number }>>([]);
   /** Desglose completo (incluye cuotas dinámicas) para calculateBalanceByAge en préstamos indefinidos */
   const [fullBreakdown, setFullBreakdown] = useState<Array<{ installment: number; dueDate: string; daysOverdue: number; principal: number; lateFee: number; isPaid: boolean; isCharge?: boolean }>>([]);
+
+  /** Descuentos aplicados en los pagos y efectivo realmente recibido. */
+  const totalDiscounts = paymentsDiscountTotal(payments as any[]);
+  const cashReceived = Math.round(
+    (payments as any[]).reduce((sum, p) => sum + paymentCashReceived(p), 0) * 100,
+  ) / 100;
 
   // Penalidades del préstamo: cada una y el acumulado (abonos con penalidad, cargos por penalización).
   const { rows: penaltyRows, totals: penaltyTotalsByLoan } = useLoanPenalties(isOpen && loanId ? [loanId] : []);
@@ -1790,6 +1797,19 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       <div className="text-sm text-gray-600">Total pagado</div>
                       <div className="text-lg font-semibold text-green-600">RD {totalPaidForPercentage.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
+                    {/* DESCUENTOS (2026-09-22): lo perdonado en los pagos. Las cuotas se acreditaron
+                        completas, así que esto NO está dentro de "Total pagado" como efectivo. */}
+                    {totalDiscounts > 0.005 && (
+                      <div>
+                        <div className="text-sm text-gray-600">Descuentos aplicados</div>
+                        <div className="text-lg font-semibold text-emerald-700">
+                          RD {totalDiscounts.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Efectivo recibido: RD {cashReceived.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 

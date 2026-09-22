@@ -246,7 +246,10 @@ export const usePortfolioData = () => {
           ids => supabase.from('payments')
             // `due_date` y `superseded_at` hacen falta para repartir los pagos entre cuotas
             // y saber qué se debe de verdad (`computeInstallmentDues`).
-            .select('id, loan_id, amount, principal_amount, interest_amount, late_fee, payment_date, payment_time_local, due_date, superseded_at, created_by')
+            // `*` a propósito: `discount_amount` (lo perdonado en el pago, que no entró en la
+            // caja) llega con una migración, y nombrarla rompería la consulta entera en una base
+            // que todavía no la tenga.
+            .select('*')
             .in('loan_id', ids),
           loanIds, 'pagos'
         ),

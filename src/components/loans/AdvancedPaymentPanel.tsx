@@ -31,6 +31,10 @@ import {
   type DueRow,
 } from '@/utils/installmentDues';
 import type { AdvancedReceiptData, ReceiptCompany } from '@/utils/advancedPaymentReceipt';
+import {
+  computeDiscount, describeDiscount, discountFields, insertPaymentsWithDiscount, netToCollect,
+  splitDiscount, type DiscountMode,
+} from '@/utils/paymentDiscount';
 import { buildIndefiniteInterestResolver, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 
 interface Props {
@@ -80,6 +84,10 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
   const [amount, setAmount] = useState<number>(0);
   const [amountTouched, setAmountTouched] = useState(false);
   const [method, setMethod] = useState('cash');
+  // DESCUENTO del pago avanzado (2026-09-22)
+  const [discountMode, setDiscountMode] = useState<DiscountMode>('percent');
+  const [discountValue, setDiscountValue] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
 
@@ -241,6 +249,12 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
     [selectedRows, amount],
   );
 
+  /** Descuento sobre lo que se va a aplicar a las cuotas. */
+  const discount = useMemo(
+    () => computeDiscount(discountMode, discountValue, allocation.applied),
+    [discountMode, discountValue, allocation.applied],
+  );
+
   /**
    * Pulsar la fila `index` significa "pagar HASTA aquí": entran ella y todas las anteriores.
    * Volver a pulsar una ya incluida corta la selección justo antes.
@@ -282,12 +296,21 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
       return;
     }
 
+    if (discount.error) {
+      toast.error(discount.error);
+      return;
+    }
+
     setSaving(true);
     try {
       const nowIso = new Date().toISOString();
-      const paymentRows = allocation.allocations.map(a => ({
+      // El descuento se reparte entre las cuotas cobradas, proporcional a cada monto: cada pago
+      // guarda su parte y la suma cuadra exacta con lo que se perdonó.
+      const discountParts = splitDiscount(allocation.allocations.map(a => a.applied), discount.amount);
+      const paymentRows = allocation.allocations.map((a, i) => ({
         loan_id: loanId,
         amount: a.applied,
+        ...discountFields(discountParts[i] || 0, discount.percentage, discountReason),
         principal_amount: a.principal,
         interest_amount: a.interest,
         late_fee: 0,
@@ -309,8 +332,12 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
         company_id: companyId,
       }));
 
-      const { error: payError } = await supabase.from('payments').insert(paymentRows);
+      // Si la base todavía no tiene las columnas del descuento, el pago se guarda sin él.
+      const { error: payError, discountSaved } = await insertPaymentsWithDiscount(supabase as any, paymentRows);
       if (payError) throw payError;
+      if (discount.amount > 0.005 && !discountSaved) {
+        toast.warning('El pago se registró, pero el descuento no se pudo guardar: falta aplicar la migración de descuentos.');
+      }
 
       // Reflejar el estado en `installments`. Los triggers recalculan el balance del préstamo;
       // `is_paid` lo mantiene la aplicación, igual que el flujo normal.
@@ -394,6 +421,9 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
         totalApplied: allocation.applied,
         totalPrincipal: round2(allocation.allocations.reduce((s, a) => s + a.principal, 0)),
         totalInterest: round2(allocation.allocations.reduce((s, a) => s + a.interest, 0)),
+        discountAmount: discount.amount,
+        discountPercentage: discount.percentage,
+        discountReason: discountReason.trim() || null,
         balanceAfter: loanAfter ? Number(loanAfter.remaining_balance ?? 0) : null,
         stillPending: allocation.shortfall,
       };
@@ -610,6 +640,44 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
             <Label htmlFor="adv-notes">Notas (opcional)</Label>
             <Textarea id="adv-notes" rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
           </div>
+
+          {/* DESCUENTO (2026-09-22): las cuotas se acreditan completas y el cliente entrega menos.
+              Se reparte entre las cuotas cobradas, proporcional a cada monto. */}
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-emerald-900">Descuento (opcional)</Label>
+              <Select value={discountMode} onValueChange={(v) => setDiscountMode(v as DiscountMode)}>
+                <SelectTrigger className="w-[130px] bg-white"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="percent">Porcentaje %</SelectItem>
+                  <SelectItem value="amount">Monto RD$</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <NumberInput
+                step="0.01"
+                min="0"
+                max={discountMode === 'percent' ? '100' : undefined}
+                value={discountValue}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDiscountValue(e.target.value)}
+                placeholder={discountMode === 'percent' ? '0%' : '0.00'}
+              />
+              <Input
+                value={discountReason}
+                onChange={e => setDiscountReason(e.target.value)}
+                placeholder="Motivo (opcional)"
+              />
+            </div>
+            {discount.error && <p className="text-xs font-medium text-red-600">{discount.error}</p>}
+            {discount.amount > 0.005 && (
+              <p className="text-xs text-emerald-800">
+                Descuento <strong>{formatCurrency(discount.amount)}</strong>
+                {discount.percentage ? ` (${discount.percentage}%)` : ''} · el cliente entrega{' '}
+                <strong>{formatCurrency(netToCollect(allocation.applied, discount.amount))}</strong>
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="space-y-3">
@@ -624,6 +692,18 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
                 <span className="text-gray-600">Se aplicará</span>
                 <span className="font-semibold text-blue-700">{formatCurrency(allocation.applied)}</span>
               </div>
+              {discount.amount > 0.005 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">{describeDiscount(discount.amount, discount.percentage)}</span>
+                    <span className="font-semibold text-emerald-700">−{formatCurrency(discount.amount)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">El cliente entrega</span>
+                    <span className="font-semibold">{formatCurrency(netToCollect(allocation.applied, discount.amount))}</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-600">Quedan saldadas</span>
                 <span className="font-semibold text-green-700">

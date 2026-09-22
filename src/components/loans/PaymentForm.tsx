@@ -62,7 +62,11 @@ const interestPerInstallment = (loan?: {
   return (Number(loan?.amount) || 0) * getPeriodRate(Number(loan?.interest_rate) || 0, loan?.payment_frequency);
 };
 import { toast } from 'sonner';
-import { ArrowLeft, DollarSign, AlertTriangle, Printer, Download } from 'lucide-react';
+import { ArrowLeft, DollarSign, AlertTriangle, Printer, Download, Percent } from 'lucide-react';
+import {
+  computeDiscount, describeDiscount, discountFields, insertPaymentsWithDiscount, netToCollect,
+  type DiscountMode,
+} from '@/utils/paymentDiscount';
 import { Search, User } from 'lucide-react';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -149,6 +153,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
   const [loading, setLoading] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentDistribution, setPaymentDistribution] = useState<any>(null);
+  // DESCUENTO del pago (2026-09-22): por porcentaje o por monto.
+  const [discountMode, setDiscountMode] = useState<DiscountMode>('percent');
+  const [discountValue, setDiscountValue] = useState<string>('');
+  const [discountReason, setDiscountReason] = useState<string>('');
+  /** Descuento sobre el monto de la cuota que se está cobrando. */
+  const discount = useMemo(
+    () => computeDiscount(discountMode, discountValue, paymentAmount),
+    [discountMode, discountValue, paymentAmount],
+  );
   const [lateFeeAmount, setLateFeeAmount] = useState<number>(0);
   const [lateFeeCalculation, setLateFeeCalculation] = useState<any>(null);
   const [lateFeeBreakdown, setLateFeeBreakdown] = useState<any>(null);
@@ -522,8 +535,21 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                 <span>Pago a Intereses: RD$${(lastPaymentData.interestAmount || payment.interest_amount || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               ${(lastPaymentData.lateFeeAmount || payment.late_fee || 0) > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${(lastPaymentData.lateFeeAmount || payment.late_fee || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
+              ${(payment.discount_amount || 0) > 0 ? `
+              <div class="info-row">
+                <span>Subtotal: RD$${(Number(payment.amount || 0) + Number(lastPaymentData.lateFeeAmount || payment.late_fee || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div class="info-row">
+                <span>${describeDiscount(payment.discount_amount, payment.discount_percentage)}: −RD$${Number(payment.discount_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              ${payment.discount_reason ? `<div class="info-row"><span>Motivo: ${payment.discount_reason}</span></div>` : ''}
+              ` : ''}
               <div class="total-amount">
-                TOTAL: RD$${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                TOTAL${(payment.discount_amount || 0) > 0 ? ' RECIBIDO' : ''}: RD$${(
+                  Number(payment.amount || 0)
+                  + Number(lastPaymentData.lateFeeAmount || payment.late_fee || 0)
+                  - Number(payment.discount_amount || 0)
+                ).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -609,6 +635,9 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         principalAmount: lastPaymentData.principalPayment,
         interestAmount: lastPaymentData.interestAmount || lastPaymentData.interestPayment || 0,
         lateFeeAmount: lastPaymentData.lateFeeAmount > 0 ? lastPaymentData.lateFeeAmount : undefined,
+        discountAmount: Number(lastPaymentData.payment?.discount_amount) || undefined,
+        discountPercentage: lastPaymentData.payment?.discount_percentage ?? null,
+        discountReason: lastPaymentData.payment?.discount_reason ?? null,
         paymentMethod: lastPaymentData.paymentMethod,
         loanAmount: lastPaymentData.loan.amount,
         remainingBalance: lastPaymentData.remainingBalance,
@@ -2287,9 +2316,19 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
         fromNextPaymentInfo: !!nextPaymentInfo?.dueDate
       });
       
+      // DESCUENTO: se acredita la cuota COMPLETA en `amount` (así queda saldada) y se guarda
+      // aparte lo perdonado. El efectivo recibido es `amount + late_fee - discount_amount`.
+      const paymentDiscount = computeDiscount(discountMode, discountValue, data.amount);
+      if (paymentDiscount.error) {
+        toast.error(paymentDiscount.error);
+        setLoading(false);
+        return;
+      }
+
       const paymentData = {
         loan_id: data.loan_id,
         amount: roundToTwoDecimals(data.amount), // Solo el monto de la cuota, sin incluir la mora (2 decimales)
+        ...discountFields(paymentDiscount.amount, paymentDiscount.percentage, discountReason),
         principal_amount: roundToTwoDecimals(principalPayment),
         interest_amount: roundToTwoDecimals(interestPayment),
         late_fee: roundToTwoDecimals(data.late_fee_amount || 0), // Mora como concepto separado (2 decimales)
@@ -2309,10 +2348,12 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
 
       // Sin verificación de duplicados - permitir cualquier pago
 
-      const { data: insertedPayment, error: paymentError } = await supabase
-        .from('payments')
-        .insert([paymentData])
-        .select();
+      // Si la base aún no tiene las columnas del descuento, el pago se guarda sin él y se avisa.
+      const { data: insertedPayment, error: paymentError, discountSaved } =
+        await insertPaymentsWithDiscount(supabase as any, [paymentData], '*');
+      if (paymentDiscount.amount > 0.005 && !discountSaved && !paymentError) {
+        toast.warning('El pago se registró, pero el descuento no se pudo guardar: falta aplicar la migración de descuentos.');
+      }
 
       if (paymentError) {
         console.error('🔍 PaymentForm: Error insertando pago:', paymentError);
@@ -3407,10 +3448,20 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                   <span className="font-semibold text-orange-600">RD${roundToTwoDecimals(form.watch('late_fee_amount') || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               )}
+              {discount.amount > 0.005 && (
+                <div className="flex justify-between items-center">
+                  <span className="text-blue-700">
+                    {describeDiscount(discount.amount, discount.percentage)}:
+                  </span>
+                  <span className="font-semibold text-emerald-700">
+                    −{formatCurrency(discount.amount)}
+                  </span>
+                </div>
+              )}
               <div className="border-t pt-2 flex justify-between items-center">
                 <span className="text-blue-800 font-medium">Total a pagar:</span>
                 <span className="font-bold text-lg text-blue-800">
-                  {formatCurrency(paymentAmount + (form.watch('late_fee_amount') || 0))}
+                  {formatCurrency(netToCollect(paymentAmount + (form.watch('late_fee_amount') || 0), discount.amount))}
                 </span>
               </div>
             </div>
@@ -3559,6 +3610,58 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                         </FormItem>
                       )}
                     />
+                  </div>
+
+                  {/* DESCUENTO (2026-09-22): se perdona parte del pago. La cuota se acredita
+                      completa —queda saldada— y el cliente entrega el total menos el descuento. */}
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-emerald-900 flex items-center gap-2">
+                          <Percent className="h-4 w-4" /> Descuento (Opcional)
+                        </p>
+                        <p className="text-xs text-emerald-700">
+                          Por porcentaje o por monto. La cuota se acredita completa; el cliente paga menos.
+                        </p>
+                      </div>
+                      <Select value={discountMode} onValueChange={(v) => setDiscountMode(v as DiscountMode)}>
+                        <SelectTrigger className="w-[130px] bg-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white">
+                          <SelectItem value="percent">Porcentaje %</SelectItem>
+                          <SelectItem value="amount">Monto RD$</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <NumberInput
+                        step="0.01"
+                        min="0"
+                        max={discountMode === 'percent' ? '100' : undefined}
+                        placeholder={discountMode === 'percent' ? '0%' : '0.00'}
+                        value={discountValue}
+                        onChange={(e) => setDiscountValue(e.target.value)}
+                      />
+                      <Input
+                        placeholder="Motivo del descuento (opcional)"
+                        value={discountReason}
+                        onChange={(e) => setDiscountReason(e.target.value)}
+                      />
+                    </div>
+                    {discount.error && <p className="text-xs font-medium text-red-600">{discount.error}</p>}
+                    {discount.amount > 0.005 && (
+                      <div className="text-xs text-emerald-800 space-y-0.5">
+                        <div>
+                          Descuento: <strong>{formatCurrency(discount.amount)}</strong>
+                          {discount.percentage ? ` (${discount.percentage}% de ${formatCurrency(paymentAmount)})` : ''}
+                        </div>
+                        <div>
+                          El cliente entrega:{' '}
+                          <strong>{formatCurrency(netToCollect(paymentAmount + (form.watch('late_fee_amount') || 0), discount.amount))}</strong>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <FormField

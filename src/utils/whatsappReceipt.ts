@@ -22,6 +22,10 @@ interface LoanPaymentReceipt {
   principalAmount: number;
   interestAmount: number;
   lateFeeAmount?: number;
+  /** Descuento aplicado al pago: lo acreditado menos esto es lo que entregó el cliente. */
+  discountAmount?: number;
+  discountPercentage?: number | null;
+  discountReason?: string | null;
   paymentMethod: string;
   loanAmount?: number;
   remainingBalance?: number;
@@ -168,6 +172,15 @@ export const generateLoanPaymentReceipt = (receipt: LoanPaymentReceipt): string 
   message += `  - Interés: ${formatCurrency(receipt.interestAmount)}\n`;
   if (receipt.lateFeeAmount && receipt.lateFeeAmount > 0) {
     message += `  - Mora: ${formatCurrency(receipt.lateFeeAmount)}\n`;
+  }
+  // Descuento: se acreditó la cuota completa y el cliente entregó menos.
+  if (receipt.discountAmount && receipt.discountAmount > 0) {
+    const pct = Number(receipt.discountPercentage);
+    message += `Descuento${Number.isFinite(pct) && pct > 0 ? ` (${pct}%)` : ''}: -${formatCurrency(receipt.discountAmount)}\n`;
+    if (receipt.discountReason) message += `  Motivo: ${receipt.discountReason}\n`;
+    message += `Total recibido: ${formatCurrency(
+      Math.max(0, Math.round((receipt.paymentAmount - receipt.discountAmount) * 100) / 100),
+    )}\n`;
   }
   message += `Método de pago: ${paymentMethod}\n`;
   if (receipt.referenceNumber) {

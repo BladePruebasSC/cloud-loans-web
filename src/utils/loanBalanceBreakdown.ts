@@ -20,6 +20,8 @@ export interface LoanBalanceLoan {
   id: string;
   /** Monto PRESTADO. No cambia con los abonos a capital. */
   amount: number;
+  /** 'paid' = saldado: no debe nada, pase lo que pase con sus cuotas. */
+  status?: string | null;
   interest_rate?: number;
   term_months?: number;
   amortization_type?: string;
@@ -72,6 +74,16 @@ export function computeLoanBalanceBreakdown(
   data: LoanBalanceData,
   todayIso: string = getCurrentDateStringForSantoDomingo(),
 ): LoanBalanceBreakdown {
+  // PRÉSTAMO SALDADO: no debe nada.
+  //
+  // FALLO REPORTADO (2026-09-22): un indefinido ya pagado ("Pagado" en la tarjeta, balance 0)
+  // salía en el estado de cuenta con RD$20,166.32 de "Balance Restante". La rama de indefinidos
+  // de abajo nunca devuelve 0 —siempre hay un período devengándose— y aquí no se miraba el
+  // estado; la tarjeta sí lo miraba, así que cada pantalla decía una cosa.
+  if (String(loan?.status || '').toLowerCase() === 'paid') {
+    return { baseBalance: 0, pendingCharges: 0, totalBalance: 0, capitalPending: 0, interestPending: 0 };
+  }
+
   const amort = String(loan?.amortization_type || '').toLowerCase();
   const payments = data.payments || [];
   const installments = data.installments || [];

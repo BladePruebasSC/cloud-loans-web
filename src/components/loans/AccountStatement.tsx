@@ -32,6 +32,7 @@ import { formatDateStringForSantoDomingo, createDateInSantoDomingo, getCurrentDa
 import { getFrequencyRateFactor } from '@/utils/frequencyUtils';
 import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 import { interleaveCapitalPayments, toCapitalPaymentEntries, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
+import { describeDiscount, paymentCashReceived, paymentsDiscountTotal } from '@/utils/paymentDiscount';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { PiggyBank } from 'lucide-react';
 
@@ -2629,12 +2630,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
     const totalPrincipal = payments.reduce((sum, payment) => sum + payment.principal_amount, 0);
     const totalInterest = payments.reduce((sum, payment) => sum + payment.interest_amount, 0);
     const totalLateFee = payments.reduce((sum, payment) => sum + payment.late_fee, 0);
-    
+    // DESCUENTOS (2026-09-22): lo perdonado en los pagos. "Total Pagado" es lo ACREDITADO a las
+    // cuotas; el efectivo recibido es eso menos el descuento.
+    const totalDiscount = paymentsDiscountTotal(payments as any[]);
+    const totalReceived = Math.round((payments as any[])
+      .reduce((sum, payment) => sum + paymentCashReceived(payment), 0) * 100) / 100;
+
     return {
       totalPaid,
       totalPrincipal,
       totalInterest,
-      totalLateFee
+      totalLateFee,
+      totalDiscount,
+      totalReceived,
     };
   };
 
@@ -2759,6 +2767,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                 <tr><td>A Principal:</td><td>${formatCurrency(payment.principal_amount)}</td></tr>
                 <tr><td>A Intereses:</td><td>${formatCurrency(payment.interest_amount || Math.max(0, payment.amount - (payment.principal_amount || 0)))}</td></tr>
                 <tr><td>Mora:</td><td>${formatCurrency(payment.late_fee)}</td></tr>
+                ${Number((payment as any).discount_amount || 0) > 0.005 ? `
+                  <tr><td>${describeDiscount(Number((payment as any).discount_amount), (payment as any).discount_percentage)}:</td><td>-${formatCurrency(Number((payment as any).discount_amount))}</td></tr>
+                  ${(payment as any).discount_reason ? `<tr><td>Motivo del descuento:</td><td>${(payment as any).discount_reason}</td></tr>` : ''}
+                  <tr><td>Efectivo Recibido:</td><td class="total">${formatCurrency(paymentCashReceived(payment as any))}</td></tr>
+                ` : ''}
                 <tr><td>Estado:</td><td>${payment.status}</td></tr>
               </table>
             </div>
@@ -3322,6 +3335,13 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                     <div className="text-sm text-gray-600">Mora Actual</div>
                   </div>
                 )}
+                {totals.totalDiscount > 0.005 && (
+                  <div className="text-center p-3 bg-emerald-50 rounded-lg">
+                    <div className="text-2xl font-bold text-emerald-700">{formatCurrency(totals.totalDiscount)}</div>
+                    <div className="text-sm text-gray-600">Descuentos</div>
+                    <div className="text-xs text-gray-500">Recibido: {formatCurrency(totals.totalReceived)}</div>
+                  </div>
+                )}
                   <div className="text-center p-3 bg-purple-50 rounded-lg">
                     <div className="text-2xl font-bold text-purple-600">{payments.length}</div>
                     <div className="text-sm text-gray-600">Número de Pagos</div>
@@ -3625,8 +3645,20 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                             </div>
                             <div className="text-right">
                               <div className="font-bold text-green-600">
-                                {formatCurrency(payment.amount + (payment.late_fee || 0))}
+                                {formatCurrency(paymentCashReceived(payment as any))}
                               </div>
+                              {/* Con descuento, arriba va lo RECIBIDO y aquí lo acreditado. */}
+                              {Number((payment as any).discount_amount || 0) > 0.005 && (
+                                <div className="text-xs text-emerald-700">
+                                  {describeDiscount(
+                                    Number((payment as any).discount_amount),
+                                    (payment as any).discount_percentage,
+                                  )} −{formatCurrency(Number((payment as any).discount_amount))}
+                                  <span className="text-gray-500">
+                                    {' '}· acreditado {formatCurrency(payment.amount + (payment.late_fee || 0))}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
 
@@ -3841,6 +3873,34 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                         <span className="text-gray-600">Mora:</span>
                         <span className="font-semibold">{formatCurrency(selectedPayment.late_fee)}</span>
                       </div>
+                      {/* DESCUENTO: se acreditó la cuota completa y el cliente entregó menos. */}
+                      {Number((selectedPayment as any).discount_amount || 0) > 0.005 && (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">
+                              {describeDiscount(
+                                Number((selectedPayment as any).discount_amount),
+                                (selectedPayment as any).discount_percentage,
+                              )}:
+                            </span>
+                            <span className="font-semibold text-emerald-700">
+                              −{formatCurrency(Number((selectedPayment as any).discount_amount))}
+                            </span>
+                          </div>
+                          {(selectedPayment as any).discount_reason && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Motivo del descuento:</span>
+                              <span className="text-sm">{(selectedPayment as any).discount_reason}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between border-t pt-2">
+                            <span className="text-gray-600">Efectivo recibido:</span>
+                            <span className="font-bold text-green-700">
+                              {formatCurrency(paymentCashReceived(selectedPayment as any))}
+                            </span>
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     {selectedPayment.notes && (

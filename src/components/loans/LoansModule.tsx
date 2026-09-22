@@ -27,7 +27,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { formatCurrencyNumber } from '@/lib/utils';
-import { getFrequencyName } from '@/utils/frequencyUtils';
+import { getFrequencyName, formatDateLocalIso, parseIsoDateLocal, addPeriodsToIsoDate } from '@/utils/frequencyUtils';
+import { agendaByDay, buildCollectionAgenda } from '@/utils/collectionAgenda';
 import { useLoanPenalties } from '@/hooks/useLoanPenalties';
 import { resolveDisplayedLateFee, totalWithLateFee, lateFeeColumnNeedsSync } from '@/utils/displayedLateFee';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
@@ -605,6 +606,32 @@ export const LoansModule = () => {
     return () => window.removeEventListener('installmentsUpdated', handler as EventListener);
   }, [loans, refetch]);
   
+  // AGENDA DE COBROS (2026-09-22): TODOS los cobros de cada préstamo dentro de la ventana, no solo
+  // el siguiente. La usan el calendario, la lista de próximos cobros y los totales de arriba.
+  const agendaToday = useMemo(() => formatDateLocalIso(getCurrentDateInSantoDomingo()), []);
+  const agendaEvents = useMemo(() => {
+    if (!loans || loans.length === 0) return [];
+    const hoy = parseIsoDateLocal(agendaToday) || new Date();
+    const mes = currentViewMonth;
+    const monthStart = formatDateLocalIso(new Date(mes.getFullYear(), mes.getMonth(), 1));
+    const monthEnd = formatDateLocalIso(new Date(mes.getFullYear(), mes.getMonth() + 1, 0));
+    const yearAgo = formatDateLocalIso(new Date(hoy.getFullYear() - 1, hoy.getMonth(), hoy.getDate()));
+    const yearAhead = formatDateLocalIso(new Date(hoy.getFullYear() + 1, hoy.getMonth(), hoy.getDate()));
+    const events = buildCollectionAgenda(loans as any[], {
+      fromIso: monthStart < yearAgo ? monthStart : yearAgo,
+      toIso: monthEnd > yearAhead ? monthEnd : yearAhead,
+      todayIso: agendaToday,
+    });
+    console.log('[agenda] cobros generados:', { prestamos: loans.length, cobros: events.length });
+    return events;
+  }, [loans, currentViewMonth, agendaToday]);
+
+  /** Cobros que caen dentro de un rango de días (ambos incluidos). */
+  const agendaBetween = useCallback(
+    (fromIso: string, toIso: string) => agendaEvents.filter(e => e.dueDate >= fromIso && e.dueDate <= toIso),
+    [agendaEvents],
+  );
+
   // OPTIMIZADO: Usar next_payment_date de la BD para NO-indefinidos.
   // Para INDEFINIDOS, derivar desde installments (primera pendiente) para evitar fechas “clamp” de fin de mes.
   // La BD ahora actualiza automáticamente este valor con triggers cuando cambian pagos/installments
@@ -2664,7 +2691,9 @@ export const LoansModule = () => {
                           
                           <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl border border-blue-100">
                             <div className="text-2xl font-bold text-blue-700 mb-1">
-                              ${formatCurrencyNumber(Math.round(loan.monthly_payment))}
+                              {/* Con centavos: `Math.round` mostraba 167.00 donde la cuota es 166.66
+                                  y no cuadraba con el estado de cuenta ni con el pago. */}
+                              ${formatCurrencyNumber(loan.monthly_payment)}
                             </div>
                             <div className="text-sm text-blue-600 font-medium">
                               {loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal'
@@ -3770,13 +3799,8 @@ export const LoansModule = () => {
                  <Calendar className="h-4 w-4 text-blue-600" />
                </CardHeader>
                <CardContent>
-                 <div className="text-2xl font-bold text-blue-600">{loans.filter(loan => {
-                   const nextPayment = new Date(loan.next_payment_date + 'T00:00:00');
-                   const today = getCurrentDateInSantoDomingo();
-                   return (loan.status === 'active' || loan.status === 'overdue') && 
-                          loan.remaining_balance > 0 &&
-                          nextPayment.toDateString() === today.toDateString();
-                 }).length}</div>
+                 {/* Cuotas que vencen HOY (una misma cartera puede tener varias del mismo préstamo). */}
+                 <div className="text-2xl font-bold text-blue-600">{agendaBetween(agendaToday, agendaToday).length}</div>
                  <p className="text-xs text-muted-foreground">Pagos programados</p>
                </CardContent>
              </Card>
@@ -3787,15 +3811,9 @@ export const LoansModule = () => {
                  <Clock className="h-4 w-4 text-orange-600" />
                </CardHeader>
                <CardContent>
-                 <div className="text-2xl font-bold text-orange-600">{loans.filter(loan => {
-                   const nextPayment = new Date(loan.next_payment_date);
-                   const today = new Date();
-                   const endOfWeek = new Date(today);
-                   endOfWeek.setDate(today.getDate() + 7);
-                   return (loan.status === 'active' || loan.status === 'overdue') && 
-                          loan.remaining_balance > 0 &&
-                          nextPayment >= today && nextPayment <= endOfWeek;
-                 }).length}</div>
+                 <div className="text-2xl font-bold text-orange-600">
+                   {agendaBetween(agendaToday, addPeriodsToIsoDate(agendaToday, 7, 'daily')).length}
+                 </div>
                  <p className="text-xs text-muted-foreground">Próximos 7 días</p>
                </CardContent>
              </Card>
@@ -3806,14 +3824,9 @@ export const LoansModule = () => {
                  <Calendar className="h-4 w-4 text-green-600" />
                </CardHeader>
                <CardContent>
-                 <div className="text-2xl font-bold text-green-600">{loans.filter(loan => {
-                   const nextPayment = new Date(loan.next_payment_date);
-                   const today = new Date();
-                   const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                   return (loan.status === 'active' || loan.status === 'overdue') && 
-                          loan.remaining_balance > 0 &&
-                          nextPayment >= today && nextPayment <= endOfMonth;
-                 }).length}</div>
+                 <div className="text-2xl font-bold text-green-600">
+                   {agendaBetween(agendaToday, addPeriodsToIsoDate(agendaToday, 30, 'daily')).length}
+                 </div>
                  <p className="text-xs text-muted-foreground">Próximos 30 días</p>
                </CardContent>
              </Card>
@@ -3824,15 +3837,11 @@ export const LoansModule = () => {
                  <DollarSign className="h-4 w-4 text-muted-foreground" />
                </CardHeader>
                <CardContent>
-                 <div className="text-2xl font-bold">${formatCurrencyNumber(loans.filter(loan => {
-                   const nextPayment = new Date(loan.next_payment_date);
-                   const today = new Date();
-                   const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                   return (loan.status === 'active' || loan.status === 'overdue') && 
-                          loan.remaining_balance > 0 &&
-                          nextPayment >= today && nextPayment <= endOfMonth;
-                 }).reduce((sum, loan) => sum + loan.monthly_payment, 0))}</div>
-                 <p className="text-xs text-muted-foreground">Este mes</p>
+                 <div className="text-2xl font-bold">${formatCurrencyNumber(
+                   agendaBetween(agendaToday, addPeriodsToIsoDate(agendaToday, 30, 'daily'))
+                     .reduce((sum, e) => sum + e.amount, 0)
+                 )}</div>
+                 <p className="text-xs text-muted-foreground">Próximos 30 días</p>
                </CardContent>
              </Card>
            </div>
@@ -3849,107 +3858,54 @@ export const LoansModule = () => {
                                 {loading ? (
                    <div className="text-center py-8 text-gray-500">Cargando agenda...</div>
                                   ) : (() => {
-                   // Función para generar todos los pagos futuros de un préstamo
-                   const generateAllPayments = (loan: any) => {
-                     const payments = [];
-                     const startDate = new Date(loan.start_date);
-                     const today = new Date();
-                     
-                     // Determinar la frecuencia de pago
-                     const frequency = loan.payment_frequency || 'monthly';
-                     let intervalDays = 30; // mensual por defecto
-                     
-                     switch (frequency) {
-                       case 'daily':
-                         intervalDays = 1;
-                         break;
-                       case 'weekly':
-                         intervalDays = 7;
-                         break;
-                       case 'biweekly':
-                         intervalDays = 14;
-                         break;
-                       case 'monthly':
-                         intervalDays = 30;
-                         break;
-                     }
-                     
-                     // Usar next_payment_date como punto de partida si existe, sino start_date
-                     let currentPaymentDate = new Date((loan.next_payment_date || loan.start_date) + 'T00:00:00');
-                     let paymentNumber = 1;
-                     const maxPayments = loan.term_months || 12;
-                     
-                     // Calcular cuántos pagos ya se han hecho basado en el balance restante
-                     const totalAmount = loan.total_amount || 0;
-                     const remainingBalance = loan.remaining_balance || totalAmount;
-                     const monthlyPayment = loan.monthly_payment || 0;
-                     const paidPayments = monthlyPayment > 0 ? Math.floor((totalAmount - remainingBalance) / monthlyPayment) : 0;
-                     
-                     // Ajustar el número de pago inicial
-                     paymentNumber = Math.max(1, paidPayments + 1);
-                     
-                     // Generar pagos para los próximos 6 meses desde la fecha actual
-                     const endDate = new Date(today);
-                     endDate.setMonth(endDate.getMonth() + 6);
-                     
-                     while (paymentNumber <= maxPayments && currentPaymentDate <= endDate) {
-                       // Incluir pagos pasados recientes (últimos 365 días), del día actual y futuros
-                       const daysDiff = Math.floor((currentPaymentDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-                       if (daysDiff >= -365) { // Incluir pagos de los últimos 365 días
-                         payments.push({
-                           ...loan,
-                           payment_date: new Date(currentPaymentDate),
-                           payment_number: paymentNumber,
-                           is_last_payment: paymentNumber === maxPayments,
-                           remaining_payments: maxPayments - paymentNumber + 1,
-                           is_overdue: daysDiff < 0 // Marcar como vencido si es un día pasado
-                         });
-                       }
-                       
-                       // Calcular siguiente fecha de pago
-                       if (frequency === 'monthly') {
-                         // Para pagos mensuales, mantener el día del mes
-                         const nextMonth = new Date(currentPaymentDate);
-                         nextMonth.setMonth(nextMonth.getMonth() + 1);
-                         currentPaymentDate = nextMonth;
-                       } else {
-                         // Para otras frecuencias, agregar días
-                         currentPaymentDate = new Date(currentPaymentDate);
-                         currentPaymentDate.setDate(currentPaymentDate.getDate() + intervalDays);
-                       }
-                       paymentNumber++;
-                     }
-                     
-                     return payments;
-                   };
-
-                   // Generar fechas para el mes seleccionado
+                   // AGENDA COMPLETA (2026-09-22): TODOS los cobros de cada préstamo, no solo el
+                   // siguiente. Las fechas y el número de cuota los genera `collectionAgenda`, con la
+                   // misma aritmética de períodos que las cuotas guardadas; un indefinido genera
+                   // cobros mientras dure la ventana (no tiene último pago).
                    const today = getCurrentDateInSantoDomingo();
                    const currentMonth = currentViewMonth.getMonth();
                    const currentYear = currentViewMonth.getFullYear();
                    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
                    const firstDayOfMonth = new Date(currentYear, currentMonth, 1).getDay();
-                   
-                   // Generar todos los pagos futuros de todos los préstamos
-                   const allPayments = loans
-                     .filter(loan => (loan.status === 'active' || loan.status === 'overdue') && loan.remaining_balance > 0)
-                     .flatMap(loan => generateAllPayments(loan));
-                  
+
+                   const todayIso = agendaToday;
+                   // Forma que espera el resto de esta vista (el préstamo con los datos del cobro).
+                   const allPayments = agendaEvents.map(e => ({
+                     ...(e.loan as any),
+                     payment_date: parseIsoDateLocal(e.dueDate) as Date,
+                     payment_date_iso: e.dueDate,
+                     payment_number: e.number,
+                     payment_total: e.total,
+                     payment_amount: e.amount,
+                     is_last_payment: e.isLast,
+                     is_overdue: e.isOverdue,
+                     is_indefinite: e.isIndefinite,
+                   }));
+                   const agendaDays = agendaByDay(agendaEvents);
+
                   // Crear array de días del mes
                   const calendarDays = [];
-                  
+
                   // Agregar días vacíos del inicio
                   for (let i = 0; i < firstDayOfMonth; i++) {
                     calendarDays.push(null);
                   }
-                  
+
                   // Agregar días del mes
                   for (let day = 1; day <= daysInMonth; day++) {
                     const date = new Date(currentYear, currentMonth, day);
-                    const paymentsForDay = allPayments.filter(payment => {
-                      return payment.payment_date.toDateString() === date.toDateString();
-                    });
-                    
+                    const dayIso = formatDateLocalIso(date);
+                    const paymentsForDay = (agendaDays.get(dayIso) || []).map(e => ({
+                      ...(e.loan as any),
+                      payment_date: date,
+                      payment_number: e.number,
+                      payment_total: e.total,
+                      payment_amount: e.amount,
+                      is_last_payment: e.isLast,
+                      is_overdue: e.isOverdue,
+                      is_indefinite: e.isIndefinite,
+                    }));
+
                     calendarDays.push({
                       day,
                       date,
@@ -4105,11 +4061,11 @@ export const LoansModule = () => {
                                          setSelectedLoanForPayment(payment);
                                          setShowPaymentForm(true);
                                        }}
-                                       title={`${payment.client?.full_name} - Pago ${payment.payment_number}/${payment.term_months || 12} - $${formatCurrencyNumber(payment.monthly_payment)}${payment.is_overdue ? ' (VENCIDO)' : ''}${payment.is_last_payment ? ' (Último pago)' : ''}`}
+                                       title={`${payment.client?.full_name} - Cuota ${payment.payment_number}${payment.payment_total ? `/${payment.payment_total}` : ' (indefinido)'} - $${formatCurrencyNumber(payment.payment_amount)}${payment.is_overdue ? ' (VENCIDO)' : ''}${payment.is_last_payment ? ' (Último pago)' : ''}`}
                                      >
                                        <div className="font-medium truncate">{payment.client?.full_name?.split(' ')[0]}</div>
                                        <div className="text-xs flex justify-between">
-                                         <span>${formatCurrencyNumber(payment.monthly_payment)}</span>
+                                         <span>${formatCurrencyNumber(payment.payment_amount)}</span>
                                          <span className="opacity-70">#{payment.payment_number}</span>
                                        </div>
                                        {payment.is_last_payment && (
@@ -4169,9 +4125,9 @@ export const LoansModule = () => {
             </CardHeader>
             <CardContent>
                {(() => {
-                 // Usar los pagos generados para la lista de próximos cobros
+                 // Los que faltan por cobrar: los vencidos sin pagar y los que vienen.
                  const upcomingPayments = allPayments
-                   .sort((a, b) => a.payment_date.getTime() - b.payment_date.getTime())
+                   .filter(p => p.is_overdue || p.payment_date_iso >= agendaToday)
                    .slice(0, 10); // Mostrar solo los próximos 10
 
                  if (upcomingPayments.length === 0) {
@@ -4213,8 +4169,8 @@ export const LoansModule = () => {
                                </span>
                              </div>
                              <div className="text-sm text-gray-600 mt-1">
-                               <span className="font-medium">${formatCurrencyNumber(payment.monthly_payment)}</span> • 
-                               Pago {payment.payment_number}/{payment.term_months || 12} • 
+                               <span className="font-medium">${formatCurrencyNumber(payment.payment_amount)}</span> •
+                               Cuota {payment.payment_number}{payment.payment_total ? `/${payment.payment_total}` : ' (indefinido)'} •
                                {paymentDate.toLocaleDateString('es-ES', { 
                                  weekday: 'long', 
                                  year: 'numeric', 

@@ -112,8 +112,8 @@ export const AnalyticsDashboard: React.FC = () => {
       ['Penalidades aplicadas', penaltySummary.allTime.total],
       ['Penalidades este mes', penaltySummary.month.total],
       [],
-      ['Mes', 'Capital', 'Interés', 'Mora', 'POS', 'Cobrado', 'Ingreso', 'Penalidad', 'Colocado', 'Préstamos'],
-      ...series12.map(s => [s.label, s.capital, s.interes, s.mora, s.pos, s.cobrado, s.ingreso, s.penalidad, s.colocado, s.prestamos]),
+      ['Mes', 'Capital', 'Interés', 'Mora', 'POS', 'Cobrado', 'Ingreso', 'Descuento', 'Penalidad', 'Colocado', 'Préstamos'],
+      ...series12.map(s => [s.label, s.capital, s.interes, s.mora, s.pos, s.cobrado, s.ingreso, s.descuento, s.penalidad, s.colocado, s.prestamos]),
       [],
       ['Penalidades', 'Fecha', 'Cliente', 'Origen', 'Detalle', 'Monto'],
       ...penaltyItems.map(p => ['', p.date, p.clientName, PENALTY_SOURCE_LABEL[p.source],
@@ -367,7 +367,8 @@ export const AnalyticsDashboard: React.FC = () => {
                       <th className="text-left py-2">Mes</th><th className="text-right py-2">Capital</th>
                       <th className="text-right py-2">Interés</th><th className="text-right py-2">Mora</th>
                       <th className="text-right py-2">POS</th><th className="text-right py-2">Cobrado</th>
-                      <th className="text-right py-2">Ingreso</th><th className="text-right py-2">Penalidad</th>
+                      <th className="text-right py-2">Ingreso</th><th className="text-right py-2">Descuento</th>
+                      <th className="text-right py-2">Penalidad</th>
                       <th className="text-right py-2">Colocado</th><th className="text-right py-2">Préstamos</th>
                     </tr>
                   </thead>
@@ -381,6 +382,7 @@ export const AnalyticsDashboard: React.FC = () => {
                         <td className="py-2 text-right">{money(s.pos)}</td>
                         <td className="py-2 text-right font-semibold">{money(s.cobrado)}</td>
                         <td className="py-2 text-right font-semibold text-emerald-700">{money(s.ingreso)}</td>
+                        <td className="py-2 text-right text-emerald-600">{money(s.descuento)}</td>
                         <td className="py-2 text-right text-orange-600">{money(s.penalidad)}</td>
                         <td className="py-2 text-right text-violet-700">{money(s.colocado)}</td>
                         <td className="py-2 text-right">{s.prestamos}</td>
