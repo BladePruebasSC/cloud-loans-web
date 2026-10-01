@@ -143,6 +143,49 @@ export async function insertPaymentsWithDiscount(
   return { data: retry.data, error: retry.error, discountSaved: false };
 }
 
+export interface DueDiscount {
+  /** Lo perdonado en esa fecha de vencimiento */
+  amount: number;
+  /** Qué porcentaje representa sobre lo acreditado a esa cuota */
+  percentage: number | null;
+}
+
+/**
+ * Descuento aplicado a cada CUOTA (por su fecha de vencimiento), para las tablas de amortización.
+ *
+ * CAMBIO SOLICITADO (2026-10-01): "en recibo de ingreso y ver cuotas, las tablas de amortización
+ * deben mostrar las cuotas que recibieron un descuento, en monto y porcentaje: que en la cuota
+ * aparezca que se pagó el monto completo, pero que se pagó tanto debido a tal descuento".
+ */
+export const discountsByDueDate = (
+  payments: Array<{ due_date?: string | null; amount?: number | null; discount_amount?: number | null }>,
+): Map<string, DueDiscount> => {
+  const acreditado = new Map<string, number>();
+  const descuento = new Map<string, number>();
+
+  for (const p of payments || []) {
+    const due = String(p?.due_date ?? '').split('T')[0];
+    if (!due) continue;
+    const disc = round2(Number(p?.discount_amount) || 0);
+    acreditado.set(due, round2((acreditado.get(due) || 0) + (Number(p?.amount) || 0)));
+    if (disc > 0.005) descuento.set(due, round2((descuento.get(due) || 0) + disc));
+  }
+
+  const out = new Map<string, DueDiscount>();
+  for (const [due, amount] of descuento) {
+    const base = acreditado.get(due) || 0;
+    out.set(due, { amount, percentage: base > 0.005 ? round2((amount / base) * 100) : null });
+  }
+  return out;
+};
+
+/** Texto corto para la fila de una tabla: "Descuento RD$52.50 (10%)". */
+export const describeDueDiscount = (d: DueDiscount | undefined | null): string => {
+  if (!d || d.amount <= 0.005) return '';
+  const monto = d.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return d.percentage ? `Descuento RD$${monto} (${d.percentage}%)` : `Descuento RD$${monto}`;
+};
+
 /** Descuento total de una lista de pagos. */
 export const paymentsDiscountTotal = (payments: Array<{ discount_amount?: number | null }>): number =>
   round2((payments || []).reduce((s, p) => s + (Number(p?.discount_amount) || 0), 0));

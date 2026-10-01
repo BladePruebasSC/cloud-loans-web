@@ -5,6 +5,7 @@ import {
   buildIndefiniteInterestResolver, resolveIndefiniteCapital, sumCapitalPayments,
   type CapitalPaymentLike,
 } from './indefiniteInterest';
+import { allocatePaymentsToPeriods, splitChargeAndRegularPayments } from './chargeAwarePayments';
 
 export type LoanBalanceBreakdown = {
   baseBalance: number; // capital + interés (SIN cargos)
@@ -155,17 +156,6 @@ export function computeLoanBalanceBreakdown(
 
   // Indefinite: base = capital actual + interés pendiente (por due_date)
   if (amort === 'indefinite') {
-    // Due dates de cargos: no contar esos pagos como interés (evita balance/interest pendiente incorrectos)
-    const chargeDueDates = new Set<string>();
-    for (const inst of installments) {
-      if (isChargeInst(inst)) {
-        const d = (inst as any)?.due_date ? String((inst as any).due_date).split('T')[0] : null;
-        if (d) chargeDueDates.add(d);
-      }
-    }
-
-    // ✅ INDEFINIDOS: Siempre existe 1 cuota "activa" (puede estar parcial).
-    // Normalizar pagos con due_date inválido (ej. 28-feb "clamp") hacia la cuota activa real.
     const freq = String(loan.payment_frequency || 'monthly');
     const startIso = loan.start_date ? String(loan.start_date).split('T')[0] : '';
     const firstDueFromStart = startIso ? getFirstDueDateIso(startIso, freq) : null;
@@ -185,124 +175,46 @@ export function computeLoanBalanceBreakdown(
       capitalPayments,
     });
 
-    const paidByDueValid = new Map<string, number>();
-    let invalidPaidTotal = 0;
-
-    for (const p of payments) {
-      const rawDue = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
-      if (!rawDue) continue;
-      // No contar pagos a cargos (solo principal) como interés: evita que balance pendiente baje de más
-      if (chargeDueDates.has(rawDue) && (Number((p as any).interest_amount || 0) || 0) < 0.01) continue;
-
-      const interestField = Number((p as any).interest_amount || 0) || 0;
-      const principalField = Number((p as any).principal_amount || 0) || 0;
-      const amt = Number((p as any).amount || 0) || 0;
-      const expected = interestFor(rawDue);
-      // Un pago sin interés NI capital es un pago de cuota guardado sin desglose (lo hacía el pago
-      // normal en los períodos generados): todo es interés. El tope de 1.25 cuotas solo aplica a
-      // los que traen capital, que podrían ser otra cosa. Sin esto, una cuota pagada por
-      // adelantado con la cuota de antes del abono se ignoraba entera.
-      const paidValue =
-        interestField > 0.01
-          ? interestField
-          : (amt > 0.01 && expected > 0.01 && (principalField < 0.01 || amt <= (expected * 1.25)) ? amt : 0);
-      if (paidValue <= 0.01) continue;
-
-      if (firstDueFromStart && rawDue < firstDueFromStart) {
-        invalidPaidTotal = round2(invalidPaidTotal + paidValue);
-      } else {
-        paidByDueValid.set(rawDue, round2((paidByDueValid.get(rawDue) || 0) + paidValue));
-      }
+    // CARGO Y CUOTA EL MISMO DÍA (2026-10-01). Antes, todo lo cobrado en la fecha de un cargo
+    // se descartaba aquí ("no contar pagos a cargos como interés"), así que el dinero cobrado de
+    // más en ese día no bajaba el balance: el préstamo seguía debiendo cuotas ya pagadas. Ahora
+    // los cargos cobran primero —hasta lo que valen— y el resto es dinero de cuotas.
+    const chargeTotalByDue = new Map<string, number>();
+    for (const inst of installments) {
+      if (!isChargeInst(inst)) continue;
+      const d = (inst as any)?.due_date ? String((inst as any).due_date).split('T')[0] : null;
+      if (!d) continue;
+      const total = Number((inst as any).total_amount ?? (inst as any).amount ?? 0) || 0;
+      chargeTotalByDue.set(d, round2((chargeTotalByDue.get(d) || 0) + total));
     }
+    const { regular: regularPaidEntries } = splitChargeAndRegularPayments(payments as any[], chargeTotalByDue);
+    const totalRegularPaid = round2(regularPaidEntries.reduce((s, e) => s + e.amount, 0));
 
-    const fullyPaid: string[] = [];
-    let partialDue: string | null = null;
-    for (const [due, paid] of paidByDueValid.entries()) {
-      if (paid <= 0.01) continue;
-      if (paid + tol < interestFor(due)) {
-        partialDue = !partialDue || due < partialDue ? due : partialDue;
-      } else {
-        fullyPaid.push(due);
-      }
-    }
-
-    const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
-    const activeDue = partialDue || (maxFull ? addPeriod(maxFull, freq) : firstDueFromStart);
-
-    let paidActive = activeDue ? (paidByDueValid.get(activeDue) || 0) : 0;
-    // Reasignar pagos inválidos (28-feb) a la cuota activa real (ej. 02-abr tras pagar 02-mar)
-    if (activeDue) {
-      paidActive = round2(paidActive + invalidPaidTotal);
-    }
-
-    // ✅ Normalizar “overpay” en cuotas ya saldadas:
-    // si por bug un pago cae en un due_date antiguo (ej. 02-mar ya pagado) y lo sobrepasa,
-    // mover el excedente a la cuota activa (para que "Falta" baje correctamente).
-    // También es lo que pasa con un período pagado por adelantado con la cuota vieja y que,
-    // tras el abono, vale menos: lo cobrado de más se acredita a la cuota activa.
-    if (activeDue) {
-      let rollover = 0;
-      for (const [due, paid] of paidByDueValid.entries()) {
-        if (due >= activeDue) continue;
-        const expected = interestFor(due);
-        if (expected <= 0.01) continue;
-        const capped = round2(Math.min(paid, expected));
-        const overflow = round2(Math.max(0, paid - expected));
-        if (overflow > 0.01) {
-          rollover = round2(rollover + overflow);
-          paidByDueValid.set(due, capped);
-        }
-      }
-      if (rollover > 0.01) {
-        paidActive = round2(paidActive + rollover);
-      }
-    }
-
-    // Sync activeDue's full paid amount (includes invalid + rollover) into the map
-    if (activeDue) {
-      paidByDueValid.set(activeDue, paidActive);
-    }
-
-    // Sum ALL pending interest: iterate every period from firstDue to the first upcoming future period.
-    // CORRECCIÓN (auditoría 2026-08-28): "hoy" se tomaba de la zona horaria del EQUIPO
-    // (`new Date()`), no de Santo Domingo. Todo el resto del sistema (mora, estado de cuenta)
-    // usa la fecha de Santo Domingo, así que en las horas de la noche el saldo pendiente y la
-    // mora podían referirse a días distintos y no cuadrar entre pantallas.
-    //
-    // CAMBIO SOLICITADO (2026-08-28): "Interés pend. hoy" debe incluir TAMBIÉN el interés de la
-    // cuota EN CURSO —la que ya está pendiente pero cuya fecha de vencimiento aún no llegó—, no
-    // solo el de los períodos ya vencidos.
-    //
-    // Antes se cortaba en el último período vencido (`if (currentDue > todayIso) break;` ANTES de
-    // sumar). Eso dejaba este panel por debajo de la tabla de cuotas, que sí lista la cuota en
-    // curso: un préstamo quincenal de RD$370 con 15 cuotas vencidas mostraba RD$5,550 aquí
-    // (15 × 370) mientras "Ver cuotas" totalizaba RD$5,920 (16 × 370). Dos cifras distintas para
-    // lo mismo, en la misma pantalla.
-    //
-    // Ahora se suma el período en curso y LUEGO se corta, de modo que se incluye exactamente un
-    // período futuro: el actual. Esto alinea "Interés pend. hoy", "Balance restante", el desglose
-    // por antigüedad (que reconcilia su total contra este valor y coloca la diferencia en el rango
-    // "Al día (aún no vence)") y la tabla de cuotas.
-    let totalPendingInterest = 0;
+    // Períodos devengados: desde la primera cuota hasta HOY, incluido el que está EN CURSO (el
+    // primero que aún no vence), y además los que el cliente ya pagó por adelantado —si no, lo
+    // ya cobrado por adelantado no tendría dónde aplicarse.
+    const periods: Array<{ dueDate: string; expected: number }> = [];
     if (firstDueFromStart) {
       let currentDue = firstDueFromStart;
+      let acumulado = 0;
       for (let guard = 0; guard < 100000; guard++) { // tope de seguridad
-        const isNotDueYet = currentDue > todayIso;
-        const paid = round2(paidByDueValid.get(currentDue) || 0);
-        const unpaid = round2(Math.max(0, round2(interestFor(currentDue) - paid)));
-        totalPendingInterest = round2(totalPendingInterest + unpaid);
-        // Se incluye el período en curso (el primero que aún no vence) y se detiene ahí:
-        // los períodos posteriores todavía no se han devengado.
-        if (isNotDueYet) break;
+        const expected = round2(interestFor(currentDue));
+        periods.push({ dueDate: currentDue, expected });
+        acumulado = round2(acumulado + expected);
+        if (currentDue > todayIso && acumulado >= totalRegularPaid - tol) break;
         currentDue = addPeriod(currentDue, freq);
       }
     }
+
+    const { paidByPeriod } = allocatePaymentsToPeriods(periods, regularPaidEntries);
+    let totalPendingInterest = round2(periods.reduce(
+      (s, p) => s + Math.max(0, round2(p.expected - (paidByPeriod.get(p.dueDate)?.paid || 0))), 0,
+    ));
+
     // Respaldo: en un préstamo indefinido siempre hay al menos un período devengándose, así que
-    // nunca debe mostrarse RD$0 de interés pendiente. Es el de la cuota activa, descontando lo
-    // que ya tenga abonado (un excedente acreditado, por ejemplo).
-    if (totalPendingInterest <= 0.01 && activeDue) {
-      const remainingActive = round2(Math.max(0, interestFor(activeDue) - (paidByDueValid.get(activeDue) || 0)));
-      totalPendingInterest = remainingActive > 0.01 ? remainingActive : interestFor(addPeriod(activeDue, freq));
+    // nunca debe mostrarse RD$0 de interés pendiente: el siguiente ya está corriendo.
+    if (totalPendingInterest <= 0.01 && periods.length > 0) {
+      totalPendingInterest = round2(interestFor(addPeriod(periods[periods.length - 1].dueDate, freq)));
     }
 
     const baseBalance = round2(currentCapital + totalPendingInterest);

@@ -67,6 +67,7 @@ import {
   computeDiscount, describeDiscount, discountFields, insertPaymentsWithDiscount, netToCollect,
   type DiscountMode,
 } from '@/utils/paymentDiscount';
+import { allocatePaymentsToPeriods, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
 import { Search, User } from 'lucide-react';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -1299,58 +1300,42 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
           }
         }
 
-        // 3) Calcular cuota regular activa desde pagos (normaliza due_dates inválidos + overpay)
-        const paidByDueValid = new Map<string, number>();
-        let invalidPaidTotal = 0;
-        for (const p of (allPaymentsForLoan || []) as any[]) {
-          const rawDue = p?.due_date ? String(p.due_date).split('T')[0] : null;
-          if (!rawDue) continue;
-          if (chargeDueDates.has(rawDue)) continue; // evitar mezclar pagos de cargos con cuotas regulares
+        // 3) Cuota regular que toca cobrar.
+        //
+        // CARGO Y CUOTA EL MISMO DÍA (2026-10-01): antes se descartaba TODO lo cobrado en la
+        // fecha de un cargo, así que el formulario volvía a pedir una cuota ya pagada y los
+        // siguientes pagos se registraban otra vez con esa fecha. Ahora los cargos cobran primero
+        // —hasta lo que valen— y el resto es dinero de cuotas, repartido en cascada.
+        const chargeTotalByDue = new Map<string, number>();
+        for (const c of chargeInstallments) {
+          const d = c?.due_date ? String(c.due_date).split('T')[0] : null;
+          if (!d) continue;
+          chargeTotalByDue.set(d, round2((chargeTotalByDue.get(d) || 0) + (Number(c.total_amount || 0) || 0)));
+        }
+        const { regular: regularPaidEntries } = splitChargeAndRegularPayments(
+          (allPaymentsForLoan || []) as any[], chargeTotalByDue,
+        );
+        const totalRegularPaid = round2(regularPaidEntries.reduce((s, e) => s + e.amount, 0));
 
-          const interestField = Number(p?.interest_amount || 0) || 0;
-          const amt = Number(p?.amount || 0) || 0;
-          const paidValue =
-            interestField > 0.01
-              ? interestField
-              : (amt > 0.01 && amt <= (cuotaDelPeriodo(rawDue) * 1.25) ? amt : 0);
-          if (paidValue <= 0.01) continue;
-
-          if (rawDue < firstDueFromStart) {
-            invalidPaidTotal = round2(invalidPaidTotal + paidValue);
-          } else {
-            paidByDueValid.set(rawDue, round2((paidByDueValid.get(rawDue) || 0) + paidValue));
-          }
+        // Períodos desde la primera cuota hasta cubrir lo ya pagado: el primero que quede con
+        // saldo es el que hay que cobrar.
+        const periodosRegulares: Array<{ dueDate: string; expected: number }> = [];
+        let cursorDue = firstDueFromStart;
+        let acumuladoEsperado = 0;
+        for (let i = 0; i < 100000; i++) { // tope de seguridad
+          const expected = round2(cuotaDelPeriodo(cursorDue));
+          periodosRegulares.push({ dueDate: cursorDue, expected });
+          acumuladoEsperado = round2(acumuladoEsperado + expected);
+          if (acumuladoEsperado >= totalRegularPaid + tol) break;
+          cursorDue = addPeriodIsoForIndefinite(cursorDue, freq);
         }
 
-        const fullyPaid: string[] = [];
-        let partialDue: string | null = null;
-        for (const [due, paid] of paidByDueValid.entries()) {
-          if (paid <= 0.01) continue;
-          if (paid + tol < cuotaDelPeriodo(due)) partialDue = !partialDue || due < partialDue ? due : partialDue;
-          else fullyPaid.push(due);
-        }
-        const maxFull = fullyPaid.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
-        const activeDue = partialDue || (maxFull ? addPeriodIsoForIndefinite(maxFull, freq) : firstDueFromStart);
-
-        let paidActive = activeDue ? (paidByDueValid.get(activeDue) || 0) : 0;
-        if (activeDue) paidActive = round2(paidActive + invalidPaidTotal);
-
-        // mover excedentes de cuotas anteriores ya saldadas a la cuota activa
-        if (activeDue) {
-          let rollover = 0;
-          for (const [due, paid] of paidByDueValid.entries()) {
-            if (due >= activeDue) continue;
-            const cuotaDeEsePeriodo = cuotaDelPeriodo(due);
-            const overflow = round2(Math.max(0, paid - cuotaDeEsePeriodo));
-            if (overflow > 0.01) {
-              rollover = round2(rollover + overflow);
-              paidByDueValid.set(due, round2(Math.min(paid, cuotaDeEsePeriodo)));
-            }
-          }
-          if (rollover > 0.01) {
-            paidActive = round2(paidActive + rollover);
-          }
-        }
+        const { paidByPeriod } = allocatePaymentsToPeriods(periodosRegulares, regularPaidEntries);
+        const primeroPendiente = periodosRegulares.find(
+          p => round2(p.expected - (paidByPeriod.get(p.dueDate)?.paid || 0)) > 0.01,
+        ) || periodosRegulares[periodosRegulares.length - 1];
+        const activeDue = primeroPendiente?.dueDate || firstDueFromStart;
+        const paidActive = round2(paidByPeriod.get(activeDue)?.paid || 0);
 
         // La cuota de la fecha que toca cobrar, no la cuota "vigente" del préstamo.
         const remainingRegular = round2(Math.max(0, round2(cuotaDelPeriodo(activeDue) - paidActive)));

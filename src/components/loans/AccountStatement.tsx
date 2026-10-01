@@ -32,7 +32,12 @@ import { formatDateStringForSantoDomingo, createDateInSantoDomingo, getCurrentDa
 import { getFrequencyRateFactor } from '@/utils/frequencyUtils';
 import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 import { interleaveCapitalPayments, toCapitalPaymentEntries, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
-import { describeDiscount, paymentCashReceived, paymentsDiscountTotal } from '@/utils/paymentDiscount';
+import {
+  describeDiscount, describeDueDiscount, discountsByDueDate, paymentCashReceived, paymentsDiscountTotal,
+} from '@/utils/paymentDiscount';
+import {
+  allocatePaymentsToPeriods, isChargePayment, splitChargeAndRegularPayments,
+} from '@/utils/chargeAwarePayments';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { PiggyBank } from 'lucide-react';
 
@@ -113,6 +118,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   const [loading, setLoading] = useState(false);
   const [loan, setLoan] = useState<Loan | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
+  /**
+   * Descuentos por fecha de vencimiento: en la tabla de amortización la cuota se acredita
+   * COMPLETA y debajo se dice cuánto se perdonó y en qué porcentaje (2026-10-01).
+   */
+  const discountByDue = useMemo(() => discountsByDueDate(payments as any[]), [payments]);
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [statementDate, setStatementDate] = useState(new Date().toISOString().split('T')[0]);
   const [filteredPayments, setFilteredPayments] = useState<Payment[]>([]);
@@ -1395,6 +1405,19 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         chargesByDue.set(key, list);
       });
 
+      // CARGO Y CUOTA EL MISMO DÍA (2026-10-01): los cargos de cada fecha cobran primero —hasta
+      // lo que valen— y lo que sobre es dinero de cuotas. Antes todo lo cobrado ese día se daba
+      // por pagado al cargo y el excedente se perdía.
+      const chargeTotalByDue = new Map<string, number>();
+      for (const [dueKey, list] of chargesByDue.entries()) {
+        const total = list.reduce(
+          (s, { inst }) => s + (Number(inst?.total_amount ?? inst?.amount ?? inst?.principal_amount ?? 0) || 0), 0,
+        );
+        chargeTotalByDue.set(dueKey, round2(total));
+      }
+      const { chargePaidByDue, regular: regularPaidEntries } =
+        splitChargeAndRegularPayments(paymentsForCalc as any[], chargeTotalByDue);
+
       // Para cada fecha, repartir pagos de cargo en orden de installment_number (maneja múltiples cargos misma fecha)
       for (const [dueKey, list] of chargesByDue.entries()) {
         const chargesSorted = [...list].sort((a, b) => {
@@ -1404,20 +1427,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
           return a.idx - b.idx;
         });
 
+        // Solo los pagos que SON de cargo (llevan capital y no llevan interés). Un pago sin
+        // desglose es de cuota, aunque caiga el mismo día que el cargo (2026-10-01).
         const paymentsForThisDue = paymentsForCalc
-          .filter((p: any) => {
-            const pDue = dueKeyOf(p?.due_date) || 'no-due';
-            const noInterest = Math.abs(Number(p?.interest_amount || 0)) < 0.01;
-            return pDue === dueKey && noInterest;
-          })
+          .filter((p: any) => (dueKeyOf(p?.due_date) || 'no-due') === dueKey && isChargePayment(p))
           .sort((a: any, b: any) => new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime());
 
-        let remainingPaid = round2(
-          paymentsForThisDue.reduce((sum: number, p: any) => {
-            const paidAmount = Number(p?.principal_amount ?? p?.amount ?? 0) || 0;
-            return sum + paidAmount;
-          }, 0)
-        );
+        // Nunca más de lo que valen los cargos de esa fecha: lo de más es dinero de cuotas.
+        let remainingPaid = round2(chargePaidByDue.get(dueKey) || 0);
 
         const paidDateForThisDue =
           paymentsForThisDue.length > 0
@@ -1525,150 +1542,66 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const startIso = String((loanData as any)?.start_date || '').split('T')[0] || '';
       const firstDueFromStart = startIso ? addPeriodIso(startIso, frequency) : null;
 
-      // ✅ INDEFINIDOS: Solo 1 cuota pendiente a la vez.
-      // - Historial: solo due_dates FULLY PAID
-      // - Si hay una cuota PARCIAL, NO generar la siguiente hasta completar.
       const tol = 0.05;
-      let invalidPaidTotal = 0;
-      let invalidLastPaidDate: string | null = null;
 
-      for (const p of paymentsForCalc) {
-        const rawDue = dueKeyOf(p?.due_date);
-        if (!rawDue || chargeDueDates.has(rawDue)) continue;
-
-        const interest = Number(p?.interest_amount || 0) || 0;
-        const amt = Number(p?.amount || 0) || 0;
-        const paidValue =
-          interest > 0.01
-            ? interest
-            : (amt > 0.01 && amt <= (loanData.monthly_payment || (interestRate * principal / 100) || 0) * 1.25 ? amt : 0);
-        if (paidValue <= 0.01) continue;
-
-        const pDate = p?.payment_date ? String(p.payment_date).split('T')[0] : null;
-
-        if (firstDueFromStart && rawDue < firstDueFromStart) {
-          invalidPaidTotal = round2(invalidPaidTotal + paidValue);
-          invalidLastPaidDate = pDate || invalidLastPaidDate;
-          continue;
-        }
-
-        const prev = paymentsByDue.get(rawDue);
-        paymentsByDue.set(rawDue, {
-          paid: round2((prev?.paid || 0) + paidValue),
-          lastPaidDate: pDate || prev?.lastPaidDate || null
-        });
-      }
-
-      const fullyPaidDueDates: string[] = [];
-      let partialDue: string | null = null;
-
-      for (const [due, info] of paymentsByDue.entries()) {
-        const paidAmt = round2(info?.paid || 0);
-        if (paidAmt <= 0.01) continue;
-        const expectedForDue = getExpectedForDueDate(due);
-        if (paidAmt + tol < expectedForDue) {
-          // Tomar la más temprana parcial (la que debe seguirse pagando)
-          partialDue = !partialDue || due < partialDue ? due : partialDue;
-        } else {
-          fullyPaidDueDates.push(due);
-        }
-      }
-
-      const maxFullyPaidDue = fullyPaidDueDates.sort((a, b) => a.localeCompare(b)).slice(-1)[0] || null;
-      const activeDue =
-        partialDue ||
-        (maxFullyPaidDue ? addPeriodIso(maxFullyPaidDue, frequency) : firstDueFromStart);
-
-      // Reasignar pagos inválidos (ej. 28-feb clamp) a la cuota activa real
-      if (activeDue && invalidPaidTotal > 0.01) {
-        const prev = paymentsByDue.get(activeDue);
-        paymentsByDue.set(activeDue, {
-          paid: round2((prev?.paid || 0) + invalidPaidTotal),
-          lastPaidDate: prev?.lastPaidDate || invalidLastPaidDate || null
-        });
-      }
-
-      // ✅ Normalizar “overpay” en cuotas ya saldadas:
-      // si por bug un pago nuevo se guarda con due_date de una cuota anterior ya pagada,
-      // mover el excedente a la cuota activa (para que "Falta" se reduzca correctamente).
-      if (activeDue) {
-        let rollover = 0;
-        for (const [due, info] of paymentsByDue.entries()) {
-          if (due >= activeDue) continue;
-          const expectedForDue = getExpectedForDueDate(due);
-          if (expectedForDue <= 0.01) continue;
-          const paidAmt = round2(info?.paid || 0);
-          const capped = round2(Math.min(paidAmt, expectedForDue));
-          const overflow = round2(Math.max(0, paidAmt - expectedForDue));
-          if (overflow > 0.01) {
-            rollover = round2(rollover + overflow);
-            paymentsByDue.set(due, { paid: capped, lastPaidDate: info?.lastPaidDate || null });
-          }
-        }
-        if (rollover > 0.01) {
-          const prev = paymentsByDue.get(activeDue);
-          paymentsByDue.set(activeDue, {
-            paid: round2((prev?.paid || 0) + rollover),
-            lastPaidDate: prev?.lastPaidDate || null
-          });
-        }
-      }
-
-      // Mostrar cada período como fila individual según el tiempo sin pagar.
+      // Períodos del indefinido: todos los vencidos hasta HOY y, además, los que el cliente ya
+      // pagó por adelantado, más el próximo a cobrar (un indefinido nunca se queda sin cuota).
+      // Un período que cae en la fecha de un CARGO también cuenta: son dos obligaciones del
+      // mismo día, no una (2026-10-01).
       const todayIsoForRows = (() => {
         const d = new Date();
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       })();
-      const fullyPaidSet = new Set<string>(fullyPaidDueDates);
 
-      const regularRows: any[] = [];
+      const totalRegularPaid = round2(regularPaidEntries.reduce((s, e) => s + e.amount, 0));
+      const periodDates: string[] = [];
       if (firstDueFromStart) {
         let cur = firstDueFromStart;
-        let rowNum = 1;
+        let acumulado = 0;
         const MAX_PERIODS = 500;
-
-        while (rowNum <= MAX_PERIODS) {
-          if (chargeDueDates.has(cur)) {
-            if (cur > todayIsoForRows) break;
-            cur = addPeriodIso(cur, frequency);
-            continue;
-          }
-
-          const paidInfo = paymentsByDue.get(cur);
-          const paidAmt = round2(paidInfo?.paid || 0);
-          const expected = getExpectedForDueDate(cur);
-          const remaining = round2(Math.max(0, expected - paidAmt));
-          const isPaid = fullyPaidSet.has(cur) || (remaining <= 0.01 && paidAmt > 0.01);
-          const isPartial = !isPaid && paidAmt > 0.01 && remaining > 0.01;
-
-          regularRows.push({
-            installment: `${rowNum}/X`,
-            rowKey: `regular-${loanData.id}-${cur}`,
-            dueDate: cur,
-            monthlyPayment: round2(expected),
-            principalPayment: 0,
-            interestPayment: round2(expected),
-            principalPaid: 0,
-            interestPaid: paidAmt,
-            remainingPrincipal: 0,
-            remainingInterest: remaining,
-            remainingPayment: remaining,
-            remainingBalance: remainingBalanceNow,
-            isPaid,
-            isPartial,
-            isSettled: false,
-            paidDate: (isPaid || isPartial) ? (paidInfo?.lastPaidDate || null) : null,
-            hasRealData: true,
-            paymentStatus: isPaid ? 'paid' : isPartial ? 'partial' : 'pending',
-            actualPaymentAmount: isPaid ? expected : isPartial ? paidAmt : 0
-          });
-
-          rowNum++;
-          // Parar después de incluir el primer período futuro (próxima cuota pendiente)
-          if (cur > todayIsoForRows) break;
+        while (periodDates.length < MAX_PERIODS) {
+          periodDates.push(cur);
+          acumulado = round2(acumulado + getExpectedForDueDate(cur));
+          if (cur > todayIsoForRows && acumulado >= totalRegularPaid - tol) break;
           cur = addPeriodIso(cur, frequency);
         }
       }
+
+      const { paidByPeriod } = allocatePaymentsToPeriods(
+        periodDates.map(d => ({ dueDate: d, expected: getExpectedForDueDate(d) })),
+        regularPaidEntries,
+      );
+
+      const regularRows: any[] = periodDates.map((cur, idx) => {
+        const expected = getExpectedForDueDate(cur);
+        const info = paidByPeriod.get(cur);
+        const paidAmt = round2(info?.paid || 0);
+        const remaining = round2(Math.max(0, expected - paidAmt));
+        const isPaid = remaining <= 0.01 && paidAmt > 0.01;
+        const isPartial = !isPaid && paidAmt > 0.01;
+
+        return {
+          installment: `${idx + 1}/X`,
+          rowKey: `regular-${loanData.id}-${cur}`,
+          dueDate: cur,
+          monthlyPayment: round2(expected),
+          principalPayment: 0,
+          interestPayment: round2(expected),
+          principalPaid: 0,
+          interestPaid: paidAmt,
+          remainingPrincipal: 0,
+          remainingInterest: remaining,
+          remainingPayment: remaining,
+          remainingBalance: remainingBalanceNow,
+          isPaid,
+          isPartial,
+          isSettled: false,
+          paidDate: (isPaid || isPartial) ? (info?.lastPaidDate || null) : null,
+          hasRealData: true,
+          paymentStatus: isPaid ? 'paid' : isPartial ? 'partial' : 'pending',
+          actualPaymentAmount: isPaid ? expected : isPartial ? paidAmt : 0,
+        };
+      });
 
       // Compute remaining balance dynamically: current principal + sum of all unpaid interest periods
       // Capital vigente: lo prestado menos los abonos (el monto prestado ya no se rebaja).
@@ -2964,6 +2897,11 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                             Falta: ${formatCurrency(installment.remainingPayment)}
                           </div>
                         ` : ''}
+                        ${describeDueDiscount(discountByDue.get(String(installment.dueDate || '').split('T')[0])) ? `
+                          <div style="font-size: 10px; color: #047857; margin-top: 2px;">
+                            ${describeDueDiscount(discountByDue.get(String(installment.dueDate || '').split('T')[0]))}
+                          </div>
+                        ` : ''}
                       </td>
                       <td style="padding: 6px; text-align: left; border: 1px solid #ddd; ${installment.isPaid ? 'color: #16a34a; text-decoration: line-through;' : installment.isPartial ? 'color: #ea580c;' : ''}">
                         ${formatCurrency(installment.principalPayment)}
@@ -3461,6 +3399,12 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                               {installment.isPartial && installment.remainingPayment > 0 && (
                                 <div className="text-xs text-orange-600 mt-1">
                                   Falta: {formatCurrency(installment.remainingPayment)}
+                                </div>
+                              )}
+                              {/* La cuota se acreditó completa; parte se perdonó como descuento. */}
+                              {describeDueDiscount(discountByDue.get(String(installment.dueDate || '').split('T')[0])) && (
+                                <div className="text-xs text-emerald-700 mt-1">
+                                  {describeDueDiscount(discountByDue.get(String(installment.dueDate || '').split('T')[0]))}
                                 </div>
                               )}
                             </td>
