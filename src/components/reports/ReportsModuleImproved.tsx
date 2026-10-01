@@ -11,6 +11,7 @@ import { LoanDetailsView } from '@/components/loans/LoanDetailsView';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { sellingPriceWithItbis, stockValueWithItbis } from '@/utils/itbis';
 import { 
   BarChart3, 
   Download, 
@@ -340,7 +341,8 @@ export const ReportsModule = () => {
       // Fetch products (inventario)
       const { data: productsData, error: productsError } = await supabase
         .from('products')
-        .select('id, name, current_stock, selling_price, status, category, sku, brand')
+        // `itbis_rate`: los precios se enseñan CON impuesto (2026-10-01).
+        .select('id, name, current_stock, selling_price, itbis_rate, status, category, sku, brand')
         .order('name');
 
       if (productsError) throw productsError;
@@ -1533,7 +1535,12 @@ export const ReportsModule = () => {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Inventario de Productos</CardTitle>
-                <Button onClick={() => exportToCSV(reportData.products, 'reporte_inventario')}>
+                <Button onClick={() => exportToCSV(reportData.products.map(p => ({
+                  ...p,
+                  // El precio que paga el cliente y el valor del stock, CON ITBIS (2026-10-01).
+                  precio_venta_con_itbis: sellingPriceWithItbis(p),
+                  valor_stock_con_itbis: stockValueWithItbis(p),
+                })), 'reporte_inventario')}>
                   <Download className="h-4 w-4 mr-2" />
                   Exportar CSV
                 </Button>
@@ -1568,7 +1575,8 @@ export const ReportsModule = () => {
                     </div>
                     <div className="text-right">
                       <div>Stock: {p.current_stock}</div>
-                      <div className="text-gray-600">Precio: ${Number(p.selling_price||0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      {/* Precio de venta CON ITBIS: es lo que paga el cliente (2026-10-01). */}
+                      <div className="text-gray-600">Precio: ${sellingPriceWithItbis(p).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
                   </div>
                 ))}

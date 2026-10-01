@@ -272,8 +272,9 @@ export const generateSaleReceipt = (receipt: SaleReceipt): string => {
   receipt.items.forEach((item, index) => {
     message += `${index + 1}. ${item.name}\n`;
     message += `   Cantidad: ${item.quantity}\n`;
+    // Precio e importe CON ITBIS: es lo que paga el cliente (2026-10-01).
     message += `   Precio unitario: ${formatCurrency(item.unitPrice)}\n`;
-    message += `   Subtotal: ${formatCurrency(item.subtotal)}\n`;
+    message += `   Importe: ${formatCurrency(item.subtotal)}\n`;
     message += `\n`;
   });
   

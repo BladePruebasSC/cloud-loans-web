@@ -14,6 +14,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
+import { formatCurrencyNumber } from '@/lib/utils';
+import { purchasePriceWithItbis, sellingPriceWithItbis } from '@/utils/itbis';
 import { 
   Package, 
   Plus, 
@@ -1351,7 +1353,10 @@ const InventoryModule = () => {
     const matchesBrand = !lowStockBrandFilter || p.brand === lowStockBrandFilter;
     return matchesLowStock && matchesCategory && matchesBrand;
   });
-  const totalValue = products.reduce((sum, p) => sum + (p.current_stock * p.purchase_price), 0);
+  // Valor del inventario a precio de COMPRA, con ITBIS: es lo que costó de verdad (2026-10-01).
+  const totalValue = products.reduce(
+    (sum, p) => sum + purchasePriceWithItbis(p) * (Number(p.current_stock) || 0), 0,
+  );
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
   const brands = [...new Set(products.map(p => p.brand).filter(Boolean))];
 
@@ -2584,11 +2589,12 @@ const InventoryModule = () => {
                             <div>
                               <span className="font-medium">Stock:</span> {product.current_stock} {getUnitLabelEs(product.unit_type, product.current_stock)}
                             </div>
+                            {/* Precios CON ITBIS: es lo que se paga y lo que se cobra (2026-10-01). */}
                             <div>
-                              <span className="font-medium">Precio Compra:</span> ${product.purchase_price}
+                              <span className="font-medium">Precio Compra:</span> ${formatCurrencyNumber(purchasePriceWithItbis(product))}
                             </div>
                             <div>
-                              <span className="font-medium">Precio Venta:</span> ${product.selling_price}
+                              <span className="font-medium">Precio Venta:</span> ${formatCurrencyNumber(sellingPriceWithItbis(product))}
                             </div>
                             <div>
                               <span className="font-medium">Categoría:</span> {product.category || 'N/A'}
@@ -2600,7 +2606,7 @@ const InventoryModule = () => {
                               <span className="font-medium">Stock Mínimo:</span> {product.min_stock}
                             </div>
                             <div>
-                              <span className="font-medium">Valor Total:</span> ${(product.current_stock * product.purchase_price).toFixed(2)}
+                              <span className="font-medium">Valor Total:</span> ${formatCurrencyNumber(purchasePriceWithItbis(product) * (Number(product.current_stock) || 0))}
                             </div>
                           </div>
                         </div>
@@ -3460,12 +3466,13 @@ const InventoryModule = () => {
               <CardContent>
                 <div className="space-y-2">
                   {products
-                    .sort((a, b) => (b.current_stock * b.purchase_price) - (a.current_stock * a.purchase_price))
+                    .map(p => ({ product: p, valor: purchasePriceWithItbis(p) * (Number(p.current_stock) || 0) }))
+                    .sort((a, b) => b.valor - a.valor)
                     .slice(0, 5)
-                    .map((product) => (
+                    .map(({ product, valor }) => (
                       <div key={product.id} className="flex justify-between">
                         <span className="truncate">{product.name}</span>
-                        <span className="font-semibold">${(product.current_stock * product.purchase_price).toFixed(2)}</span>
+                        <span className="font-semibold">${formatCurrencyNumber(valor)}</span>
                       </div>
                     ))}
                 </div>
@@ -4075,9 +4082,12 @@ const InventoryModule = () => {
                           className="p-3 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
                           onMouseDown={(e) => {
                             e.preventDefault();
-                            const itbisRate = product.itbis_rate ?? 18;
-                            const priceWithTax = product.selling_price;
-                            const priceWithoutTax = priceWithTax / (1 + itbisRate / 100);
+                            // `selling_price` se guarda SIN ITBIS: el precio unitario que se
+                            // registra y se enseña lleva el impuesto (2026-10-01). Antes se
+                            // tomaba el precio sin ITBIS como si ya lo llevara, y además se le
+                            // volvía a quitar para el subtotal: la venta salía por debajo.
+                            const priceWithTax = sellingPriceWithItbis(product);
+                            const priceWithoutTax = Number(product.selling_price) || 0;
                             setEditSaleProducts([...editSaleProducts, {
                               id: `temp-${Date.now()}`,
                               product_id: product.id,
@@ -4093,7 +4103,7 @@ const InventoryModule = () => {
                           <div className="font-medium">{product.name}</div>
                           <div className="text-sm text-gray-600">
                             {product.sku && `Código: ${product.sku} | `}
-                            Precio: ${product.selling_price.toFixed(2)}
+                            Precio: ${formatCurrencyNumber(sellingPriceWithItbis(product))} (con ITBIS)
                           </div>
                         </div>
                       ))}

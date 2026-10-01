@@ -14,6 +14,9 @@ import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import {
+  itbisRateOf, purchasePriceWithItbis, sellingPriceWithItbis, withItbis, withoutItbis,
+} from '@/utils/itbis';
 import { 
   DollarSign, 
   Search, 
@@ -1910,12 +1913,15 @@ export const PointOfSaleModule = () => {
                       <div className="mt-auto pt-2 border-t border-gray-100">
                         <div className="mb-2">
                           {product.selling_price ? (
-                            (() => {
-                              const itbisRate = product.itbis_rate ?? 18;
-                              const itbisMultiplier = 1 + (itbisRate / 100);
-                              const priceWithTax = ((product.selling_price || 0) * itbisMultiplier);
-                              return <p className="text-base sm:text-lg font-bold text-green-600">${priceWithTax.toFixed(2)}</p>;
-                            })()
+                            <>
+                              {/* Precio de venta CON ITBIS: es lo que paga el cliente. */}
+                              <p className="text-base sm:text-lg font-bold text-green-600">
+                                ${sellingPriceWithItbis(product).toFixed(2)}
+                              </p>
+                              <p className="text-[10px] text-gray-500">
+                                ITBIS incluido ({itbisRateOf(product)}%) · costo ${purchasePriceWithItbis(product).toFixed(2)}
+                              </p>
+                            </>
                           ) : (
                             <p className="text-xs text-gray-500">Sin precio</p>
                           )}
@@ -2101,12 +2107,16 @@ export const PointOfSaleModule = () => {
                         </div>
                         
                         <div className="text-right">
-                          <Label className="text-xs">Subtotal</Label>
+                          {/* Lo que paga el cliente por esta línea: CON ITBIS (2026-10-01). */}
+                          <Label className="text-xs">Subtotal (con ITBIS)</Label>
                           <div className="font-semibold text-green-600 text-xs sm:text-sm">
-                            ${(saleData.discountMode === 'total'
-                              ? (item.unitPrice / (1 + (item.product.itbis_rate ?? 18) / 100) * item.quantity)
-                              : item.subtotal
-                            ).toFixed(2)}
+                            ${(() => {
+                              const rate = itbisRateOf(item.product);
+                              const base = saleData.discountMode === 'total'
+                                ? withoutItbis(item.unitPrice, rate) * item.quantity
+                                : item.subtotal;
+                              return withItbis(base, rate).toFixed(2);
+                            })()}
                           </div>
                         </div>
                       </div>
@@ -2121,7 +2131,7 @@ export const PointOfSaleModule = () => {
           <div className="border-t border-gray-200 bg-white p-3 sm:p-4 lg:static fixed bottom-0 left-0 right-0 z-30 shadow-[0_-4px_10px_rgba(0,0,0,0.1)] lg:shadow-none">
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
-                <span>Subtotal:</span>
+                <span>Subtotal (sin ITBIS):</span>
                 <span>${saleData.subtotal.toFixed(2)}</span>
               </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
@@ -3206,11 +3216,12 @@ export const PointOfSaleModule = () => {
                     day: 'numeric'
                   });
                   
+                  // Precio e importe CON ITBIS (`item.subtotal` se guarda sin él).
                   const items = (dataToUse.items && dataToUse.items.length > 0 ? dataToUse.items : cart).map((item: any) => ({
                     name: item.product.name,
                     quantity: item.quantity,
                     unitPrice: item.unitPrice,
-                    subtotal: item.subtotal
+                    subtotal: withItbis(item.subtotal, itbisRateOf(item.product)),
                   }));
                   
                   const paymentMethods = (dataToUse.paymentSplits || []).map((split: any) => ({
@@ -3448,11 +3459,12 @@ export const PointOfSaleModule = () => {
                   const companyName = companyInfo.company_name || 'LA EMPRESA';
                   const saleDate = formatDateStringForSantoDomingo(new Date().toISOString().split('T')[0]);
                   
+                  // El recibo enseña precio e importe CON ITBIS (`item.subtotal` es sin él).
                   const items = lastSaleData.cart.map((item: any) => ({
                     name: item.product.name,
                     quantity: item.quantity,
                     unitPrice: item.unitPrice,
-                    subtotal: item.subtotal
+                    subtotal: withItbis(item.subtotal, itbisRateOf(item.product)),
                   }));
                   
                   const paymentMethods = lastSaleData.paymentMethods.map((split: any) => ({
@@ -3468,8 +3480,10 @@ export const PointOfSaleModule = () => {
                     totalAmount: lastSaleData.saleData.total,
                     items,
                     paymentMethods,
-                    discount: 0, // TODO: calcular descuento si existe
-                    tax: lastSaleData.saleData.total * 0.18, // TODO: calcular ITBIS correctamente
+                    // El ITBIS y el descuento ya calculados de la venta. Antes era
+                    // `total * 0.18`, que sobre un total que YA incluye el impuesto da de más.
+                    discount: Number(lastSaleData.saleData.discount) || 0,
+                    tax: Number(lastSaleData.saleData.tax) || 0,
                     saleId: lastSaleData.saleData.ncfNumber || undefined
                   });
 
