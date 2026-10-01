@@ -20,7 +20,8 @@ import { formatDateStringForSantoDomingo, getCurrentDateInSantoDomingo } from '@
 import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 import { interleaveCapitalPayments, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
 import { allocatePaymentsToPeriods, isChargePayment, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
-import { describeDueDiscount, discountsByDueDate } from '@/utils/paymentDiscount';
+import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { describeDueDiscount, discountsByDueDateSplit } from '@/utils/paymentDiscount';
 import { PiggyBank } from 'lucide-react';
 
 interface Installment {
@@ -93,8 +94,18 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
    * Descuentos por fecha de vencimiento: la cuota se acreditó COMPLETA y parte se perdonó, así
    * que la tabla lo dice (monto y porcentaje) en vez de dejar la cuota como si se hubiera
    * cobrado entera en efectivo (2026-10-01).
+   *
+   * Separado en cargo/cuota: un cargo vence casi siempre el mismo día que una cuota, y el
+   * descuento de uno salía TAMBIÉN en la fila del otro (el mismo "Descuento RD$280.00 (7.78%)"
+   * repetido en "Cargo #1" y en la cuota 1/X).
    */
-  const discountByDue = useMemo(() => discountsByDueDate(allPayments || []), [allPayments]);
+  const discountByDue = useMemo(() => discountsByDueDateSplit(allPayments || []), [allPayments]);
+
+  /** El descuento que le toca a la fila: del cargo si es un cargo, de la cuota si no. */
+  const rowDiscount = (inst: Installment & { amount?: number }) => {
+    const due = String(inst?.due_date || '').split('T')[0];
+    return (isChargeInstallment(inst) ? discountByDue.charges : discountByDue.regular).get(due);
+  };
 
   useEffect(() => {
     if (isOpen && loanId) {
@@ -1332,7 +1343,31 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         })
         .reduce((sum, inst) => r2(sum + r2((inst as any).interest_amount || 0)), 0);
 
-      balancePending = r2(currentCapital + unpaidInterestTotal + unpaidChargesAmountIndefinite);
+      // BALANCE PENDIENTE de un indefinido: el MISMO cálculo que la tarjeta y Detalles.
+      //
+      // FALLO REPORTADO (2026-10-01): esta tabla decía "Total Pendiente RD$35,000" mientras la
+      // tarjeta decía "Balance Pendiente RD$35,525". Aquí el interés pendiente se sacaba de las
+      // filas de `installments`, y un indefinido solo tiene UNA fila real: si estaba marcada como
+      // pagada el interés pendiente era 0, aunque las filas de la tabla —generadas— enseñaran el
+      // período en curso. `computeLoanBalanceBreakdown` cuenta los períodos generados.
+      const desglose = computeLoanBalanceBreakdown(
+        loanInfo as any,
+        {
+          payments: (allPayments || []) as any[],
+          installments: installments as any[],
+          capitalPayments: capitalPayments as CapitalPaymentLike[],
+        },
+      );
+      balancePending = r2(desglose.totalBalance);
+
+      console.log('[cuotas] indefinido balance:', {
+        loanId,
+        balancePending,
+        porFilas: r2(currentCapital + unpaidInterestTotal + unpaidChargesAmountIndefinite),
+        capitalPending: desglose.capitalPending,
+        interestPending: desglose.interestPending,
+        cargosPendientes: desglose.pendingCharges,
+      });
     } else {
       // Para préstamos con plazo definido: calcular el total correctamente
       // IMPORTANTE: Usar total_amount del préstamo como base (sin redondear) y sumar solo los cargos
@@ -1881,9 +1916,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                             <span className="font-medium">Mora Pagada:</span>
                             <div>RD${formatCurrencyNumber(installment.late_fee_paid || 0)}</div>
                           </div>
-                          {describeDueDiscount(discountByDue.get((installment.due_date || '').split('T')[0])) && (
+                          {describeDueDiscount(rowDiscount(installment)) && (
                             <div className="col-span-2 text-emerald-700">
-                              {describeDueDiscount(discountByDue.get((installment.due_date || '').split('T')[0]))}
+                              {describeDueDiscount(rowDiscount(installment))}
                             </div>
                           )}
                         </div>
@@ -1953,9 +1988,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                                 </div>
                               )}
                               {/* La cuota se acreditó completa; parte se perdonó como descuento. */}
-                              {describeDueDiscount(discountByDue.get((installment.due_date || '').split('T')[0])) && (
+                              {describeDueDiscount(rowDiscount(installment)) && (
                                 <div className="text-xs mt-1 font-normal text-emerald-700">
-                                  {describeDueDiscount(discountByDue.get((installment.due_date || '').split('T')[0]))}
+                                  {describeDueDiscount(rowDiscount(installment))}
                                 </div>
                               )}
                             </td>

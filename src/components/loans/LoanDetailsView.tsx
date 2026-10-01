@@ -47,6 +47,7 @@ import { getLateFeePeriodDays } from '@/utils/frequencyUtils';
 import { useLoanPenalties } from '@/hooks/useLoanPenalties';
 import { PENALTY_SOURCE_LABEL } from '@/utils/loanPenalties';
 import { paymentCashReceived, paymentsDiscountTotal } from '@/utils/paymentDiscount';
+import { computeLoanPaidTotals } from '@/utils/loanPaidTotals';
 
 interface LoanDetailsViewProps {
   loanId: string;
@@ -1055,76 +1056,36 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   });
   const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
   
-  // CORRECCIÓN CRÍTICA: Calcular cargos pagados considerando pagos parciales
-  // No usar is_paid directamente, sino calcular cuánto se ha pagado de cada cargo
-  const paidChargesAmount = allCharges.reduce((sum, inst) => {
-    const chargeDueDate = inst.due_date?.split('T')[0];
-    if (!chargeDueDate) return sum;
-    
-    // Obtener cargos con la misma fecha para distribuir pagos correctamente
-    const chargesWithSameDate = allCharges.filter(c => c.due_date?.split('T')[0] === chargeDueDate)
-      .sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
-    
-    // Obtener pagos asignados a cargos con esta fecha
-    const paymentsForCharges = payments.filter(p => {
-      const paymentDueDate = p.due_date?.split('T')[0];
-      const hasNoInterest = Math.abs(p.interest_amount || 0) < 0.01;
-      return paymentDueDate === chargeDueDate && hasNoInterest;
-    });
-    
-    const totalPaidForDate = paymentsForCharges.reduce((s, p) => s + (p.principal_amount || p.amount || 0), 0);
-    const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
-    
-    let principalPaidForThisCharge = 0;
-    if (chargeIndex >= 0 && chargesWithSameDate.length > 0) {
-      let remainingPayments = totalPaidForDate;
-      for (let i = 0; i < chargeIndex; i++) {
-        const prevCharge = chargesWithSameDate[i];
-        remainingPayments -= Math.min(remainingPayments, prevCharge.total_amount || 0);
-      }
-      principalPaidForThisCharge = Math.min(remainingPayments, inst.total_amount || 0);
-    } else {
-      principalPaidForThisCharge = Math.min(totalPaidForDate, inst.total_amount || 0);
-    }
-    
-    return sum + principalPaidForThisCharge;
-  }, 0);
-  
+  /**
+   * LO COBRADO, por concepto (cargos / interés / capital / abonos).
+   *
+   * FALLO REPORTADO (2026-10-01): "los préstamos indefinidos dan problemas cuando se elimina un
+   * pago... el balance restante, el total pagado, etc. no cambian". En un indefinido quincenal de
+   * 35,000 con un cargo de 1,500 y seis cuotas de 525 cobradas, "Ver cuotas" decía "Total pagado
+   * RD$4,650" y esta pantalla decía RD$1,575.
+   *
+   * DOS CAUSAS, las dos por medir el pago con su desglose:
+   *   1. un pago sobre un período GENERADO se guarda sin desglose (capital 0, interés 0), así que
+   *      "Interés pagado" —`Σ interest_amount`— lo contaba como 0;
+   *   2. lo cobrado a los cargos se medía con `principal_amount || amount`: al ser el capital 0,
+   *      el `||` tomaba el monto completo y el dinero de la cuota del mismo día se daba por
+   *      cobrado al cargo, donde se perdía.
+   *
+   * `computeLoanPaidTotals` hace el MISMO reparto que las tablas de amortización: los cargos de
+   * cada fecha cobran primero (hasta lo que valen) y el resto es dinero de cuotas.
+   */
+  const paidTotals = computeLoanPaidTotals({
+    isIndefinite: loan.amortization_type === 'indefinite',
+    payments,
+    installments,
+    capitalPayments,
+  });
+
+  const paidChargesAmount = paidTotals.chargesPaid;
   const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
 
-  /**
-   * Lo que cada fecha se llevó en CARGOS.
-   *
-   * Un cargo se fecha casi siempre el mismo día que una cuota. Sin esta cuenta, el dinero de
-   * un cargo cobrado se contaba TAMBIÉN como si hubiera saldado la cuota regular de ese día,
-   * y el saldo bajaba una cuota entera de más: un cargo de 3,000 restaba 3,836.11.
-   *
-   * Es el mismo reparto que hace `paidChargesAmount` unas líneas arriba, pero agrupado por
-   * fecha para poder descontarlo de lo que se atribuye a las cuotas.
-   */
-  const paidToChargesByDueDate = allCharges.reduce((map, inst) => {
-    const chargeDueDate = inst.due_date?.split('T')[0];
-    if (!chargeDueDate) return map;
-
-    const chargesWithSameDate = allCharges
-      .filter(c => c.due_date?.split('T')[0] === chargeDueDate)
-      .sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
-
-    const totalPaidForDate = payments
-      .filter(p => p.due_date?.split('T')[0] === chargeDueDate
-        && Math.abs(Number(p.interest_amount || 0)) < 0.01)
-      .reduce((s, p) => s + (Number(p.principal_amount ?? p.amount) || 0), 0);
-
-    const chargeIndex = chargesWithSameDate.findIndex(c => c.id === inst.id);
-    let remaining = totalPaidForDate;
-    for (let i = 0; i < Math.max(0, chargeIndex); i++) {
-      remaining -= Math.min(remaining, chargesWithSameDate[i].total_amount || 0);
-    }
-    const applied = Math.min(Math.max(0, remaining), inst.total_amount || 0);
-
-    map.set(chargeDueDate, Math.round(((map.get(chargeDueDate) || 0) + applied) * 100) / 100);
-    return map;
-  }, new Map<string, number>());
+  /** Lo que cada fecha se llevó en CARGOS (para no atribuirlo también a la cuota de ese día). */
+  const paidToChargesByDueDate = paidTotals.chargePaidByDue;
 
   /** Lo pagado en una fecha que corresponde a la CUOTA REGULAR, ya sin lo de los cargos. */
   const paidForRegularOn = (due: string | null | undefined, totalPaidForDue: number): number => {
@@ -1135,17 +1096,17 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   
   // Calcular pagos y abonos
   const totalPaidFromPayments = payments.reduce((sum, p) => sum + (p.principal_amount || 0), 0);
-  const totalInterestPaid = payments.reduce((sum, p) => sum + (p.interest_amount || 0), 0);
+  // INTERÉS COBRADO: en un indefinido es todo el dinero de cuotas (incluidos los pagos guardados
+  // sin desglose), no solo `Σ interest_amount`. Ver `computeLoanPaidTotals`.
+  const totalInterestPaid = paidTotals.interestPaid;
   const totalLateFeePaid = payments.reduce((sum, p) => sum + (p.late_fee || 0), 0);
-  
+
   // Calcular total de abonos a capital
   const totalCapitalPayments = capitalPayments.reduce((sum, cp) => sum + (cp.amount || 0), 0);
-  
-  // CORRECCIÓN: Capital pagado = abonos a capital + principal de pagos que NO son a cargos.
-  // En indefinidos, los pagos a cargos (principal_amount > 0, interest_amount ~ 0) no reducen el capital del préstamo.
-  const capitalPaidFromLoan = loan.amortization_type === 'indefinite'
-    ? totalCapitalPayments + Math.round((totalPaidFromPayments - paidChargesAmount) * 100) / 100
-    : totalPaidFromPayments + totalCapitalPayments;
+
+  // CAPITAL COBRADO = abonos a capital + capital de los pagos que NO son a cargos.
+  // Un cargo es aparte del préstamo: su cobro no rebaja el capital (sí cuenta en "Total pagado").
+  const capitalPaidFromLoan = Math.round((paidTotals.principalPaid + totalCapitalPayments) * 100) / 100;
   
   // Total pagado = capital + interés de los pagos (NO incluye abonos a capital)
   const totalPaidFromAllPayments = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
@@ -1355,8 +1316,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
   // Para otros tipos: total = capital + interés total + todos los cargos
   let totalLoanAmount: number;
   if (loan.amortization_type === 'indefinite') {
-    // Para indefinidos: capital + interés pendiente + todos los cargos
-    totalLoanAmount = loan.amount + pendingInterestForIndefinite + totalChargesAmount;
+    // Para indefinidos: capital + interés YA cobrado + interés pendiente + todos los cargos.
+    //
+    // El interés de un indefinido no tiene final, así que el "total" es lo que ha costado hasta
+    // hoy más lo que falta. Antes se omitía el interés ya cobrado, así que el total bajaba a
+    // medida que el cliente pagaba y el porcentaje nunca cuadraba con "Ver cuotas".
+    totalLoanAmount = Math.round(
+      ((loan.amount || 0) + totalInterestPaid + pendingInterestForIndefinite + totalChargesAmount) * 100,
+    ) / 100;
   } else {
     // Para otros tipos: calcular total correcto
     let correctTotalAmount = (loan as any).total_amount;
@@ -1367,14 +1334,18 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     totalLoanAmount = correctTotalAmount + totalChargesAmount;
   }
   
-  // TOTAL PAGADO = capital pagado + interés pagado.
+  // TOTAL PAGADO = capital pagado + interés pagado + cargos cobrados.
   //
   // FALLO REPORTADO (2026-09-15): "en detalles el total pagado debe sumar el interés pagado y el
   // capital pagado y no lo está haciendo". Sumaba SOLO `payments.amount`, así que un abono a
   // capital —que sí cuenta en "Capital pagado"— quedaba fuera: con 50,000 de capital y 9,000 de
   // interés, el total decía 9,000. El abono es dinero cobrado, y también cuenta para el
   // porcentaje pagado del préstamo.
-  const totalPaidForPercentage = Math.round((capitalPaidFromLoan + totalInterestPaid) * 100) / 100;
+  //
+  // FALLO REPORTADO (2026-10-01): faltaba lo cobrado a los CARGOS, que sí está dentro de
+  // `totalLoanAmount`: con un cargo de 1,500 cobrado el total pagado se quedaba corto en 1,500 y
+  // no cuadraba con "Ver cuotas".
+  const totalPaidForPercentage = paidTotals.totalPaid;
   
   console.log('🔍 LoanDetailsView - Cálculo de total pagado:', {
     loanId: loan.id,

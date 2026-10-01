@@ -28,6 +28,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { useAuth } from '@/hooks/useAuth';
+import { isChargePayment, paymentGross, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
+import { chargeTotalsByDueDate, paidPeriodsFromMoney } from '@/utils/loanPaidTotals';
 
 interface Payment {
   id: string;
@@ -436,17 +438,21 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         try {
           const chargeDueDate = String(payment.due_date).split('T')[0];
 
-          // Sumar todos los pagos de cargo que quedan para esta cuota (mismo loan_id + due_date + sin interés)
+          // Sumar todos los pagos de CARGO que quedan para esta fecha.
+          //
+          // FALLO (2026-10-01): se sumaba `principal_amount || amount` de todo pago sin interés.
+          // Un pago de cuota de un indefinido se guarda sin desglose (capital 0, interés 0), así
+          // que el `||` tomaba su monto completo y se contaba como si fuera del cargo.
           const { data: remainingCargoPayments } = await supabase
             .from('payments')
-            .select('principal_amount, amount')
+            .select('principal_amount, interest_amount, amount')
             .eq('loan_id', payment.loan_id)
             .eq('due_date', chargeDueDate)
             .lt('interest_amount', 0.01);
 
-          const totalRemaining = (remainingCargoPayments || []).reduce(
-            (sum: number, p: any) => sum + (Number(p.principal_amount) || Number(p.amount) || 0), 0
-          );
+          const totalRemaining = (remainingCargoPayments || [])
+            .filter((p: any) => isChargePayment(p))
+            .reduce((sum: number, p: any) => sum + paymentGross(p), 0);
 
           // Buscar el installment del cargo por loan_id + due_date
           const { data: cargoInstallments } = await supabase
@@ -473,7 +479,8 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       console.log('🗑️ OBTENIENDO PAGOS RESTANTES...');
       const { data: remainingPayments, error: paymentsError } = await supabase
         .from('payments')
-        .select('id, principal_amount, interest_amount, late_fee, payment_date, due_date, amount')
+        // `superseded_at` para no contar los pagos anulados por una extensión de plazo.
+        .select('id, principal_amount, interest_amount, late_fee, payment_date, due_date, amount, superseded_at')
         .eq('loan_id', payment.loan_id)
         .order('payment_date', { ascending: true });
 
@@ -553,6 +560,26 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       // CORRECCIÓN: Los triggers de la BD ya actualizaron remaining_balance y next_payment_date correctamente (incluyendo cargos)
       // NO recalcular manualmente, solo calcular paid_installments que es necesario para actualizar las cuotas
       
+      // PASO 4.9: Cuotas y cargos del préstamo (se usan para repartir lo cobrado y, más abajo,
+      // para revertir su estado). Antes se leían después de PASO 5; se adelantó porque el reparto
+      // de lo cobrado necesita saber cuánto valen los cargos.
+      const { data: allInstallments, error: installmentsError } = await supabase
+        .from('installments')
+        .select('id, installment_number, is_paid, paid_amount, due_date, total_amount, principal_amount, interest_amount')
+        .eq('loan_id', payment.loan_id)
+        .order('due_date', { ascending: true })
+        .order('installment_number', { ascending: true });
+
+      // Lo cobrado que es de CUOTAS, ya sin lo que se llevaron los cargos (mismo reparto que las
+      // tablas de amortización). Los cargos de cada fecha cobran primero, hasta lo que valen.
+      const chargeTotalByDue = chargeTotalsByDueDate((allInstallments || []) as any[]);
+      const { chargePaidByDue, regular: regularPaidEntries } = splitChargeAndRegularPayments(
+        (remainingPayments || []) as any[], chargeTotalByDue,
+      );
+      const regularMoneyLeft = Math.round(
+        regularPaidEntries.reduce((s, e) => s + (Number(e.amount) || 0), 0) * 100,
+      ) / 100;
+
       // PASO 5: Recalcular paid_installments basándose en los pagos restantes (necesario para actualizar el estado de las cuotas)
       let updatedPaidInstallments: number[] = [];
 
@@ -560,21 +587,20 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
         // Para préstamos indefinidos, calcular basándose en el interés pagado.
         // La cuota es `monthly_payment` (interés sobre el capital vigente): `amount` es el monto
         // prestado y no baja con los abonos a capital.
+        //
+        // FALLO REPORTADO (2026-10-01): "cuando elimino un pago, los siguientes los procesa pero
+        // los datos no se actualizan". Aquí se acumulaba `interest_amount`, y un pago sobre un
+        // período GENERADO se guarda sin desglose (capital 0, interés 0): valía 0, así que al
+        // borrar un pago las cuotas cobradas volvían a "pendiente" y el préstamo quedaba con un
+        // `paid_installments` que no se movía por más que se cobrara.
         const interestPerPayment = Number(loanData.monthly_payment) > 0.005
           ? Number(loanData.monthly_payment)
           : (loanData.amount * loanData.interest_rate) / 100;
-        let paidInstallmentsCount = 0;
-        let currentInstallmentInterestPaid = 0;
-        
-        if (remainingPayments && remainingPayments.length > 0) {
-          for (const p of remainingPayments) {
-            currentInstallmentInterestPaid += p.interest_amount || 0;
-            if (currentInstallmentInterestPaid >= interestPerPayment * 0.99) {
-              paidInstallmentsCount++;
-              currentInstallmentInterestPaid = 0;
-            }
-          }
-        }
+        const paidInstallmentsCount = paidPeriodsFromMoney(regularMoneyLeft, interestPerPayment);
+
+        console.log('🗑️ Indefinido: períodos saldados con el dinero de cuotas restante:', {
+          regularMoneyLeft, interestPerPayment, paidInstallmentsCount,
+        });
 
         // CORRECCIÓN: NO calcular next_payment_date manualmente
         // El trigger de la BD ya lo actualizó correctamente (incluyendo cargos)
@@ -628,21 +654,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       // PASO 6: Revertir el estado de las cuotas y cargos que ya no deberían estar pagados
       // CORRECCIÓN: Necesitamos diferenciar entre cuotas regulares y cargos
       console.log('🗑️ REVIRTIENDO ESTADO DE CUOTAS Y CARGOS...');
-      const { data: allInstallments, error: installmentsError } = await supabase
-        .from('installments')
-        .select('id, installment_number, is_paid, paid_amount, due_date, total_amount, principal_amount, interest_amount')
-        .eq('loan_id', payment.loan_id)
-        .order('due_date', { ascending: true })
-        .order('installment_number', { ascending: true });
 
       if (!installmentsError && allInstallments) {
         // Agrupar cargos por fecha de vencimiento para calcular pagos aplicados
         const chargesByDate = new Map<string, typeof allInstallments>();
-        const regularInstallments = allInstallments.filter(inst => 
-          Math.abs(inst.interest_amount || 0) >= 0.01 || 
-          Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) >= 0.01
-        );
-        
+
         // Agrupar cargos por fecha
         allInstallments.forEach(inst => {
           const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
@@ -661,11 +677,6 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           charges.sort((a, b) => a.installment_number - b.installment_number);
         });
 
-        // Calcular pagos aplicados a cargos
-        const paymentsForCharges = (remainingPayments || []).filter(p => 
-          Math.abs(p.interest_amount || 0) < 0.01
-        );
-
         // Procesar cada installment
         for (const installment of allInstallments) {
           const isCharge = Math.abs(installment.interest_amount || 0) < 0.01 && 
@@ -679,18 +690,14 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
             const chargeDate = installment.due_date.split('T')[0];
             const chargesWithSameDate = chargesByDate.get(chargeDate) || [];
             const chargeIndex = chargesWithSameDate.findIndex(c => c.installment_number === installment.installment_number);
-            
-            // Filtrar pagos que corresponden a cargos de esta fecha (usar due_date, no payment_date)
-            const paymentsForThisDate = paymentsForCharges.filter(p => {
-              const pDue = (p.due_date as string)?.split('T')[0];
-              return pDue === chargeDate;
-            });
-            
-            // Calcular total pagado a cargos de esta fecha
-            const totalPaidForDate = paymentsForThisDate.reduce((sum, p) => 
-              sum + (p.principal_amount || p.amount || 0), 0
-            );
-            
+
+            // Lo cobrado a los cargos de esta fecha, del reparto compartido.
+            //
+            // FALLO (2026-10-01): se tomaba todo pago sin interés y se medía con
+            // `principal_amount || amount`, así que una cuota de un indefinido cobrada el mismo
+            // día (se guarda sin desglose) se contaba como dinero del cargo.
+            const totalPaidForDate = chargePaidByDue.get(chargeDate) || 0;
+
             // Asignar pagos secuencialmente a los cargos
             let remainingPaymentsForCharges = totalPaidForDate;
             

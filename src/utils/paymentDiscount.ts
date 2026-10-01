@@ -14,6 +14,7 @@
 //   · EL EFECTIVO RECIBIDO es `amount - discount_amount`. Es lo que se cobra en caja, lo que sale
 //     en el recibo y lo que suma en los ingresos.
 
+import { isChargePayment } from './chargeAwarePayments';
 import { findMissingColumn } from './supabaseErrors';
 
 const round2 = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 100) / 100;
@@ -178,6 +179,30 @@ export const discountsByDueDate = (
   }
   return out;
 };
+
+export interface DueDiscountSplit {
+  /** Descuentos de los pagos a CARGOS, por fecha */
+  charges: Map<string, DueDiscount>;
+  /** Descuentos de los pagos de CUOTA, por fecha */
+  regular: Map<string, DueDiscount>;
+}
+
+/**
+ * Lo mismo, pero separando el cargo de la cuota.
+ *
+ * FALLO (2026-10-01): un cargo casi siempre vence el mismo día que una cuota, así que el descuento
+ * de uno salía TAMBIÉN en la fila del otro ("Descuento RD$280.00 (7.78%)" repetido en el cargo y
+ * en la cuota 1/X). Cada fila debe enseñar solo lo que se perdonó en SU concepto.
+ */
+export const discountsByDueDateSplit = (
+  payments: Array<{
+    due_date?: string | null; amount?: number | null; discount_amount?: number | null;
+    principal_amount?: number | null; interest_amount?: number | null;
+  }>,
+): DueDiscountSplit => ({
+  charges: discountsByDueDate((payments || []).filter(p => isChargePayment(p as any))),
+  regular: discountsByDueDate((payments || []).filter(p => !isChargePayment(p as any))),
+});
 
 /** Texto corto para la fila de una tabla: "Descuento RD$52.50 (10%)". */
 export const describeDueDiscount = (d: DueDiscount | undefined | null): string => {

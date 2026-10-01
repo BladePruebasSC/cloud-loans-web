@@ -86,7 +86,9 @@ export function computeLoanBalanceBreakdown(
   }
 
   const amort = String(loan?.amortization_type || '').toLowerCase();
-  const payments = data.payments || [];
+  // Un pago anulado por una extensión de plazo (`superseded_at`) ya no cobró nada: la base lo
+  // excluye en `calculate_loan_remaining_balance` y aquí también, para que no haya dos balances.
+  const payments = (data.payments || []).filter((p: any) => !p?.superseded_at);
   const installments = data.installments || [];
   const capitalPayments = data.capitalPayments || [];
   const totalCapitalPayments = sumCapitalPayments(capitalPayments);
@@ -272,7 +274,9 @@ export async function getLoanBalanceBreakdown(
   const [paymentsRes, installmentsRes, capitalRes] = await Promise.all([
     supabase
       .from('payments')
-      .select('amount, due_date, interest_amount, principal_amount')
+      // `superseded_at`: los pagos anulados por una extensión de plazo no cuentan (es lo que hace
+      // también `calculate_loan_remaining_balance` en la base, y así ambos dan el mismo balance).
+      .select('amount, due_date, interest_amount, principal_amount, superseded_at')
       .eq('loan_id', loan.id),
     supabase
       .from('installments')

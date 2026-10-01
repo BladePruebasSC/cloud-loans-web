@@ -2109,10 +2109,15 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     try {
       // Validaciones antes de procesar el pago
       const monthlyPayment = selectedLoan.monthly_payment;
-      // Calcular el balance restante correcto (incluyendo intereses pendientes para indefinidos)
-      const remainingBalance = selectedLoan.amortization_type === 'indefinite' 
-        ? selectedLoan.amount + pendingInterestForIndefinite
-        : (computedBalancePending !== null ? computedBalancePending : selectedLoan.remaining_balance);
+      // Balance restante: el del desglose compartido (el que enseña esta misma pantalla y
+      // Detalles). En indefinidos se usaba una cuenta propia que salía de `Σ interest_amount`, y
+      // los pagos guardados sin desglose valían 0, así que el balance de la validación quedaba
+      // más alto que el de la pantalla.
+      const remainingBalance = computedBalancePending !== null
+        ? computedBalancePending
+        : (selectedLoan.amortization_type === 'indefinite'
+            ? selectedLoan.amount + pendingInterestForIndefinite
+            : selectedLoan.remaining_balance);
       const currentPaymentRemaining = paymentStatus.currentPaymentRemaining;
       const interestRate = selectedLoan.interest_rate; // Tasa de interés mensual [[memory:6311805]]
       

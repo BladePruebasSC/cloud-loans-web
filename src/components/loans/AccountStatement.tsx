@@ -33,7 +33,7 @@ import { getFrequencyRateFactor } from '@/utils/frequencyUtils';
 import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
 import { interleaveCapitalPayments, toCapitalPaymentEntries, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
 import {
-  describeDiscount, describeDueDiscount, discountsByDueDate, paymentCashReceived, paymentsDiscountTotal,
+  describeDiscount, describeDueDiscount, discountsByDueDateSplit, paymentCashReceived, paymentsDiscountTotal,
 } from '@/utils/paymentDiscount';
 import {
   allocatePaymentsToPeriods, isChargePayment, splitChargeAndRegularPayments,
@@ -121,8 +121,23 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
   /**
    * Descuentos por fecha de vencimiento: en la tabla de amortización la cuota se acredita
    * COMPLETA y debajo se dice cuánto se perdonó y en qué porcentaje (2026-10-01).
+   *
+   * Separados cargo/cuota: los dos vencen casi siempre el mismo día, y el descuento de uno salía
+   * repetido en la fila del otro.
    */
-  const discountByDue = useMemo(() => discountsByDueDate(payments as any[]), [payments]);
+  const discountByDue = useMemo(() => discountsByDueDateSplit(payments as any[]), [payments]);
+
+  /** El descuento que le toca a una fila de la tabla de amortización. */
+  const rowDiscount = (row: {
+    dueDate?: string | null; isChargeRow?: boolean;
+    interestPayment?: number; principalPayment?: number; monthlyPayment?: number;
+  }) => {
+    const due = String(row?.dueDate || '').split('T')[0];
+    const esCargo = !!row?.isChargeRow
+      || (Math.abs(Number(row?.interestPayment) || 0) < 0.01
+        && Math.abs((Number(row?.principalPayment) || 0) - (Number(row?.monthlyPayment) || 0)) < 0.01);
+    return (esCargo ? discountByDue.charges : discountByDue.regular).get(due);
+  };
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [statementDate, setStatementDate] = useState(new Date().toISOString().split('T')[0]);
   const [filteredPayments, setFilteredPayments] = useState<Payment[]>([]);
@@ -426,8 +441,13 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
         correctTotalAmount = loanData.amount + totalInterest;
       }
       
-      // Calcular el total pagado (capital + interés)
-      const totalPaid = (paymentsData || []).reduce((sum, p) => sum + ((p.principal_amount || 0) + (p.interest_amount || 0)), 0);
+      // Calcular el total pagado (capital + interés).
+      // Un pago sobre un período generado de un indefinido se guarda SIN desglose (capital 0 e
+      // interés 0): en ese caso vale su monto, o este total se quedaría corto.
+      const totalPaid = (paymentsData || []).reduce((sum, p) => {
+        const desglose = (Number(p.principal_amount) || 0) + (Number(p.interest_amount) || 0);
+        return sum + (desglose > 0.005 ? desglose : (Number(p.amount) || 0));
+      }, 0);
       
       // El balance restante base es el total menos lo pagado
       // Los cargos se agregarán después cuando se obtengan los installments
@@ -1475,6 +1495,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
         return {
           installment: `Cargo #${idx + 1}`,
+          isChargeRow: true,
           rowKey: String(inst?.id || `charge-${loanData.id}-${dueDate || 'no-due'}-${idx}`),
           dueDate: dueDate || (loanData?.start_date?.split?.('T')?.[0] || null),
           monthlyPayment: total,
@@ -2428,6 +2449,8 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
 
       schedule.push({
         installment: isIndefinite ? `${i}/X` : i,
+        // Para que el descuento de un cargo no salga también en la cuota del mismo día.
+        isChargeRow: !!isCharge,
         dueDate: dueDate.toISOString().split('T')[0],
         monthlyPayment: displayAmount, // Mostrar monto real pagado si existe, sino el monto de la cuota
         principalPayment: originalPrincipal,
@@ -2897,9 +2920,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                             Falta: ${formatCurrency(installment.remainingPayment)}
                           </div>
                         ` : ''}
-                        ${describeDueDiscount(discountByDue.get(String(installment.dueDate || '').split('T')[0])) ? `
+                        ${describeDueDiscount(rowDiscount(installment)) ? `
                           <div style="font-size: 10px; color: #047857; margin-top: 2px;">
-                            ${describeDueDiscount(discountByDue.get(String(installment.dueDate || '').split('T')[0]))}
+                            ${describeDueDiscount(rowDiscount(installment))}
                           </div>
                         ` : ''}
                       </td>
@@ -3402,9 +3425,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
                                 </div>
                               )}
                               {/* La cuota se acreditó completa; parte se perdonó como descuento. */}
-                              {describeDueDiscount(discountByDue.get(String(installment.dueDate || '').split('T')[0])) && (
+                              {describeDueDiscount(rowDiscount(installment)) && (
                                 <div className="text-xs text-emerald-700 mt-1">
-                                  {describeDueDiscount(discountByDue.get(String(installment.dueDate || '').split('T')[0]))}
+                                  {describeDueDiscount(rowDiscount(installment))}
                                 </div>
                               )}
                             </td>
