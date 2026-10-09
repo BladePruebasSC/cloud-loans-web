@@ -360,6 +360,7 @@ export const salesReports: ReportDefinition<ReportData>[] = [
 export const inventoryReports: ReportDefinition<ReportData>[] = [
   {
     id: 'inventory-current',
+    asOfToday: true,
     name: 'Inventario actual',
     category: 'inventario',
     description: 'Existencias y valor del inventario, con los precios con ITBIS.',
@@ -428,6 +429,7 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
 
   {
     id: 'inventory-low',
+    asOfToday: true,
     name: 'Stock bajo y agotados',
     category: 'inventario',
     description: 'Lo que hay que reponer: productos agotados o por debajo de su mínimo.',
@@ -474,6 +476,7 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
 
   {
     id: 'inventory-by-category',
+    asOfToday: true,
     name: 'Inventario por categoría',
     category: 'inventario',
     description: 'Dónde está metido el dinero del inventario.',

@@ -133,6 +133,7 @@ const tramoDe = (dias: number): string =>
 export const arrearsReports: ReportDefinition<CoreDataset>[] = [
   {
     id: 'arrears-portfolio',
+    asOfToday: true,
     name: 'Cartera vencida',
     category: 'mora',
     description: 'Todos los préstamos con atraso: cuánto deben, cuánto está vencido y desde cuándo.',
@@ -180,6 +181,7 @@ export const arrearsReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'arrears-aging',
+    asOfToday: true,
     name: 'Antigüedad de la mora (PAR)',
     category: 'mora',
     description: 'Cuánto saldo hay en cada tramo de atraso y qué porcentaje de la cartera representa.',
@@ -236,6 +238,7 @@ export const arrearsReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'arrears-clients',
+    asOfToday: true,
     name: 'Clientes morosos',
     category: 'mora',
     description: 'Clientes con deuda vencida, de la más grande a la más pequeña.',
@@ -282,6 +285,7 @@ export const arrearsReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'arrears-by-city',
+    asOfToday: true,
     name: 'Mora por ciudad y sector',
     category: 'mora',
     description: 'Dónde se concentra el atraso, con el porcentaje vencido de cada zona.',

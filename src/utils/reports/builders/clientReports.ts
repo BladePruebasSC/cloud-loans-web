@@ -130,6 +130,7 @@ export const clientReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'clients-portfolio',
+    asOfToday: true,
     name: 'Cartera por cliente',
     category: 'clientes',
     description: 'Cuánto debe cada cliente, cuánto ha pagado y cómo viene cumpliendo.',
@@ -177,6 +178,7 @@ export const clientReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'clients-behavior',
+    asOfToday: true,
     name: 'Comportamiento de pago',
     category: 'clientes',
     description: 'Quién paga puntual y quién no, con la puntuación del CRM y el atraso promedio.',
@@ -271,6 +273,7 @@ export const clientReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'clients-by-city',
+    asOfToday: true,
     name: 'Clientes por ciudad y sector',
     category: 'clientes',
     description: 'Dónde vive la clientela y cuánta cartera hay en cada zona.',
@@ -311,6 +314,7 @@ export const clientReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'clients-inactive',
+    asOfToday: true,
     name: 'Clientes sin préstamo activo',
     category: 'clientes',
     description: 'Clientes que no tienen nada vivo hoy: candidatos a volver a prestar.',

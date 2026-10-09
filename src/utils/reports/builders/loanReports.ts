@@ -141,6 +141,7 @@ export const loanReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'loans-active',
+    asOfToday: true,
     name: 'Cartera activa',
     category: 'prestamos',
     description: 'Los préstamos vivos hoy, con su balance, atraso y próximo pago.',
@@ -217,6 +218,7 @@ export const loanReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'loans-overdue',
+    asOfToday: true,
     name: 'Préstamos vencidos',
     category: 'prestamos',
     description: 'Préstamos con al menos una cuota vencida, ordenados por días de atraso.',
@@ -251,6 +253,7 @@ export const loanReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'loans-by-client',
+    asOfToday: true,
     name: 'Préstamos por cliente',
     category: 'prestamos',
     description: 'Cuántos préstamos tiene cada cliente, cuánto se le prestó y cuánto debe.',
@@ -301,6 +304,7 @@ export const loanReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'loans-by-type',
+    asOfToday: true,
     name: 'Préstamos por tipo y frecuencia',
     category: 'prestamos',
     description: 'Cómo se reparte la cartera entre tipos de amortización y frecuencias de cobro.',
@@ -349,6 +353,7 @@ export const loanReports: ReportDefinition<CoreDataset>[] = [
 
   {
     id: 'loans-by-city',
+    asOfToday: true,
     name: 'Préstamos por ciudad y sector',
     category: 'prestamos',
     description: 'Dónde está colocada la cartera. Sale de la ciudad y el sector del cliente.',

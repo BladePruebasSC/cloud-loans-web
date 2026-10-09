@@ -95,8 +95,12 @@ export const ReportView: React.FC<Props> = ({
     const nombres: Record<string, string> = {};
     for (const u of users) nombres[u.id] = u.name;
     for (const c of data?.clients || []) nombres[c.id] = c.full_name;
-    return describeFilters(filters, nombres);
-  }, [filters, users, data?.clients]);
+    const lineas = describeFilters(filters, nombres);
+    // En un reporte "a hoy", decir el período en el PDF y en la impresión sería engañoso: no es
+    // lo que se está midiendo.
+    if (report.asOfToday) lineas[0] = `Situación al ${data?.todayIso || filters.endDate}`;
+    return lineas;
+  }, [filters, users, data?.clients, report.asOfToday, data?.todayIso]);
 
   useEffect(() => {
     if (!loading && data) onAudit('report_viewed', { rows: resultado.rows.length });
@@ -227,12 +231,20 @@ export const ReportView: React.FC<Props> = ({
         </div>
       )}
 
+      {report.asOfToday && (
+        <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-900 print:hidden">
+          Este reporte es la <strong>foto de hoy</strong> ({data?.todayIso || ''}): no depende del
+          período, así que no se enseña el selector de fechas.
+        </div>
+      )}
+
       <ReportFiltersBar
         filters={filters}
         onChange={onFiltersChange}
         available={report.filters || []}
         todayIso={data?.todayIso || filters.endDate}
         options={opciones}
+        hidePeriod={report.asOfToday}
       />
 
       {error && (

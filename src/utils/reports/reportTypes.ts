@@ -177,6 +177,12 @@ export interface ReportDefinition<D = any> {
   columns: ReportColumn[];
   /** Filtros que tienen sentido en este reporte */
   filters?: ReportFilterKey[];
+  /**
+   * El reporte es una FOTO DE HOY y no depende del período (la cartera viva, la mora, el
+   * inventario). Se le esconde el selector de fechas en vez de dejar un control que no hace
+   * nada, y se dice en pantalla que es a hoy.
+   */
+  asOfToday?: boolean;
   /** Columna por la que se ordena al abrirlo */
   defaultSort?: { key: string; dir: 'asc' | 'desc' };
   /** Palabras por las que también se puede encontrar en el buscador */
