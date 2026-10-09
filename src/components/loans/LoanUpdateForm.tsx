@@ -37,7 +37,10 @@ import {
 } from '@/utils/lateFeeWaiver';
 import { describeSupabaseError } from '@/utils/supabaseErrors';
 import { computeExtendedSchedule } from '@/utils/loanRescheduling';
-import type { RawPayment } from '@/utils/installmentDues';
+import { computeInstallmentDues, type RawPayment } from '@/utils/installmentDues';
+import {
+  computeCapitalPaymentPreview, countOverdueDues, periodInterestFor,
+} from '@/utils/capitalPaymentPreview';
 import { formatCurrency } from '@/lib/utils';
 import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
@@ -649,22 +652,56 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     }
   }, [isOpen]);
 
+  /**
+   * Las cuotas CON SU ESTADO REAL, deducido de los pagos repartidos por fecha de vencimiento.
+   *
+   * FALLO REPORTADO (2026-10-09): el abono a capital decía "Tiene 2 cuota(s) vencida(s)" y
+   * bloqueaba el formulario en un préstamo con todas las cuotas al día. Miraba
+   * `installments.is_paid`, una columna que mantienen los triggers y que se queda atrás; el resto
+   * de la aplicación —ver cuotas, estado de cuenta, inicio, pago avanzado— no se fía de ella y
+   * reparte los pagos con `computeInstallmentDues`. Aquí se hace lo mismo.
+   */
+  const dueRows = useMemo(
+    () => computeInstallmentDues(installments as any, (loanPayments || []) as any),
+    [installments, loanPayments],
+  );
+
+  /** Las cuotas REGULARES que de verdad quedan por cobrar (sin cargos), en orden. */
+  const pendingRegularInstallments = useMemo(() => {
+    const pendientes = new Set(
+      dueRows.filter(row => !row.isCharge && row.pending > 0.005).map(row => row.id),
+    );
+    return (installments || [])
+      .filter(inst => pendientes.has(inst.id))
+      .sort((a, b) => (a.installment_number || 0) - (b.installment_number || 0));
+  }, [dueRows, installments]);
+
+  /** Cargos que siguen pendientes (no los cambia un abono a capital, pero sí suman al balance). */
+  const unpaidChargesAmountReal = useMemo(
+    () => Math.round(dueRows.filter(row => row.isCharge).reduce((s, row) => s + row.pending, 0) * 100) / 100,
+    [dueRows],
+  );
+
+  /**
+   * CAPITAL pagado en cuotas regulares, con el reparto de `computeInstallmentDues`: de lo cobrado
+   * a cada cuota, primero su interés y el resto a capital. Así un cargo cobrado el mismo día que
+   * una cuota no se cuenta como capital de esa cuota.
+   */
+  const principalPaidFromDues = useMemo(
+    () => Math.round(dueRows
+      .filter(row => !row.isCharge)
+      .reduce((sum, row) => sum + Math.min(row.principal, Math.max(0, row.paid - row.interest)), 0) * 100) / 100,
+    [dueRows],
+  );
+
   // Calcular capital pendiente (necesario para calcular balance actual correctamente)
   useEffect(() => {
     if (isOpen && loan.id) {
       const calculatePendingCapital = async () => {
         try {
           // ✅ Para ABONO A CAPITAL: el capital pendiente debe EXCLUIR cargos.
-          // No usar principal_amount/interest_amount del pago (pueden quedar desfasados tras abonos a capital).
-          // Usamos `amount` por `due_date` y aplicamos interés primero según `installments`.
-          const { data: payments, error: paymentsError } = await supabase
-            .from('payments')
-            .select('amount, due_date')
-            .eq('loan_id', loan.id);
-
-          if (paymentsError) throw paymentsError;
-
-          // Obtener todos los abonos a capital anteriores
+          // Lo cobrado ya está repartido en `dueRows` (interés primero, el resto a capital), así
+          // que aquí solo hacen falta los abonos a capital anteriores.
           const { data: capitalPayments, error: capitalPaymentsError } = await supabase
             .from('capital_payments')
             .select('amount, capital_before, capital_after, created_at')
@@ -673,35 +710,13 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           if (capitalPaymentsError) throw capitalPaymentsError;
 
           const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
-          const isChargeInst = (inst: any) =>
-            Math.abs(Number(inst?.interest_amount || 0)) < 0.01 &&
-            Math.abs(Number(inst?.principal_amount || 0) - Number(inst?.total_amount || inst?.amount || 0)) < 0.01;
 
           // Total de abonos a capital anteriores
           const totalCapitalPayments = (capitalPayments || []).reduce((sum, cp) => sum + (cp.amount || 0), 0);
 
-          // Pagos por due_date (monto total pagado a esa cuota)
-          const paidByDue = new Map<string, number>();
-          for (const p of payments || []) {
-            const due = (p as any)?.due_date ? String((p as any).due_date).split('T')[0] : null;
-            if (!due) continue;
-            paidByDue.set(due, round2((paidByDue.get(due) || 0) + (Number((p as any).amount) || 0)));
-          }
-
-          // Capital pagado (solo cuotas regulares) = max(0, pago - interésEsperado), limitado a principalEsperado
-          const principalPaidRegular = round2(
-            (installments || [])
-              .filter(inst => !isChargeInst(inst))
-              .reduce((sum, inst) => {
-                const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
-                if (!due) return sum;
-                const totalPaid = paidByDue.get(due) || 0;
-                const expectedInterest = round2(Number(inst.interest_amount || 0));
-                const expectedPrincipal = round2(Number(inst.principal_amount || 0));
-                const principalPaid = Math.min(expectedPrincipal, Math.max(0, round2(totalPaid - expectedInterest)));
-                return sum + principalPaid;
-              }, 0)
-          );
+          // Capital pagado en cuotas regulares: del reparto compartido (interés primero, el resto
+          // a capital), que además no le atribuye a la cuota el dinero de un cargo del mismo día.
+          const principalPaidRegular = principalPaidFromDues;
           
           // ✅ Capital pendiente (para ABONO A CAPITAL) = SOLO principal del préstamo.
           // Los cargos NO deben influir en capital pendiente (los cargos no cambian con abonos a capital).
@@ -714,17 +729,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               loan.amount, (capitalPayments || []) as CapitalPaymentLike[],
             ).currentCapital;
           } else {
-            // Calcular cargos pendientes (NO deben incluirse en el capital disponible para abono a capital)
-            // Nota: normalmente los cargos tienen un due_date distinto a las cuotas regulares, así que podemos
-            // medir pagos a cargos por due_date (monto) sin mezclar con cuotas.
-            const unpaidChargesAmount = round2((installments || [])
-              .filter(inst => isChargeInst(inst))
-              .reduce((sum, inst) => {
-                const due = inst?.due_date ? String(inst.due_date).split('T')[0] : null;
-                const chargeTotal = round2(Number((inst as any).total_amount || inst.amount || 0));
-                const paid = due ? (paidByDue.get(due) || 0) : 0;
-                return sum + Math.max(0, round2(chargeTotal - paid));
-              }, 0));
+            // Cargos pendientes (no entran en el capital disponible para abonar), del mismo
+            // reparto: antes, lo cobrado a la CUOTA de ese día se daba por cobrado al cargo.
+            const unpaidChargesAmount = unpaidChargesAmountReal;
 
             // Para préstamos con plazo fijo:
             // NO usar la suma de capital por cuotas, porque por redondeos de la cuota mensual puede dar
@@ -737,6 +744,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             calculatedPendingCapital = round2(Math.max(0, round2(capitalPendingFromRegular) - unpaidChargesAmount));
           }
           
+          console.log('[abono] capital pendiente:', {
+            loanId: loan.id, calculatedPendingCapital, principalPaidRegular,
+            totalCapitalPayments, cargosPendientes: unpaidChargesAmountReal,
+            cuotasPendientes: pendingRegularInstallments.length,
+          });
           setPendingCapital(calculatedPendingCapital);
           setOriginalPendingCapital(calculatedPendingCapital); // Guardar el capital pendiente original para calcular penalidad
         } catch (error) {
@@ -748,7 +760,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
       calculatePendingCapital();
     }
-  }, [isOpen, loan.id, form.watch('update_type'), installments]);
+  }, [isOpen, loan.id, form.watch('update_type'), installments,
+      principalPaidFromDues, unpaidChargesAmountReal]);
 
   // Calcular monto de penalidad cuando cambia el porcentaje
   // IMPORTANTE: La penalidad se calcula sobre el capital pendiente ORIGINAL (antes del abono)
@@ -832,39 +845,44 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             newInstallmentCount: 0 // No aplica para indefinidos
           });
         } else {
-          // Para préstamos con plazo fijo
-          const unpaidInstallments = installments.filter(inst => !inst.is_paid);
-          const remainingInstallmentsCount = unpaidInstallments.length;
+          // PLAZO FIJO. El cálculo vive en `capitalPaymentPreview.ts`, probado, y es el mismo que
+          // usan el "nuevo balance" de abajo y el guardado.
+          //
+          // FALLO (2026-10-09): aquí el interés de cada cuota salía de `capital × tasa / 100`.
+          // `loans.interest_rate` es MENSUAL: en un préstamo diario eso cobraba treinta veces el
+          // interés real, y el capital por cuota (`cuota − monto prestado × tasa / 100`) salía
+          // NEGATIVO. Por eso el balance se disparaba al escribir el monto.
+          const remainingInstallmentsCount = pendingRegularInstallments.length;
+          const previa = computeCapitalPaymentPreview({
+            amortizationType: loan.amortization_type,
+            interestRate: loan.interest_rate,
+            frequency: loan.payment_frequency,
+            monthlyPayment: loan.monthly_payment,
+            pendingCapitalBefore: originalPendingCapital,
+            capitalPaymentAmount,
+            pendingInstallmentsCount: remainingInstallmentsCount,
+            unpaidChargesAmount: unpaidChargesAmountReal,
+            keepInstallments,
+          });
 
           if (keepInstallments) {
-            // Mantener número de cuotas: recalcular el monto de cada cuota
-            const interestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
-            const principalPerPayment = remainingInstallmentsCount > 0 ? newPendingCapital / remainingInstallmentsCount : 0;
-            const newInstallmentAmount = interestPerPayment + principalPerPayment;
-            const currentInstallmentAmount = loan.monthly_payment;
-            
             setCapitalPaymentPreview({
               newPendingCapital,
-              installmentsImpact: `Las ${remainingInstallmentsCount} cuotas restantes se reducirán de RD$${currentInstallmentAmount.toFixed(2)} a RD$${newInstallmentAmount.toFixed(2)} cada una`,
-              newInstallmentAmount,
-              newInstallmentCount: remainingInstallmentsCount
+              installmentsImpact: `Las ${remainingInstallmentsCount} cuotas restantes se reducirán de RD$${(loan.monthly_payment || 0).toFixed(2)} a RD$${previa.newInstallmentAmount.toFixed(2)} cada una`,
+              newInstallmentAmount: previa.newInstallmentAmount,
+              newInstallmentCount: previa.newInstallmentCount,
             });
           } else {
-            // Mantener monto de cuota: reducir número de cuotas
-            const interestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
-            const principalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
-            const newInstallmentCount = principalPerPayment > 0 ? Math.ceil(newPendingCapital / principalPerPayment) : remainingInstallmentsCount;
-            const reductionInInstallments = Math.max(0, remainingInstallmentsCount - newInstallmentCount);
-            
+            const reductionInInstallments = previa.removedInstallments;
             const timeUnit = reductionInInstallments === 1 ? frequencyUnit.singular : frequencyUnit.plural;
-            
+
             setCapitalPaymentPreview({
               newPendingCapital,
               installmentsImpact: reductionInInstallments > 0
-                ? `Se reducirán ${reductionInInstallments} cuota(s). El préstamo finalizará ${reductionInInstallments} ${timeUnit} antes.`
+                ? `Se reducirán ${reductionInInstallments} cuota(s): de ${remainingInstallmentsCount} quedarán ${previa.newInstallmentCount}. El préstamo finalizará ${reductionInInstallments} ${timeUnit} antes.`
                 : `El número de cuotas se mantendrá en ${remainingInstallmentsCount}`,
               newInstallmentAmount: loan.monthly_payment,
-              newInstallmentCount
+              newInstallmentCount: previa.newInstallmentCount,
             });
           }
         }
@@ -902,20 +920,16 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       }
     }
 
-    return installments.filter(inst => {
-      if (inst.is_paid) return false;
-
-      const dueDateStr = inst.due_date?.split('T')[0];
-      if (!dueDateStr) return false;
-
-      const [dueYear, dueMonth, dueDay] = dueDateStr.split('-').map(Number);
-      const dueDate = new Date(dueYear, dueMonth - 1, dueDay);
-      const dueDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-      const daysPast = Math.floor((todayDateOnly.getTime() - dueDateOnly.getTime()) / (1000 * 60 * 60 * 24));
-
-      return daysPast > gracePeriod;
-    }).length;
-  }, [form.watch('update_type'), installments, isIndefiniteLoan, displayNextPaymentDate, loan]);
+    // Lo que de verdad queda por cobrar, de los pagos repartidos por vencimiento (no de `is_paid`).
+    const todayIso = `${todayDateOnly.getFullYear()}-${String(todayDateOnly.getMonth() + 1).padStart(2, '0')}-${String(todayDateOnly.getDate()).padStart(2, '0')}`;
+    const vencidas = countOverdueDues(dueRows, todayIso, gracePeriod);
+    console.log('[abono] cuotas vencidas:', {
+      loanId: loan.id, vencidas, gracePeriod, todayIso,
+      pendientes: dueRows.filter(r => r.pending > 0.005).length,
+      porIsPaidDeLaBase: installments.filter(i => !i.is_paid).length,
+    });
+    return vencidas;
+  }, [form.watch('update_type'), dueRows, installments, isIndefiniteLoan, displayNextPaymentDate, loan]);
 
   // Función para calcular las cuotas futuras después del abono
   const calculatePreviewInstallments = () => {
@@ -1009,8 +1023,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       let previewInsts: any[] = [];
 
       if (keepInstallments) {
-        // Mantener número de cuotas: recalcular el monto
-        const interestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
+        // Mantener número de cuotas: recalcular el monto.
+        // El interés es el del PERÍODO (la tasa guardada es mensual), igual que en el guardado.
+        const interestPerPayment = periodInterestFor(newPendingCapital, loan.interest_rate, loan.payment_frequency);
         const principalPerPayment = remainingInstallmentsCount > 0 ? newPendingCapital / remainingInstallmentsCount : 0;
         const newInstallmentAmount = interestPerPayment + principalPerPayment;
 
@@ -1026,9 +1041,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           });
         });
       } else {
-        // Mantener monto de cuota: reducir número de cuotas
-        const interestPerPayment = (newPendingCapital * loan.interest_rate) / 100;
-        const principalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
+        // Mantener monto de cuota: reducir número de cuotas.
+        // El capital de cada cuota es lo que queda de la CUOTA tras su interés; antes se restaba
+        // el interés del monto prestado entero y salía negativo (2026-10-09).
+        const interestPerPayment = periodInterestFor(newPendingCapital, loan.interest_rate, loan.payment_frequency);
+        const principalPerPayment = Math.max(0, round2((loan.monthly_payment || 0) - interestPerPayment));
         const newInstallmentCount = principalPerPayment > 0 ? Math.ceil(newPendingCapital / principalPerPayment) : remainingInstallmentsCount;
         
         // Generar las nuevas cuotas (solo las que quedan)
@@ -1126,7 +1143,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
       // monto prestado, que ya no baja con los abonos a capital.
       const interestPerPayment = Number(loan.monthly_payment) > 0.005
         ? Number(loan.monthly_payment)
-        : (loan.amount * loan.interest_rate) / 100;
+        // Sin cuota guardada, el interés del período (la tasa es mensual, no por período).
+        : periodInterestFor(loan.amount, loan.interest_rate, loan.payment_frequency);
 
       // Calcular dinámicamente cuántas cuotas deberían existir desde start_date hasta hoy
       const [startYear, startMonth, startDay] = loan.start_date.split('-').map(Number);
@@ -1597,57 +1615,38 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
         // No afecta el balance, solo la mora
         break;
 
-      case 'capital_payment':
-        // Calcular el nuevo balance después del abono a capital
+      case 'capital_payment': {
+        // NUEVO BALANCE tras el abono: capital que queda + interés de las cuotas que queden +
+        // cargos pendientes. Sale de `computeCapitalPaymentPreview`, el mismo cálculo probado
+        // que enseña la vista previa, para que las dos cifras no puedan discrepar.
+        //
+        // FALLO (2026-10-09): "cuando pongo un monto a abonar, el nuevo balance se vuelve loco".
+        // El interés por cuota se calculaba con la tasa MENSUAL entera (`capital × tasa / 100`)
+        // en préstamos diarios/semanales/quincenales, y los cargos y las cuotas pendientes se
+        // leían del `is_paid` de la base. Con 1,000 de abono, un préstamo de 4,800 de balance
+        // pasaba a más de 10,000.
         const capitalPaymentAmount = form.watch('capital_payment_amount') || 0;
         if (capitalPaymentAmount > 0 && originalPendingCapital > 0) {
-          const capitalAfter = Math.max(0, originalPendingCapital - capitalPaymentAmount);
-          
-          // Calcular cargos no pagados para incluirlos en el balance
-          const unpaidCharges = installments.filter(inst => {
-            const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                            Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-            return isCharge && !inst.is_paid;
+          const previa = computeCapitalPaymentPreview({
+            amortizationType: loan.amortization_type,
+            interestRate: loan.interest_rate,
+            frequency: loan.payment_frequency,
+            monthlyPayment: loan.monthly_payment,
+            pendingCapitalBefore: originalPendingCapital,
+            capitalPaymentAmount,
+            pendingInstallmentsCount: pendingRegularInstallments.length,
+            unpaidChargesAmount: unpaidChargesAmountReal,
+            keepInstallments: form.watch('keep_installments') || false,
+            indefiniteRatio: isIndefiniteLoan ? indefiniteInterestRatio(originalPendingCapital) : undefined,
           });
-          const unpaidChargesAmount = unpaidCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
-          
-          // Para préstamos con plazo fijo, recalcular el balance
-          if (loan.amortization_type !== 'indefinite') {
-            const unpaidInstallments = installments.filter(inst => !inst.is_paid && 
-              !(Math.abs(inst.interest_amount || 0) < 0.01 && Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01));
-            const remainingInstallmentsCount = unpaidInstallments.length;
-            const keepInstallments = form.watch('keep_installments') || false;
-            
-            // Calcular interés pendiente después del abono
-            let newInterestPending = 0;
-            if (keepInstallments && remainingInstallmentsCount > 0) {
-              // Mantener número de cuotas: recalcular el monto de cada cuota
-              const newInterestPerPayment = (capitalAfter * loan.interest_rate) / 100;
-              const newPrincipalPerPayment = capitalAfter / remainingInstallmentsCount;
-              const newInstallmentAmount = newInterestPerPayment + newPrincipalPerPayment;
-              newPayment = newInstallmentAmount;
-              newInterestPending = newInterestPerPayment * remainingInstallmentsCount;
-            } else {
-              // Mantener monto de cuota: el balance se reduce por el capital abonado
-              const interestPerPayment = (capitalAfter * loan.interest_rate) / 100;
-              const originalPrincipalPerPayment = loan.monthly_payment - (loan.amount * loan.interest_rate / 100);
-              const newInstallmentCount = originalPrincipalPerPayment > 0 ? Math.ceil(capitalAfter / originalPrincipalPerPayment) : remainingInstallmentsCount;
-              newInterestPending = interestPerPayment * newInstallmentCount;
-            }
-            
-            // Balance = Capital Pendiente + Interés Pendiente + Cargos no pagados
-            newBalance = capitalAfter + newInterestPending + unpaidChargesAmount;
-          } else {
-            // CORRECCIÓN: Para préstamos indefinidos, el interés pendiente se recalcula con el nuevo capital
-            // Nuevo interés por cuota = (capitalAfter * interés) / 100
-            // El interés pendiente típicamente es 1 cuota (la próxima cuota pendiente)
-            const newInterestPerPayment = Math.round(capitalAfter * indefiniteInterestRatio(originalPendingCapital) * 100) / 100;
-            // Para préstamos indefinidos, típicamente hay 1 cuota pendiente de interés
-            // Balance = Capital Pendiente + Interés Pendiente (nuevo) + Cargos no pagados
-            newBalance = capitalAfter + newInterestPerPayment + unpaidChargesAmount;
+
+          if (!previa.exceedsCapital) {
+            newBalance = previa.newBalance;
+            if (previa.newInstallmentAmount > 0) newPayment = previa.newInstallmentAmount;
           }
         }
         break;
+      }
     }
 
     // IMPORTANTE: Redondear a 2 decimales para evitar diferencias de redondeo
@@ -2793,7 +2792,11 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             if (freshLoan?.amount != null) {
               capitalNow = round2(Number(freshLoan.amount));
             }
-            const fallbackInterestPerPayment = round2((capitalNow * (loan.interest_rate || 0)) / 100);
+            // El interés de UN período: la cuota vigente si existe, o la tasa mensual ajustada a
+            // la frecuencia (antes se cobraba la tasa de un mes entero en diarios y semanales).
+            const fallbackInterestPerPayment = Number(loan.monthly_payment) > 0.005
+              ? round2(Number(loan.monthly_payment))
+              : periodInterestFor(capitalNow, loan.interest_rate || 0, loan.payment_frequency);
             const pendingInterest = round2(
               (interestPendingFromInstallments || 0) > 0.01
                 ? (interestPendingFromInstallments || 0)
@@ -3907,14 +3910,12 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               });
             }
 
-            // Obtener cuotas pendientes para recalcular (EXCLUIR CARGOS)
-            // Los cargos NO se recalculan, solo las cuotas regulares del préstamo
-            const unpaidInstallments = installments.filter(inst => {
-              // Excluir cargos: un cargo es cuando interest_amount === 0 y principal_amount === total_amount
-              const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                              Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-              return !inst.is_paid && !isCharge; // Solo cuotas regulares no pagadas
-            }).sort((a, b) => a.installment_number - b.installment_number);
+            // Cuotas REGULARES que de verdad quedan por cobrar, deducidas de los pagos.
+            //
+            // IMPORTANTE (2026-10-09): antes se filtraba por `is_paid`. Una cuota ya cobrada
+            // cuyo indicador se hubiera quedado atrás entraba aquí y el abono le REESCRIBÍA el
+            // importe (o la borraba, en "mantener la cuota"), perdiendo el cobro.
+            const unpaidInstallments = pendingRegularInstallments;
             const remainingInstallmentsCount = unpaidInstallments.length;
 
             if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
@@ -3927,13 +3928,9 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               // `buildIndefiniteInterestResolver`.
               const cutoffCuotaVieja = getCurrentDateStringForSantoDomingo();
               
-              // Obtener todas las cuotas regulares pendientes (excluyendo cargos)
-              const unpaidRegularInstallments = installments.filter(inst => {
-                const isCharge = Math.abs(inst.interest_amount || 0) < 0.01 && 
-                                Math.abs((inst.principal_amount || 0) - (inst.total_amount || 0)) < 0.01;
-                return !inst.is_paid && !isCharge; // Solo cuotas regulares no pagadas
-              });
-              
+              // Cuotas regulares que de verdad quedan por cobrar (no las del `is_paid` de la base).
+              const unpaidRegularInstallments = pendingRegularInstallments;
+
               // IMPORTANTE: Actualizar el interés de las cuotas pendientes POSTERIORES al período en curso.
               // En préstamos indefinidos, el interés depende directamente del capital base
               // Si el capital se reduce, el interés de las cuotas pendientes también debe reducirse
@@ -4067,7 +4064,10 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 // - NO usar Math.round (redondeo a entero) porque introduce diferencias de RD$2.00 (ej. 1166.67 → 1167)
                 // - Ajustar la ÚLTIMA cuota para cuadrar centavos: suma(principal) = capitalAfter y suma(interés) = interés total
                 const count = unpaidInstallments.length;
-                const interestPerPayment = round2((capitalAfter * (loan.interest_rate || 0)) / 100);
+                // `loans.interest_rate` es MENSUAL: el interés de UNA cuota lleva el factor de la
+                // frecuencia (2026-10-09). Antes, en un préstamo diario, cada cuota cargaba el
+                // interés de un mes entero y el balance se disparaba tras el abono.
+                const interestPerPayment = periodInterestFor(capitalAfter, loan.interest_rate || 0, loan.payment_frequency);
                 const rawPrincipalPerPayment = count > 0 ? capitalAfter / count : 0;
                 const principalPerPayment = round2(rawPrincipalPerPayment);
 
@@ -4167,7 +4167,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                 // Mantener monto de cuota: reducir número de cuotas
                 // IMPORTANTE: Los cargos NO se eliminan ni se modifican, solo las cuotas regulares
                 // CORRECCIÓN: evitar redondeo a entero y ajustar la última cuota
-                const interestPerPayment = round2((capitalAfter * (loan.interest_rate || 0)) / 100);
+                // La tasa es MENSUAL: el interés de una cuota lleva el factor de la frecuencia.
+                const interestPerPayment = periodInterestFor(capitalAfter, loan.interest_rate || 0, loan.payment_frequency);
                 const installmentAmount = round2(Number(loan.monthly_payment || 0));
                 const principalPerPayment = round2(Math.max(0, installmentAmount - interestPerPayment));
                 const isPaidOff = capitalAfter <= 0.009;
