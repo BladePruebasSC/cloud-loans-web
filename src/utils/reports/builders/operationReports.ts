@@ -320,6 +320,44 @@ export const salesReports: ReportDefinition<ReportData>[] = [
   },
 
   {
+    id: 'sales-by-client',
+    name: 'Ventas por cliente',
+    category: 'ventas',
+    description: 'A quién se le vende. Los mostradores sin cliente salen como "Consumidor final".',
+    permission: 'reports.inventory',
+    dataset: 'sales',
+    columns: [
+      { key: 'cliente', label: 'Cliente', align: 'left' },
+      { key: 'ventas', label: 'Ventas', format: 'number', total: true },
+      { key: 'articulos', label: 'Artículos', format: 'number', total: true },
+      { key: 'total', label: 'Total', format: 'money', total: true },
+      { key: 'ticket', label: 'Ticket promedio', format: 'money' },
+      { key: 'ultima', label: 'Última compra', format: 'date' },
+    ],
+    filters: ['search', 'userId', 'minAmount'],
+    defaultSort: { key: 'total', dir: 'desc' },
+    keywords: ['cliente', 'compradores', 'ventas por cliente'],
+    build: ctx => {
+      const lista = salesInPeriod(ctx.data, ctx.filters);
+      const grupos = groupRows(lista, s => String(s.customer_name || '').trim() || 'Consumidor final');
+      const rows: ReportRow[] = [...grupos.entries()].map(([cliente, items]) => {
+        const total = round2(items.reduce((s, v) => s + saleTotalWithTax(v), 0));
+        return {
+          _id: cliente,
+          _clientId: items.find(i => i.client_id)?.client_id || undefined,
+          cliente,
+          ventas: items.length,
+          articulos: items.reduce((n, v) => n + (v.details || []).reduce((q, d) => q + (Number(d.quantity) || 0), 0), 0),
+          total,
+          ticket: items.length ? round2(total / items.length) : 0,
+          ultima: items.map(v => dateOnly(v.sale_date || v.created_at)).sort().slice(-1)[0] || '',
+        };
+      });
+      return { rows: applyCommonFilters(rows, ctx.filters, 'total') };
+    },
+  },
+
+  {
     id: 'sales-by-user',
     name: 'Ventas por usuario',
     category: 'ventas',
@@ -634,6 +672,59 @@ export const bankReports: ReportDefinition<ReportData>[] = [
   },
 ];
 
+export const reconciliationReport: ReportDefinition<ReportData> = {
+  id: 'bank-reconciliations',
+  name: 'Conciliaciones de cuentas',
+  category: 'caja',
+  description: 'Cuadres hechos: lo que decía el sistema, lo que decía el banco y la diferencia.',
+  permission: 'reports.financial',
+  dataset: 'banks',
+  columns: [
+    { key: 'fecha', label: 'Fecha', format: 'date' },
+    { key: 'cuenta', label: 'Cuenta', align: 'left' },
+    { key: 'sistema', label: 'Saldo del sistema', format: 'money', total: true },
+    { key: 'banco', label: 'Saldo del banco', format: 'money', total: true },
+    { key: 'diferencia', label: 'Diferencia', format: 'money', total: true },
+    { key: 'usuario', label: 'Concilió', align: 'left' },
+    { key: 'notas', label: 'Notas', align: 'left', width: 60 },
+  ],
+  filters: ['search'],
+  defaultSort: { key: 'fecha', dir: 'desc' },
+  keywords: ['conciliación', 'cuadre', 'diferencia', 'arqueo'],
+  build: ctx => {
+    const { data, filters } = ctx;
+    const cuentas = new Map((data.banks?.accounts || []).map(a => [a.id, a]));
+    const rows = (data.banks?.reconciliations || [])
+      .filter(r => inPeriod(dateOnly(r.reconciliation_date), filters))
+      .map(r => ({
+        _id: r.id,
+        fecha: dateOnly(r.reconciliation_date),
+        cuenta: String(cuentas.get(String(r.account_id))?.bank_name || 'Cuenta'),
+        sistema: round2(r.system_balance),
+        banco: round2(r.bank_balance),
+        diferencia: round2(r.difference),
+        usuario: userNameOf(data, r.created_by),
+        notas: String(r.notes || ''),
+      } as ReportRow));
+    const filtradas = applyCommonFilters(rows, filters, 'diferencia');
+    const conDiferencia = filtradas.filter(r => Math.abs(Number(r.diferencia) || 0) > 0.005);
+    return {
+      rows: filtradas,
+      notes: conDiferencia.length > 0
+        ? [`${conDiferencia.length} conciliación(es) cerraron con diferencia: conviene revisarlas.`]
+        : [],
+      kpis: [
+        { key: 'cuadres', label: 'Conciliaciones', value: filtradas.length, format: 'number' },
+        { key: 'conDiferencia', label: 'Con diferencia', value: conDiferencia.length, format: 'number' },
+        {
+          key: 'diferencia', label: 'Diferencia acumulada', format: 'money',
+          value: round2(filtradas.reduce((s, r) => s + (Number(r.diferencia) || 0), 0)),
+        },
+      ],
+    };
+  },
+};
+
 // ---------------------------------------------------------------------------
 // LEGAL
 // ---------------------------------------------------------------------------
@@ -690,6 +781,58 @@ export const legalReports: ReportDefinition<ReportData>[] = [
           {
             key: 'abiertos', label: 'Abiertos', format: 'number',
             value: filtradas.filter(r => !r.cierre).length,
+          },
+          {
+            key: 'monto', label: 'Monto reclamado', format: 'money',
+            value: round2(filtradas.reduce((s, r) => s + (Number(r.monto) || 0), 0)),
+          },
+        ],
+      };
+    },
+  },
+
+  {
+    id: 'legal-intimations',
+    name: 'Intimaciones',
+    category: 'legal',
+    description: 'Intimaciones emitidas, notificadas y vencidas, con el monto reclamado y su plazo.',
+    permission: 'legal.view',
+    dataset: 'legal',
+    columns: [
+      { key: 'numero', label: 'Número', align: 'left' },
+      { key: 'emitida', label: 'Emitida', format: 'date' },
+      { key: 'notificada', label: 'Notificada', format: 'date' },
+      { key: 'plazo', label: 'Vence el plazo', format: 'date' },
+      { key: 'estado', label: 'Estado', format: 'badge' },
+      { key: 'monto', label: 'Monto reclamado', format: 'money', total: true },
+      { key: 'respuesta', label: 'Respondió', format: 'date' },
+    ],
+    filters: ['search', 'status'],
+    defaultSort: { key: 'emitida', dir: 'desc' },
+    keywords: ['intimación', 'intimaciones', 'carta', 'plazo', 'legal'],
+    build: ctx => {
+      const { data, filters } = ctx;
+      const rows = (data.legal?.intimations || [])
+        .filter((i: any) => inPeriod(dateOnly(i.issued_at || i.created_at), filters))
+        .filter((i: any) => !filters.status || String(i.status || '') === filters.status)
+        .map((i: any) => ({
+          _id: String(i.id),
+          numero: String(i.intimation_number || '—'),
+          emitida: dateOnly(i.issued_at || i.created_at),
+          notificada: dateOnly(i.notified_at),
+          plazo: dateOnly(i.deadline_date),
+          estado: String(i.status || '').replace(/_/g, ' '),
+          monto: round2(i.claimed_amount),
+          respuesta: dateOnly(i.responded_at),
+        } as ReportRow));
+      const filtradas = applyCommonFilters(rows, filters, 'monto');
+      return {
+        rows: filtradas,
+        kpis: [
+          { key: 'total', label: 'Intimaciones', value: filtradas.length, format: 'number' },
+          {
+            key: 'notificadas', label: 'Notificadas', format: 'number',
+            value: filtradas.filter(r => r.notificada && r.notificada !== '—').length,
           },
           {
             key: 'monto', label: 'Monto reclamado', format: 'money',

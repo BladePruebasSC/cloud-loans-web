@@ -138,9 +138,21 @@ export interface BankTransactionRow {
   created_by: string | null;
 }
 
+export interface BankReconciliationRow {
+  id: string;
+  account_id: string | null;
+  reconciliation_date: string | null;
+  system_balance: number | null;
+  bank_balance: number | null;
+  difference: number | null;
+  notes: string | null;
+  created_by: string | null;
+}
+
 export interface BanksDataset {
   accounts: BankAccountRow[];
   transactions: BankTransactionRow[];
+  reconciliations: BankReconciliationRow[];
 }
 
 export interface LegalCaseRow {

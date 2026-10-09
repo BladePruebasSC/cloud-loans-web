@@ -120,12 +120,21 @@ const fetchInventory = async (): Promise<InventoryDataset> => {
 };
 
 const fetchBanks = async (companyId: string): Promise<BanksDataset> => {
-  const [{ data: accounts }, { data: transactions }] = await Promise.all([
+  const [{ data: accounts }, { data: transactions }, conciliaciones] = await Promise.all([
     supabase.from('bank_accounts').select('*').eq('company_owner_id', companyId),
     supabase.from('bank_transactions').select('*').eq('company_owner_id', companyId)
       .order('transaction_date', { ascending: false }),
+    // Las conciliaciones llegaron en una migración posterior: si no está aplicada, el resto del
+    // módulo de bancos sigue funcionando.
+    supabase.from('bank_reconciliations').select('*').eq('company_owner_id', companyId)
+      .order('reconciliation_date', { ascending: false })
+      .then(r => r, () => ({ data: [] as any[] })),
   ]);
-  return { accounts: (accounts || []) as any[], transactions: (transactions || []) as any[] };
+  return {
+    accounts: (accounts || []) as any[],
+    transactions: (transactions || []) as any[],
+    reconciliations: ((conciliaciones as any)?.data || []) as any[],
+  };
 };
 
 /** LEGAL: las tablas son opcionales (el módulo puede no estar desplegado). */

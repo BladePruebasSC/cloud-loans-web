@@ -16,7 +16,7 @@ import { arrearsReports } from './builders/arrearsReports';
 import { clientReports } from './builders/clientReports';
 import { financialReports } from './builders/financialReports';
 import {
-  bankReports, expenseReports, inventoryReports, legalReports, salesReports,
+  bankReports, expenseReports, inventoryReports, legalReports, reconciliationReport, salesReports,
 } from './builders/operationReports';
 
 export const REPORTS: ReportDefinition<ReportData>[] = [
@@ -29,6 +29,7 @@ export const REPORTS: ReportDefinition<ReportData>[] = [
   ...salesReports,
   ...inventoryReports,
   ...bankReports,
+  reconciliationReport,
   ...legalReports,
 ];
 
