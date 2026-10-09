@@ -831,6 +831,18 @@ export const usePortfolioData = () => {
     portfolio, cashflow, recovery, agenda, riskLoans, series6, series12,
     pending, activity, onboarding, clientStats, lateFeeByLoan,
     capitalPayments, capitalToday, capitalMonth, penalties, penaltySummary, penaltyItems,
+    // ------------------------------------------------------------------
+    // Material en crudo para REPORTES Y ANÁLISIS (2026-10-09)
+    // ------------------------------------------------------------------
+    // Son cosas que este hook YA carga y calcula para el inicio y el panel. Se exponen para que
+    // los reportes no las vuelvan a consultar ni las recalculen con otra fórmula: es lo que hace
+    // que un reporte diga exactamente el mismo número que la pantalla de la que sale.
+    installments, loanHistory, deletedLoans, awaitingApprovalCount,
+    /** Atraso REAL por préstamo: días, monto vencido, pendiente y próxima fecha. */
+    overdueFactsByLoan,
+    /** Balance pendiente por préstamo, el mismo de la ficha. */
+    balanceByLoan,
+    installmentsByLoan, paymentsByLoan, capitalPaymentsByLoan,
     refresh: () => load(true),
   };
 };

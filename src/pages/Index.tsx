@@ -20,7 +20,10 @@ import { CarterasModule } from '@/components/carteras/CarterasModule';
 import { DocumentsModule } from '@/components/documents/DocumentsModule';
 import { MapModule } from '@/components/map/MapModule';
 import { PaymentAgreementsModule } from '@/components/agreements/PaymentAgreementsModule';
-import { ReportsModule as ReportsModuleImproved } from '@/components/reports/ReportsModuleImproved';
+// Reportes y Análisis (2026-10-09): el módulo nuevo, montado sobre el catálogo de reportes.
+// El anterior (`ReportsModuleImproved.tsx`) se deja en el repositorio, sin enrutar, por si hay
+// que volver a él durante la transición.
+import { ReportsModule as ReportsModuleImproved } from '@/components/reports/ReportsModule';
 import { CompanyModule } from '@/components/company/CompanyModule';
 import RegistrationCodesModule from '@/components/admin/RegistrationCodesModule';
 import RegistrationCodeModal from '@/components/RegistrationCodeModal';
