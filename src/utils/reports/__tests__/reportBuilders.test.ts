@@ -8,7 +8,7 @@
 // abono a capital con penalidad.
 import { describe, it, expect } from 'vitest';
 import { computePortfolioSnapshot, overdueFromDues } from '../../portfolioMetrics';
-import { REPORTS, reportById } from '../reportCatalog';
+import { REPORTS, reportById, visibleReports } from '../reportCatalog';
 import { buildDashboard } from '../reportDashboard';
 import { financialTotals } from '../builders/financialReports';
 import { arrearsLoans, computePar } from '../builders/arrearsReports';
@@ -367,6 +367,37 @@ describe('La portada', () => {
     expect(kpi.value).toBe(2);
     const cartera = run('loans-active', data);
     expect(cartera.rows).toHaveLength(3); // los 2 por aprobar no están
+  });
+});
+
+describe('Permisos', () => {
+  const data = makeData();
+  // Un cajero: puede ver reportes y registrar pagos, nada financiero.
+  const cajero = (p: string) => ['reports.view', 'payments.create'].includes(p);
+
+  it('El catálogo solo enseña los reportes que el usuario puede ver', () => {
+    const suyos = visibleReports(cajero);
+    expect(suyos.some(r => r.id === 'payments-received')).toBe(true);
+    expect(suyos.some(r => r.id === 'fin-summary')).toBe(false);      // reports.financial
+    expect(suyos.some(r => r.id === 'loans-active')).toBe(false);     // reports.loans
+    expect(suyos.some(r => r.id === 'expenses-detail')).toBe(false);  // expenses.view
+    expect(suyos.length).toBeLessThan(REPORTS.length);
+  });
+
+  it('La portada esconde los indicadores financieros, no los enseña en cero', () => {
+    const secciones = buildDashboard(data, PERIODO, cajero);
+    const claves = secciones.flatMap(s => s.kpis.map(k => k.key));
+    expect(claves).toContain('cobrado');
+    expect(claves).not.toContain('resultado');
+    expect(claves).not.toContain('gastos');
+    expect(claves).not.toContain('cartera');
+  });
+
+  it('El dueño lo ve todo', () => {
+    const todo = () => true;
+    expect(visibleReports(todo).length).toBe(REPORTS.length);
+    const secciones = buildDashboard(data, PERIODO, todo);
+    expect(secciones.flatMap(s => s.kpis).length).toBeGreaterThan(15);
   });
 });
 

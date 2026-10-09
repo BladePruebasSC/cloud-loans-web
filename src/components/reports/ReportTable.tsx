@@ -19,7 +19,6 @@ import {
   ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Columns3, Eye, Inbox,
 } from 'lucide-react';
 import { alignOf, formatCell } from '@/utils/reports/reportFormat';
-import { sortRows } from '@/utils/reports/reportFilters';
 import type { ReportColumn, ReportRow } from '@/utils/reports/reportTypes';
 
 interface Props {
@@ -54,10 +53,8 @@ export const ReportTable: React.FC<Props> = ({
     [columns, hiddenColumns],
   );
 
-  const ordenadas = useMemo(
-    () => (sort ? sortRows(rows, sort.key, sort.dir) : rows),
-    [rows, sort],
-  );
+  // Las filas llegan YA ORDENADAS desde `ReportView`: el mismo orden que se exporta e imprime.
+  const ordenadas = rows;
 
   const totalPages = Math.max(1, Math.ceil(ordenadas.length / pageSize));
   const paginaActual = Math.min(page, totalPages - 1);

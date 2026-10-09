@@ -166,7 +166,7 @@ export const ReportsModule: React.FC = () => {
   // ---------------------------------------------------------------------
   // Portada
   // ---------------------------------------------------------------------
-  const secciones = R.data ? buildDashboard(R.data, filters) : [];
+  const secciones = R.data ? buildDashboard(R.data, filters, can) : [];
   const series = R.data ? dashboardSeries(R.data, filters) : [];
   const filtrosTexto = describeFilters(filters);
 
@@ -264,30 +264,36 @@ export const ReportsModule: React.FC = () => {
                 </section>
               ))}
 
-              {series.length > 1 && (
+              {/* Los gráficos también respetan los permisos: el de gastos e interés es
+                  información financiera. */}
+              {series.length > 1 && (can('reports.loans') || can('reports.financial')) && (
                 <div className="grid gap-4 lg:grid-cols-2">
-                  <ReportChart
-                    spec={{
-                      kind: 'bar', title: 'Cobrado y prestado en el período', xKey: 'periodo',
-                      series: [
-                        { key: 'cobrado', label: 'Cobrado' },
-                        { key: 'prestado', label: 'Prestado' },
-                      ],
-                      money: true,
-                    }}
-                    rows={series as any}
-                  />
-                  <ReportChart
-                    spec={{
-                      kind: 'line', title: 'Interés cobrado y gastos', xKey: 'periodo',
-                      series: [
-                        { key: 'interes', label: 'Interés' },
-                        { key: 'gastos', label: 'Gastos' },
-                      ],
-                      money: true,
-                    }}
-                    rows={series as any}
-                  />
+                  {can('reports.loans') && (
+                    <ReportChart
+                      spec={{
+                        kind: 'bar', title: 'Cobrado y prestado en el período', xKey: 'periodo',
+                        series: [
+                          { key: 'cobrado', label: 'Cobrado' },
+                          { key: 'prestado', label: 'Prestado' },
+                        ],
+                        money: true,
+                      }}
+                      rows={series as any}
+                    />
+                  )}
+                  {can('reports.financial') && (
+                    <ReportChart
+                      spec={{
+                        kind: 'line', title: 'Interés cobrado y gastos', xKey: 'periodo',
+                        series: [
+                          { key: 'interes', label: 'Interés' },
+                          { key: 'gastos', label: 'Gastos' },
+                        ],
+                        money: true,
+                      }}
+                      rows={series as any}
+                    />
+                  )}
                 </div>
               )}
 

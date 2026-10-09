@@ -25,7 +25,7 @@ import { ReportChart } from './ReportChart';
 import { ReportTable } from './ReportTable';
 import type { ReportData } from '@/utils/reports/reportDataset';
 import type { ReportDefinition, ReportFilters, ReportResult } from '@/utils/reports/reportTypes';
-import { describeFilters, hasActiveFilters } from '@/utils/reports/reportFilters';
+import { describeFilters, hasActiveFilters, sortRows } from '@/utils/reports/reportFilters';
 import { describePeriod } from '@/utils/reports/reportPeriods';
 import {
   exportReportCsv, exportReportExcel, exportReportPdf, kpiText, printReport,
@@ -134,7 +134,12 @@ export const ReportView: React.FC<Props> = ({
   }), [data, users]);
 
   const columnasVisibles = report.columns.filter(c => !hidden.has(c.key));
-  const filasOrdenadas = useMemo(() => resultado.rows, [resultado.rows]);
+  // El ORDEN se aplica aquí, no en la tabla: así lo que se exporta y lo que se imprime sale en
+  // el mismo orden que se está viendo (punto 22 del pedido), y no en el que vino del cálculo.
+  const filasOrdenadas = useMemo(
+    () => (sort ? sortRows(resultado.rows, sort.key, sort.dir) : resultado.rows),
+    [resultado.rows, sort],
+  );
   const filasParaSalida = useMemo(() => (
     selected.size > 0
       ? filasOrdenadas.filter((r, i) => selected.has(String(r._id ?? i)))

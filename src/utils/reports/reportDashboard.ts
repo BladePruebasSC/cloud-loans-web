@@ -28,6 +28,12 @@ export interface DashboardKpi {
   previous?: number;
   /** El indicador es una foto de HOY y no depende del período */
   asOfToday?: boolean;
+  /**
+   * Permiso que hace falta para VERLO. Un cajero con `reports.view` no tiene por qué ver el
+   * resultado del negocio ni los gastos (punto 27 del pedido): esos indicadores sencillamente
+   * no se le enseñan, no se le enseñan en cero.
+   */
+  permission?: string;
 }
 
 export interface DashboardSection {
@@ -36,7 +42,12 @@ export interface DashboardSection {
   kpis: DashboardKpi[];
 }
 
-export const buildDashboard = (data: ReportData, period: Period): DashboardSection[] => {
+export const buildDashboard = (
+  data: ReportData,
+  period: Period,
+  /** Permisos del usuario; si no se pasa, se enseña todo (dueño/administrador) */
+  can: (permission: string) => boolean = () => true,
+): DashboardSection[] => {
   const anterior = previousPeriod(period);
   const act = financialTotals(data, period);
   const ant = financialTotals(data, anterior);
@@ -59,14 +70,14 @@ export const buildDashboard = (data: ReportData, period: Period): DashboardSecti
   const par30 = par.find(p => p.dias === 30)?.porcentaje || 0;
   const clientesConActivo = new Set(activos.map(l => l.client_id)).size;
 
-  return [
+  const secciones: DashboardSection[] = [
     {
       title: 'Del período',
       subtitle: 'Lo que pasó entre las fechas elegidas, con el período anterior al lado',
       kpis: [
         {
           key: 'prestado', label: 'Capital prestado', value: prestadoPeriodo(period), format: 'money',
-          previous: prestadoPeriodo(anterior), linkTo: 'loans-placed',
+          previous: prestadoPeriodo(anterior), linkTo: 'loans-placed', permission: 'reports.loans',
           hint: `${prestamosPeriodo(period)} préstamo(s) desembolsado(s)`,
         },
         {
@@ -88,15 +99,15 @@ export const buildDashboard = (data: ReportData, period: Period): DashboardSecti
         },
         {
           key: 'ventas', label: 'Ventas', value: act.ventas, format: 'money',
-          previous: ant.ventas, linkTo: 'sales-detail',
+          previous: ant.ventas, linkTo: 'sales-detail', permission: 'reports.inventory',
         },
         {
           key: 'gastos', label: 'Gastos', value: act.gastos, format: 'money',
-          previous: ant.gastos, linkTo: 'expenses-detail',
+          previous: ant.gastos, linkTo: 'expenses-detail', permission: 'expenses.view',
         },
         {
           key: 'resultado', label: 'Resultado', value: act.resultado, format: 'money',
-          previous: ant.resultado, linkTo: 'fin-summary',
+          previous: ant.resultado, linkTo: 'fin-summary', permission: 'reports.financial',
           hint: 'Ingreso operativo menos gastos',
         },
         {
@@ -111,27 +122,29 @@ export const buildDashboard = (data: ReportData, period: Period): DashboardSecti
       kpis: [
         {
           key: 'cartera', label: 'Saldo por cobrar', value: saldo, format: 'money',
-          linkTo: 'loans-active', asOfToday: true, hint: `${activos.length} préstamo(s) activo(s)`,
+          linkTo: 'loans-active', asOfToday: true, permission: 'reports.loans',
+          hint: `${activos.length} préstamo(s) activo(s)`,
         },
         {
           key: 'activos', label: 'Préstamos activos', value: activos.length, format: 'number',
-          linkTo: 'loans-active', asOfToday: true,
+          linkTo: 'loans-active', asOfToday: true, permission: 'reports.loans',
         },
         {
           key: 'vencidos', label: 'Préstamos vencidos', value: morosos.length, format: 'number',
-          linkTo: 'loans-overdue', asOfToday: true,
+          linkTo: 'loans-overdue', asOfToday: true, permission: 'reports.loans',
         },
         {
           key: 'vencido', label: 'Monto vencido', value: vencido, format: 'money',
-          linkTo: 'arrears-portfolio', asOfToday: true,
+          linkTo: 'arrears-portfolio', asOfToday: true, permission: 'reports.loans',
         },
         {
           key: 'moraPendiente', label: 'Mora pendiente', value: moraPendiente, format: 'money',
-          linkTo: 'arrears-portfolio', asOfToday: true,
+          linkTo: 'arrears-portfolio', asOfToday: true, permission: 'reports.loans',
         },
         {
           key: 'par30', label: 'PAR 30', value: par30, format: 'percent',
-          linkTo: 'arrears-aging', asOfToday: true, hint: 'Saldo con más de 30 días de atraso',
+          linkTo: 'arrears-aging', asOfToday: true, permission: 'reports.loans',
+          hint: 'Saldo con más de 30 días de atraso',
         },
         {
           key: 'clientesActivos', label: 'Clientes con préstamo', value: clientesConActivo, format: 'number',
@@ -143,11 +156,18 @@ export const buildDashboard = (data: ReportData, period: Period): DashboardSecti
         },
         {
           key: 'porAprobar', label: 'Préstamos por aprobar', value: data.awaitingApprovalCount,
-          format: 'number', asOfToday: true, hint: 'No entran en ninguna cifra hasta aprobarse',
+          format: 'number', asOfToday: true, permission: 'reports.loans',
+          hint: 'No entran en ninguna cifra hasta aprobarse',
         },
       ],
     },
   ];
+
+  // Se quitan los indicadores que este usuario no puede ver, y las secciones que se quedan sin
+  // ninguno. Lo que no se puede ver no se enseña en cero: desaparece.
+  return secciones
+    .map(s => ({ ...s, kpis: s.kpis.filter(k => !k.permission || can(k.permission)) }))
+    .filter(s => s.kpis.length > 0);
 };
 
 /** Series para los gráficos de la portada, con los datos del período. */
