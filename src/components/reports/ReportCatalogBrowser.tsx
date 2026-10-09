@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Clock, Search, Star } from 'lucide-react';
 import { REPORT_CATEGORIES, type ReportDefinition } from '@/utils/reports/reportTypes';
+import { ReportCategoryIcon } from './ReportCategoryIcon';
 import { groupByCategory, searchReports } from '@/utils/reports/reportCatalog';
 import type { ReportData } from '@/utils/reports/reportDataset';
 
@@ -32,11 +33,16 @@ const ReportCard: React.FC<{
   favorite: boolean;
   onOpen: () => void;
   onToggleFavorite: () => void;
-}> = ({ report, favorite, onOpen, onToggleFavorite }) => (
+}> = ({ report, favorite, onOpen, onToggleFavorite }) => {
+  const categoria = REPORT_CATEGORIES.find(c => c.id === report.category) || REPORT_CATEGORIES[0];
+  return (
   <div className="group relative rounded-lg border bg-white p-3 transition hover:border-blue-300 hover:shadow-sm">
-    <button type="button" className="w-full text-left" onClick={onOpen}>
-      <div className="pr-7 font-medium text-gray-900">{report.name}</div>
-      <div className="mt-1 text-xs leading-snug text-gray-500">{report.description}</div>
+    <button type="button" className="flex w-full items-start gap-2.5 text-left" onClick={onOpen}>
+      <ReportCategoryIcon category={categoria} size="md" className="mt-0.5" />
+      <span className="min-w-0">
+        <span className="block pr-7 font-medium text-gray-900">{report.name}</span>
+        <span className="mt-1 block text-xs leading-snug text-gray-500">{report.description}</span>
+      </span>
     </button>
     <button
       type="button"
@@ -48,7 +54,8 @@ const ReportCard: React.FC<{
       <Star className={`h-4 w-4 ${favorite ? 'fill-amber-400 text-amber-400' : ''}`} />
     </button>
   </div>
-);
+  );
+};
 
 export const ReportCatalogBrowser: React.FC<Props> = ({
   reports, query, onQueryChange, onOpen, favorites, onToggleFavorite, recents,
@@ -89,13 +96,14 @@ export const ReportCatalogBrowser: React.FC<Props> = ({
           if (cuantos === 0) return null;
           return (
             <Button
-              key={c.id} size="sm" className="h-8"
+              key={c.id} size="sm" className="h-8 gap-1.5"
               variant={category === c.id ? 'default' : 'outline'}
               onClick={() => onCategoryChange(category === c.id ? null : c.id)}
               title={c.description}
             >
-              <span className="mr-1">{c.icon}</span>{c.label}
-              <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-[10px]">{cuantos}</Badge>
+              <ReportCategoryIcon category={c} />
+              {c.label}
+              <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px]">{cuantos}</Badge>
             </Button>
           );
         })}
@@ -147,9 +155,9 @@ export const ReportCatalogBrowser: React.FC<Props> = ({
         REPORT_CATEGORIES.filter(c => porCategoria.has(c.id)).map(c => (
           <section key={c.id}>
             <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-700">
-              <span>{c.icon}</span> {c.label}
+              <ReportCategoryIcon category={c} size="md" /> {c.label}
             </h3>
-            <p className="mb-2 text-xs text-gray-500">{c.description}</p>
+            <p className="mb-2 ml-10 text-xs text-gray-500">{c.description}</p>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {porCategoria.get(c.id)!.map(r => (
                 <ReportCard

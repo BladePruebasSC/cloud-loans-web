@@ -20,11 +20,14 @@ import {
   AlertCircle, ArrowLeft, Download, FileSpreadsheet, FileText, Info, Loader2, Printer, Save, Star,
 } from 'lucide-react';
 import { ReportFiltersBar, type FilterOption } from './ReportFiltersBar';
+import { ReportCategoryIcon } from './ReportCategoryIcon';
 import { ReportKpiGrid } from './ReportKpiGrid';
 import { ReportChart } from './ReportChart';
 import { ReportTable } from './ReportTable';
 import type { ReportData } from '@/utils/reports/reportDataset';
-import type { ReportDefinition, ReportFilters, ReportResult } from '@/utils/reports/reportTypes';
+import {
+  REPORT_CATEGORIES, type ReportDefinition, type ReportFilters, type ReportResult,
+} from '@/utils/reports/reportTypes';
 import { describeFilters, hasActiveFilters, sortRows } from '@/utils/reports/reportFilters';
 import { describePeriod } from '@/utils/reports/reportPeriods';
 import {
@@ -133,6 +136,7 @@ export const ReportView: React.FC<Props> = ({
     ],
   }), [data, users]);
 
+  const categoria = REPORT_CATEGORIES.find(c => c.id === report.category) || REPORT_CATEGORIES[0];
   const columnasVisibles = report.columns.filter(c => !hidden.has(c.key));
   // El ORDEN se aplica aquí, no en la tabla: así lo que se exporta y lo que se imprime sale en
   // el mismo orden que se está viendo (punto 22 del pedido), y no en el que vino del cálculo.
@@ -185,9 +189,12 @@ export const ReportView: React.FC<Props> = ({
           <Button variant="ghost" size="sm" className="mt-0.5" onClick={onBack}>
             <ArrowLeft className="h-4 w-4 mr-1" /> Reportes
           </Button>
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">{report.name}</h2>
-            <p className="text-sm text-gray-500">{report.description}</p>
+          <div className="flex items-start gap-2.5">
+            <ReportCategoryIcon category={categoria} size="md" className="mt-1" />
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">{report.name}</h2>
+              <p className="text-sm text-gray-500">{report.description}</p>
+            </div>
           </div>
         </div>
 

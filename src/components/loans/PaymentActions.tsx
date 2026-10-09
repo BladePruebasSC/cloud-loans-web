@@ -29,6 +29,7 @@ import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeC
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { useAuth } from '@/hooks/useAuth';
 import { isChargePayment, paymentGross, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
+import { paymentCashReceived } from '@/utils/paymentDiscount';
 import { chargeTotalsByDueDate, paidPeriodsFromMoney } from '@/utils/loanPaidTotals';
 
 interface Payment {
@@ -45,6 +46,10 @@ interface Payment {
   status: string;
   created_at: string;
   loan_id: string;
+  /** Descuento aplicado al cobro: la cuota se acredita completa y en caja entra menos. */
+  discount_amount?: number | null;
+  discount_percentage?: number | null;
+  discount_reason?: string | null;
 }
 
 interface Loan {
@@ -1235,8 +1240,17 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                 <span>Pago a Intereses: RD$${payment.interest_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               ${payment.late_fee > 0 ? `<div class="info-row"><span>Cargo por Mora: RD$${payment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
+              ${Number(payment.discount_amount) > 0.005 ? `
+              <div class="info-row">
+                <span>Acreditado a la cuota: RD$${(payment.amount + (payment.late_fee || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div class="info-row">
+                <span>Descuento aplicado${Number(payment.discount_percentage) > 0 ? ` (${Number(payment.discount_percentage).toLocaleString('es-DO', { maximumFractionDigits: 2 })}%)` : ''}: −RD$${Number(payment.discount_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              ${payment.discount_reason ? `<div class="info-row"><span>Motivo del descuento: ${payment.discount_reason}</span></div>` : ''}
+              ` : ''}
               <div class="total-amount">
-                TOTAL: RD$${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${Number(payment.discount_amount) > 0.005 ? 'TOTAL PAGADO' : 'TOTAL'}: RD$${paymentCashReceived(payment).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -1667,9 +1681,35 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                         </div>
                       )}
                       <hr className="my-2" />
-                      <div className="flex justify-between text-lg font-bold text-green-600">
-                        <span>TOTAL:</span>
+                      <div className="flex justify-between font-semibold">
+                        <span className="text-gray-600">Acreditado a la cuota:</span>
                         <span>RD${(payment.amount + (payment.late_fee || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      {/* DESCUENTO (2026-10-09): la cuota se acredita completa, pero en caja entró
+                          menos. El recibo tiene que decir las dos cifras: lo que se perdonó y lo
+                          que el cliente entregó de verdad. */}
+                      {Number(payment.discount_amount) > 0.005 && (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">
+                              Descuento aplicado
+                              {Number(payment.discount_percentage) > 0
+                                ? ` (${Number(payment.discount_percentage).toLocaleString('es-DO', { maximumFractionDigits: 2 })}%)`
+                                : ''}:
+                            </span>
+                            <span className="font-semibold text-emerald-700">
+                              −RD${Number(payment.discount_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          {payment.discount_reason && (
+                            <div className="text-xs text-gray-500">Motivo: {payment.discount_reason}</div>
+                          )}
+                        </>
+                      )}
+                      <hr className="my-2" />
+                      <div className="flex justify-between text-lg font-bold text-green-600">
+                        <span>{Number(payment.discount_amount) > 0.005 ? 'TOTAL PAGADO:' : 'TOTAL:'}</span>
+                        <span>RD${paymentCashReceived(payment).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     </div>
                   </div>

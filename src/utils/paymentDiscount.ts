@@ -149,6 +149,10 @@ export interface DueDiscount {
   amount: number;
   /** Qué porcentaje representa sobre lo acreditado a esa cuota */
   percentage: number | null;
+  /** Lo que se ACREDITÓ a la cuota (el monto completo) */
+  credited: number;
+  /** Lo que el cliente entregó de verdad: acreditado − descuento */
+  net: number;
 }
 
 /**
@@ -175,7 +179,12 @@ export const discountsByDueDate = (
   const out = new Map<string, DueDiscount>();
   for (const [due, amount] of descuento) {
     const base = acreditado.get(due) || 0;
-    out.set(due, { amount, percentage: base > 0.005 ? round2((amount / base) * 100) : null });
+    out.set(due, {
+      amount,
+      percentage: base > 0.005 ? round2((amount / base) * 100) : null,
+      credited: base,
+      net: round2(Math.max(0, base - amount)),
+    });
   }
   return out;
 };
@@ -204,12 +213,28 @@ export const discountsByDueDateSplit = (
   regular: discountsByDueDate((payments || []).filter(p => !isChargePayment(p as any))),
 });
 
-/** Texto corto para la fila de una tabla: "Descuento RD$52.50 (10%)". */
+const money = (v: number) => `RD$${v.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Texto para la fila de una tabla: "Descuento RD$0.29 (17.37%) · pagó RD$1.38".
+ *
+ * CAMBIO SOLICITADO (2026-10-09): "en la tabla de ver recibos quiero que se vea el monto real que
+ * se pagó con descuento y no solo el monto que se descontó". La cuota se acredita completa —por
+ * eso sale saldada—, pero en caja entró menos: las dos cifras tienen que estar a la vista.
+ */
 export const describeDueDiscount = (d: DueDiscount | undefined | null): string => {
   if (!d || d.amount <= 0.005) return '';
-  const monto = d.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return d.percentage ? `Descuento RD$${monto} (${d.percentage}%)` : `Descuento RD$${monto}`;
+  const base = `Descuento ${money(d.amount)}${d.percentage ? ` (${d.percentage}%)` : ''}`;
+  // `credited`/`net` no existían en los primeros descuentos guardados: si no vienen, se enseña
+  // solo lo perdonado, que es lo que se sabe.
+  return typeof d.net === 'number' && d.credited > 0.005
+    ? `${base} · pagó ${money(d.net)} de ${money(d.credited)}`
+    : base;
 };
+
+/** Solo el monto que entró de verdad: "Pagó RD$1.38". Para columnas estrechas. */
+export const describeDueNet = (d: DueDiscount | undefined | null): string =>
+  (!d || d.amount <= 0.005 || typeof d.net !== 'number') ? '' : `Pagó ${money(d.net)}`;
 
 /** Descuento total de una lista de pagos. */
 export const paymentsDiscountTotal = (payments: Array<{ discount_amount?: number | null }>): number =>

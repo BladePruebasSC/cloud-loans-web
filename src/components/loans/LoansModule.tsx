@@ -589,16 +589,10 @@ export const LoansModule = () => {
           }));
         });
 
-        // ✅ También refrescar el "Próximo Pago" calculado en indefinidos (evita quedarse en 28-feb).
-        if (String((loan as any)?.amortization_type || loan?.amortization_type || '').toLowerCase() === 'indefinite') {
-          calculateNextPaymentDateISO(loan)
-            .then((iso) => {
-              setNextPaymentDates((prev) => ({ ...prev, [affectedLoanId]: iso }));
-            })
-            .catch(() => {
-              // no-op
-            });
-        }
+        // ✅ Y el "Próximo Pago", la mora y el interés pendiente, con datos frescos de la base.
+        // Antes esto solo recalculaba la fecha de los INDEFINIDOS; en los de plazo fijo se
+        // quedaba la cuota ya cobrada hasta recargar la página (2026-10-09).
+        void refreshLoanCalculations(affectedLoanId);
       }, 300);
     };
 
@@ -1353,8 +1347,33 @@ export const LoansModule = () => {
     const balanceUpdates: { [key: string]: number } = {};
     const baseBalanceUpdates: { [key: string]: number } = {};
     const chargesUpdates: { [key: string]: number } = {};
+    const nextDateUpdates: { [key: string]: string | null } = {};
 
     await Promise.all(targetLoans.map(async (loan: any) => {
+      // PRÓXIMO PAGO (2026-10-09): "la fecha de próximo pago no se actualiza hasta que recargas
+      // la página". La fecha de los préstamos de plazo fijo la calcula un efecto cuya dependencia
+      // es la LISTA DE IDS: al registrar un pago los ids no cambian, así que no se volvía a
+      // ejecutar y la tarjeta seguía enseñando la cuota ya cobrada. Se recalcula aquí, que es por
+      // donde pasa todo cambio hecho desde esta pantalla (pago, abono, cargo, aprobación...).
+      try {
+        if (String(loan.amortization_type || '').toLowerCase() === 'indefinite') {
+          nextDateUpdates[loan.id] = await calculateNextPaymentDateISO(loan);
+        } else {
+          const [instRes, payRes] = await Promise.all([
+            supabase.from('installments')
+              .select('id, loan_id, due_date, installment_number, principal_amount, interest_amount, total_amount, amount, is_paid')
+              .eq('loan_id', loan.id),
+            supabase.from('payments')
+              .select('id, loan_id, due_date, amount, principal_amount, interest_amount, payment_date, payment_time_local, created_at')
+              .eq('loan_id', loan.id),
+          ]);
+          const due = getFirstUnpaidDueDate((instRes.data || []) as any, (payRes.data || []) as any);
+          nextDateUpdates[loan.id] = due || loan.next_payment_date?.split('T')[0] || null;
+        }
+      } catch (error) {
+        console.error('[préstamos] no se pudo recalcular la próxima fecha de pago:', error);
+      }
+
       if (loan.late_fee_enabled) {
         lateFeeUpdates[loan.id] = await calculateCurrentLateFee(loan);
         syncLateFeeColumn(loan, lateFeeUpdates[loan.id]);
@@ -1383,6 +1402,9 @@ export const LoansModule = () => {
       setCalculatedRemainingBalances(prev => ({ ...prev, ...balanceUpdates }));
       setCalculatedBaseBalances(prev => ({ ...prev, ...baseBalanceUpdates }));
       setCalculatedPendingCharges(prev => ({ ...prev, ...chargesUpdates }));
+    }
+    if (Object.keys(nextDateUpdates).length > 0) {
+      setNextPaymentDates(prev => ({ ...prev, ...nextDateUpdates }));
     }
   };
 

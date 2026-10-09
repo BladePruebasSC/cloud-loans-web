@@ -20,7 +20,8 @@ import {
   Printer,
   Download,
   X,
-  CreditCard
+  CreditCard,
+  Trash2
 } from 'lucide-react';
 import { PaymentActions } from './PaymentActions';
 import { sortPaymentsNewestFirst, sortPaymentsOldestFirst } from '@/utils/paymentOrdering';
@@ -397,6 +398,41 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
 
 
+  /**
+   * ¿La entrada es la constancia de un PAGO ELIMINADO?
+   *
+   * FALLO REPORTADO (2026-10-09): "cuando se elimine un pago, en historial de modificaciones,
+   * salga en español y como pago eliminado, no como ajuste de balance". El borrado se anota con
+   * `change_type = 'balance_adjustment'` porque la tabla tiene un CHECK que no admite otros
+   * valores (ver 20250128000002); el tipo REAL va en `notes`, igual que hacen las demás
+   * actualizaciones del préstamo. Aquí se reconoce para enseñarlo como lo que es.
+   */
+  const deletedPaymentInfo = (entry: LoanHistoryEntry): {
+    amount: number | null; paymentDate: string | null; detail: string | null;
+  } | null => {
+    const description = String(entry.description || '');
+    let notas: any = null;
+    try {
+      const raw = (entry as any).notes;
+      notas = typeof raw === 'string' && raw.trim().startsWith('{') ? JSON.parse(raw) : null;
+    } catch { notas = null; }
+
+    const esBorrado = notas?.update_type === 'delete_payment'
+      || /^pago eliminado/i.test(description.trim());
+    if (!esBorrado) return null;
+
+    const montoDesc = description.match(/RD\$([\d,]+\.?\d*)/);
+    const detalle = description.match(/\(([^)]+)\)\s*$/);
+    return {
+      amount: typeof notas?.amount === 'number'
+        ? notas.amount
+        : (montoDesc ? parseFloat(montoDesc[1].replace(/,/g, '')) : null),
+      paymentDate: String(notas?.payment_date || description.match(/del (\d{4}-\d{2}-\d{2})/)?.[1] || '')
+        .split('T')[0] || null,
+      detail: detalle ? detalle[1] : null,
+    };
+  };
+
   const getChangeTypeIcon = (type: string) => {
     switch (type) {
       case 'payment': return <Receipt className="h-4 w-4 text-green-600" />;
@@ -467,7 +503,11 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   const getChangeTypeLabelWithUpdateType = (entry: LoanHistoryEntry) => {
     // Si la descripción contiene información específica, extraerla para una etiqueta más descriptiva
     const description = entry.description || '';
-    
+
+    // Un pago eliminado se dice así, no "Ajuste de Balance". Va primero porque su descripción
+    // puede mencionar la mora o el capital del pago y confundir a las comprobaciones de abajo.
+    if (deletedPaymentInfo(entry)) return 'Pago Eliminado';
+
     // Detectar tipos específicos basados en la descripción
     if (description.includes('Abono a capital')) {
       return 'Abono a Capital';
@@ -1426,11 +1466,17 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                         }
                       }
                       
+                      const borrado = deletedPaymentInfo(entry);
+
                       return (
-                      <div key={entry.id} className="border rounded-lg p-4">
+                      <div key={entry.id} className={`border rounded-lg p-4 ${borrado ? 'border-red-200 bg-red-50/40' : ''}`}>
                         <div className="flex items-center gap-3 mb-2">
-                          {getChangeTypeIcon(entry.change_type)}
-                          <span className="font-semibold">{getChangeTypeLabelWithUpdateType(entry)}</span>
+                          {borrado
+                            ? <Trash2 className="h-4 w-4 text-red-600" />
+                            : getChangeTypeIcon(entry.change_type)}
+                          <span className={`font-semibold ${borrado ? 'text-red-800' : ''}`}>
+                            {getChangeTypeLabelWithUpdateType(entry)}
+                          </span>
                           <span className="text-sm text-gray-500">
                             {formatInTimeZone(
                               new Date(entry.created_at),
@@ -1440,12 +1486,41 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                           </span>
                         </div>
                         
-                        {(() => {
+                        {/* PAGO ELIMINADO: se dice qué se borró, de cuándo y de qué se componía,
+                            en vez de un "Razón:" con la descripción en crudo. */}
+                        {borrado && (
+                          <div className="space-y-1 text-sm text-red-900">
+                            {borrado.amount !== null && (
+                              <div>
+                                <span className="font-medium">Monto del pago eliminado:</span>{' '}
+                                RD${borrado.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            )}
+                            {borrado.paymentDate && (
+                              <div>
+                                <span className="font-medium">Fecha del pago:</span>{' '}
+                                {formatInTimeZone(
+                                  new Date(`${borrado.paymentDate}T12:00:00Z`),
+                                  'America/Santo_Domingo',
+                                  'dd MMM yyyy',
+                                )}
+                              </div>
+                            )}
+                            {borrado.detail && (
+                              <div><span className="font-medium">Desglose:</span> {borrado.detail}</div>
+                            )}
+                            <div className="text-xs text-red-700">
+                              El cobro se borró del préstamo: ya no cuenta en el balance ni en los ingresos.
+                            </div>
+                          </div>
+                        )}
+
+                        {!borrado && (() => {
                           // Extraer información de la descripción
                           const descInfo = extractDescriptionInfo(entry.description || '');
                           const displayReason = entry.reason || descInfo.reason;
                           const displayAmount = entry.amount || descInfo.amount;
-                          
+
                           return (
                             <>
                               {displayReason && (
@@ -1611,7 +1686,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                           </div>
                         )}
 
-                        {(oldValues && typeof oldValues === 'object' && Object.keys(oldValues).length > 0) || (newValues && typeof newValues === 'object' && Object.keys(newValues).length > 0) ? (
+                        {!borrado && ((oldValues && typeof oldValues === 'object' && Object.keys(oldValues).length > 0) || (newValues && typeof newValues === 'object' && Object.keys(newValues).length > 0)) ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                           <div>
                             <span className="font-medium">Valores Anteriores:</span>
@@ -1656,12 +1731,19 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                         </div>
                         ) : null}
 
-                        {/* Mostrar notas si existen */}
-                        {(entry as any).notes && (
-                          <div className="text-sm text-gray-600 mt-2 pt-2 border-t">
-                            <span className="font-medium">Notas:</span> {(entry as any).notes}
-                          </div>
-                        )}
+                        {/* Las notas, SOLO si son para leerlas.
+                            Varias actualizaciones guardan ahí un JSON interno con el tipo real
+                            del cambio; eso es para el sistema, no para la pantalla, y se estaba
+                            enseñando en crudo ({"update_type":"delete_payment",…}). */}
+                        {(() => {
+                          const raw = String((entry as any).notes || '').trim();
+                          if (!raw || raw.startsWith('{') || raw.startsWith('[')) return null;
+                          return (
+                            <div className="text-sm text-gray-600 mt-2 pt-2 border-t">
+                              <span className="font-medium">Notas:</span> {translatePaymentNotes(raw)}
+                            </div>
+                          );
+                        })()}
                       </div>
                       );
                     })}

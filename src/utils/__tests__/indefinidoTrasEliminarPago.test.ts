@@ -124,7 +124,9 @@ describe('Indefinido: lo cobrado y el balance se mueven con cada pago', () => {
 
   it('El descuento sale en la fila del CARGO, no repetido en la cuota del mismo día', () => {
     const d = discountsByDueDateSplit(PAGOS as any[]);
-    expect(describeDueDiscount(d.charges.get('2026-09-15'))).toBe('Descuento RD$280.00 (18.67%)');
+    // Y dice lo que entró de verdad: se acreditaron 1,500 al cargo y el cliente entregó 1,220.
+    expect(describeDueDiscount(d.charges.get('2026-09-15')))
+      .toBe('Descuento RD$280.00 (18.67%) · pagó RD$1,220.00 de RD$1,500.00');
     expect(describeDueDiscount(d.regular.get('2026-09-15'))).toBe('');
   });
 });

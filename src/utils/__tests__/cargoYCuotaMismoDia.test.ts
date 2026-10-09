@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   allocatePaymentsToPeriods, isChargePayment, paymentGross, splitChargeAndRegularPayments,
 } from '../chargeAwarePayments';
-import { describeDueDiscount, discountsByDueDate } from '../paymentDiscount';
+import { describeDueDiscount, describeDueNet, discountsByDueDate } from '../paymentDiscount';
 import { computeLoanBalanceBreakdown } from '../loanBalanceBreakdown';
 
 // El préstamo del reporte
@@ -101,18 +101,22 @@ describe('descuento en la tabla de amortización', () => {
     { due_date: '2026-10-27', amount: 225, discount_amount: 0 },
   ];
 
-  it('Cada cuota sabe cuánto se le perdonó y qué porcentaje fue', () => {
+  it('Cada cuota sabe cuánto se le perdonó, qué porcentaje fue y cuánto entró de verdad', () => {
     const porCuota = discountsByDueDate(pagos);
-    expect(porCuota.get('2026-09-29')).toEqual({ amount: 52.5, percentage: 10 });
+    // Se acreditaron 525 a la cuota, pero el cliente entregó 472.50.
+    expect(porCuota.get('2026-09-29')).toEqual({ amount: 52.5, percentage: 10, credited: 525, net: 472.5 });
     // Dos pagos para la misma cuota: el porcentaje es sobre lo acreditado a esa cuota
-    expect(porCuota.get('2026-10-27')).toEqual({ amount: 25, percentage: 4.76 });
+    expect(porCuota.get('2026-10-27')).toEqual({ amount: 25, percentage: 4.76, credited: 525, net: 500 });
     expect(porCuota.has('2026-10-13')).toBe(false); // sin descuento, no se anota
   });
 
-  it('El texto que sale en la fila', () => {
+  it('El texto que sale en la fila dice lo perdonado Y lo que se pagó', () => {
     const porCuota = discountsByDueDate(pagos);
-    expect(describeDueDiscount(porCuota.get('2026-09-29'))).toBe('Descuento RD$52.50 (10%)');
+    expect(describeDueDiscount(porCuota.get('2026-09-29')))
+      .toBe('Descuento RD$52.50 (10%) · pagó RD$472.50 de RD$525.00');
+    expect(describeDueNet(porCuota.get('2026-09-29'))).toBe('Pagó RD$472.50');
     expect(describeDueDiscount(porCuota.get('2026-10-13'))).toBe('');
-    expect(describeDueDiscount({ amount: 25, percentage: null })).toBe('Descuento RD$25.00');
+    // Un descuento viejo, sin lo acreditado guardado, enseña solo lo que se sabe.
+    expect(describeDueDiscount({ amount: 25, percentage: null } as any)).toBe('Descuento RD$25.00');
   });
 });

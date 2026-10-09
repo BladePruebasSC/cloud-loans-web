@@ -10,27 +10,40 @@ export type ReportCategoryId =
   | 'resumen' | 'financiero' | 'prestamos' | 'pagos' | 'clientes' | 'mora' | 'cobranzas'
   | 'ventas' | 'inventario' | 'caja' | 'gastos' | 'legal';
 
+/**
+ * Icono de cada categoría.
+ *
+ * CAMBIO SOLICITADO (2026-10-09): "en reportes, en vez de emoji quiero logos personalizados que
+ * sigan el estilo de la página". Aquí vive solo la CLAVE del icono y su color; el dibujo lo pone
+ * `ReportCategoryIcon` con los mismos iconos (lucide) y la misma paleta que el resto del sistema.
+ * Así este archivo sigue siendo lógica pura, sin componentes dentro.
+ */
+export type ReportCategoryIconKey =
+  | 'resumen' | 'financiero' | 'prestamos' | 'pagos' | 'clientes' | 'mora'
+  | 'cobranzas' | 'ventas' | 'inventario' | 'caja' | 'gastos' | 'legal';
+
 export interface ReportCategory {
   id: ReportCategoryId;
   label: string;
-  /** Emoji para la navegación (el mismo criterio visual del resto del sistema) */
-  icon: string;
+  icon: ReportCategoryIconKey;
+  /** Clases de color del icono, en el estilo de las tarjetas del sistema */
+  tone: string;
   description: string;
 }
 
 export const REPORT_CATEGORIES: ReportCategory[] = [
-  { id: 'resumen', label: 'Resumen', icon: '📊', description: 'La foto del período y los indicadores clave' },
-  { id: 'financiero', label: 'Financiero', icon: '💰', description: 'Ingresos, egresos, ganancia y flujo de efectivo' },
-  { id: 'prestamos', label: 'Préstamos', icon: '💳', description: 'Colocación, cartera y estado de los préstamos' },
-  { id: 'pagos', label: 'Pagos', icon: '💵', description: 'Lo cobrado: capital, interés, mora y cargos' },
-  { id: 'clientes', label: 'Clientes', icon: '👥', description: 'Quiénes son, dónde están y cómo pagan' },
-  { id: 'mora', label: 'Mora', icon: '⚠️', description: 'Cartera vencida, antigüedad y recuperación' },
-  { id: 'cobranzas', label: 'Cobranzas', icon: '🧑‍💼', description: 'Gestión de cobro y cobranza por usuario' },
-  { id: 'ventas', label: 'Ventas', icon: '🛒', description: 'Punto de venta, productos y recibos' },
-  { id: 'inventario', label: 'Inventario', icon: '📦', description: 'Existencias, valor y faltantes' },
-  { id: 'caja', label: 'Caja y bancos', icon: '🏦', description: 'Cuentas, movimientos y conciliación' },
-  { id: 'gastos', label: 'Gastos', icon: '💸', description: 'En qué se va el dinero' },
-  { id: 'legal', label: 'Legal', icon: '⚖️', description: 'Casos, intimaciones y recuperación' },
+  { id: 'resumen', label: 'Resumen', icon: 'resumen', tone: 'bg-slate-100 text-slate-700', description: 'La foto del período y los indicadores clave' },
+  { id: 'financiero', label: 'Financiero', icon: 'financiero', tone: 'bg-emerald-100 text-emerald-700', description: 'Ingresos, egresos, ganancia y flujo de efectivo' },
+  { id: 'prestamos', label: 'Préstamos', icon: 'prestamos', tone: 'bg-blue-100 text-blue-700', description: 'Colocación, cartera y estado de los préstamos' },
+  { id: 'pagos', label: 'Pagos', icon: 'pagos', tone: 'bg-green-100 text-green-700', description: 'Lo cobrado: capital, interés, mora y cargos' },
+  { id: 'clientes', label: 'Clientes', icon: 'clientes', tone: 'bg-indigo-100 text-indigo-700', description: 'Quiénes son, dónde están y cómo pagan' },
+  { id: 'mora', label: 'Mora', icon: 'mora', tone: 'bg-red-100 text-red-700', description: 'Cartera vencida, antigüedad y recuperación' },
+  { id: 'cobranzas', label: 'Cobranzas', icon: 'cobranzas', tone: 'bg-cyan-100 text-cyan-700', description: 'Gestión de cobro y cobranza por usuario' },
+  { id: 'ventas', label: 'Ventas', icon: 'ventas', tone: 'bg-amber-100 text-amber-700', description: 'Punto de venta, productos y recibos' },
+  { id: 'inventario', label: 'Inventario', icon: 'inventario', tone: 'bg-orange-100 text-orange-700', description: 'Existencias, valor y faltantes' },
+  { id: 'caja', label: 'Caja y bancos', icon: 'caja', tone: 'bg-teal-100 text-teal-700', description: 'Cuentas, movimientos y conciliación' },
+  { id: 'gastos', label: 'Gastos', icon: 'gastos', tone: 'bg-rose-100 text-rose-700', description: 'En qué se va el dinero' },
+  { id: 'legal', label: 'Legal', icon: 'legal', tone: 'bg-purple-100 text-purple-700', description: 'Casos, intimaciones y recuperación' },
 ];
 
 export const categoryById = (id: ReportCategoryId): ReportCategory =>
