@@ -19,6 +19,8 @@ import {
   type LoanData,
 } from './installmentLateFeeCalculator';
 import { getCurrentDateInSantoDomingo } from './dateUtils';
+import { computeArrearsByLoan } from './loanArrears';
+import type { OverdueFacts } from './portfolioMetrics';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface LateFeeLoanLike {
@@ -181,4 +183,73 @@ export const fetchLateFeesForLoans = async (
   }
 
   return computeLateFeesByLoan(loans, installmentsByLoan, paymentsByLoan, calculationDate, capitalPaymentsByLoan);
+};
+
+/**
+ * Mora Y ATRASO de cada préstamo, con UNA sola lectura.
+ *
+ * FALLO REPORTADO (2026-10-12): cobranza legal sacaba los días de atraso de
+ * `loans.next_payment_date` —columna cacheada— menos la gracia, mientras la tarjeta del préstamo
+ * los calcula desde las cuotas. El mismo préstamo salía "al día" en un sitio y con "7 d" en el
+ * otro. Esta función devuelve las dos cosas del MISMO origen: las cuotas y los pagos.
+ */
+export const fetchLateFeesAndArrears = async (
+  loans: LateFeeLoanLike[],
+  todayIso: string,
+  calculationDate: Date = getCurrentDateInSantoDomingo(),
+): Promise<{ lateFees: Map<string, number>; arrears: Map<string, OverdueFacts> }> => {
+  const ids = loans.map(l => String(l.id)).filter(Boolean);
+  if (ids.length === 0) return { lateFees: new Map(), arrears: new Map() };
+
+  const installmentsByLoan = new Map<string, any[]>();
+  const paymentsByLoan = new Map<string, any[]>();
+  const capitalPaymentsByLoan = new Map<string, any[]>();
+
+  try {
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK);
+      const [instRes, payRes, capRes] = await Promise.all([
+        supabase.from('installments').select('*').in('loan_id', slice),
+        supabase.from('payments')
+          // `due_date` y el desglose hacen falta para repartir los pagos entre las cuotas.
+          .select('id, loan_id, amount, principal_amount, interest_amount, payment_date, due_date')
+          .in('loan_id', slice),
+        supabase.from('capital_payments')
+          .select('loan_id, amount, capital_before, capital_after, created_at')
+          .in('loan_id', slice),
+      ]);
+      if (instRes.error) throw instRes.error;
+      if (payRes.error) throw payRes.error;
+
+      for (const row of instRes.data || []) {
+        const lid = String((row as any).loan_id || '');
+        if (!lid) continue;
+        const list = installmentsByLoan.get(lid);
+        if (list) list.push(row); else installmentsByLoan.set(lid, [row]);
+      }
+      for (const row of payRes.data || []) {
+        const lid = String((row as any).loan_id || '');
+        if (!lid) continue;
+        const list = paymentsByLoan.get(lid);
+        if (list) list.push(row); else paymentsByLoan.set(lid, [row]);
+      }
+      for (const row of capRes.data || []) {
+        const lid = String((row as any).loan_id || '');
+        if (!lid) continue;
+        const list = capitalPaymentsByLoan.get(lid);
+        if (list) list.push(row); else capitalPaymentsByLoan.set(lid, [row]);
+      }
+    }
+  } catch (error) {
+    console.error('Error leyendo cuotas/pagos para calcular mora y atraso:', error);
+    return { lateFees: new Map(), arrears: new Map() };
+  }
+
+  const lateFees = await computeLateFeesByLoan(
+    loans, installmentsByLoan, paymentsByLoan, calculationDate, capitalPaymentsByLoan,
+  );
+  const arrears = computeArrearsByLoan(
+    loans as any, installmentsByLoan, paymentsByLoan, todayIso, capitalPaymentsByLoan,
+  );
+  return { lateFees, arrears };
 };

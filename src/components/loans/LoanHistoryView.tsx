@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { PaymentActions } from './PaymentActions';
 import { sortPaymentsNewestFirst, sortPaymentsOldestFirst } from '@/utils/paymentOrdering';
+import { paymentCashReceived } from '@/utils/paymentDiscount';
 import { formatInTimeZone } from 'date-fns-tz';
 import { useAuth } from '@/hooks/useAuth';
 import jsPDF from 'jspdf';
@@ -1018,12 +1019,24 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                 <div className="flex-1">
                                   <div className="flex items-center gap-3 mb-2">
                                     <Receipt className={`h-4 w-4 ${payment.status === 'completed' ? 'text-green-600' : 'text-yellow-600'}`} />
-                                    <span className="font-semibold">Pago de ${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    <span className="font-semibold">
+                                      Pago de ${payment.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      {Number((payment as any).discount_amount) > 0.005 && (
+                                        <span className="ml-1 font-normal text-emerald-700">
+                                          (cobrado ${paymentCashReceived(payment as any).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                        </span>
+                                      )}
+                                    </span>
                                     <Badge variant={payment.status === 'completed' ? 'default' : 'secondary'}>
                                       {payment.status === 'completed' ? 'Completado' : ((payment.interest_amount || 0) < 0.01 ? 'Parcial' : 'Pendiente')}
                                     </Badge>
                                     {payment.late_fee > 0 && (
                                       <Badge variant="destructive">Con Mora</Badge>
+                                    )}
+                                    {Number((payment as any).discount_amount) > 0.005 && (
+                                      <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
+                                        Con descuento
+                                      </Badge>
                                     )}
                                   </div>
                                   
@@ -1056,6 +1069,31 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                                   {payment.late_fee > 0 && (
                                     <div className="text-sm text-red-600 mt-2">
                                       <span className="font-medium">Mora:</span> ${payment.late_fee.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  )}
+
+                                  {/* DESCUENTO (2026-10-12): "donde aparezca algún monto, pago o
+                                      recibo que haya sido con descuento debe salir el descuento,
+                                      el monto que se pagó con descuento, cuánto fue el descuento y
+                                      el monto original". Las cuatro cifras, juntas. */}
+                                  {Number((payment as any).discount_amount) > 0.005 && (
+                                    <div className="text-sm mt-2 rounded-md bg-emerald-50 px-2 py-1.5 text-emerald-900">
+                                      <span className="font-medium">Acreditado a la cuota:</span>{' '}
+                                      ${(payment.amount + (payment.late_fee || 0)).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      {' · '}
+                                      <span className="font-medium">Descuento:</span>{' '}
+                                      −${Number((payment as any).discount_amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      {Number((payment as any).discount_percentage) > 0
+                                        ? ` (${Number((payment as any).discount_percentage).toLocaleString('es-DO', { maximumFractionDigits: 2 })}%)`
+                                        : ''}
+                                      {' · '}
+                                      <span className="font-medium">Pagó:</span>{' '}
+                                      <strong>${paymentCashReceived(payment as any).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                                      {(payment as any).discount_reason && (
+                                        <span className="block text-xs text-emerald-700">
+                                          Motivo: {(payment as any).discount_reason}
+                                        </span>
+                                      )}
                                     </div>
                                   )}
 

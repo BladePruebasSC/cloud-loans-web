@@ -21,6 +21,7 @@ import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type Capital
 import { interleaveCapitalPayments, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
 import { allocatePaymentsToPeriods, isChargePayment, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { getInstallmentLabel } from '@/utils/frequencyUtils';
 import { describeDueDiscount, discountsByDueDateSplit } from '@/utils/paymentDiscount';
 import { PiggyBank } from 'lucide-react';
 
@@ -1799,10 +1800,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                     </div>
                     <div>
                       <span className="text-gray-600">
-                        {loanInfo.payment_frequency === 'biweekly' ? 'Cuota Quincenal:'
-                          : loanInfo.payment_frequency === 'weekly' ? 'Cuota Semanal:'
-                          : loanInfo.payment_frequency === 'daily' ? 'Cuota Diaria:'
-                          : 'Cuota Mensual:'}
+                        {getInstallmentLabel(loanInfo.payment_frequency, true)}
                       </span>
                       <div className="font-semibold">RD${formatCurrencyNumber(loanInfo.monthly_payment || 0)}</div>
                     </div>

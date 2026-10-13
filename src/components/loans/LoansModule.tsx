@@ -27,7 +27,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { formatCurrencyNumber } from '@/lib/utils';
-import { getFrequencyName, formatDateLocalIso, parseIsoDateLocal, addPeriodsToIsoDate } from '@/utils/frequencyUtils';
+import {
+  getFrequencyName, getInstallmentLabel, formatDateLocalIso, parseIsoDateLocal, addPeriodsToIsoDate,
+} from '@/utils/frequencyUtils';
 import { agendaByDay, buildCollectionAgenda } from '@/utils/collectionAgenda';
 import { useLoanPenalties } from '@/hooks/useLoanPenalties';
 import { resolveDisplayedLateFee, totalWithLateFee, lateFeeColumnNeedsSync } from '@/utils/displayedLateFee';
@@ -2718,10 +2720,7 @@ export const LoansModule = () => {
                               ${formatCurrencyNumber(loan.monthly_payment)}
                             </div>
                             <div className="text-sm text-blue-600 font-medium">
-                              {loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal'
-                                : loan.payment_frequency === 'weekly' ? 'Cuota Semanal'
-                                : loan.payment_frequency === 'daily' ? 'Cuota Diaria'
-                                : 'Cuota Mensual'}
+                              {getInstallmentLabel(loan.payment_frequency)}
                             </div>
                           </div>
                         </div>
@@ -3517,10 +3516,7 @@ export const LoansModule = () => {
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">
-                                     {loan.payment_frequency === 'biweekly' ? 'Cuota Quincenal:'
-                                       : loan.payment_frequency === 'weekly' ? 'Cuota Semanal:'
-                                       : loan.payment_frequency === 'daily' ? 'Cuota Diaria:'
-                                       : 'Cuota Mensual:'}
+                                     {getInstallmentLabel(loan.payment_frequency, true)}
                                    </span>
                                    <span className="text-xs sm:text-sm">${formatCurrencyNumber(loan.monthly_payment)}</span>
                                  </div>

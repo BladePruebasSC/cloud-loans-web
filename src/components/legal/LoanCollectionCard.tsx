@@ -6,14 +6,24 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { useLegalPermissions, useLegalCases } from '@/hooks/useLegalCases';
 import { getCurrentDateStringForSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
-import { daysBetweenIso, isCaseOpen, CONTACT_TYPE_LABEL, CONTACT_RESULT_LABEL } from '@/utils/legalWorkflow';
+import {
+  daysBetweenIso, isCaseOpen, stageFromDaysOverdue, CONTACT_TYPE_LABEL, CONTACT_RESULT_LABEL,
+  type CollectionThresholds,
+} from '@/utils/legalWorkflow';
+import { computeLoanArrears } from '@/utils/loanArrears';
 import { formatCurrency } from '@/lib/utils';
 import { StageBadge, CaseStatusBadge, OverdueDays, PromiseStatusBadge, DeadlineBadge } from './LegalBadges';
 import { OpenCaseDialog } from './OpenCaseDialog';
 import { Gavel, ArrowUpRight } from 'lucide-react';
 
 interface Props {
-  loan: { id: string; client_id: string; next_payment_date: string; grace_period_days?: number | null; status?: string | null; collection_stage?: string | null; collection_stage_since?: string | null };
+  loan: {
+    id: string; client_id: string; next_payment_date: string; grace_period_days?: number | null;
+    status?: string | null; collection_stage?: string | null; collection_stage_since?: string | null;
+    /** Hacen falta para calcular el atraso real (y la rejilla de un indefinido) */
+    start_date?: string | null; monthly_payment?: number | null; amount?: number | null;
+    interest_rate?: number | null; payment_frequency?: string | null; amortization_type?: string | null;
+  };
   clientName: string;
 }
 
@@ -31,6 +41,17 @@ export const LoanCollectionCard: React.FC<Props> = ({ loan, clientName }) => {
   const [intimation, setIntimation] = useState<any | null>(null);
   const [showOpen, setShowOpen] = useState(false);
   const [available, setAvailable] = useState(true);
+  /**
+   * Atraso REAL del préstamo, desde sus cuotas y sus pagos.
+   *
+   * FALLO REPORTADO (2026-10-12): esta tarjeta decía "7 d" y "Cobranza administrativa" en un
+   * préstamo cuya ficha decía "0 días vencidos". Calculaba los días con
+   * `hoy − loans.next_payment_date − gracia`: esa columna la mantienen triggers y se queda atrás,
+   * y restarle la gracia mezcla dos cosas (los días de atraso son los que son; la gracia solo
+   * decide cuántos generan mora).
+   */
+  const [arrears, setArrears] = useState<{ days: number; amount: number } | null>(null);
+  const [thresholds, setThresholds] = useState<Partial<CollectionThresholds> | null>(null);
   const todayIso = getCurrentDateStringForSantoDomingo();
 
   const load = async () => {
@@ -40,6 +61,31 @@ export const LoanCollectionCard: React.FC<Props> = ({ loan, clientName }) => {
       supabase.from('collection_promises').select('*').eq('loan_id', loan.id).eq('status', 'pending').order('promised_date').limit(1),
     ]);
     if (error) { setAvailable(false); return; }
+
+    // El atraso y los umbrales de la empresa, para decir la etapa que de verdad le toca.
+    try {
+      const [instRes, payRes, capRes, settingsRes] = await Promise.all([
+        supabase.from('installments').select('*').eq('loan_id', loan.id),
+        supabase.from('payments')
+          .select('id, loan_id, amount, principal_amount, interest_amount, payment_date, due_date')
+          .eq('loan_id', loan.id),
+        supabase.from('capital_payments')
+          .select('loan_id, amount, capital_before, capital_after, created_at')
+          .eq('loan_id', loan.id),
+        companyId
+          ? supabase.rpc('legal_get_settings' as any, { p_company: companyId } as any)
+          : Promise.resolve({ data: null } as any),
+      ]);
+      if (!instRes.error && (instRes.data || []).length > 0) {
+        const facts = computeLoanArrears(
+          loan as any, instRes.data || [], payRes.data || [], todayIso, (capRes.data || []) as any,
+        );
+        setArrears({ days: facts.daysOverdue, amount: facts.overdueAmount });
+      }
+      if ((settingsRes as any)?.data) setThresholds((settingsRes as any).data as Partial<CollectionThresholds>);
+    } catch (e) {
+      console.error('[cobranza] no se pudo calcular el atraso del préstamo:', e);
+    }
     const c = cs?.[0] || null;
     setLegalCase(c);
     setLastTracking(tr?.[0] || null);
@@ -53,9 +99,19 @@ export const LoanCollectionCard: React.FC<Props> = ({ loan, clientName }) => {
 
   if (!available || !can('legal.view')) return null;
   const isActive = loan.status === 'active' || loan.status === 'overdue';
+  // Sin cuotas leídas se conserva el respaldo de siempre (la columna de la base).
   const rawDays = daysBetweenIso(String(loan.next_payment_date || '').split('T')[0], todayIso);
-  const daysOverdue = isActive && rawDays !== null ? Math.max(0, rawDays - Number(loan.grace_period_days || 0)) : 0;
+  const fallbackDays = isActive && rawDays !== null
+    ? Math.max(0, rawDays - Number(loan.grace_period_days || 0))
+    : 0;
+  const daysOverdue = isActive ? (arrears ? arrears.days : fallbackDays) : 0;
   const openCase = legalCase && isCaseOpen(legalCase.status) ? legalCase : null;
+
+  // La etapa que le toca por su atraso real; la guardada puede estar vieja.
+  const stage = arrears
+    ? stageFromDaysOverdue(daysOverdue, Number(loan.grace_period_days || 0), thresholds, !!openCase)
+    : (loan.collection_stage || null);
+  const stageSince = stage === loan.collection_stage ? loan.collection_stage_since : null;
 
   return (
     <Card className="border-l-4 border-l-purple-400">
@@ -68,8 +124,14 @@ export const LoanCollectionCard: React.FC<Props> = ({ loan, clientName }) => {
         </div>
       </CardHeader>
       <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        <div><p className="text-gray-500 text-xs">Etapa de cobranza</p><div className="mt-1"><StageBadge stage={loan.collection_stage} />{loan.collection_stage_since && <span className="block text-[11px] text-gray-500">desde {formatDateStringForSantoDomingo(loan.collection_stage_since)}</span>}</div></div>
-        <div><p className="text-gray-500 text-xs">Días de mora</p><p className="text-lg"><OverdueDays days={daysOverdue} /></p></div>
+        <div><p className="text-gray-500 text-xs">Etapa de cobranza</p><div className="mt-1"><StageBadge stage={stage} />{stageSince && <span className="block text-[11px] text-gray-500">desde {formatDateStringForSantoDomingo(stageSince)}</span>}</div></div>
+        <div>
+          <p className="text-gray-500 text-xs">Días de mora</p>
+          <p className="text-lg"><OverdueDays days={daysOverdue} /></p>
+          {arrears && arrears.amount > 0.005 && (
+            <span className="block text-[11px] text-gray-500">{formatCurrency(arrears.amount)} vencido</span>
+          )}
+        </div>
         <div><p className="text-gray-500 text-xs">Caso legal</p>{legalCase ? <div className="mt-1"><CaseStatusBadge status={legalCase.status} /><span className="block text-xs font-mono text-gray-600">{legalCase.case_number}</span></div> : <p className="text-gray-400">Sin caso</p>}</div>
         <div><p className="text-gray-500 text-xs">Intimación</p>{intimation ? <div className="mt-1 text-xs"><span className="font-mono">{intimation.intimation_number || 'borrador'}</span> · {intimation.status}{intimation.deadline_date && <div className="mt-1"><DeadlineBadge deadlineIso={intimation.deadline_date} todayIso={todayIso} /></div>}</div> : <p className="text-gray-400">—</p>}</div>
         <div className="col-span-2"><p className="text-gray-500 text-xs">Última gestión</p>{lastTracking ? <p>{formatDateStringForSantoDomingo(lastTracking.contact_date)} · {CONTACT_TYPE_LABEL[lastTracking.contact_type] || lastTracking.contact_type}{lastTracking.result && ` · ${CONTACT_RESULT_LABEL[lastTracking.result] || lastTracking.result}`}{lastTracking.client_response && <span className="block text-xs text-gray-600 truncate">{lastTracking.client_response}</span>}</p> : <p className="text-gray-400">Sin gestiones</p>}</div>

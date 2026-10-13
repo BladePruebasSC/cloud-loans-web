@@ -26,6 +26,7 @@ import {
   formatDateLocalIso,
   getFrequencyLabel,
   getFrequencyRateFactor,
+  getInstallmentLabel,
   getLateFeePeriodDays,
   parseIsoDateLocal,
 } from '@/utils/frequencyUtils';
@@ -3780,30 +3781,18 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
             // Validar que no haya cuotas vencidas antes de permitir el abono a capital
             {
-              const todayCheck = getCurrentDateInSantoDomingo();
-              const todayOnly = new Date(todayCheck.getFullYear(), todayCheck.getMonth(), todayCheck.getDate());
               const graceCheck = (loan as any).grace_period_days || 0;
-              let hasOverdue = false;
-
-              if (isIndefiniteLoan) {
-                const nextEff = displayNextPaymentDate ?? loan.next_payment_date ?? '';
-                if (nextEff) {
-                  const [ny, nm, nd] = nextEff.split('T')[0].split('-').map(Number);
-                  const nextD = new Date(ny, nm - 1, nd);
-                  const days = Math.floor((todayOnly.getTime() - nextD.getTime()) / (1000 * 60 * 60 * 24));
-                  if (days > graceCheck) hasOverdue = true;
-                }
-              } else {
-                hasOverdue = installments.some(inst => {
-                  if (inst.is_paid) return false;
-                  const dueDateStr = inst.due_date?.split('T')[0];
-                  if (!dueDateStr) return false;
-                  const [dy2, dm2, dd2] = dueDateStr.split('-').map(Number);
-                  const dD = new Date(dy2, dm2 - 1, dd2);
-                  const days = Math.floor((todayOnly.getTime() - dD.getTime()) / (1000 * 60 * 60 * 24));
-                  return days > graceCheck;
-                });
-              }
+              // Las cuotas vencidas son las MISMAS que decide el aviso de arriba
+              // (`overdueInstallmentsCount`), deducidas de los pagos repartidos por fecha.
+              //
+              // FALLO REPORTADO (2026-10-12): "ves que no sale bloqueado pero cuando le doy a
+              // guardar me da un error de que tiene cuotas vencidas". Esta comprobación se había
+              // quedado mirando `installments.is_paid` —la columna cacheada— mientras el aviso ya
+              // usaba el reparto real: el formulario dejaba escribir y el guardado lo rechazaba.
+              const hasOverdue = overdueInstallmentsCount > 0;
+              console.log('[abono] comprobación al guardar:', {
+                loanId: loan.id, overdueInstallmentsCount, graceCheck, hasOverdue,
+              });
 
               if (hasOverdue) {
                 toast.error('No se puede realizar un abono a capital mientras haya cuotas vencidas. Pague las cuotas vencidas primero.');
@@ -6651,7 +6640,7 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
                   <span className="font-semibold">${loan.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Cuota Mensual:</span>
+                  <span className="text-gray-600">{getInstallmentLabel((loan as any).payment_frequency, true)}</span>
                   <span className="font-semibold">${loan.monthly_payment.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">

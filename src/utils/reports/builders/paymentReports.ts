@@ -60,6 +60,11 @@ const PAYMENT_COLUMNS = [
   { key: 'interes', label: 'Interés', format: 'money' as const, total: true },
   { key: 'cargo', label: 'Cargos', format: 'money' as const, total: true },
   { key: 'mora', label: 'Mora', format: 'money' as const, total: true },
+  // Las cuatro cifras de un cobro con descuento: lo acreditado, lo perdonado y lo que entró.
+  {
+    key: 'acreditado', label: 'Acreditado', format: 'money' as const, total: true,
+    help: 'Lo que se acreditó a la cuota, antes del descuento',
+  },
   { key: 'descuento', label: 'Descuento', format: 'money' as const, total: true },
   { key: 'efectivo', label: 'Recibido', format: 'money' as const, total: true },
   { key: 'metodo', label: 'Método', align: 'left' as const },
@@ -94,6 +99,7 @@ const paymentRow = (
   interes: item.breakdown.interes,
   cargo: item.breakdown.cargo,
   mora: item.breakdown.mora,
+  acreditado: round2(item.breakdown.bruto + item.breakdown.mora),
   descuento: item.breakdown.descuento,
   efectivo: item.breakdown.efectivo,
   metodo: labelFor(PAYMENT_METHOD_LABEL, (item.payment as any).payment_method || 'cash'),
@@ -122,7 +128,7 @@ export const paymentReports: ReportDefinition<CoreDataset>[] = [
     build: ctx => {
       const items = paymentsInPeriod(ctx);
       const rows = applyCommonFilters(items.map(i => paymentRow(i, ctx.data)), ctx.filters, 'efectivo');
-      const t = totalsOf(rows, ['capital', 'interes', 'cargo', 'mora', 'descuento', 'efectivo']);
+      const t = totalsOf(rows, ['capital', 'interes', 'cargo', 'mora', 'acreditado', 'descuento', 'efectivo']);
       const sinDesglose = items.filter(i => i.breakdown.sinDesglose).length;
       const notes: string[] = [];
       if (sinDesglose > 0) {

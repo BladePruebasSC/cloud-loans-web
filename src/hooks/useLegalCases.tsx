@@ -3,8 +3,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
-import { daysBetweenIso, isCaseOpen, translateLegalError, type LegalCaseStatus } from '@/utils/legalWorkflow';
-import { fetchLateFeesForLoans } from '@/utils/portfolioLateFees';
+import {
+  daysBetweenIso, isCaseOpen, stageFromDaysOverdue, translateLegalError, type LegalCaseStatus,
+} from '@/utils/legalWorkflow';
+import { fetchLateFeesAndArrears } from '@/utils/portfolioLateFees';
 
 // ============================================================================
 // Datos del módulo de Cobranza Legal
@@ -41,7 +43,10 @@ export interface CollectionLoanRow {
   next_payment_date: string; grace_period_days: number | null; monthly_payment: number; status: string;
   collection_stage: string | null; collection_stage_since: string | null;
   client?: { full_name: string; dni: string; phone: string } | null;
+  /** Días de atraso REALES, desde las cuotas (sin descontar la gracia) */
   daysOverdue: number;
+  /** Lo vencido y sin pagar a hoy */
+  overdueAmount?: number;
   activeCaseId?: string | null;
 }
 
@@ -200,17 +205,46 @@ export const useLegalCases = () => {
       // global): en un préstamo por el que no ha pasado ninguno se queda en 0 para siempre. El
       // resto de la aplicación nunca la usa; calcula la mora desde las cuotas, y eso es lo que
       // se hace aquí con el mismo motor.
-      const lateFeeByLoan = await fetchLateFeesForLoans(loanRows);
+      //
+      // Y EL ATRASO, del mismo origen (2026-10-12).
+      //
+      // FALLO REPORTADO: "dice que está al día y que tiene 0 días vencidos, pero en cobranza
+      // legal sale que tiene días de atraso". Aquí se hacía `hoy − next_payment_date − gracia`:
+      // esa columna es cacheada (en el préstamo del reporte decía "3 oct" cuando la próxima cuota
+      // era el 14) y restar la gracia mezcla dos cosas —los días de atraso son los que son; la
+      // gracia solo decide cuántos generan mora—. Ahora sale de las cuotas y los pagos, como en
+      // la tarjeta del préstamo, y de la MISMA lectura que la mora: no cuesta una consulta más.
+      const [{ lateFees: lateFeeByLoan, arrears }, cfg] = await Promise.all([
+        fetchLateFeesAndArrears(loanRows, todayIso),
+        loadSettings(),
+      ]);
 
-      const loans = loanRows.map(l => ({
-        ...l,
-        current_late_fee: lateFeeByLoan.get(String(l.id)) ?? l.current_late_fee,
-        daysOverdue: computeDaysOverdue(l, todayIso),
-        activeCaseId: openCaseByLoan.get(l.id) || null,
-      })) as CollectionLoanRow[];
+      const loans = loanRows.map(l => {
+        const facts = arrears.get(String(l.id));
+        // Sin cuotas leídas se conserva el respaldo de siempre.
+        const dias = facts ? facts.daysOverdue : computeDaysOverdue(l, todayIso);
+        const caseAbierto = !!openCaseByLoan.get(l.id);
+        // La ETAPA se deduce del atraso real. La columna `collection_stage` la escribe un barrido
+        // en la base que mide con `next_payment_date` (cacheada): un préstamo al día podía salir
+        // en "Cobranza administrativa" (2026-10-12).
+        const etapa = facts
+          ? stageFromDaysOverdue(dias, Number(l.grace_period_days) || 0, cfg, caseAbierto)
+          : (l.collection_stage as string | null);
+        return {
+          ...l,
+          current_late_fee: lateFeeByLoan.get(String(l.id)) ?? l.current_late_fee,
+          daysOverdue: dias,
+          // La próxima cuota REAL: la primera con algo pendiente.
+          next_payment_date: facts?.nextDueDate || l.next_payment_date,
+          overdueAmount: facts?.overdueAmount ?? 0,
+          collection_stage: etapa,
+          // El "desde" es de la etapa GUARDADA: si la real es otra, no se enseña una fecha que
+          // no le corresponde.
+          collection_stage_since: etapa === l.collection_stage ? l.collection_stage_since : null,
+          activeCaseId: openCaseByLoan.get(l.id) || null,
+        };
+      }) as CollectionLoanRow[];
       setCollectionLoans(loans);
-
-      await loadSettings();
     } catch (e: any) {
       console.error('Legal: error cargando', e);
       if (tablesAvailable) toast.error('Error al cargar Cobranza Legal', { description: e?.message });

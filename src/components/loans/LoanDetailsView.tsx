@@ -1887,6 +1887,13 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                   status: loan.status,
                   collection_stage: (loan as any).collection_stage,
                   collection_stage_since: (loan as any).collection_stage_since,
+                  // Para que la tarjeta calcule el atraso real (y la rejilla de un indefinido).
+                  start_date: loan.start_date,
+                  monthly_payment: loan.monthly_payment,
+                  amount: loan.amount,
+                  interest_rate: loan.interest_rate,
+                  payment_frequency: (loan as any).payment_frequency,
+                  amortization_type: loan.amortization_type,
                 }}
                 clientName={(loan as any).client?.full_name || 'Cliente'}
               />

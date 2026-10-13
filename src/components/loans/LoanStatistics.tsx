@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
+import { getInstallmentLabel } from '@/utils/frequencyUtils';
 import { 
   BarChart3,
   DollarSign, 
@@ -366,7 +367,7 @@ export const LoanStatistics: React.FC<LoanStatisticsProps> = ({
                   <div className="text-2xl font-bold text-green-600">
                     {formatCurrency(stats.monthlyPayment)}
                   </div>
-                  <div className="text-sm text-gray-600">Cuota Mensual</div>
+                  <div className="text-sm text-gray-600">{getInstallmentLabel((loan as any).payment_frequency)}</div>
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-purple-600">

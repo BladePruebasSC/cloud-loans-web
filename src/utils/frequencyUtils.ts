@@ -123,6 +123,23 @@ export const getFrequencyLabel = (frequency?: string | null, plural = true): str
 export const getFrequencyName = (frequency?: string | null): string =>
   FREQUENCIES[normalizeFrequency(frequency)].name;
 
+/** Adjetivo de la cuota según la frecuencia: "Diaria", "Quincenal", "Mensual"… */
+const FEMININE_NAME: Record<PaymentFrequency, string> = {
+  daily: 'Diaria', weekly: 'Semanal', biweekly: 'Quincenal',
+  monthly: 'Mensual', quarterly: 'Trimestral', yearly: 'Anual',
+};
+
+/**
+ * Cómo se llama la cuota de este préstamo: "Cuota Diaria", "Cuota Quincenal"…
+ *
+ * CAMBIO SOLICITADO (2026-10-12): "en donde dice cuota debe decir la frecuencia, si es mensual,
+ * semanal, quincenal, etc.". Había media docena de sitios con el mismo `frequency === 'biweekly'
+ * ? 'Cuota Quincenal' : …` escrito a mano, y todos caían en "Cuota Mensual" para las frecuencias
+ * que no estaban en la lista (trimestral, anual) o cuando el campo venía vacío.
+ */
+export const getInstallmentLabel = (frequency?: string | null, withColon = false): string =>
+  `Cuota ${FEMININE_NAME[normalizeFrequency(frequency)]}${withColon ? ':' : ''}`;
+
 /** Devuelve el último día del mes indicado (mes 0-indexado, admite desbordes). */
 const lastDayOfMonth = (year: number, monthIndex: number): number =>
   new Date(year, monthIndex + 1, 0).getDate();

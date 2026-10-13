@@ -28,6 +28,7 @@ import {
   addPeriodsToDate,
   formatDateLocalIso,
   getFrequencyRateFactor,
+  getInstallmentLabel,
   getLateFeePeriodDays,
   getPeriodRate,
   parseIsoDateLocal,
@@ -3744,7 +3745,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Cuota Mensual:</span>
+                    <span className="text-sm text-gray-600">{getInstallmentLabel(selectedLoan.payment_frequency, true)}</span>
                     <span className="font-semibold">
                       ${formatCurrencyNumber(selectedLoan.monthly_payment)}
                     </span>
@@ -3929,7 +3930,7 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
                     <div className="text-sm text-blue-800">
                       <div className="font-medium mb-1">🎯 Lógica de Aplicación de Pagos:</div>
                       <ul className="text-xs space-y-1">
-                        <li>• <strong>Cuota mensual:</strong> {formatCurrency(selectedLoan.monthly_payment)} (interés + capital)</li>
+                        <li>• <strong>{getInstallmentLabel(selectedLoan.payment_frequency, true)}</strong> {formatCurrency(selectedLoan.monthly_payment)} (interés + capital)</li>
                         <li>• <strong>Interés fijo:</strong> {formatCurrency(interestPerInstallment(selectedLoan))} por cuota</li>
                         <li>• <strong>Primero:</strong> Se paga el interés fijo de la cuota</li>
                         <li>• <strong>Después:</strong> El resto se aplica al capital</li>

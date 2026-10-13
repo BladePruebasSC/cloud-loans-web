@@ -36,6 +36,51 @@ export const STAGE_META: Record<CollectionStage, { label: string; className: str
   legal:                   { label: 'En proceso legal',       className: 'bg-purple-100 text-purple-800', order: 7 },
 };
 
+export interface CollectionThresholds {
+  /** Días de atraso a partir de los cuales empieza cada etapa */
+  preventive: number;
+  administrative: number;
+  intensive: number;
+  prelegal: number;
+}
+
+export const DEFAULT_COLLECTION_THRESHOLDS: CollectionThresholds = {
+  preventive: 3, administrative: 8, intensive: 30, prelegal: 60,
+};
+
+/**
+ * La ETAPA DE COBRANZA a partir del atraso REAL del préstamo.
+ *
+ * FALLO REPORTADO (2026-10-12): un préstamo al día salía como "Cobranza administrativa" en la
+ * pantalla de cobranza legal. La etapa la guarda `loans.collection_stage`, que escribe un barrido
+ * en la base calculando los días con `loans.next_payment_date` —una columna cacheada que se queda
+ * atrás—. Mientras ese barrido no corra (o corra con la fecha vieja), la etapa guardada miente.
+ *
+ * Esta función es la MISMA escalera que `legal_compute_collection_stage` en SQL, pero se alimenta
+ * de los días de atraso calculados desde las cuotas, que es el dato que no se queda viejo.
+ */
+export const stageFromDaysOverdue = (
+  daysOverdue: number,
+  graceDays: number,
+  thresholds: Partial<CollectionThresholds> | null | undefined,
+  /** Un caso legal abierto manda sobre cualquier etapa */
+  hasOpenCase = false,
+): CollectionStage => {
+  if (hasOpenCase) return 'legal';
+  const dias = Math.max(0, Number(daysOverdue) || 0);
+  if (dias <= 0) return 'al_dia';
+  const gracia = Math.max(0, Number(graceDays) || 0);
+  if (dias <= gracia) return 'cuota_vencida';
+
+  const t = { ...DEFAULT_COLLECTION_THRESHOLDS, ...(thresholds || {}) };
+  const conMora = dias - gracia;
+  if (conMora >= t.prelegal) return 'pre_legal';
+  if (conMora >= t.intensive) return 'cobranza_intensiva';
+  if (conMora >= t.administrative) return 'cobranza_administrativa';
+  if (conMora >= t.preventive) return 'cobranza_preventiva';
+  return 'mora';
+};
+
 export const CASE_STATUS_META: Record<LegalCaseStatus, { label: string; className: string; group: 'prelegal' | 'intimation' | 'notification' | 'deadline' | 'payment' | 'escalated' | 'resolved' | 'other' }> = {
   pre_legal:              { label: 'Pre-legal',                  className: 'bg-red-100 text-red-800',       group: 'prelegal' },
   pending_legal_approval: { label: 'Pendiente de aprobación',    className: 'bg-amber-100 text-amber-800',   group: 'intimation' },
