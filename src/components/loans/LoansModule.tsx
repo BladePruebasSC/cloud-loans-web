@@ -28,7 +28,8 @@ import { toast } from 'sonner';
 import { getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo, getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { formatCurrencyNumber } from '@/lib/utils';
 import {
-  getFrequencyName, getInstallmentLabel, formatDateLocalIso, parseIsoDateLocal, addPeriodsToIsoDate,
+  getFrequencyName, getInstallmentLabel, getInstallmentsLabel, formatDateLocalIso, parseIsoDateLocal,
+  addPeriodsToIsoDate,
 } from '@/utils/frequencyUtils';
 import { agendaByDay, buildCollectionAgenda } from '@/utils/collectionAgenda';
 import { useLoanPenalties } from '@/hooks/useLoanPenalties';
@@ -2748,10 +2749,12 @@ export const LoansModule = () => {
                               {(loan as any).amortization_type === 'indefinite' ? 'Indefinido' : loan.term_months}
                             </div>
                             <div className="text-xs text-gray-600">
-                              {/* Un indefinido no tiene número de cuotas: se dice cada cuánto paga. */}
+                              {/* Un indefinido no tiene número de cuotas: se dice cada cuánto paga.
+                                  En los demás, el número VA CON SU FRECUENCIA ("17 Cuotas
+                                  Diarias"): el número solo no dice de qué se está hablando. */}
                               {(loan as any).amortization_type === 'indefinite'
                                 ? getFrequencyName(loan.payment_frequency)
-                                : 'Cuotas'}
+                                : getInstallmentsLabel(loan.payment_frequency)}
                             </div>
                           </div>
                           

@@ -140,6 +140,21 @@ const FEMININE_NAME: Record<PaymentFrequency, string> = {
 export const getInstallmentLabel = (frequency?: string | null, withColon = false): string =>
   `Cuota ${FEMININE_NAME[normalizeFrequency(frequency)]}${withColon ? ':' : ''}`;
 
+/** El mismo adjetivo en plural: "Diarias", "Quincenales", "Mensuales"… */
+const FEMININE_PLURAL: Record<PaymentFrequency, string> = {
+  daily: 'Diarias', weekly: 'Semanales', biweekly: 'Quincenales',
+  monthly: 'Mensuales', quarterly: 'Trimestrales', yearly: 'Anuales',
+};
+
+/**
+ * Cómo se llaman VARIAS cuotas: "Cuotas Diarias", "Cuotas Quincenales"…
+ *
+ * Para los sitios que enseñan el NÚMERO de cuotas ("17 · Cuotas"): así se sabe de qué cuotas se
+ * está hablando sin tener que buscar la frecuencia en otro lado (2026-10-12).
+ */
+export const getInstallmentsLabel = (frequency?: string | null): string =>
+  `Cuotas ${FEMININE_PLURAL[normalizeFrequency(frequency)]}`;
+
 /** Devuelve el último día del mes indicado (mes 0-indexado, admite desbordes). */
 const lastDayOfMonth = (year: number, monthIndex: number): number =>
   new Date(year, monthIndex + 1, 0).getDate();

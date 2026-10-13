@@ -30,6 +30,7 @@ import { PasswordVerificationDialog } from '@/components/common/PasswordVerifica
 import { useAuth } from '@/hooks/useAuth';
 import { isChargePayment, paymentGross, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
 import { paymentCashReceived } from '@/utils/paymentDiscount';
+import { getFrequencyLabel } from '@/utils/frequencyUtils';
 import { chargeTotalsByDueDate, paidPeriodsFromMoney } from '@/utils/loanPaidTotals';
 
 interface Payment {
@@ -56,7 +57,9 @@ interface Loan {
   id: string;
   amount: number;
   interest_rate: number;
+  /** El plazo está en PERÍODOS de la frecuencia del préstamo, no en meses. */
   term_months: number;
+  payment_frequency?: string | null;
   client: {
     full_name: string;
     dni: string;
@@ -232,6 +235,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           amount,
           interest_rate,
           term_months,
+          payment_frequency,
           client:client_id (
             full_name,
             dni,
@@ -1213,7 +1217,7 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                 <span>Tasa de Interés: ${loan.interest_rate}%</span>
               </div>
               <div class="info-row">
-                <span>Plazo: ${loan.term_months} meses</span>
+                <span>Plazo: ${loan.term_months} ${getFrequencyLabel(loan.payment_frequency, loan.term_months !== 1)}</span>
               </div>
             </div>
 
@@ -1633,7 +1637,11 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
                     </div>
                     <div>
                       <span className="font-medium text-gray-600">Plazo:</span>
-                      <div className="font-semibold">{loan.term_months} meses</div>
+                      {/* El plazo está en PERÍODOS de la frecuencia: un préstamo diario de 30
+                          cuotas decía "30 meses" (2026-10-12). */}
+                      <div className="font-semibold">
+                        {loan.term_months} {getFrequencyLabel(loan.payment_frequency, loan.term_months !== 1)}
+                      </div>
                     </div>
                   </div>
                 </CardContent>

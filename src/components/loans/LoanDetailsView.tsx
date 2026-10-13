@@ -43,7 +43,7 @@ import { LoanCollectionCard } from '@/components/legal/LoanCollectionCard';
 import { getLateFeeBreakdownFromInstallments } from '@/utils/installmentLateFeeCalculator';
 import { computeInstallmentLateFee } from '@/utils/lateFeeWaiver';
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
-import { getLateFeePeriodDays } from '@/utils/frequencyUtils';
+import { getInstallmentLabel, getInstallmentsLabel, getLateFeePeriodDays } from '@/utils/frequencyUtils';
 import { useLoanPenalties } from '@/hooks/useLoanPenalties';
 import { PENALTY_SOURCE_LABEL } from '@/utils/loanPenalties';
 import { paymentCashReceived, paymentsDiscountTotal } from '@/utils/paymentDiscount';
@@ -1614,7 +1614,8 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         ).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div>
-                        <span className="text-gray-600">Cuotas:</span>
+                        {/* Es el IMPORTE de la cuota: se dice con su frecuencia (2026-10-12). */}
+                        <span className="text-gray-600">{getInstallmentLabel((loan as any).payment_frequency, true)}</span>
                         <div className="font-semibold">RD {Number(loan.monthly_payment || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div>

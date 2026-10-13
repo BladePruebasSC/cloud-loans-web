@@ -21,7 +21,7 @@ import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type Capital
 import { interleaveCapitalPayments, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
 import { allocatePaymentsToPeriods, isChargePayment, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
-import { getInstallmentLabel } from '@/utils/frequencyUtils';
+import { getInstallmentLabel, getInstallmentsLabel } from '@/utils/frequencyUtils';
 import { describeDueDiscount, discountsByDueDateSplit } from '@/utils/paymentDiscount';
 import { PiggyBank } from 'lucide-react';
 
@@ -1830,7 +1830,9 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                     <div className="text-2xl font-bold text-blue-600">
                       {String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite' ? '1/X' : installments.length}
                     </div>
-                    <div className="text-sm text-gray-600">Total Cuotas</div>
+                    <div className="text-sm text-gray-600">
+                      Total {getInstallmentsLabel(loanInfo?.payment_frequency)}
+                    </div>
                   </div>
                   <div className="text-center p-3 bg-green-50 rounded-lg">
                     <div className="text-2xl font-bold text-green-600">{paidCount}</div>
