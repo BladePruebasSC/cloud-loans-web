@@ -288,6 +288,83 @@ export async function recordLoanPenalty(
   }
 }
 
+// ---------------------------------------------------------------------------
+// ¿Qué CARGOS son en realidad una penalidad?
+// ---------------------------------------------------------------------------
+// FALLO REPORTADO (2026-10-14): "cuando se agrega un cargo a un préstamo y se le pone como razón
+// penalidad, no cuenta como una penalidad como tal, sino que sigue siendo un cargo normal y
+// corriente". Un "Cargo por Penalización" se guarda como un cargo más de `installments` —y así
+// debe ser, porque se cobra igual que un cargo—, pero en pantalla no había forma de distinguirlo:
+// salía como "Cargo #2" y el usuario lo leía como otro cargo distinto de la penalidad que enseña
+// la tarjeta, es decir, como si el mismo dinero se debiera dos veces.
+//
+// Aquí se emparejan las penalidades con sus cargos: por `installment_id` cuando la tabla
+// `loan_penalties` existe, y por monto y día cuando se están leyendo del historial (mientras la
+// migración 20260918000000 no esté aplicada).
+
+export interface ChargeLike {
+  id?: string | null;
+  total_amount?: number | null;
+  amount?: number | null;
+  created_at?: string | null;
+}
+
+const dayOf = (v: unknown): string => String(v ?? '').split('T')[0];
+const chargeAmount = (c: ChargeLike): number =>
+  round2(Number(c?.total_amount ?? c?.amount ?? 0) || 0);
+
+/**
+ * Devuelve el conjunto de ids de cargos que SON una penalidad.
+ *
+ * `charges` son las filas de `installments` que ya se identificaron como cargos.
+ */
+export const penaltyChargeIds = (
+  penalties: Array<Pick<LoanPenalty, 'amount' | 'source' | 'installment_id' | 'created_at'>>,
+  charges: ChargeLike[],
+): Set<string> => {
+  const out = new Set<string>();
+  const porId = new Set(
+    (penalties || []).map(p => String(p?.installment_id || '')).filter(Boolean),
+  );
+  const libres = (charges || []).filter(c => c?.id && !porId.has(String(c.id)));
+
+  for (const c of charges || []) {
+    if (c?.id && porId.has(String(c.id))) out.add(String(c.id));
+  }
+
+  // Las que no traen `installment_id` (leídas del historial): por monto y, si se sabe, por día.
+  const usados = new Set<string>();
+  for (const p of (penalties || []).filter(x => x?.source === 'charge' && !x?.installment_id)) {
+    const monto = round2(Number(p?.amount) || 0);
+    const dia = dayOf(p?.created_at);
+    const candidato = libres.find(c => {
+      const id = String(c.id);
+      if (usados.has(id)) return false;
+      if (Math.abs(chargeAmount(c) - monto) > 0.01) return false;
+      const diaCargo = dayOf(c.created_at);
+      // Si alguno de los dos no trae fecha, basta con que coincida el monto.
+      return !dia || !diaCargo || dia === diaCargo;
+    });
+    if (candidato?.id) {
+      usados.add(String(candidato.id));
+      out.add(String(candidato.id));
+    }
+  }
+  return out;
+};
+
+/** Cuánto de lo que se debe en cargos es, en realidad, penalidad. */
+export const penaltyAmountInCharges = (
+  penaltyIds: Set<string>,
+  charges: Array<ChargeLike & { pending?: number | null }>,
+): number => round2((charges || []).reduce((sum, c) => {
+  if (!c?.id || !penaltyIds.has(String(c.id))) return sum;
+  const pendiente = c.pending === null || c.pending === undefined
+    ? chargeAmount(c)
+    : round2(Number(c.pending) || 0);
+  return sum + Math.max(0, pendiente);
+}, 0));
+
 /** Enlaza una penalidad con la entrada del historial que la describe. */
 export async function linkPenaltyToHistory(
   supabase: SupabaseClient,

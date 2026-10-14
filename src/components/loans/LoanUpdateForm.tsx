@@ -2851,10 +2851,21 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             newBalance = round2(baseRemaining + unpaidChargesAmountFromInstallments);
           }
 
-          // Actualizar el balance del préstamo
+          // Actualizar el balance del préstamo.
+          //
+          // FALLO REPORTADO (2026-10-14): "el monto se desbalancea más de lo que debería".
+          // AQUÍ ESTABA: agregar un cargo escribía `term_months = nextInstallmentNumber`, o sea
+          // que el préstamo pasaba a decir que tiene UNA CUOTA MÁS por cada cargo. Un préstamo de
+          // 30 cuotas con dos cargos decía "32 Cuotas", y ese número no es decorativo:
+          //   · el total del préstamo se recalcula como `monto × tasa × term_months` en varios
+          //     sitios, así que cada cargo inflaba el interés de todo el préstamo;
+          //   · el estado de cuenta genera el cronograma con `term_months` cuotas, así que
+          //     aparecían cuotas fantasma que nadie había creado;
+          //   · "Cuotas pagadas 0 / 32" contaba cargos como cuotas.
+          // Un cargo NO es una cuota del plazo: se cobra aparte y no alarga el préstamo. El
+          // número de la fila sigue saliendo del máximo existente, así que nada depende de esto.
           loanUpdates = {
             remaining_balance: newBalance,
-            ...(isIndefinite ? {} : { term_months: nextInstallmentNumber }), // no tocar term_months en indefinidos
           };
 
           console.log(`✅ Nueva cuota ${nextInstallmentNumber} creada con cargo de RD$${data.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);

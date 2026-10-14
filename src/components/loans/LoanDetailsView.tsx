@@ -45,7 +45,7 @@ import { computeInstallmentLateFee } from '@/utils/lateFeeWaiver';
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import { getInstallmentLabel, getInstallmentsLabel, getLateFeePeriodDays } from '@/utils/frequencyUtils';
 import { useLoanPenalties } from '@/hooks/useLoanPenalties';
-import { PENALTY_SOURCE_LABEL } from '@/utils/loanPenalties';
+import { PENALTY_SOURCE_LABEL, penaltyAmountInCharges, penaltyChargeIds } from '@/utils/loanPenalties';
 import { paymentCashReceived, paymentsDiscountTotal } from '@/utils/paymentDiscount';
 import { computeLoanPaidTotals } from '@/utils/loanPaidTotals';
 
@@ -1055,6 +1055,20 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
     return isCharge;
   });
   const totalChargesAmount = allCharges.reduce((sum, inst) => sum + (inst.total_amount || 0), 0);
+
+  // Qué cargos tiene el préstamo, uno por uno. Si "Cargos pendientes" no cuadra con lo que el
+  // usuario recuerda haber agregado, esto dice exactamente qué filas hay (2026-10-14).
+  if (allCharges.length > 0) {
+    console.log('[detalles] cargos del préstamo:', {
+      loanId: loan.id,
+      totalChargesAmount,
+      cargos: allCharges.map(c => ({
+        id: c.id, n: c.installment_number, monto: c.total_amount,
+        vence: String(c.due_date || '').split('T')[0], creado: String(c.created_at || '').split('T')[0],
+        pagado: c.is_paid,
+      })),
+    });
+  }
   
   /**
    * LO COBRADO, por concepto (cargos / interés / capital / abonos).
@@ -1083,6 +1097,24 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
 
   const paidChargesAmount = paidTotals.chargesPaid;
   const unpaidChargesAmount = totalChargesAmount - paidChargesAmount;
+
+  /**
+   * Cuánto de los cargos PENDIENTES es una penalidad.
+   *
+   * Un "Cargo por Penalización" se cobra como un cargo más —por eso está dentro de los cargos
+   * pendientes— y además suma en el apartado Penalidad. Sin decirlo, el mismo dinero parece dos
+   * deudas distintas (2026-10-14).
+   */
+  const penaltyChargeIdSet = penaltyChargeIds(penaltyRows as any, allCharges as any);
+  const penaltyInCharges = penaltyAmountInCharges(
+    penaltyChargeIdSet,
+    allCharges.map(inst => {
+      const total = Number(inst.total_amount ?? inst.amount ?? 0) || 0;
+      const due = inst.due_date ? String(inst.due_date).split('T')[0] : '';
+      const pagado = paidTotals.chargePaidByDue.get(due) || 0;
+      return { ...inst, pending: Math.max(0, Math.round((total - Math.min(total, pagado)) * 100) / 100) };
+    }) as any,
+  );
 
   /** Lo que cada fecha se llevó en CARGOS (para no atribuirlo también a la cuota de ese día). */
   const paidToChargesByDueDate = paidTotals.chargePaidByDue;
@@ -1741,6 +1773,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                       <div>
                         <div className="text-sm text-gray-600">Cargos pendientes</div>
                         <div className="text-lg font-semibold">RD {unpaidChargesAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        {/* Un "Cargo por Penalización" se cobra como un cargo más. Decir cuánto
+                            de esto es penalidad evita leerlo como una deuda aparte de la que
+                            enseña el apartado Penalidad (2026-10-14). */}
+                        {penaltyInCharges > 0.01 && (
+                          <div className="text-xs text-amber-700">
+                            Incluye RD {penaltyInCharges.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} de penalidad
+                          </div>
+                        )}
                       </div>
                     )}
                     {effectiveLateFee > 0 && (
@@ -1873,6 +1913,14 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                           }, { acc: 0, rows: [] }).rows}
                         </tbody>
                       </table>
+                      {/* Que quede claro que una penalidad NO es una deuda aparte: la del abono
+                          se cobró con el abono y la del cargo está dentro de los cargos
+                          pendientes (2026-10-14). */}
+                      <p className="mt-3 text-xs text-gray-500">
+                        {penaltyInCharges > 0.01
+                          ? `De este total, RD ${penaltyInCharges.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} están pendientes de cobro y ya se cuentan dentro de "Cargos pendientes": no se suman aparte al balance.`
+                          : 'Estas penalidades ya se cobraron (con su abono a capital o con su cargo): no se suman aparte al balance.'}
+                      </p>
                     </div>
                   )}
                 </CardContent>
