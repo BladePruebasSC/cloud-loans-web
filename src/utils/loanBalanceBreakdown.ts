@@ -266,12 +266,16 @@ export async function getLoanBalanceBreakdown(
   supabase: SupabaseClient,
   loan: LoanBalanceLoan
 ): Promise<LoanBalanceBreakdown> {
-  const fallback = () => {
+  const fallback = (motivo: unknown) => {
+    // Este respaldo devuelve la columna guardada, que puede estar vieja y NO incluir los cargos.
+    // Si se usa, el préstamo enseñará cifras distintas en cada pantalla, así que se avisa en vez
+    // de tragárselo en silencio (2026-10-14).
+    console.error('[balance] no se pudo calcular el balance; se usa remaining_balance:', loan?.id, motivo);
     const value = round2(Number((loan as any)?.remaining_balance || 0));
     return { baseBalance: value, pendingCharges: 0, totalBalance: value };
   };
 
-  const [paymentsRes, installmentsRes, capitalRes] = await Promise.all([
+  const [paymentsFirstTry, installmentsRes, capitalRes] = await Promise.all([
     supabase
       .from('payments')
       // `superseded_at`: los pagos anulados por una extensión de plazo no cuentan (es lo que hace
@@ -288,7 +292,21 @@ export async function getLoanBalanceBreakdown(
       .eq('loan_id', loan.id),
   ]);
 
-  if (paymentsRes.error || installmentsRes.error) return fallback();
+  // `payments.superseded_at` llegó en una migración posterior (20260903000000). Si la base
+  // todavía no la tiene, la consulta ENTERA falla con un 400 y el balance se quedaba en
+  // `loans.remaining_balance` —la columna vieja, sin los cargos—, que es justo lo que este
+  // cálculo viene a sustituir: la tarjeta decía una cifra y el formulario otra. Se reintenta sin
+  // esa columna; sin ella, simplemente no hay pagos anulados que excluir.
+  const paymentsRes = paymentsFirstTry.error
+    ? await supabase
+        .from('payments')
+        .select('amount, due_date, interest_amount, principal_amount')
+        .eq('loan_id', loan.id)
+    : paymentsFirstTry;
+
+  if (paymentsRes.error || installmentsRes.error) {
+    return fallback(paymentsRes.error || installmentsRes.error);
+  }
 
   return computeLoanBalanceBreakdown(loan, {
     payments: paymentsRes.data,

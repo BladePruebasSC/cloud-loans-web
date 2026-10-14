@@ -225,6 +225,35 @@ describe('el balance cuenta los gastos de cierre', () => {
     expect(r2(balanceAlCrear(27000, 2500, false) + 1000 + 600)).toBe(b.totalBalance);
   });
 
+  it('El historial de "Agregar Cargo" parte del saldo CON el cierre', () => {
+    // FALLO REPORTADO: "en historial de modificación dice que pasa de 27,000 a 28,000: no está
+    // tomando en cuenta el balance con el gasto de cierre".
+    //
+    // El "antes" salía de una cuenta (la vista previa) y el "después" de otra (una tercera copia
+    // del cálculo que partía de `total_amount`, sin cargos). Ahora las dos salen de
+    // `getLoanBalanceBreakdown`: se lee el saldo CON el cargo ya insertado y el "antes" es ese
+    // saldo menos el cargo.
+    const saldoCon = (installments: typeof INSTALLMENTS) =>
+      computeLoanBalanceBreakdown(PRESTAMO as any, {
+        payments: [], installments, capitalPayments: [],
+      }, '2026-10-21').totalBalance;
+
+    const antesDeVerdad = saldoCon([...CUOTAS, CARGO_CIERRE]);
+    const despues = saldoCon([...CUOTAS, CARGO_CIERRE, CARGO_1000]);
+
+    expect(antesDeVerdad).toBe(29500);   // 27,000 + 2,500 de gastos de cierre
+    expect(despues).toBe(30500);
+
+    // Lo que guarda el historial: "después" y "después − cargo".
+    const anteriorEnElHistorial = r2(Math.max(0, despues - CARGO_1000.total_amount));
+    expect(anteriorEnElHistorial).toBe(antesDeVerdad);
+    expect(r2(despues - anteriorEnElHistorial)).toBe(1000);
+
+    // Lo que decía antes: 27,000 → 28,000, los dos sin el cierre.
+    expect(PRESTAMO.remaining_balance).toBe(27000);
+    expect(anteriorEnElHistorial).not.toBe(PRESTAMO.remaining_balance);
+  });
+
   it('Cobrar el cargo del cierre lo saca del balance', () => {
     const b = computeLoanBalanceBreakdown(PRESTAMO as any, {
       payments: [{
