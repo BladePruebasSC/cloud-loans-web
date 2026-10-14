@@ -2656,17 +2656,15 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
             return;
           }
 
-          // "Cargo por Penalización": además de ser un cargo, suma a la PENALIDAD del préstamo.
-          if (data.adjustment_reason === 'penalty_fee') {
-            recordedPenaltyId = await recordLoanPenalty(supabase as any, {
-              loan_id: loan.id,
-              amount: data.amount,
-              source: 'charge',
-              installment_id: (insertedChargeRows as any[] | null)?.[0]?.id ?? null,
-              description: 'Cargo por Penalización',
-              created_by: user?.id || companyId,
-            });
-          }
+          // ACLARACIÓN (2026-10-14): "cuando un cargo pone como razón cargo por penalización, no
+          // se refiere a la penalidad, por ende no debe aparecer como penalidad, sino que debe
+          // funcionar como los demás cargos normales".
+          //
+          // Hasta ahora, elegir esa razón registraba además una fila en `loan_penalties`, así que
+          // el mismo dinero salía como cargo Y como "Penalidad" del préstamo. La PENALIDAD es
+          // otra cosa: la que se cobra al hacer un ABONO A CAPITAL (la casilla "Penalidad" de ese
+          // formulario). "Cargo por Penalización" es solo el nombre de la razón del cargo.
+          void insertedChargeRows;
 
           // IMPORTANTE: Recalcular balance usando la misma lógica que LoanDetailsView
           // Obtener TODAS las cuotas actualizadas (incluyendo el nuevo cargo) y pagos para considerar pagos parciales

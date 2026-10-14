@@ -1,99 +1,64 @@
-// Un "Cargo por Penalización" es un cargo Y una penalidad, pero UNA sola deuda.
+// Un "Cargo por Penalización" es un CARGO NORMAL, no la penalidad del préstamo.
 //
-// FALLO REPORTADO (2026-10-14): "cuando se agrega un cargo a un préstamo y se le pone como razón
-// penalidad, no cuenta como una penalidad como tal, sino que sigue siendo un cargo normal y
-// corriente; este error está causando que el monto se desbalancee más de lo que debería, el cargo
-// se triplique en detalles".
+// ACLARACIÓN DEL USUARIO (2026-10-14): "cuando un cargo pone como razón cargo por penalización,
+// no se refiere a la penalidad, por ende no debe aparecer como penalidad, sino que debe funcionar
+// como los demás cargos normales".
+//
+// La PENALIDAD del préstamo es otra cosa: la que se cobra al hacer un ABONO A CAPITAL con la
+// casilla "Penalidad" marcada. "Cargo por Penalización" es solo el nombre de una de las razones
+// que se le pueden poner a un cargo.
 import { describe, it, expect } from 'vitest';
-import { penaltyAmountInCharges, penaltyChargeIds, penaltiesFromHistory } from '../loanPenalties';
+import { penaltiesFromHistory, summarizePenalties } from '../loanPenalties';
 
-const CARGOS = [
-  // Cargo normal, del 10 de octubre
-  { id: 'c1', total_amount: 2000, created_at: '2026-10-10T14:00:00Z' },
-  // Cargo por penalización, del 14 de octubre
-  { id: 'c2', total_amount: 1000, created_at: '2026-10-14T15:53:00Z' },
-];
-
-describe('Qué cargos son una penalidad', () => {
-  it('Por su enlace directo, cuando la penalidad está guardada en su tabla', () => {
-    const penalidades = [
-      { amount: 1000, source: 'charge' as const, installment_id: 'c2', created_at: '2026-10-14T15:53:00Z' },
-    ];
-    const ids = penaltyChargeIds(penalidades, CARGOS);
-    expect([...ids]).toEqual(['c2']);
-  });
-
-  it('Por monto y día, cuando se leen del historial (sin la migración aplicada)', () => {
-    const penalidades = [
-      { amount: 1000, source: 'charge' as const, installment_id: null, created_at: '2026-10-14T15:53:00Z' },
-    ];
-    const ids = penaltyChargeIds(penalidades, CARGOS);
-    expect([...ids]).toEqual(['c2']);
-  });
-
-  it('Dos penalidades del mismo monto no se emparejan con el mismo cargo', () => {
-    const cargos = [
-      { id: 'a', total_amount: 500, created_at: '2026-10-14T10:00:00Z' },
-      { id: 'b', total_amount: 500, created_at: '2026-10-14T11:00:00Z' },
-    ];
-    const penalidades = [
-      { amount: 500, source: 'charge' as const, installment_id: null, created_at: '2026-10-14T10:00:00Z' },
-      { amount: 500, source: 'charge' as const, installment_id: null, created_at: '2026-10-14T11:00:00Z' },
-    ];
-    expect(penaltyChargeIds(penalidades, cargos).size).toBe(2);
-  });
-
-  it('Una penalidad de ABONO A CAPITAL no marca ningún cargo', () => {
-    const penalidades = [
-      { amount: 1000, source: 'capital_payment' as const, installment_id: null, created_at: '2026-10-14T15:53:00Z' },
-    ];
-    expect(penaltyChargeIds(penalidades, CARGOS).size).toBe(0);
-  });
-
-  it('Sin penalidades, ningún cargo se marca', () => {
-    expect(penaltyChargeIds([], CARGOS).size).toBe(0);
-  });
-});
-
-describe('Cuánto de los cargos pendientes es penalidad', () => {
-  it('Solo lo que queda por cobrar del cargo que es penalidad', () => {
-    const ids = new Set(['c2']);
-    // El cargo de penalidad está entero por cobrar
-    expect(penaltyAmountInCharges(ids, [
-      { id: 'c1', total_amount: 2000, pending: 2000 },
-      { id: 'c2', total_amount: 1000, pending: 1000 },
-    ])).toBe(1000);
-
-    // Cobrado a medias
-    expect(penaltyAmountInCharges(ids, [
-      { id: 'c2', total_amount: 1000, pending: 400 },
-    ])).toBe(400);
-
-    // Ya cobrado: no queda penalidad pendiente
-    expect(penaltyAmountInCharges(ids, [
-      { id: 'c2', total_amount: 1000, pending: 0 },
-    ])).toBe(0);
-  });
-
-  it('EL CASO REPORTADO: con 3,000 en cargos, 1,000 es la penalidad y no se suma aparte', () => {
-    const penalidades = penaltiesFromHistory([
+describe('Un cargo con razón "Cargo por Penalización" NO es una penalidad', () => {
+  it('EL CASO REPORTADO: no se cuenta como penalidad del préstamo', () => {
+    const filas = penaltiesFromHistory([
       {
         id: 'h1', loan_id: 'L1', created_at: '2026-10-14T15:53:00Z',
         description: 'Agregar Cargo: penalty_fee. Monto: RD$1,000.00',
       },
     ]);
-    expect(penalidades).toHaveLength(1);
-    expect(penalidades[0].amount).toBe(1000);
-    expect(penalidades[0].source).toBe('charge');
+    expect(filas).toHaveLength(0);
+    expect(summarizePenalties(filas).total).toBe(0);
+  });
 
-    const ids = penaltyChargeIds(penalidades, CARGOS);
-    const cargosPendientes = 3000; // los dos cargos sin cobrar
-    const dePenalidad = penaltyAmountInCharges(ids, [
-      { id: 'c1', total_amount: 2000, pending: 2000 },
-      { id: 'c2', total_amount: 1000, pending: 1000 },
+  it('Ninguna razón de cargo cuenta como penalidad', () => {
+    const filas = penaltiesFromHistory([
+      { id: 'h1', loan_id: 'L1', created_at: '2026-10-14T10:00:00Z', description: 'Agregar Cargo: penalty_fee. Monto: RD$1,000.00' },
+      { id: 'h2', loan_id: 'L1', created_at: '2026-10-14T11:00:00Z', description: 'Agregar Cargo: legal_fee. Monto: RD$800.00' },
+      { id: 'h3', loan_id: 'L1', created_at: '2026-10-14T12:00:00Z', description: 'add_charge: penalty_fee. Monto: RD$500.00' },
     ]);
-    expect(dePenalidad).toBe(1000);
-    // La penalidad está DENTRO de los cargos: el balance no la suma dos veces.
-    expect(cargosPendientes - dePenalidad).toBe(2000);
+    expect(filas).toHaveLength(0);
+  });
+});
+
+describe('La penalidad de verdad sigue contando', () => {
+  it('La del ABONO A CAPITAL, con su porcentaje', () => {
+    const filas = penaltiesFromHistory([
+      {
+        id: 'h1', loan_id: 'L1', created_at: '2026-09-01T15:00:00Z',
+        description: 'Abono a capital: RD$50,000.00. Penalidad (2%): RD$3,000.00. Abono voluntario',
+      },
+      {
+        id: 'h2', loan_id: 'L1', created_at: '2026-10-14T15:53:00Z',
+        description: 'Agregar Cargo: penalty_fee. Monto: RD$1,000.00',
+      },
+    ]);
+
+    expect(filas.map(f => [f.source, f.amount, f.percentage])).toEqual([
+      ['capital_payment', 3000, 2],
+    ]);
+    // El cargo de 1,000 no suma aquí: se debe como cargo, no como penalidad.
+    expect(summarizePenalties(filas).total).toBe(3000);
+  });
+
+  it('Varias se van sumando', () => {
+    const filas = penaltiesFromHistory([
+      { id: 'h1', loan_id: 'L1', created_at: '2026-09-01T15:00:00Z', description: 'Abono a capital: RD$10,000.00. Penalidad (2%): RD$200.00' },
+      { id: 'h2', loan_id: 'L1', created_at: '2026-09-20T15:00:00Z', description: 'Abono a capital: RD$5,000.00. Penalidad (3%): RD$150.00' },
+    ]);
+    const total = summarizePenalties(filas);
+    expect(total.total).toBe(350);
+    expect(total.count).toBe(2);
   });
 });

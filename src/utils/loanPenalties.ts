@@ -35,7 +35,9 @@ export interface LoanPenalty {
 
 export const PENALTY_SOURCE_LABEL: Record<PenaltySource, string> = {
   capital_payment: 'Abono a capital',
-  charge: 'Cargo por penalización',
+  // 'charge' ya no se usa: un "Cargo por Penalización" es un CARGO, no una penalidad
+  // (2026-10-14). Se conserva la etiqueta por las filas que quedaran guardadas.
+  charge: 'Cargo',
   other: 'Otra actualización',
 };
 
@@ -67,11 +69,14 @@ export const parseDopAmount = (text: string | null | undefined): number => {
   return Number.isFinite(n) ? round2(n) : 0;
 };
 
-// Los mismos patrones que la migración 20260918000000. El monto no se traga el punto final de la
-// frase ("RD$3,000.00. Motivo…").
+// El patrón de la migración 20260918000000. El monto no se traga el punto final de la frase
+// ("RD$3,000.00. Motivo…").
+//
+// ACLARACIÓN (2026-10-14): aquí había también un patrón para los cargos con razón "Cargo por
+// Penalización" (`add_charge: penalty_fee`). Se quitó: ese cargo NO es una penalidad, es un cargo
+// normal con ese nombre, y contarlo aquí hacía que el mismo dinero saliera como cargo pendiente Y
+// como Penalidad del préstamo. La PENALIDAD es la del ABONO A CAPITAL.
 const CAPITAL_PAYMENT_PENALTY = /Penalidad \((\d+(?:\.\d+)?)%\): RD\$(\d[\d,]*(?:\.\d+)?)/i;
-const PENALTY_CHARGE = /^(?:Agregar Cargo|add_charge)\s*:\s*penalty_fee/i;
-const CHARGE_AMOUNT = /Monto: RD\$(\d[\d,]*(?:\.\d+)?)/i;
 
 export interface HistoryRowLike {
   id: string;
@@ -93,17 +98,6 @@ export const penaltiesFromHistory = (rows: HistoryRowLike[]): LoanPenalty[] => {
           id: `h-${h.id}`, loan_id: h.loan_id, amount, percentage: Number(abono[1]), base_amount: null,
           source: 'capital_payment', loan_history_id: h.id,
           description: `Penalidad del abono a capital (${abono[1]}%)`, created_at: String(h.created_at || ''),
-        });
-      }
-      continue;
-    }
-    if (PENALTY_CHARGE.test(desc)) {
-      const amount = parseDopAmount(desc.match(CHARGE_AMOUNT)?.[1]);
-      if (amount > 0.005) {
-        out.push({
-          id: `h-${h.id}`, loan_id: h.loan_id, amount, percentage: null, base_amount: null,
-          source: 'charge', loan_history_id: h.id,
-          description: 'Cargo por Penalización', created_at: String(h.created_at || ''),
         });
       }
     }
@@ -186,7 +180,10 @@ export async function fetchLoanPenalties(
       console.error('[penalidades] fallo al leer loan_penalties:', error);
       continue;
     }
-    rows.push(...((data || []) as any[]).map(normalizeRow));
+    // Las de origen "cargo" ya no son penalidades (2026-10-14): un "Cargo por Penalización" es
+    // un cargo normal con ese nombre. Las que se guardaron antes de la aclaración se dejan en la
+    // base —no se borra nada— pero no se cuentan ni se enseñan.
+    rows.push(...((data || []) as any[]).map(normalizeRow).filter(p => p.source !== 'charge'));
   }
   if (!missingTable) return { rows, fromHistory: false };
 
@@ -287,83 +284,6 @@ export async function recordLoanPenalty(
     return null;
   }
 }
-
-// ---------------------------------------------------------------------------
-// ¿Qué CARGOS son en realidad una penalidad?
-// ---------------------------------------------------------------------------
-// FALLO REPORTADO (2026-10-14): "cuando se agrega un cargo a un préstamo y se le pone como razón
-// penalidad, no cuenta como una penalidad como tal, sino que sigue siendo un cargo normal y
-// corriente". Un "Cargo por Penalización" se guarda como un cargo más de `installments` —y así
-// debe ser, porque se cobra igual que un cargo—, pero en pantalla no había forma de distinguirlo:
-// salía como "Cargo #2" y el usuario lo leía como otro cargo distinto de la penalidad que enseña
-// la tarjeta, es decir, como si el mismo dinero se debiera dos veces.
-//
-// Aquí se emparejan las penalidades con sus cargos: por `installment_id` cuando la tabla
-// `loan_penalties` existe, y por monto y día cuando se están leyendo del historial (mientras la
-// migración 20260918000000 no esté aplicada).
-
-export interface ChargeLike {
-  id?: string | null;
-  total_amount?: number | null;
-  amount?: number | null;
-  created_at?: string | null;
-}
-
-const dayOf = (v: unknown): string => String(v ?? '').split('T')[0];
-const chargeAmount = (c: ChargeLike): number =>
-  round2(Number(c?.total_amount ?? c?.amount ?? 0) || 0);
-
-/**
- * Devuelve el conjunto de ids de cargos que SON una penalidad.
- *
- * `charges` son las filas de `installments` que ya se identificaron como cargos.
- */
-export const penaltyChargeIds = (
-  penalties: Array<Pick<LoanPenalty, 'amount' | 'source' | 'installment_id' | 'created_at'>>,
-  charges: ChargeLike[],
-): Set<string> => {
-  const out = new Set<string>();
-  const porId = new Set(
-    (penalties || []).map(p => String(p?.installment_id || '')).filter(Boolean),
-  );
-  const libres = (charges || []).filter(c => c?.id && !porId.has(String(c.id)));
-
-  for (const c of charges || []) {
-    if (c?.id && porId.has(String(c.id))) out.add(String(c.id));
-  }
-
-  // Las que no traen `installment_id` (leídas del historial): por monto y, si se sabe, por día.
-  const usados = new Set<string>();
-  for (const p of (penalties || []).filter(x => x?.source === 'charge' && !x?.installment_id)) {
-    const monto = round2(Number(p?.amount) || 0);
-    const dia = dayOf(p?.created_at);
-    const candidato = libres.find(c => {
-      const id = String(c.id);
-      if (usados.has(id)) return false;
-      if (Math.abs(chargeAmount(c) - monto) > 0.01) return false;
-      const diaCargo = dayOf(c.created_at);
-      // Si alguno de los dos no trae fecha, basta con que coincida el monto.
-      return !dia || !diaCargo || dia === diaCargo;
-    });
-    if (candidato?.id) {
-      usados.add(String(candidato.id));
-      out.add(String(candidato.id));
-    }
-  }
-  return out;
-};
-
-/** Cuánto de lo que se debe en cargos es, en realidad, penalidad. */
-export const penaltyAmountInCharges = (
-  penaltyIds: Set<string>,
-  charges: Array<ChargeLike & { pending?: number | null }>,
-): number => round2((charges || []).reduce((sum, c) => {
-  if (!c?.id || !penaltyIds.has(String(c.id))) return sum;
-  const pendiente = c.pending === null || c.pending === undefined
-    ? chargeAmount(c)
-    : round2(Number(c.pending) || 0);
-  return sum + Math.max(0, pendiente);
-}, 0));
 
 /** Enlaza una penalidad con la entrada del historial que la describe. */
 export async function linkPenaltyToHistory(

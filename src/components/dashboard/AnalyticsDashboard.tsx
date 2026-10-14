@@ -264,8 +264,8 @@ export const AnalyticsDashboard: React.FC = () => {
                 </div>
               </Panel>
 
-              {/* Apartado de PENALIDADES: abonos a capital con penalidad y cargos por penalización */}
-              <Panel title="Penalidades" subtitle="Aplicadas en abonos a capital y cargos por penalización"
+              {/* Apartado de PENALIDADES: las que se cobran al hacer un abono a capital */}
+              <Panel title="Penalidades" subtitle="Cobradas al hacer un abono a capital"
                 action={<Button size="sm" variant="outline" onClick={() => setTab('penalidades')}>Ver detalle</Button>}>
                 <div className="space-y-4">
                   <div>
@@ -593,12 +593,11 @@ export const AnalyticsDashboard: React.FC = () => {
               <Kpi icon={CalendarDays} label="Este mes" tone="bg-amber-100 text-amber-700"
                 value={money(penaltySummary.month.total)}
                 sub={`${penaltySummary.month.count} este mes · hoy ${money(penaltySummary.today.total)}`} />
+              {/* La penalidad es SIEMPRE la del abono a capital (2026-10-14): un cargo con la
+                  razón "Cargo por Penalización" es un cargo normal y se cuenta con los cargos. */}
               <Kpi icon={PiggyBank} label="En abonos a capital" tone="bg-orange-100 text-orange-700"
                 value={money(penaltySummary.bySource.capital_payment.total)}
                 sub={`${penaltySummary.bySource.capital_payment.count} abono${penaltySummary.bySource.capital_payment.count === 1 ? '' : 's'} con penalidad`} />
-              <Kpi icon={Receipt} label="Cargos por penalización" tone="bg-amber-100 text-amber-700"
-                value={money(penaltySummary.bySource.charge.total)}
-                sub={`${penaltySummary.bySource.charge.count} cargo${penaltySummary.bySource.charge.count === 1 ? '' : 's'}`} />
             </div>
 
             <Panel title="Penalidades por mes" subtitle="Monto aplicado cada mes"
@@ -617,7 +616,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <Panel title="Detalle de penalidades" subtitle="Cada penalidad aplicada, de la más reciente a la más antigua">
               {penaltyItems.length === 0 ? (
                 <p className="text-sm text-slate-500 py-8 text-center">
-                  Sin penalidades. Aparecen al hacer un abono a capital con penalidad o al agregar un "Cargo por Penalización".
+                  Sin penalidades. Aparecen al hacer un abono a capital con la casilla "Penalidad" marcada.
                 </p>
               ) : (
                 <div className="overflow-x-auto">

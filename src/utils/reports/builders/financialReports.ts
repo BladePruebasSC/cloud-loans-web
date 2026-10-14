@@ -145,7 +145,7 @@ export const financialReports: ReportDefinition<ReportData>[] = [
         fila('Interés cobrado', 'interes', 'INGRESO: lo que cobra el negocio por prestar.'),
         fila('Mora cobrada', 'mora', 'INGRESO: penalidad por atraso ya cobrada.'),
         fila('Cargos cobrados', 'cargos', 'INGRESO: cargos y comisiones cobrados con las cuotas.'),
-        fila('Penalidades', 'penalidades', 'INGRESO: penalidades de abonos a capital y cargos por penalización.'),
+        fila('Penalidades', 'penalidades', 'INGRESO: las penalidades cobradas al hacer un abono a capital.'),
         fila('Ventas (punto de venta)', 'ventas', 'INGRESO bruto del punto de venta, con ITBIS incluido.'),
         fila('Descuentos otorgados', 'descuentos', 'Dinero perdonado en los cobros: nunca entró en la caja.'),
         fila('Gastos', 'gastos', 'EGRESO: gastos registrados en el período.'),

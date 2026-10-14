@@ -297,7 +297,7 @@ export const usePortfolioData = () => {
       setLoanHistory(historyRows);
       setCapitalPayments(capitalRows);
 
-      // Penalidades (abonos con penalidad, cargos por penalización) de los préstamos aprobados.
+      // Penalidades (las de los abonos a capital) de los préstamos aprobados.
       const penaltyResult = await fetchLoanPenalties(supabase as any, loanIds);
       setPenalties(penaltyResult.rows);
 
@@ -498,7 +498,7 @@ export const usePortfolioData = () => {
       today: summarizePenalties(penalties.filter(p => dayOf(p) === todayIso)),
       month: summarizePenalties(penalties.filter(p => dayOf(p).slice(0, 7) === todayIso.slice(0, 7))),
       allTime: summarizePenalties(penalties),
-      // Por origen: abonos a capital con penalidad y cargos por penalización
+      // Por origen (hoy solo hay uno: el abono a capital con penalidad)
       bySource: {
         capital_payment: summarizePenalties(penalties.filter(p => p.source === 'capital_payment')),
         charge: summarizePenalties(penalties.filter(p => p.source === 'charge')),

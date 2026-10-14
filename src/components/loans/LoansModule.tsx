@@ -1,4 +1,4 @@
-﻿
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -548,7 +548,7 @@ export const LoansModule = () => {
   
   const { loans, loading, refetch } = useLoans();
   const { profile, companyId } = useAuth();
-  // Penalidad acumulada de cada préstamo (abonos con penalidad + cargos por penalización).
+  // Penalidad acumulada de cada préstamo (la de los abonos a capital con penalidad).
   const loanIdsForPenalties = useMemo(() => (loans || []).map((l: any) => l.id as string), [loans]);
   const { totals: penaltyTotals } = useLoanPenalties(loanIdsForPenalties);
   const { updateAllLateFees, loading: lateFeeLoading } = useLateFee();

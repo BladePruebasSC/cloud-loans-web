@@ -621,7 +621,7 @@ export interface MonthlyPoint {
   ingreso: number;  // interés + mora + POS
   colocado: number; // capital desembolsado ese mes
   prestamos: number;
-  /** Penalidades aplicadas ese mes (abonos con penalidad, cargos por penalización) */
+  /** Penalidades aplicadas ese mes (las de los abonos a capital con penalidad) */
   penalidad: number;
   /** Descuentos concedidos en los pagos de ese mes */
   descuento: number;
@@ -649,8 +649,8 @@ export const buildMonthlySeries = (
   todayIso: string,
   months = 6,
   /**
-   * Penalidades del período. Van en su propia columna: NO se suman al cobrado ni al ingreso,
-   * porque la de un cargo por penalización se cobra después, como pago del cargo.
+   * Penalidades del período (las que se cobran al hacer un abono a capital). Van en su propia
+   * columna: NO se suman al cobrado ni al ingreso, porque ya entraron con su abono.
    */
   penalties: PenaltyPoint[] = [],
 ): MonthlyPoint[] => {

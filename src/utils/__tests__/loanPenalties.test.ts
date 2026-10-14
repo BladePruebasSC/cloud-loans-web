@@ -27,7 +27,9 @@ describe('penalidad: montos escritos en el historial', () => {
     expect(parseDopAmount('')).toBe(0);
   });
 
-  it('Recupera las penalidades de abonos y cargos desde el texto del historial', () => {
+  // ACLARACIÓN (2026-10-14): un cargo con la razón "Cargo por Penalización" NO es una penalidad,
+  // es un cargo normal con ese nombre. Solo cuenta la penalidad del ABONO A CAPITAL.
+  it('Recupera del texto del historial SOLO las penalidades de los abonos a capital', () => {
     const filas = penaltiesFromHistory([
       { id: 'h1', loan_id: 'L1', created_at: '2026-09-01T15:00:00Z',
         description: 'Abono a capital: RD$50,000.00. Penalidad (2%): RD$3,000.00. Abono voluntario' },
@@ -40,7 +42,6 @@ describe('penalidad: montos escritos en el historial', () => {
     ]);
     expect(filas.map(f => [f.loan_id, f.source, f.amount, f.percentage])).toEqual([
       ['L1', 'capital_payment', 3000, 2],
-      ['L1', 'charge', 1500, null],
     ]);
   });
 

@@ -447,7 +447,7 @@ export const HomeModule: React.FC = () => {
                         cls: 'text-teal-700',
                       }]
                     : []),
-                  // Penalidades aplicadas (abonos con penalidad, cargos por penalización).
+                  // Penalidades aplicadas (las de los abonos a capital con penalidad).
                   {
                     label: `Penalidades este mes${penaltySummary.month.count > 0 ? ` (${penaltySummary.month.count})` : ''}`,
                     value: formatCurrency(penaltySummary.month.total),

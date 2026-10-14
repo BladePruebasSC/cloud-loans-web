@@ -22,8 +22,6 @@ import { interleaveCapitalPayments, type CapitalPaymentEntry } from '@/utils/cap
 import { allocatePaymentsToPeriods, isChargePayment, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import { getInstallmentLabel, getInstallmentsLabel } from '@/utils/frequencyUtils';
-import { useLoanPenalties } from '@/hooks/useLoanPenalties';
-import { penaltyChargeIds } from '@/utils/loanPenalties';
 import { describeDueDiscount, discountsByDueDateSplit } from '@/utils/paymentDiscount';
 import { PiggyBank } from 'lucide-react';
 
@@ -74,12 +72,11 @@ const isChargeInstallment = (inst: {
 const formatInstallmentLabel = (
   installment: Installment & { charge_sequence?: number },
   isIndefinite: boolean,
-  /** Ids de los cargos que son una PENALIDAD: se dicen por su nombre (2026-10-14). */
-  penaltyChargeIdSet?: Set<string>,
 ) => {
+  // Un cargo es un cargo, sea cual sea su razón: "Cargo por Penalización" es solo el nombre de
+  // una de las razones, no lo convierte en la PENALIDAD del préstamo (2026-10-14).
   if (isChargeInstallment(installment)) {
-    const esPenalidad = penaltyChargeIdSet?.has(String((installment as any).id));
-    return `${esPenalidad ? 'Penalidad' : 'Cargo'} #${installment.charge_sequence || 1}`;
+    return `Cargo #${installment.charge_sequence || 1}`;
   }
   if (isIndefinite) return `#${installment.installment_number}/X`;
   return `#${installment.installment_number}`;
@@ -113,15 +110,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
     return (isChargeInstallment(inst) ? discountByDue.charges : discountByDue.regular).get(due);
   };
 
-  /**
-   * Los cargos que son una PENALIDAD, para decirlo en su fila en vez de "Cargo #2"
-   * (2026-10-14: "se le pone como razón penalidad y sigue siendo un cargo normal y corriente").
-   */
-  const { rows: penaltyRows } = useLoanPenalties(isOpen && loanId ? [loanId] : []);
-  const penaltyChargeIdSet = useMemo(
-    () => penaltyChargeIds(penaltyRows as any, (installments || []).filter(isChargeInstallment) as any),
-    [penaltyRows, installments],
-  );
 
   useEffect(() => {
     if (isOpen && loanId) {
@@ -1897,7 +1885,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                               {formatInstallmentLabel(
                                 installment,
                                 String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite',
-                                penaltyChargeIdSet,
                               )}
                             </span>
                             {getStatusBadge(installment)}
@@ -1992,7 +1979,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
                               {formatInstallmentLabel(
                                 installment,
                                 String(loanInfo?.amortization_type || '').toLowerCase() === 'indefinite',
-                                penaltyChargeIdSet,
                               )}
                             </td>
                             <td className="p-3">{formatDate(installment.due_date)}</td>
