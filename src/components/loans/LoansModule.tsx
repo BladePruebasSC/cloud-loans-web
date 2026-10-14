@@ -2240,7 +2240,14 @@ export const LoansModule = () => {
   const pendingLoans = filteredLoans.filter(loan => loan.status === 'pending');
   const inAgreementLoans = filteredLoans.filter(loan => hasActiveAgreement(loan.id));
   const totalAmount = filteredLoans.filter(loan => loan.status !== 'deleted').reduce((sum, loan) => sum + loan.amount, 0);
-  const totalBalance = filteredLoans.filter(loan => loan.status !== 'deleted').reduce((sum, loan) => sum + loan.remaining_balance, 0);
+  // "Balance pendiente": la suma de los MISMOS balances que enseña cada tarjeta
+  // (`pendingBalanceForCard`, que incluye los cargos pendientes). Antes se sumaba la columna
+  // `remaining_balance` en crudo, y cuando esa columna no contaba un cargo —el de los gastos de
+  // cierre, FALLO REPORTADO 2026-10-14— el total de arriba no cuadraba con la suma de las
+  // tarjetas de abajo. Mientras el cálculo hidrata se usa la columna, igual que la tarjeta.
+  const totalBalance = filteredLoans
+    .filter(loan => loan.status !== 'deleted')
+    .reduce((sum, loan) => sum + (pendingBalanceForCard(loan) ?? Number(loan.remaining_balance || 0)), 0);
 
   if (showLoanForm) {
     return (
@@ -3412,7 +3419,9 @@ export const LoansModule = () => {
                           loan.status === 'overdue' || 
                           nextPayment <= today ||
                           (loan.status === 'active' && diffDays <= 7 && diffDays >= 0);
-                 }).reduce((sum, loan) => sum + loan.remaining_balance, 0))}</div>
+                 // El mismo balance de la tarjeta (con los cargos pendientes dentro), no la
+                 // columna en crudo: ver la nota de `totalBalance`.
+                 }).reduce((sum, loan) => sum + (pendingBalanceForCard(loan) ?? Number(loan.remaining_balance || 0)), 0))}</div>
                  <p className="text-xs text-muted-foreground">Capital por cobrar</p>
                </CardContent>
              </Card>
@@ -3509,12 +3518,14 @@ export const LoansModule = () => {
                                  <div className="flex flex-col sm:flex-row sm:items-center">
                                    <span className="font-medium text-xs sm:text-sm">Balance Total:</span> 
                                    <span className="text-xs sm:text-sm font-semibold text-red-600">${formatCurrencyNumber(
-                                     // CORRECCIÓN: Priorizar valor de BD si está disponible (es más confiable que el cálculo dinámico)
-                                     (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-                                       ? loan.remaining_balance
-                                       : (calculatedRemainingBalances[loan.id] !== undefined
-                                           ? calculatedRemainingBalances[loan.id]
-                                           : loan.amount || 0)
+                                     // El MISMO "Balance Pendiente" de la tarjeta. Esta vista
+                                     // priorizaba `remaining_balance` de la BD, que puede no
+                                     // contar un cargo (los gastos de cierre, 2026-10-14): el
+                                     // mismo préstamo decía dos balances según la vista.
+                                     pendingBalanceForCard(loan)
+                                       ?? (loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                                         ? Number(loan.remaining_balance)
+                                         : Number(loan.amount || 0))
                                    )}</span>
                                  </div>
                                  <div className="flex flex-col sm:flex-row sm:items-center">
@@ -4441,11 +4452,11 @@ export const LoansModule = () => {
                                  <div className="flex items-center">
                                    <DollarSign className="h-3 w-3 mr-1" />
                                    Balance: ${formatCurrencyNumber(
-                                     (loan.remaining_balance !== null && loan.remaining_balance !== undefined)
-                                       ? loan.remaining_balance
-                                       : (calculatedRemainingBalances[loan.id] !== undefined
-                                           ? calculatedRemainingBalances[loan.id]
-                                           : loan.amount || 0)
+                                     // El mismo balance de la tarjeta (con los cargos dentro).
+                                     pendingBalanceForCard(loan)
+                                       ?? (loan.remaining_balance !== null && loan.remaining_balance !== undefined
+                                         ? Number(loan.remaining_balance)
+                                         : Number(loan.amount || 0))
                                    )}
                                  </div>
                                  <div className="flex items-center">

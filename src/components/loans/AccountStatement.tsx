@@ -39,6 +39,7 @@ import {
   allocatePaymentsToPeriods, isChargePayment, splitChargeAndRegularPayments,
 } from '@/utils/chargeAwarePayments';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { chargeLabelFor, chargeSequenceByRow, installmentNumbersWithCharges } from '@/utils/loanChargeRows';
 import { PiggyBank } from 'lucide-react';
 
 /** "Capital: RD$150,000.00 → RD$100,000.00 · motivo" de un abono a capital. */
@@ -1666,6 +1667,27 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       installmentsMap.set(installment.installment_number, installment);
     });
 
+    // FALLO REPORTADO (2026-10-14): "en la tabla de estado de cuenta no salen los cargos".
+    // Todos los recorridos de este tramo (préstamos a plazo fijo) iban de 1 a `numberOfPayments`,
+    // que es el PLAZO del préstamo. Un cargo se guarda como una cuota EXTRA cuyo número está por
+    // encima del plazo (plazo 30 → cargos 31, 32, 33), así que ninguna fila de cargo se generaba:
+    // "Ver cuotas" sí los enseñaba y el Estado de Cuenta no, y además sus pagos quedaban sueltos
+    // para que se los comiera una cuota regular. Ahora se recorren también los números de cuota
+    // que existen de verdad en la base por encima del plazo.
+    const installmentNumbersInOrder = installmentNumbersWithCharges(
+      numberOfPayments,
+      installmentsMap.keys(),
+    );
+
+    // Numeración de los cargos (Cargo #1, #2, #3…) por orden de cobro, la misma que usa
+    // "Ver cuotas", para que el cargo del día 15 sea el #1 en las dos pantallas.
+    const chargeSequences = chargeSequenceByRow(installmentsData as any[], (inst: any) => {
+      const interest = Math.abs(Number(inst?.interest_amount || 0));
+      const principalAmt = Number(inst?.principal_amount || 0);
+      const total = Number(inst?.amount || inst?.total_amount || 0);
+      return interest < 0.01 && principalAmt > 0 && Math.abs(principalAmt - total) < 0.01;
+    });
+
     // Obtener todos los pagos del préstamo para calcular saldos pendientes
     const { data: payments, error } = await supabase
       .from('payments')
@@ -1843,7 +1865,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       
       // PRIMERO: Procesar TODOS los cargos (en cualquier orden de cuota)
       const chargeInstallments: number[] = [];
-      for (let i = 1; i <= numberOfPayments; i++) {
+      for (const i of installmentNumbersInOrder) {
         const realInstallment = installmentsMap.get(i);
         // CORRECCIÓN (auditoría de cálculos): `interest_amount === 0` con igualdad estricta podía
         // clasificar una cuota como "cargo" aquí y como "cuota regular" en InstallmentsTable.tsx
@@ -1943,7 +1965,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       
       // Crear lista de cuotas regulares ordenadas por número de cuota
       const regularInstallments: Array<{ installmentNumber: number; installment: any }> = [];
-      for (let i = 1; i <= numberOfPayments; i++) {
+      for (const i of installmentNumbersInOrder) {
         const realInstallment = installmentsMap.get(i);
         if (!realInstallment) continue;
 
@@ -2059,7 +2081,7 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       }
     }
 
-    for (let i = 1; i <= numberOfPayments; i++) {
+    for (const i of installmentNumbersInOrder) {
       // Obtener datos reales de la cuota si existe (debe estar antes de usarla)
       const realInstallment = installmentsMap.get(i);
       
@@ -2448,7 +2470,14 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       });
 
       schedule.push({
-        installment: isIndefinite ? `${i}/X` : i,
+        // Un cargo no es la cuota número 31 del préstamo: se enseña como "Cargo #n", igual que
+        // en "Ver cuotas". `rowKey` evita que dos filas compartan clave en React.
+        installment: isCharge
+          ? chargeLabelFor(realInstallment, chargeSequences)
+          : (isIndefinite ? `${i}/X` : i),
+        rowKey: isCharge
+          ? String(realInstallment?.id || `charge-${loanData.id}-${i}`)
+          : `cuota-${i}`,
         // Para que el descuento de un cargo no salga también en la cuota del mismo día.
         isChargeRow: !!isCharge,
         dueDate: dueDate.toISOString().split('T')[0],

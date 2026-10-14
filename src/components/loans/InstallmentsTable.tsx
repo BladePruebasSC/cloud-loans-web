@@ -21,6 +21,7 @@ import { buildIndefiniteInterestResolver, resolveIndefiniteCapital, type Capital
 import { interleaveCapitalPayments, type CapitalPaymentEntry } from '@/utils/capitalPaymentRows';
 import { allocatePaymentsToPeriods, isChargePayment, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
+import { chargeRowKey, chargeSequenceByRow } from '@/utils/loanChargeRows';
 import { getInstallmentLabel, getInstallmentsLabel } from '@/utils/frequencyUtils';
 import { describeDueDiscount, discountsByDueDateSplit } from '@/utils/paymentDiscount';
 import { PiggyBank } from 'lucide-react';
@@ -668,13 +669,16 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
         return a.installment_number - b.installment_number;
       });
 
-      if (isIndefinite) {
-        let chargeSeq = 0;
-        for (const inst of sortedInstallments) {
-          if (isChargeInstallment(inst)) {
-            chargeSeq += 1;
-            (inst as Installment & { charge_sequence?: number }).charge_sequence = chargeSeq;
-          }
+      // Numerar los cargos (Cargo #1, #2, #3...) en TODOS los préstamos, no solo en los
+      // indefinidos. Antes esto se hacía dentro del bloque de indefinidos, por lo que en un
+      // préstamo a plazo fijo `charge_sequence` quedaba sin asignar y la tabla enseñaba
+      // "Cargo #1" en todas las filas de cargo (2026-10-14). La numeración es la del util
+      // compartido, la misma que usa el Estado de Cuenta.
+      const chargeSequences = chargeSequenceByRow(sortedInstallments, isChargeInstallment);
+      for (const inst of sortedInstallments) {
+        const seq = chargeSequences.get(chargeRowKey(inst));
+        if (seq) {
+          (inst as Installment & { charge_sequence?: number }).charge_sequence = seq;
         }
       }
       
@@ -720,9 +724,7 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             if (da !== db) return da.localeCompare(db);
             return (a.installment_number || 0) - (b.installment_number || 0);
           });
-          chargeInstallments.forEach((ch, idx) => {
-            (ch as Installment & { charge_sequence?: number }).charge_sequence = idx + 1;
-          });
+          // La numeración (`charge_sequence`) ya se asignó más arriba para todos los préstamos.
 
           // Procesar cada cargo
           for (const chargeInst of chargeInstallments) {

@@ -1027,7 +1027,37 @@ const generateOriginalInstallments = async (loan: any, formData: LoanFormData) =
       console.error('Error generando cuotas:', error);
       throw error;
     }
-    
+
+    // FALLO REPORTADO (2026-10-14): "cuando hacemos un [gasto de] cierre y agregamos un cargo,
+    // en el balance no toma en cuenta este gasto de cierre".
+    //
+    // El préstamo se guarda con `remaining_balance = total_amount`, y `total_amount` es, por
+    // convenio, capital + interés SIN cargos (ver las notas de la auditoría 2026-08-28 más
+    // abajo). Los gastos de cierre no financiados se persisten justo aquí como cuota-cargo, así
+    // que el saldo guardado NACÍA CORTO por ese importe: un préstamo de 27,000 con 2,500 de
+    // gastos de cierre y dos cargos de 1,000 y 600 enseñaba 28,600 mientras "Ver cuotas" sumaba
+    // 31,100. El convenio del saldo —el mismo de `calculate_loan_remaining_balance` y de
+    // `computeLoanBalanceBreakdown`— es capital + interés + CARGOS pendientes − cobrado, así
+    // que el cargo de cierre tiene que estar dentro. `total_amount` no se toca: sigue siendo
+    // capital + interés, como en el resto del sistema.
+    if (closingCosts > 0.01) {
+      const round2Balance = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
+      const baseBalance = Number(loan?.remaining_balance ?? loan?.total_amount ?? 0) || 0;
+      const balanceConCierre = round2Balance(baseBalance + closingCosts);
+      const { error: balanceError } = await supabase
+        .from('loans')
+        .update({ remaining_balance: balanceConCierre })
+        .eq('id', loan.id);
+
+      if (balanceError) {
+        // No se interrumpe la creación del préstamo por esto: las cuotas ya están guardadas y
+        // todas las pantallas recalculan el saldo desde ellas. Solo quedaría la columna corta.
+        console.error('Error sumando los gastos de cierre al balance del préstamo:', balanceError);
+      } else {
+        console.log('✅ Gastos de cierre incluidos en el balance:', { baseBalance, closingCosts, balanceConCierre });
+      }
+    }
+
     console.log('✅ Cuotas originales generadas exitosamente:', installments.length);
   } catch (error) {
     console.error('Error generando cuotas originales:', error);
