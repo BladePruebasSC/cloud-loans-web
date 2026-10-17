@@ -268,3 +268,86 @@ describe('el balance cuenta los gastos de cierre', () => {
     expect(b.totalBalance).toBe(28600);    // 27,000 + 1,600
   });
 });
+
+// ============================================================================
+// REPARACIÓN DE LAS ENTRADAS YA GUARDADAS EN EL HISTORIAL
+// ============================================================================
+// FALLO REPORTADO (2026-10-16): "según el historial, antes del cargo tenía como balance 27,000
+// y después 28,000, pero no es así: al crear el préstamo se le indicó un gasto de cierre de
+// 2,500, o sea que debería ser 29,500 y después 30,500. Afuera en el preview sale perfecto,
+// solo es en el historial de modificaciones".
+//
+// Una entrada ya escrita es un REGISTRO: no se recalcula sola. La migración
+// 20261016000000_historial_cargo_con_gastos_de_cierre.sql la repara, y solo cuando puede
+// demostrar que se escribió con el saldo corto. Aquí se comprueba esa regla.
+
+/** Réplica de la regla de la migración. Devuelve las entradas con su saldo corregido. */
+const repararHistorial = (
+  entradas: Array<{ antes: number; despues: number }>,
+  { totalAmount, cierre, financiados = false }:
+    { totalAmount: number; cierre: number; financiados?: boolean },
+) => {
+  if (!(cierre > 0.01) || financiados) return entradas;
+  let cargosPrevios = 0;
+  return entradas.map((e) => {
+    // ¿El "antes" es justo lo que valía la columna sin el cargo del cierre?
+    const seEscribioCorta = Math.abs(e.antes - r2(totalAmount + cargosPrevios)) < 0.01;
+    const corregida = seEscribioCorta
+      ? { antes: r2(e.antes + cierre), despues: r2(e.despues + cierre) }
+      : e;
+    cargosPrevios = r2(cargosPrevios + (e.despues - e.antes));
+    return corregida;
+  });
+};
+
+describe('reparación del historial de "Agregar Cargo"', () => {
+
+  it('El caso reportado: 27,000 → 28,000 pasa a 29,500 → 30,500', () => {
+    const reparadas = repararHistorial(
+      [{ antes: 27000, despues: 28000 }],
+      { totalAmount: 27000, cierre: 2500 },
+    );
+    expect(reparadas).toEqual([{ antes: 29500, despues: 30500 }]);
+  });
+
+  it('Con varios cargos, la cadena se corrige entera', () => {
+    const reparadas = repararHistorial(
+      [{ antes: 27000, despues: 28000 }, { antes: 28000, despues: 28600 }],
+      { totalAmount: 27000, cierre: 2500 },
+    );
+    expect(reparadas).toEqual([
+      { antes: 29500, despues: 30500 },
+      { antes: 30500, despues: 31100 },
+    ]);
+  });
+
+  it('El monto del cargo nunca cambia: solo se mueve el punto de partida', () => {
+    const originales = [{ antes: 27000, despues: 28000 }, { antes: 28000, despues: 28600 }];
+    const reparadas = repararHistorial(originales, { totalAmount: 27000, cierre: 2500 });
+    originales.forEach((o, i) => {
+      expect(r2(reparadas[i].despues - reparadas[i].antes)).toBe(r2(o.despues - o.antes));
+    });
+  });
+
+  it('Es idempotente: una entrada ya corregida no se vuelve a tocar', () => {
+    const unaVez = repararHistorial([{ antes: 27000, despues: 28000 }], { totalAmount: 27000, cierre: 2500 });
+    const dosVeces = repararHistorial(unaVez, { totalAmount: 27000, cierre: 2500 });
+    expect(dosVeces).toEqual(unaVez);
+  });
+
+  it('No se toca lo que no se puede demostrar', () => {
+    // Hubo pagos por medio: el "antes" ya no es `total_amount + cargos anteriores`, así que no
+    // hay forma de saber qué le falta. Se deja como está.
+    const conPagos = [{ antes: 24300, despues: 25300 }];
+    expect(repararHistorial(conPagos, { totalAmount: 27000, cierre: 2500 })).toEqual(conPagos);
+
+    // Gastos de cierre FINANCIADOS: van dentro del capital, no son un cargo.
+    const entrada = [{ antes: 29500, despues: 30500 }];
+    expect(repararHistorial(entrada, { totalAmount: 29500, cierre: 2500, financiados: true }))
+      .toEqual(entrada);
+
+    // Sin gastos de cierre no hay nada que sumar.
+    expect(repararHistorial([{ antes: 27000, despues: 28000 }], { totalAmount: 27000, cierre: 0 }))
+      .toEqual([{ antes: 27000, despues: 28000 }]);
+  });
+});
