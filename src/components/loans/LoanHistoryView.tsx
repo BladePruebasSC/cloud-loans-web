@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { PaymentActions } from './PaymentActions';
 import { sortPaymentsNewestFirst, sortPaymentsOldestFirst } from '@/utils/paymentOrdering';
+import { chargeHistoryBalances } from '@/utils/chargeHistoryBalances';
 import { paymentCashReceived } from '@/utils/paymentDiscount';
 import { formatInTimeZone } from 'date-fns-tz';
 import { useAuth } from '@/hooks/useAuth';
@@ -173,48 +174,58 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     return map;
   }, [installments, payments, history]);
 
-  // ✅ Para "Agregar Cargo": recalcular balances mostrados usando el total base real
-  // (evita desfaces como 245,996 vs 246,000 por cuota redondeada).
+  // ✅ Para "Agregar Cargo": recalcular los balances que se enseñan (evita desfaces como
+  // 245,996 vs 246,000 por cuota redondeada, y las entradas viejas escritas con cálculos que ya
+  // no existen). La cuenta vive en `chargeHistoryBalances`, que además arranca del saldo REAL:
+  // los cargos que no salen del historial —los gastos de cierre, creados con el préstamo— ya
+  // estaban ahí antes de la primera entrada, y lo cobrado se descuenta (2026-10-19).
   const computedChargeBalancesById = useMemo(() => {
-    const map = new Map<string, { prev: number; next: number }>();
-    if (!loan) return map;
+    if (!loan) return new Map<string, { prev: number; next: number }>();
 
-    // IMPORTANTE:
     // Para préstamos a plazo, el "total" real normalmente vive en `loans.total_amount`.
     // La fórmula simple `amount * rate * term_months` NO aplica y produce balances absurdos.
     const fallbackTotal = round2(
       (Number(loan.amount || 0) || 0) +
         ((Number(loan.amount || 0) || 0) * (Number(loan.interest_rate || 0) / 100) * (Number(loan.term_months || 0) || 0))
     );
-    const baseLoanTotal = round2(
-      Number(loan.total_amount ?? fallbackTotal) || 0
+    const baseLoanTotal = round2(Number(loan.total_amount ?? fallbackTotal) || 0);
+
+    const esCargo = (i: any) => {
+      const interest = Math.abs(Number(i?.interest_amount || 0));
+      const principal = Number(i?.principal_amount || 0);
+      const total = Number(i?.total_amount ?? i?.amount ?? 0);
+      return interest < 0.01 && principal > 0.01 && Math.abs(principal - total) < 0.01;
+    };
+    const chargesTotal = round2(
+      (installments || []).reduce(
+        (s: number, i: any) => (esCargo(i) ? s + Number(i?.total_amount ?? i?.amount ?? 0) : s), 0,
+      )
     );
 
-    const chargeEntries = (history || [])
+    const entries = (history || [])
       .filter((e) => {
         const t = String(e.change_type || '').toLowerCase();
         return t === 'add_charge' || (t === 'balance_adjustment' && String(e.description || '').toLowerCase().includes('agregar cargo'));
       })
-      .slice()
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      .map((e) => {
+        const description = String(e.description || '');
+        const amountMatch = description.match(/Monto:\s*RD?\$?([\d,]+\.?\d*)/i);
+        const amount =
+          (amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null) ??
+          (Number((e as any).amount || 0) || 0);
+        return { id: e.id, created_at: e.created_at, amount: Number(amount) || 0 };
+      });
 
-    let cumulativeCharges = 0;
-    for (const entry of chargeEntries) {
-      const description = String(entry.description || '');
-      const amountMatch = description.match(/Monto:\s*RD?\$?([\d,]+\.?\d*)/i);
-      const amount =
-        (amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null) ??
-        (Number((entry as any).amount || 0) || 0);
-
-      const prev = round2(baseLoanTotal + cumulativeCharges);
-      const next = round2(baseLoanTotal + cumulativeCharges + (Number(amount) || 0));
-      map.set(entry.id, { prev, next });
-
-      cumulativeCharges = round2(cumulativeCharges + (Number(amount) || 0));
-    }
-
-    return map;
-  }, [history, loan]);
+    return chargeHistoryBalances({
+      baseTotal: baseLoanTotal,
+      chargesTotal,
+      entries,
+      payments: (payments || []).map((p: any) => ({
+        at: p?.created_at || p?.payment_time_local || p?.payment_date || null,
+        amount: Number(p?.amount) || 0,
+      })),
+    });
+  }, [history, loan, installments, payments]);
 
   // Función para formatear fecha y hora de pagos
   const formatPaymentDateTime = (payment: Payment) => {
