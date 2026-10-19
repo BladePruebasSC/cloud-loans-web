@@ -32,6 +32,7 @@ import { isChargePayment, paymentGross, splitChargeAndRegularPayments } from '@/
 import { paymentCashReceived } from '@/utils/paymentDiscount';
 import { getFrequencyLabel } from '@/utils/frequencyUtils';
 import { chargeTotalsByDueDate, paidPeriodsFromMoney } from '@/utils/loanPaidTotals';
+import { capitalPaymentLockFor } from '@/utils/capitalPaymentLock';
 
 interface Payment {
   id: string;
@@ -168,9 +169,12 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
       try {
         console.log('🔍 Verificando último pago para:', payment.id);
 
+        // Se piden los tres sellos de tiempo: hay filas sin `created_at` (la columna llegó por
+        // migración y las bases han ido cambiando de esquema), y a esas se las daba por nacidas
+        // en 1970 —instante 0—, así que NUNCA podían ser "el último pago" aunque lo fueran.
         const { data: allPayments, error } = await supabase
           .from('payments')
-          .select('id, created_at')
+          .select('id, created_at, payment_time_local, payment_date')
           .eq('loan_id', payment.loan_id);
 
         if (error) {
@@ -188,27 +192,37 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
           // operación y todas llevan el MISMO `created_at`: antes solo una —la de mayor id, al
           // azar— se podía eliminar y las demás del mismo cobro no. Ahora cualquiera de ese
           // último lote; al borrarla, las que queden siguen siendo las últimas.
+          // Todas las filas pasan por el MISMO resolutor de instante (`created_at`, si no
+          // `payment_time_local`, si no la fecha): comparar el instante completo de una contra
+          // solo el `created_at` de las otras dejaba fuera de concurso a las filas sin esa
+          // columna. Empatar no es ser posterior, así que las varias filas de un mismo cobro
+          // siguen contando todas como "las últimas".
           const propioMs = instantMs(propioIso);
-          const isLatest = !(allPayments || []).some(p => p.id !== payment.id && instantMs(p.created_at) > propioMs);
+          const isLatest = !(allPayments || []).some(
+            p => p.id !== payment.id && instantMs(paymentInstantIso(p as any)) > propioMs,
+          );
           setIsLatestPayment(isLatest);
         } else {
           setIsLatestPayment(false);
         }
 
-        // ¿Hay un abono a capital registrado DESPUÉS de este pago? Se comparan INSTANTES, no días:
-        // con la fecha suelta ('2026-09-11' = medianoche), un abono hecho esa misma mañana contaba
-        // como posterior a un pago de la tarde y bloqueaba su eliminación sin motivo.
-        if (propioIso) {
-          const { data: laterCapital } = await supabase
-            .from('capital_payments')
-            .select('id')
-            .eq('loan_id', payment.loan_id)
-            .gt('created_at', propioIso)
-            .limit(1);
-          setHasLaterCapitalPayment(!!(laterCapital && laterCapital.length > 0));
-        } else {
-          setHasLaterCapitalPayment(false);
-        }
+        // ¿Este pago quedó POR DEBAJO de un abono a capital? La comparación vive en
+        // `capitalPaymentLock`: primero por día en Santo Domingo y, dentro del mismo día, por hora
+        // solo cuando las dos salen del mismo reloj. Antes se le preguntaba a la base por abonos
+        // con `created_at > instante del pago`, y ese instante podía venir de `payment_time_local`
+        // —que escribe el navegador en la hora del equipo— mientras el abono traía el `created_at`
+        // de la base, en UTC: con el equipo fuera de la hora de Santo Domingo, un pago hecho
+        // DESPUÉS del abono parecía anterior y no había forma de eliminarlo (2026-10-19).
+        const { data: abonos } = await supabase
+          .from('capital_payments')
+          .select('id, created_at')
+          .eq('loan_id', payment.loan_id);
+
+        const bloqueo = capitalPaymentLockFor(
+          { ...(payment as any), created_at: propio?.created_at ?? (payment as any)?.created_at },
+          abonos || [],
+        );
+        setHasLaterCapitalPayment(bloqueo.locked);
         setDeleteCheckDone(true);
       } catch (error) {
         console.error('🔍 Error en verificación:', error);
@@ -325,23 +339,33 @@ export const PaymentActions: React.FC<PaymentActionsProps> = ({
 
       console.log('🗑️ Datos del préstamo obtenidos:', loanData);
 
-      // VALIDACIÓN: no se elimina un pago si hay un ABONO A CAPITAL posterior. El abono se calculó
-      // sobre el capital que quedaba tras ese pago, así que borrarlo dejaría el abono apoyado en un
-      // historial que ya no existe. Se comparan INSTANTES, no días (ver `paymentInstantIso`): antes
-      // se usaba la fecha del pago y un abono de esa misma mañana bloqueaba un pago de la tarde.
-      const paymentInstant = paymentInstantIso(payment as any);
-      if (paymentInstant) {
-        const { data: laterCapitalPayments, error: capCheckError } = await supabase
-          .from('capital_payments')
-          .select('id, created_at, amount')
-          .eq('loan_id', payment.loan_id)
-          .gt('created_at', paymentInstant)
-          .limit(1);
+      // VALIDACIÓN: no se elimina un pago ANTERIOR a un abono a capital. El abono se calculó sobre
+      // el capital que quedaba tras ese pago, así que borrarlo dejaría el abono apoyado en un
+      // historial que ya no existe. Un pago registrado DESPUÉS del abono no entró en esa cuenta y
+      // se borra como cualquier otro: la comparación es la de `capitalPaymentLock`, la misma que
+      // decide si la opción del menú está disponible, para que no digan cosas distintas.
+      //
+      // Se relee el instante del pago de la base (el objeto que llega por props puede no traerlo)
+      // y se comprueba contra los abonos de AHORA, no contra los de cuando se abrió la pantalla.
+      const { data: filaDelPago } = await supabase
+        .from('payments')
+        .select('created_at, payment_time_local, payment_date')
+        .eq('id', payment.id)
+        .maybeSingle();
 
-        if (!capCheckError && laterCapitalPayments && laterCapitalPayments.length > 0) {
-          const capDate = String(laterCapitalPayments[0].created_at).split('T')[0];
+      const { data: abonosDelPrestamo, error: capCheckError } = await supabase
+        .from('capital_payments')
+        .select('id, created_at, amount')
+        .eq('loan_id', payment.loan_id);
+
+      if (!capCheckError) {
+        const bloqueo = capitalPaymentLockFor(
+          { ...(payment as any), ...(filaDelPago || {}) },
+          abonosDelPrestamo || [],
+        );
+        if (bloqueo.locked) {
           toast.error(
-            `No se puede eliminar este pago porque hay un abono a capital del ${capDate} que se calculó sobre él. Elimine primero el abono a capital.`
+            `No se puede eliminar este pago porque hay un abono a capital del ${bloqueo.capitalPaymentDay} que se calculó sobre él. Elimine primero el abono a capital.`
           );
           setLoading(false);
           setShowDeleteModal(false);
