@@ -80,6 +80,34 @@ export const getPeriodRate = (monthlyRatePercent: number, frequency?: string | n
   (Number(monthlyRatePercent || 0) / 100) * getFrequencyRateFactor(frequency);
 
 /**
+ * La inversa de `getPeriodRate` para un préstamo de PLAZO INDEFINIDO: qué tasa mensual (en %)
+ * hace que la cuota de un período sea exactamente la que se fijó.
+ *
+ * En un indefinido la cuota es SOLO interés —el capital no se amortiza—, así que
+ * `cuota = capital × tasaDelPeríodo` y la vuelta es directa, sin plazo que repartir. Por eso no
+ * sirve el cálculo de los préstamos a plazo (`cuota × períodos − capital`), que necesita saber
+ * en cuántas cuotas se devuelve el capital.
+ *
+ * FALLO REPORTADO (2026-10-20): "en los préstamos indefinidos no me permite fijar la cuota, se
+ * queda con el monto calculado por la tasa". Al fijar la cuota se usaba el cálculo a plazo, que
+ * primero exige que la cuota cubra `capital / plazo`: en un indefinido ese reparto no existe
+ * (el plazo vale 1), así que 1,400 de cuota sobre 45,000 de capital nunca pasaba el filtro y la
+ * tasa se quedaba como estaba.
+ */
+export const monthlyRateFromIndefiniteQuota = (
+  capital: number,
+  quota: number,
+  frequency?: string | null,
+): number => {
+  const cap = Number(capital) || 0;
+  const q = Number(quota) || 0;
+  if (cap <= 0 || q <= 0) return 0;
+  const monthly = ((q / cap) / getFrequencyRateFactor(frequency)) * 100;
+  if (!Number.isFinite(monthly)) return 0;
+  return Math.max(0, Math.round(monthly * 1e6) / 1e6);
+};
+
+/**
  * Días que se usan para prorratear la mora cuando `late_fee_calculation_type` es
  * 'monthly' (es decir, "una tarifa por cada período de atraso").
  */

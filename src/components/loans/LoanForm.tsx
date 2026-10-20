@@ -21,7 +21,7 @@ import { ArrowLeft, Calculator, Search, User, DollarSign, Calendar, Percent, Fil
 import { createDateInSantoDomingo, getCurrentDateString, getCurrentDateInSantoDomingo, formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import {
   addPeriodsToDate, formatDateLocalIso, fromAnnualRate, getFrequencyLabel,
-  getFrequencyRateFactor, getPeriodRate, toAnnualRate,
+  getFrequencyRateFactor, getPeriodRate, monthlyRateFromIndefiniteQuota, toAnnualRate,
 } from '@/utils/frequencyUtils';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
@@ -2186,7 +2186,14 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
        
     } else if (amortization_type === 'indefinite') {
       // Plazo indefinido - Solo intereses, sin fecha de vencimiento
-      const interestPerPayment = amount * periodRate;
+      //
+      // CUOTA FIJA (2026-10-20): "en los préstamos indefinidos no me permite fijar la cuota, se
+      // queda con el monto calculado por la tasa". Si el usuario fijó la cuota, esa ES la cuota:
+      // la tasa se derivó de ella (`monthlyRateFromIndefiniteQuota`), y recalcularla aquí a
+      // partir de la tasa redondeada devolvía un importe distinto del que se escribió.
+      const interestPerPayment = (fixed_payment_enabled && Number(fixed_payment_amount) > 0)
+        ? Number(fixed_payment_amount)
+        : amount * periodRate;
       
       // CORRECCIÓN: Calcular la primera fecha de pago correctamente
       // Para préstamos indefinidos, la primera cuota debe ser un período después de la fecha de inicio
@@ -2249,19 +2256,23 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     const amount = form.getValues('amount');
     const months = form.getValues('term_months');
     const quotaRD = form.getValues('fixed_payment_amount');
-    
-    if (amount <= 0 || months <= 0) {
+    // Un préstamo indefinido no tiene plazo que exigir: la cuota es solo interés (2026-10-20).
+    const esIndefinido = String(form.getValues('amortization_type') || '').toLowerCase() === 'indefinite';
+
+    if (amount <= 0 || (!esIndefinido && months <= 0)) {
       toast.error('Debe ingresar el monto y plazo antes de fijar la cuota');
       return;
     }
-    
+
     let newInterestRate = 0;
 
     // Usar la cuota fija
     if (quotaRD > 0) {
-      newInterestRate = calculateInterestFromQuota(
-        amount, quotaRD, months, form.getValues('payment_frequency'),
-      );
+      newInterestRate = esIndefinido
+        ? monthlyRateFromIndefiniteQuota(amount, quotaRD, form.getValues('payment_frequency'))
+        : calculateInterestFromQuota(
+            amount, quotaRD, months, form.getValues('payment_frequency'),
+          );
     } else {
       toast.error('Debe ingresar una cuota fija');
       return;
@@ -2764,13 +2775,22 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     // dejaba una tasa calculada sobre 10,000 aplicándose a un préstamo de 12,000.
     const amount = getFinancedAmount();
 
-    if (fixedPaymentEnabled && fixedPaymentAmount && amount > 0 && term_months > 0) {
+    // PLAZO INDEFINIDO: la cuota es solo interés y no hay plazo que repartir, así que la tasa
+    // sale directa (`cuota / capital`). Antes se usaba el cálculo a plazo, que primero exige que
+    // la cuota cubra `capital / plazo`; en un indefinido ese reparto no existe —el plazo vale 1—,
+    // así que la condición nunca se cumplía, la tasa se quedaba como estaba y la tabla seguía
+    // enseñando la cuota de la tasa vieja (2026-10-20).
+    const esIndefinido = String(form.watch('amortization_type') || '').toLowerCase() === 'indefinite';
+
+    if (fixedPaymentEnabled && fixedPaymentAmount && amount > 0 && (esIndefinido || term_months > 0)) {
       // Una cuota que no cubre ni el capital no define ninguna tasa válida: daría negativa.
       // Se deja la tasa como estaba en vez de ponerla a 0 —borrar el 20% que el usuario
       // escribió sería peor— y el campo de cuota ya avisa en rojo del mínimo.
-      if (fixedPaymentAmount < amount / term_months) return;
+      if (!esIndefinido && fixedPaymentAmount < amount / term_months) return;
 
-      const newInterestRate = calculateInterestFromQuota(amount, fixedPaymentAmount, term_months, frequency);
+      const newInterestRate = esIndefinido
+        ? monthlyRateFromIndefiniteQuota(amount, fixedPaymentAmount, frequency)
+        : calculateInterestFromQuota(amount, fixedPaymentAmount, term_months, frequency);
       form.setValue('interest_rate', newInterestRate);
 
       toast.success(
@@ -2781,7 +2801,9 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
       // Si se desactiva la cuota fija, limpiar el campo de cuota fija
       form.setValue('fixed_payment_amount', 0);
     }
-  }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months'), form.watch('payment_frequency'), form.watch('closing_costs'), form.watch('closing_costs_financed')]);
+    // `amortization_type` entra en las dependencias: cambiar a (o desde) plazo indefinido cambia
+    // la fórmula con la que se deriva la tasa de la cuota fija.
+  }, [form.watch('fixed_payment_amount'), form.watch('fixed_payment_enabled'), form.watch('amount'), form.watch('term_months'), form.watch('payment_frequency'), form.watch('amortization_type'), form.watch('closing_costs'), form.watch('closing_costs_financed')]);
 
   // Actualizar el esquema cuando cambien los días excluidos
   useEffect(() => {
