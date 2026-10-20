@@ -1821,6 +1821,15 @@ export const LoansModule = () => {
     const createParam = urlParams.get('create');
     
     if (createParam === 'true') {
+      // Un número que puede valer 0: ausente es `undefined` (que mande el valor por defecto),
+      // presente es su número, 0 incluido.
+      const numeroDeUrl = (clave: string): number | undefined => {
+        const valor = urlParams.get(clave);
+        if (valor === null || valor.trim() === '') return undefined;
+        const n = Number(valor);
+        return Number.isFinite(n) ? n : undefined;
+      };
+
       const initialData = {
         client_id: urlParams.get('client_id') || undefined,
         amount: urlParams.get('amount') ? Number(urlParams.get('amount')) : undefined,
@@ -1837,6 +1846,17 @@ export const LoansModule = () => {
         first_payment_date: urlParams.get('first_payment_date') || undefined,
         closing_costs: urlParams.get('closing_costs') ? Number(urlParams.get('closing_costs')) : undefined,
         late_fee: urlParams.get('late_fee') === 'true',
+        // MORA DE LA SOLICITUD (2026-10-20). Antes solo llegaba el sí/no (`late_fee`) y el
+        // formulario rellenaba el resto con los valores de la empresa: el préstamo nacía con una
+        // mora distinta de la aprobada. `?? undefined` y no `|| 0`: un parámetro ausente debe
+        // dejar que mande el valor por defecto, pero un 0 enviado es un 0 (sin días de gracia).
+        late_fee_enabled: urlParams.get('late_fee_enabled') !== null
+          ? urlParams.get('late_fee_enabled') === 'true'
+          : (urlParams.get('late_fee') !== null ? urlParams.get('late_fee') === 'true' : undefined),
+        late_fee_rate: numeroDeUrl('late_fee_rate'),
+        grace_period_days: numeroDeUrl('grace_period_days'),
+        max_late_fee: numeroDeUrl('max_late_fee'),
+        late_fee_calculation_type: urlParams.get('late_fee_calculation_type') || undefined,
         minimum_payment_type: urlParams.get('minimum_payment_type') || undefined,
         minimum_payment_percentage: urlParams.get('minimum_payment_percentage') ? Number(urlParams.get('minimum_payment_percentage')) : undefined,
         guarantor_required: urlParams.get('guarantor_required') === 'true',
@@ -2012,6 +2032,15 @@ export const LoansModule = () => {
       first_payment_date: request.first_payment_date,
       closing_costs: request.closing_costs,
       late_fee: request.late_fee,
+      // La configuración de mora de la solicitud, tal cual (2026-10-20): sin esto el formulario
+      // la rellenaba con la de la empresa y el préstamo nacía con una mora distinta de la que se
+      // aprobó. `?? undefined` para que un campo que la solicitud no definió deje mandar el
+      // valor por defecto, pero un 0 (días de gracia) llegue como 0.
+      late_fee_enabled: request.late_fee ?? request.late_fee_enabled ?? undefined,
+      late_fee_rate: request.late_fee_rate ?? undefined,
+      grace_period_days: request.grace_period_days ?? undefined,
+      max_late_fee: request.max_late_fee ?? undefined,
+      late_fee_calculation_type: request.late_fee_calculation_type ?? undefined,
       minimum_payment_type: request.minimum_payment_type,
       minimum_payment_percentage: request.minimum_payment_percentage,
       guarantor_required: request.guarantor_required,

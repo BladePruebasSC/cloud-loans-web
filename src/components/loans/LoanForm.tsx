@@ -23,6 +23,7 @@ import {
   addPeriodsToDate, formatDateLocalIso, fromAnnualRate, getFrequencyLabel,
   getFrequencyRateFactor, getPeriodRate, monthlyRateFromIndefiniteQuota, toAnnualRate,
 } from '@/utils/frequencyUtils';
+import { hasLateFeeConfig, mergeLateFeeConfig } from '@/utils/lateFeeConfig';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { GuaranteeForm, GuaranteeFormData } from './GuaranteeForm';
 import { describeSupabaseError, findMissingColumn } from '@/utils/supabaseErrors';
@@ -1240,6 +1241,18 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
   const [selectedDocuments, setSelectedDocuments] = useState<string[]>([]);
   const { user, companyId, companySettings } = useAuth();
 
+  /**
+   * El préstamo ya viene con su propia configuración de mora: la de la SOLICITUD que se está
+   * convirtiendo, o la del préstamo que se está editando.
+   *
+   * FALLO REPORTADO (2026-10-20): "cuando creas un préstamo desde solicitud no está tomando en
+   * cuenta los datos de mora: la solicitud dice 0 días de gracia y en el formulario sale el
+   * número por defecto". Eran dos cosas a la vez: la solicitud no mandaba esos campos (ya los
+   * manda) y, aunque los mandara, la carga de los valores por defecto de la empresa —que es
+   * asíncrona— los pisaba al terminar, sin mirar si el formulario ya venía relleno.
+   */
+  const traeConfiguracionDeMora = hasLateFeeConfig(initialData);
+
   // Cargar configuración global de mora
   useEffect(() => {
     const loadGlobalLateFeeConfig = async () => {
@@ -1253,13 +1266,25 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
         if (data && !error) {
           const config = JSON.parse(data.value);
           setGlobalLateFeeConfig(config);
-          
-          // Actualizar el formulario con los valores por defecto
-          form.setValue('late_fee_enabled', config.default_late_fee_enabled);
-          form.setValue('late_fee_rate', config.default_late_fee_rate);
-          form.setValue('grace_period_days', config.default_grace_period_days);
-          form.setValue('max_late_fee', config.default_max_late_fee);
-          form.setValue('late_fee_calculation_type', config.default_late_fee_calculation_type);
+
+          // Los valores por defecto son para un préstamo EN BLANCO: donde la solicitud (o el
+          // préstamo que se edita) diga algo, manda lo suyo, aunque sea un 0 o un false.
+          const mora = mergeLateFeeConfig({
+            late_fee_enabled: config.default_late_fee_enabled,
+            late_fee_rate: config.default_late_fee_rate,
+            grace_period_days: config.default_grace_period_days,
+            max_late_fee: config.default_max_late_fee,
+            late_fee_calculation_type: config.default_late_fee_calculation_type,
+          }, initialData);
+
+          form.setValue('late_fee_enabled', !!mora.late_fee_enabled);
+          form.setValue('late_fee_rate', Number(mora.late_fee_rate ?? 0));
+          form.setValue('grace_period_days', Number(mora.grace_period_days ?? 0));
+          form.setValue('max_late_fee', Number(mora.max_late_fee ?? 0));
+          form.setValue(
+            'late_fee_calculation_type',
+            (mora.late_fee_calculation_type as 'daily' | 'monthly' | 'compound') ?? 'daily',
+          );
         }
       } catch (error) {
         console.error('Error loading global late fee config:', error);
@@ -1267,7 +1292,7 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
     };
 
     loadGlobalLateFeeConfig();
-  }, []);
+  }, [traeConfiguracionDeMora]);
 
   // Función para verificar si una fecha cae en día excluido y ajustarla
   const adjustDateForExcludedDays = (date: Date) => {
@@ -1359,17 +1384,25 @@ export const LoanForm = ({ onBack, onLoanCreated, onLoanUpdated, editingLoanId, 
         // La configurada es ANUAL, el campo del préstamo guarda MENSUAL.
         form.setValue('interest_rate', fromAnnualRate(companySettings.interest_rate_default ?? 0), { shouldDirty: false });
       }
-      if (currentValues.late_fee_rate === 2.0 || currentValues.late_fee_rate === undefined) {
+      // AQUÍ ESTABA EL FALLO DE LOS DÍAS DE GRACIA (2026-10-20). Estas tres líneas rellenan los
+      // huecos con lo que tenga configurado la empresa, pero trataban un 0 y un "false" como
+      // huecos: una solicitud con 0 DÍAS DE GRACIA —que es un valor, "sin gracia"— acababa con
+      // los 2 días de la empresa, y una con la mora DESHABILITADA se activaba sola. Si el
+      // formulario viene de una solicitud (o de un préstamo que se edita), lo que traiga manda.
+      if (initialData?.late_fee_rate === undefined
+          && (currentValues.late_fee_rate === 2.0 || currentValues.late_fee_rate === undefined)) {
         form.setValue('late_fee_rate', companySettings.default_late_fee_rate ?? 2.0, { shouldDirty: false });
       }
-      if (!currentValues.late_fee_enabled && companySettings.default_late_fee_rate) {
+      if (initialData?.late_fee_enabled === undefined
+          && !currentValues.late_fee_enabled && companySettings.default_late_fee_rate) {
         form.setValue('late_fee_enabled', true, { shouldDirty: false });
       }
-      if (currentValues.grace_period_days === 0 || currentValues.grace_period_days === undefined) {
+      if (initialData?.grace_period_days === undefined
+          && (currentValues.grace_period_days === 0 || currentValues.grace_period_days === undefined)) {
         form.setValue('grace_period_days', companySettings.grace_period_days ?? 0, { shouldDirty: false });
       }
     }
-  }, [companySettings, form]);
+  }, [companySettings, form, initialData]);
 
   // ── Tasa de interés: se ESCRIBE en anual, se GUARDA en mensual ──────────────
   // `loans.interest_rate` es mensual por convención del sistema, pero el usuario piensa y

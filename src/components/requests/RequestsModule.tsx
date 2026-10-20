@@ -579,7 +579,28 @@ const RequestsModule = () => {
       // ID de la solicitud para copiar documentos
       request_id: request.id,
     });
-    
+
+    // CONFIGURACIÓN DE MORA (2026-10-20): "cuando creas un préstamo desde solicitud no está
+    // tomando en cuenta los datos de mora: la solicitud dice 0 días de gracia y en el formulario
+    // sale el número por defecto".
+    //
+    // Solo viajaba `late_fee` (el sí/no). La tasa, los días de gracia, el máximo y el tipo de
+    // cálculo se quedaban en la solicitud, así que el formulario los rellenaba con los de la
+    // empresa y el préstamo nacía con una mora DISTINTA de la que se aprobó.
+    //
+    // Se envían solo los que la solicitud tiene de verdad: un 0 es un valor (0 días de gracia es
+    // "sin gracia"), pero un nulo significa "la solicitud no lo definió" y ahí sí mandan los
+    // valores por defecto.
+    const enviarSiExiste = (clave: string, valor: unknown) => {
+      if (valor === null || valor === undefined || valor === '') return;
+      loanParams.set(clave, String(valor));
+    };
+    enviarSiExiste('late_fee_enabled', request.late_fee ?? request.late_fee_enabled);
+    enviarSiExiste('late_fee_rate', request.late_fee_rate);
+    enviarSiExiste('grace_period_days', request.grace_period_days);
+    enviarSiExiste('max_late_fee', request.max_late_fee);
+    enviarSiExiste('late_fee_calculation_type', request.late_fee_calculation_type);
+
     // Navegar al formulario de préstamos con los datos pre-llenados
     window.location.href = `/prestamos?create=true&${loanParams.toString()}`;
   };
