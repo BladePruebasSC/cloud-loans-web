@@ -6,7 +6,9 @@
 //
 //   · una cuota que VENCE DESPUÉS del abono se cobra con la cuota nueva;
 //   · una que venció antes (o el mismo día) conserva la anterior: se devengó y se cobró con el
-//     capital de entonces.
+//     capital de entonces;
+//   · y una que YA ESTABA PAGADA cuando se hizo el abono conserva la anterior aunque venza más
+//     tarde: lo cobrado no se recalcula (2026-10-20, ver la nota dentro del resolutor).
 //
 // REGLA CORREGIDA (2026-09-16): antes la cuota vieja se mantenía hasta "fecha del abono + 1
 // período". Con un abono el 14 de septiembre, la cuota del 1 de octubre seguía cobrándose a
@@ -26,7 +28,11 @@
 // `monto prestado − abonos`. Es lo mismo que ya hacían los préstamos a plazo fijo y la función
 // SQL del balance (20260905000000), que restaba los abonos sobre un monto que ya venía rebajado.
 
-import { getFrequencyRateFactor } from './frequencyUtils';
+import { addPeriodsToIsoDate, getFrequencyRateFactor } from './frequencyUtils';
+import {
+  splitChargeAndRegularPayments, type PaymentRowLike, type RegularPaidEntry,
+} from './chargeAwarePayments';
+import { chargeTotalsByDueDate, type InstallmentRowLike } from './loanPaidTotals';
 
 const round2 = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 100) / 100;
 
@@ -101,7 +107,30 @@ export interface IndefiniteInterestInput {
    */
   currentInterest?: number | null;
   capitalPayments?: CapitalPaymentLike[] | null;
+  /**
+   * Fecha de la PRIMERA cuota ('YYYY-MM-DD'). Hace falta —junto con `regularPaid`— para saber
+   * qué períodos ya estaban saldados cuando se hizo cada abono. Sin ella, el corte es solo la
+   * fecha del abono (el comportamiento anterior).
+   */
+  firstDueIso?: string | null;
+  /**
+   * Lo cobrado A CUOTAS (ya separado de los cargos), con el día en que entró el dinero.
+   * `regularPaidForResolver` lo arma a partir de los pagos y las cuotas del préstamo.
+   */
+  regularPaid?: Array<{ amount: number; paidDate?: string | null; dueDate?: string | null }> | null;
 }
+
+/**
+ * Lo cobrado a CUOTAS (sin lo que se llevaron los cargos), listo para pasárselo al resolutor.
+ *
+ * Es el mismo reparto que usa el resto del sistema (`splitChargeAndRegularPayments`): los cargos
+ * de cada fecha cobran primero, hasta lo que valen, y el resto es dinero de cuotas.
+ */
+export const regularPaidForResolver = (
+  payments: PaymentRowLike[] | null | undefined,
+  installments: InstallmentRowLike[] | null | undefined,
+): RegularPaidEntry[] =>
+  splitChargeAndRegularPayments(payments || [], chargeTotalsByDueDate(installments)).regular;
 
 /** Interés que corresponde a un período, según su fecha de vencimiento ('YYYY-MM-DD'). */
 export type InterestForDue = (dueIso: string) => number;
@@ -109,9 +138,12 @@ export type InterestForDue = (dueIso: string) => number;
 /**
  * Devuelve el interés de cada período de un indefinido.
  *
- * Sin abonos es siempre la cuota vigente. Con abonos, un período que vence HASTA el día del abono
- * vale el capital de ANTES por la tasa; los que vencen después, la cuota vigente. Con varios
- * abonos manda el primero cuya fecha alcance el vencimiento.
+ * Sin abonos es siempre la cuota vigente. Con abonos, un período que vence HASTA el corte del
+ * abono vale el capital de ANTES por la tasa; los que vencen después, la cuota vigente. Con
+ * varios abonos manda el primero cuyo corte alcance el vencimiento.
+ *
+ * El corte es el día del abono, estirado hasta el último período que ya estaba PAGADO cuando se
+ * hizo (ver la nota de abajo): lo ya cobrado no se recalcula.
  */
 export const buildIndefiniteInterestResolver = (input: IndefiniteInterestInput): InterestForDue => {
   const abonos = (input.capitalPayments || [])
@@ -139,6 +171,70 @@ export const buildIndefiniteInterestResolver = (input: IndefiniteInterestInput):
       };
     })
     .filter((t): t is { corte: string; interesAntes: number } => !!t.corte && t.interesAntes !== null);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // LO YA PAGADO NO SE RECALCULA
+  //
+  // FALLO REPORTADO (2026-10-20): "en los indefinidos, cuando haces un abono a capital está
+  // recalculando las cuotas ya pagadas: si tengo una cuota de 700 y la pago, luego hago el
+  // abono y esa cuota la recalcula a 400, genera una segunda de 400 y le abona los 300
+  // sobrantes. Antes del abono el préstamo debe seguir igual; es después, con las cuotas aún
+  // sin saldar, con las que debe trabajar".
+  //
+  // El corte era solo la FECHA del abono, y una cuota que ya estaba PAGADA pero que vencía
+  // después de ese día se recalculaba a la cuota nueva: lo cobrado de más se convertía en un
+  // sobrante fantasma que saltaba a la cuota siguiente.
+  //
+  // Tampoco sirve volver a "fecha del abono + 1 período" (lo que había antes del 2026-09-16):
+  // eso mantenía la cuota vieja en períodos que NADIE había pagado. Lo que distingue un caso
+  // del otro no es la fecha, es si el período ya estaba saldado.
+  //
+  // Así que el corte de cada abono se estira hasta el último período que el dinero cobrado
+  // ANTES de ese abono ya tenía cubierto. El dinero del MISMO DÍA cuenta como anterior: el
+  // cliente paga su cuota y, en la misma visita, abona al capital; esa cuota se cobró con el
+  // capital de antes (y así no depende de comparar horas de relojes distintos).
+  const firstDue = String(input.firstDueIso || '').split('T')[0];
+  const cobros = (input.regularPaid || [])
+    .map(e => ({
+      dia: String(e?.paidDate || e?.dueDate || '').split('T')[0],
+      amount: round2(Number(e?.amount) || 0),
+    }))
+    .filter(e => e.dia && e.amount > 0.005);
+
+  if (firstDue && cobros.length > 0 && tramos.length > 0) {
+    const freq = String(input.frequency || 'monthly');
+    // El interés que regía ANTES del abono `k`: el de un abono anterior si el período cae en su
+    // tramo, y si no el de este.
+    const interesAntesDe = (k: number, due: string): number => {
+      for (let j = 0; j < k; j++) {
+        if (due <= tramos[j].corte) return tramos[j].interesAntes;
+      }
+      return tramos[k].interesAntes;
+    };
+
+    for (let k = 0; k < tramos.length; k++) {
+      const dinero = round2(
+        cobros.reduce((s, c) => (c.dia <= tramos[k].corte ? s + c.amount : s), 0)
+      );
+      if (dinero <= 0.005) continue;
+
+      let due = firstDue;
+      let acumulado = 0;
+      let ultimoCubierto: string | null = null;
+      for (let guard = 0; guard < 5000; guard++) {
+        const esperado = interesAntesDe(k, due);
+        if (esperado <= 0.005) break;
+        if (acumulado + esperado > dinero + 0.01) break;   // ya no alcanza: período sin saldar
+        acumulado = round2(acumulado + esperado);
+        ultimoCubierto = due;
+        due = addPeriodsToIsoDate(due, 1, freq);
+      }
+
+      if (ultimoCubierto && ultimoCubierto > tramos[k].corte) {
+        tramos[k].corte = ultimoCubierto;
+      }
+    }
+  }
 
   return (dueIso: string) => {
     const due = String(dueIso || '').split('T')[0];

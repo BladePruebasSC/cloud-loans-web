@@ -19,7 +19,10 @@
 
 import { computeInstallmentDues, type IndefiniteSchedule } from './installmentDues';
 import { overdueFromDues, type OverdueFacts } from './portfolioMetrics';
-import { buildIndefiniteInterestResolver, type CapitalPaymentLike } from './indefiniteInterest';
+import {
+  buildIndefiniteInterestResolver, regularPaidForResolver, type CapitalPaymentLike,
+} from './indefiniteInterest';
+import { getFirstDueDateIso } from './frequencyUtils';
 
 export interface ArrearsLoanLike {
   id: string;
@@ -39,6 +42,10 @@ export const indefiniteScheduleFor = (
   loan: ArrearsLoanLike,
   todayIso: string,
   capitalPayments: CapitalPaymentLike[] = [],
+  // Pagos y cuotas del préstamo: con ellos, una cuota que ya estaba pagada cuando se hizo un
+  // abono a capital conserva su importe en vez de recalcularse (2026-10-20).
+  payments: any[] = [],
+  installments: any[] = [],
 ): IndefiniteSchedule | null => {
   if (String(loan.amortization_type || '').toLowerCase() !== 'indefinite') return null;
   if (!loan.start_date) return null;
@@ -55,6 +62,8 @@ export const indefiniteScheduleFor = (
         frequency,
         currentInterest: Number(loan.monthly_payment) || 0,
         capitalPayments,
+        firstDueIso: getFirstDueDateIso(String(loan.start_date).split('T')[0], frequency),
+        regularPaid: regularPaidForResolver(payments as any[], installments as any[]),
       })
       : undefined,
   };
@@ -73,7 +82,7 @@ export const computeLoanArrears = (
   todayIso: string,
   capitalPayments: CapitalPaymentLike[] = [],
 ): OverdueFacts => {
-  const schedule = indefiniteScheduleFor(loan, todayIso, capitalPayments);
+  const schedule = indefiniteScheduleFor(loan, todayIso, capitalPayments, payments, installments);
   const dues = computeInstallmentDues(installments as never, payments as never, schedule);
   return overdueFromDues(dues, todayIso, Number(loan.grace_period_days) || 0);
 };

@@ -14,8 +14,9 @@ import { activityInstant } from '@/utils/activityTime';
 import { computeLateFeesByLoan } from '@/utils/portfolioLateFees';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import {
-  buildIndefiniteInterestResolver, capitalPaymentDateIso, type CapitalPaymentLike,
+  capitalPaymentDateIso, type CapitalPaymentLike,
 } from '@/utils/indefiniteInterest';
+import { indefiniteScheduleFor } from '@/utils/loanArrears';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { fetchLoanPenalties, summarizePenalties, type LoanPenalty } from '@/utils/loanPenalties';
 
@@ -387,23 +388,16 @@ export const usePortfolioData = () => {
       let schedule: IndefiniteSchedule | null = null;
       if (String(loan.amortization_type || '').toLowerCase() === 'indefinite') {
         if (!loan.start_date) continue;
-        const frequency = String(loan.payment_frequency || 'monthly');
-        const abonos = capitalPaymentsByLoan.get(loan.id) || [];
-        schedule = {
-          startDate: String(loan.start_date),
-          frequency,
+        // La MISMA agenda que usan la tarjeta, "Ver cuotas" y el estado de cuenta, con sus pagos:
+        // así una cuota pagada antes de un abono a capital conserva su importe aquí también
+        // (2026-10-20). Antes esta copia armaba el resolutor por su cuenta, sin los pagos.
+        schedule = indefiniteScheduleFor(
+          loan as never,
           todayIso,
-          periodInterest: Number(loan.monthly_payment) || undefined,
-          interestForDue: abonos.length > 0
-            ? buildIndefiniteInterestResolver({
-                amount: loan.amount,
-                interestRate: loan.interest_rate,
-                frequency,
-                currentInterest: loan.monthly_payment,
-                capitalPayments: abonos,
-              })
-            : undefined,
-        };
+          (capitalPaymentsByLoan.get(loan.id) || []) as CapitalPaymentLike[],
+          paymentsByLoan.get(loan.id) || [],
+          rows,
+        );
       }
 
       const dues = computeInstallmentDues(rows as never, (paymentsByLoan.get(loan.id) || []) as never, schedule);

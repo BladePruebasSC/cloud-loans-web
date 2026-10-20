@@ -1381,23 +1381,9 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       // Para indefinidos: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
       // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
       // Regla compartida con "Ver cuotas", el pago avanzado, la mora y el balance.
+      // (El resolutor se arma más abajo: necesita el reparto de lo cobrado y la fecha de la
+      // primera cuota para no recalcular las cuotas que ya estaban pagadas, 2026-10-20.)
       const capitalPaymentsForSchedule = abonosDelPrestamo;
-      const interestForDueShared = buildIndefiniteInterestResolver({
-        amount: principal,
-        interestRate,
-        frequency: String((loanData as any)?.payment_frequency || 'monthly'),
-        currentInterest: currentPeriodPayment,
-        capitalPayments: (capitalPaymentsForSchedule || []) as CapitalPaymentLike[],
-      });
-      const getExpectedForDueDate = (dueDate: string): number => {
-        if (!dueDate) return currentPeriodPayment;
-        // Con ABONOS manda la regla por fecha, no lo que quedó guardado en la fila.
-        if ((capitalPaymentsForSchedule || []).length > 0) return interestForDueShared(dueDate);
-        // Sin abonos, el total_amount de BD es el monto real de esa cuota.
-        const dbAmt = dbAmountByDueDateForSchedule.get(dueDate);
-        if (dbAmt && dbAmt > 0.01) return dbAmt;
-        return interestForDueShared(dueDate);
-      };
 
       const dueKeyOf = (d: any) => (String(d || '').split('T')[0] || '').trim() || null;
       const chargeKey = (inst: any, idx: number) => {
@@ -1563,6 +1549,27 @@ export const AccountStatement: React.FC<AccountStatementProps> = ({
       const frequency = String((loanData as any)?.payment_frequency || 'monthly');
       const startIso = String((loanData as any)?.start_date || '').split('T')[0] || '';
       const firstDueFromStart = startIso ? addPeriodIso(startIso, frequency) : null;
+
+      // Cuota de cada período. Se arma aquí, con el reparto de lo cobrado ya hecho, para que las
+      // cuotas que estaban pagadas cuando se hizo un abono conserven su importe.
+      const interestForDueShared = buildIndefiniteInterestResolver({
+        amount: principal,
+        interestRate,
+        frequency,
+        currentInterest: currentPeriodPayment,
+        capitalPayments: (capitalPaymentsForSchedule || []) as CapitalPaymentLike[],
+        firstDueIso: firstDueFromStart,
+        regularPaid: regularPaidEntries,
+      });
+      const getExpectedForDueDate = (dueDate: string): number => {
+        if (!dueDate) return currentPeriodPayment;
+        // Con ABONOS manda la regla por fecha, no lo que quedó guardado en la fila.
+        if ((capitalPaymentsForSchedule || []).length > 0) return interestForDueShared(dueDate);
+        // Sin abonos, el total_amount de BD es el monto real de esa cuota.
+        const dbAmt = dbAmountByDueDateForSchedule.get(dueDate);
+        if (dbAmt && dbAmt > 0.01) return dbAmt;
+        return interestForDueShared(dueDate);
+      };
 
       const tol = 0.05;
 

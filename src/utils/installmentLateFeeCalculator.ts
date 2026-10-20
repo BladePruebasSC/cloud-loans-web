@@ -9,7 +9,9 @@ import {
 } from './frequencyUtils';
 import { supabase } from '@/integrations/supabase/client';
 import { spendLateFeeCredit } from './lateFeeWaiver';
-import { buildIndefiniteInterestResolver, type CapitalPaymentLike } from './indefiniteInterest';
+import {
+  buildIndefiniteInterestResolver, regularPaidForResolver, type CapitalPaymentLike,
+} from './indefiniteInterest';
 
 // ----------------------------------------------------------------------------
 // TRAZA DEL CÁLCULO (apagada por defecto)
@@ -290,6 +292,9 @@ export const getLateFeeBreakdownFromInstallments = async (
       // Tras un abono a capital la fila guardada conserva el interés de ANTES, y ese `base` se
       // aplicaba a todos los períodos: la mora y el interés pendiente seguían con la cuota vieja.
       // Con abonos, cada período toma la cuota vigente en su fecha.
+      // Y una cuota que YA ESTABA PAGADA cuando se hizo el abono conserva su importe: si se
+      // recalcula, lo cobrado de más se convierte en un sobrante que salta a la cuota siguiente
+      // y la mora se calcula sobre una cuota que nadie debe (2026-10-20).
       const interestFor: (dueIso: string) => number = capitalPayments.length > 0
         ? buildIndefiniteInterestResolver({
             amount: loan.amount,
@@ -297,6 +302,8 @@ export const getLateFeeBreakdownFromInstallments = async (
             frequency,
             currentInterest: loan.monthly_payment,
             capitalPayments,
+            firstDueIso: formatDateLocalIso(first),
+            regularPaid: regularPaidForResolver(payments as any[], installments as any[]),
           })
         : () => base;
       return { frequency, first, dates, base, interestFor };

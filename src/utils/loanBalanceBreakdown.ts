@@ -169,13 +169,6 @@ export function computeLoanBalanceBreakdown(
     // usaba `monthly_payment` (la cuota NUEVA) para todos, así que los períodos ya cobrados con
     // la cuota vieja parecían pagados de más.
     const { currentCapital } = resolveIndefiniteCapital(loan.amount, capitalPayments);
-    const interestFor = buildIndefiniteInterestResolver({
-      amount: loan.amount,
-      interestRate: loan.interest_rate,
-      frequency: freq,
-      currentInterest: loan.monthly_payment,
-      capitalPayments,
-    });
 
     // CARGO Y CUOTA EL MISMO DÍA (2026-10-01). Antes, todo lo cobrado en la fecha de un cargo
     // se descartaba aquí ("no contar pagos a cargos como interés"), así que el dinero cobrado de
@@ -191,6 +184,18 @@ export function computeLoanBalanceBreakdown(
     }
     const { regular: regularPaidEntries } = splitChargeAndRegularPayments(payments as any[], chargeTotalByDue);
     const totalRegularPaid = round2(regularPaidEntries.reduce((s, e) => s + e.amount, 0));
+
+    // El reparto se calcula ANTES del resolutor porque este lo necesita: una cuota que ya estaba
+    // pagada cuando se hizo el abono conserva su importe y no se recalcula (2026-10-20).
+    const interestFor = buildIndefiniteInterestResolver({
+      amount: loan.amount,
+      interestRate: loan.interest_rate,
+      frequency: freq,
+      currentInterest: loan.monthly_payment,
+      capitalPayments,
+      firstDueIso: firstDueFromStart,
+      regularPaid: regularPaidEntries,
+    });
 
     // Períodos devengados: desde la primera cuota hasta HOY, incluido el que está EN CURSO (el
     // primero que aún no vence), y además los que el cliente ya pagó por adelantado —si no, lo

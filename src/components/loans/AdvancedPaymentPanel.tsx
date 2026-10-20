@@ -35,7 +35,10 @@ import {
   computeDiscount, describeDiscount, discountFields, insertPaymentsWithDiscount, netToCollect,
   splitDiscount, type DiscountMode,
 } from '@/utils/paymentDiscount';
-import { buildIndefiniteInterestResolver, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
+import {
+  buildIndefiniteInterestResolver, regularPaidForResolver, type CapitalPaymentLike,
+} from '@/utils/indefiniteInterest';
+import { getFirstDueDateIso } from '@/utils/frequencyUtils';
 
 interface Props {
   loanId: string;
@@ -181,6 +184,9 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
             // cuota VIEJA (4,500 en vez de 3,000): tomaba el interés de la única fila guardada,
             // que es la primera cuota y conserva el capital original. Con abonos, cada período
             // lleva la cuota que le corresponde por su fecha.
+            // Y una cuota que ya estaba PAGADA cuando se hizo el abono conserva la suya: si se
+            // recalcula, lo cobrado de más aparece como un sobrante en la cuota siguiente y el
+            // panel pide menos de lo que toca (2026-10-20).
             interestForDue: abonos.length > 0
               ? buildIndefiniteInterestResolver({
                   amount: Number((loanRow as any).amount) || 0,
@@ -188,6 +194,10 @@ export const AdvancedPaymentPanel = ({ loanId, clientName, onRegistered, onCance
                   frequency,
                   currentInterest: Number((loanRow as any).monthly_payment) || 0,
                   capitalPayments: abonos,
+                  firstDueIso: getFirstDueDateIso(
+                    String((loanRow as any).start_date).split('T')[0], frequency,
+                  ),
+                  regularPaid: regularPaidForResolver(payments || [], installments || []),
                 })
               : undefined,
           }

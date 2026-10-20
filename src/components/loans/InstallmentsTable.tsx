@@ -789,28 +789,6 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
             : round2(((loanInfo?.amount || 0) * (loanInfo?.interest_rate || 0)) / 100);
           const nowIso = new Date().toISOString();
 
-          // Monto de cuota vigente: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
-          // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
-          // La regla vive en `buildIndefiniteInterestResolver` y es la MISMA del pago avanzado, la
-          // mora y el balance: antes cada pantalla tenía su copia y el pago avanzado ninguna.
-          const interestForDueShared = buildIndefiniteInterestResolver({
-            amount: Number(loanInfo?.amount || 0),
-            interestRate: Number(loanInfo?.interest_rate || 0),
-            frequency: String(loanInfo?.payment_frequency || 'monthly'),
-            currentInterest: interestPerPayment,
-            capitalPayments: (capitalPaymentsDataRaw || []) as CapitalPaymentLike[],
-          });
-          const getExpectedForDueDate = (dueDate: string): number => {
-            if (!dueDate) return interestPerPayment;
-            // Con ABONOS manda la regla por fecha, no lo que quedó guardado en la fila: si el
-            // abono no llegó a reescribirla, la tabla seguía pidiendo la cuota vieja.
-            if ((capitalPaymentsDataRaw || []).length > 0) return interestForDueShared(dueDate);
-            // Sin abonos, el total_amount de BD es el monto real de esa cuota.
-            const dbAmt = dbAmountByDueDate.get(dueDate);
-            if (dbAmt && dbAmt > 0.01) return dbAmt;
-            return interestForDueShared(dueDate);
-          };
-
           // Conjunto de due_dates de cargos (evita mezclar pagos de cargos con cuotas regulares)
           const chargeDueDates = new Set<string>();
           for (const c of chargeInstallments) {
@@ -872,6 +850,33 @@ export const InstallmentsTable: React.FC<InstallmentsTableProps> = ({
           const { regular: regularPaidEntries } = splitChargeAndRegularPayments(
             unassignedPayments as any[], chargeTotalByDue,
           );
+
+          // Monto de cuota vigente: la cuota que vence en (abono_date + 1 periodo) se pagó con capital anterior.
+          // Así 5,000 pagado para vencimiento 18 mar (abono 18 feb) se muestra como 1 cuota de 5,000, no 2×2,500.
+          // La regla vive en `buildIndefiniteInterestResolver` y es la MISMA del pago avanzado, la
+          // mora y el balance: antes cada pantalla tenía su copia y el pago avanzado ninguna.
+          //
+          // Se arma DESPUÉS del reparto porque el resolutor necesita saber qué cuotas ya estaban
+          // pagadas cuando se hizo cada abono: esas conservan su importe (2026-10-20).
+          const interestForDueShared = buildIndefiniteInterestResolver({
+            amount: Number(loanInfo?.amount || 0),
+            interestRate: Number(loanInfo?.interest_rate || 0),
+            frequency: String(loanInfo?.payment_frequency || 'monthly'),
+            currentInterest: interestPerPayment,
+            capitalPayments: (capitalPaymentsDataRaw || []) as CapitalPaymentLike[],
+            firstDueIso: firstDueFromStart,
+            regularPaid: regularPaidEntries,
+          });
+          const getExpectedForDueDate = (dueDate: string): number => {
+            if (!dueDate) return interestPerPayment;
+            // Con ABONOS manda la regla por fecha, no lo que quedó guardado en la fila: si el
+            // abono no llegó a reescribirla, la tabla seguía pidiendo la cuota vieja.
+            if ((capitalPaymentsDataRaw || []).length > 0) return interestForDueShared(dueDate);
+            // Sin abonos, el total_amount de BD es el monto real de esa cuota.
+            const dbAmt = dbAmountByDueDate.get(dueDate);
+            if (dbAmt && dbAmt > 0.01) return dbAmt;
+            return interestForDueShared(dueDate);
+          };
 
           // Mora pagada por due_date (para mostrar en la columna "Mora Pagada")
           const lateFeePaidByDue = new Map<string, number>();

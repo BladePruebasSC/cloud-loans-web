@@ -68,14 +68,19 @@ import {
   computeDiscount, describeDiscount, discountFields, insertPaymentsWithDiscount, netToCollect,
   type DiscountMode,
 } from '@/utils/paymentDiscount';
-import { allocatePaymentsToPeriods, splitChargeAndRegularPayments } from '@/utils/chargeAwarePayments';
+import {
+  allocatePaymentsToPeriods, splitChargeAndRegularPayments, type RegularPaidEntry,
+} from '@/utils/chargeAwarePayments';
+import { getFirstDueDateIso } from '@/utils/frequencyUtils';
 import { Search, User } from 'lucide-react';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { generateLoanPaymentReceipt, openWhatsApp } from '@/utils/whatsappReceipt';
 import { formatDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { getLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
-import { buildIndefiniteInterestResolver, type CapitalPaymentLike } from '@/utils/indefiniteInterest';
+import {
+  buildIndefiniteInterestResolver, regularPaidForResolver, type CapitalPaymentLike,
+} from '@/utils/indefiniteInterest';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { AdvancedPaymentPanel } from './AdvancedPaymentPanel';
@@ -219,20 +224,40 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
    * fecha de cada período.
    */
   const [capitalPaymentsForLoan, setCapitalPaymentsForLoan] = useState<CapitalPaymentLike[]>([]);
+  /**
+   * Lo cobrado a CUOTAS, para que el resolutor sepa qué períodos ya estaban pagados cuando se
+   * hizo cada abono: esos conservan su importe y no se recalculan (2026-10-20).
+   */
+  const [regularPaidForLoan, setRegularPaidForLoan] = useState<RegularPaidEntry[]>([]);
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
       const esIndefinido = String((selectedLoan as any)?.amortization_type || '').toLowerCase() === 'indefinite';
       if (!selectedLoan?.id || !esIndefinido) {
         setCapitalPaymentsForLoan([]);
+        setRegularPaidForLoan([]);
         return;
       }
-      const { data, error } = await supabase
-        .from('capital_payments')
-        .select('amount, capital_before, capital_after, created_at')
-        .eq('loan_id', selectedLoan.id);
-      if (error) console.error('Error leyendo abonos a capital:', error);
-      if (!cancelled) setCapitalPaymentsForLoan((data || []) as CapitalPaymentLike[]);
+      const [abonosRes, pagosRes, cuotasRes] = await Promise.all([
+        supabase
+          .from('capital_payments')
+          .select('amount, capital_before, capital_after, created_at')
+          .eq('loan_id', selectedLoan.id),
+        supabase
+          .from('payments')
+          .select('amount, principal_amount, interest_amount, due_date, payment_date, status')
+          .eq('loan_id', selectedLoan.id),
+        supabase
+          .from('installments')
+          .select('due_date, total_amount, amount, principal_amount, interest_amount')
+          .eq('loan_id', selectedLoan.id),
+      ]);
+      if (abonosRes.error) console.error('Error leyendo abonos a capital:', abonosRes.error);
+      if (cancelled) return;
+      setCapitalPaymentsForLoan((abonosRes.data || []) as CapitalPaymentLike[]);
+      setRegularPaidForLoan(
+        regularPaidForResolver((pagosRes.data || []) as any[], (cuotasRes.data || []) as any[]),
+      );
     })();
     return () => { cancelled = true; };
   }, [selectedLoan?.id, (selectedLoan as any)?.amortization_type]);
@@ -248,16 +273,20 @@ export const PaymentForm = ({ onBack, preselectedLoan, onPaymentSuccess }: {
     const cuotaVigente = interestPerInstallment(selectedLoan as any);
     const due = String(dueIso || '').split('T')[0];
     if (!selectedLoan || capitalPaymentsForLoan.length === 0 || !due) return cuotaVigente;
+    const frecuencia = String((selectedLoan as any).payment_frequency || 'monthly');
+    const inicio = String((selectedLoan as any).start_date || '').split('T')[0];
     const resolver = buildIndefiniteInterestResolver({
       amount: (selectedLoan as any).amount,
       interestRate: (selectedLoan as any).interest_rate,
-      frequency: (selectedLoan as any).payment_frequency,
+      frequency: frecuencia,
       currentInterest: (selectedLoan as any).monthly_payment,
       capitalPayments: capitalPaymentsForLoan,
+      firstDueIso: inicio ? getFirstDueDateIso(inicio, frecuencia) : null,
+      regularPaid: regularPaidForLoan,
     });
     const cuota = resolver(due);
     return cuota > 0.005 ? cuota : cuotaVigente;
-  }, [selectedLoan, capitalPaymentsForLoan]);
+  }, [selectedLoan, capitalPaymentsForLoan, regularPaidForLoan]);
   
   // Ref para evitar recrear listeners innecesariamente
   const realtimeChannelRef = useRef<any>(null);
