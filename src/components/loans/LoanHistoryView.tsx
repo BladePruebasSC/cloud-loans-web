@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { PaymentActions } from './PaymentActions';
 import { sortPaymentsNewestFirst, sortPaymentsOldestFirst } from '@/utils/paymentOrdering';
-import { chargeHistoryBalances } from '@/utils/chargeHistoryBalances';
+import { chargeHistoryBalances, isPayChargesEntry, paymentIdsOfEntry } from '@/utils/chargeHistoryBalances';
 import { paymentCashReceived } from '@/utils/paymentDiscount';
 import { formatInTimeZone } from 'date-fns-tz';
 import { useAuth } from '@/hooks/useAuth';
@@ -106,6 +106,21 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
   const [companySettings, setCompanySettings] = useState<any>(null);
 
   const round2 = (n: number) => Math.round((Number(n || 0) * 100)) / 100;
+
+  /**
+   * Una entrada de "Pagar cargos": COBRA cargos, no los agrega.
+   *
+   * FALLO REPORTADO (2026-10-20): "cuando haces un pago por actualización-pagar cargos, este
+   * genera un historial de modificación erróneo: se crea un cargo, se paga, y en el historial
+   * sale de nuevo un 'Agregar Cargo' donde suma los 1,000 que se pagó al monto".
+   *
+   * Se iba por el mismo camino que un cargo nuevo porque la etiqueta se decidía con un
+   * `description.includes('Cargo')`, y "Pago de Cargos" también lleva esa palabra.
+   */
+  const esPagoDeCargos = isPayChargesEntry;
+
+  /** Los ids de los pagos que registró una entrada de "Pagar cargos" (van en sus notas). */
+  const pagosDeLaEntrada = paymentIdsOfEntry;
 
   // A qué cuota o cargo se aplicó cada pago. Mismo criterio que InstallmentsTable /
   // nextPaymentDateFromInstallments: los pagos SIN interés con la misma fecha de vencimiento
@@ -202,10 +217,16 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       )
     );
 
+    // Entran los dos movimientos que mueven los cargos: agregarlos (sube el saldo) y cobrarlos
+    // (lo baja). Antes solo entraban los primeros, así que un "Pagar cargos" enseñaba el saldo
+    // que la columna `remaining_balance` tuviera en ese momento —que podía estar vieja— en vez
+    // del que de verdad había antes y después del cobro (2026-10-20).
     const entries = (history || [])
       .filter((e) => {
         const t = String(e.change_type || '').toLowerCase();
-        return t === 'add_charge' || (t === 'balance_adjustment' && String(e.description || '').toLowerCase().includes('agregar cargo'));
+        const desc = String(e.description || '').toLowerCase();
+        if (esPagoDeCargos(e)) return true;
+        return t === 'add_charge' || (t === 'balance_adjustment' && desc.includes('agregar cargo'));
       })
       .map((e) => {
         const description = String(e.description || '');
@@ -213,7 +234,14 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
         const amount =
           (amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null) ??
           (Number((e as any).amount || 0) || 0);
-        return { id: e.id, created_at: e.created_at, amount: Number(amount) || 0 };
+        const cobro = esPagoDeCargos(e);
+        return {
+          id: e.id,
+          created_at: e.created_at,
+          amount: Number(amount) || 0,
+          kind: (cobro ? 'payment' : 'charge') as 'payment' | 'charge',
+          paymentIds: cobro ? pagosDeLaEntrada(e) : null,
+        };
       });
 
     return chargeHistoryBalances({
@@ -221,6 +249,7 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
       chargesTotal,
       entries,
       payments: (payments || []).map((p: any) => ({
+        id: p?.id ?? null,
         at: p?.created_at || p?.payment_time_local || p?.payment_date || null,
         amount: Number(p?.amount) || 0,
       })),
@@ -523,6 +552,11 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
     // Detectar tipos específicos basados en la descripción
     if (description.includes('Abono a capital')) {
       return 'Abono a Capital';
+    }
+    // Cobrar cargos no es agregarlos. Va ANTES del `includes('Cargo')` de abajo, que se tragaba
+    // "Pago de Cargos" y lo enseñaba como un cargo nuevo (2026-10-20).
+    if (esPagoDeCargos(entry)) {
+      return 'Cargo Saldado';
     }
     if (description.includes('Agregar Cargo') || description.includes('Cargo')) {
       return 'Agregar Cargo';
@@ -1501,7 +1535,11 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
 
                       // ✅ Si es "Agregar Cargo" (aunque venga como balance_adjustment),
                       // corregir los balances mostrados usando el cálculo acumulado (evita mostrar 244,000 otra vez).
+                      // También los cobros de cargos: su "antes" y "después" salen de la misma
+                      // cadena, así que un cargo que se agrega y se cobra sube y baja el mismo
+                      // importe en vez de sumarlo dos veces (2026-10-20).
                       const isAddChargeLike = (() => {
+                        if (esPagoDeCargos(entry)) return true;
                         const t = String(entry.change_type || '').toLowerCase();
                         if (t === 'add_charge') return true;
                         const desc = String(entry.description || '').toLowerCase();
@@ -1522,7 +1560,10 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                         <div className="flex items-center gap-3 mb-2">
                           {borrado
                             ? <Trash2 className="h-4 w-4 text-red-600" />
-                            : getChangeTypeIcon(entry.change_type)}
+                            : esPagoDeCargos(entry)
+                              // Un cargo cobrado se lee de un vistazo: baja la deuda.
+                              ? <CheckCircle className="h-4 w-4 text-green-600" />
+                              : getChangeTypeIcon(entry.change_type)}
                           <span className={`font-semibold ${borrado ? 'text-red-800' : ''}`}>
                             {getChangeTypeLabelWithUpdateType(entry)}
                           </span>
@@ -1570,16 +1611,33 @@ export const LoanHistoryView: React.FC<LoanHistoryViewProps> = ({
                           const displayReason = entry.reason || descInfo.reason;
                           const displayAmount = entry.amount || descInfo.amount;
 
+                          // Un cobro de cargos escribe la razón, el monto y el saldo en una sola
+                          // frase; de ahí salía un "Razón: . Monto: … Saldo: …" que no es una
+                          // razón. Se enseña su monto con su propio rótulo y se calla la razón
+                          // cuando no la hay (2026-10-20).
+                          const cobroDeCargos = esPagoDeCargos(entry);
+                          const razonLimpia = String(displayReason || '').replace(/^[.\s]+/, '').trim();
+                          const mostrarRazon = cobroDeCargos
+                            ? (razonLimpia.length > 0 && !/^monto:/i.test(razonLimpia) ? razonLimpia : null)
+                            : displayReason;
+
                           return (
                             <>
-                              {displayReason && (
+                              {mostrarRazon && (
                                 <div className="text-sm text-gray-600 mb-2">
-                                  <span className="font-medium">Razón:</span> {translateReason(displayReason)}
+                                  <span className="font-medium">Razón:</span> {translateReason(mostrarRazon)}
+                                </div>
+                              )}
+
+                              {/* Lo cobrado a los cargos */}
+                              {cobroDeCargos && displayAmount && (
+                                <div className="text-sm text-gray-600 mb-2">
+                                  <span className="font-medium">Monto Cobrado:</span> RD${displayAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>
                               )}
 
                               {/* Mostrar monto del cargo si existe */}
-                              {entry.change_type === 'balance_adjustment' && entry.description?.includes('Agregar Cargo') && displayAmount && (
+                              {!cobroDeCargos && entry.change_type === 'balance_adjustment' && entry.description?.includes('Agregar Cargo') && displayAmount && (
                                 <div className="text-sm text-gray-600 mb-2">
                                   <span className="font-medium">Monto del Cargo:</span> RD${displayAmount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>

@@ -27,11 +27,26 @@ export interface ChargeHistoryEntryLike {
   id: string;
   /** Cuándo se registró la entrada. Ordena la cadena y separa lo ya cobrado. */
   created_at?: string | null;
-  /** Monto del cargo que agregó esa entrada. */
+  /** Monto del cargo que agregó —o que cobró— esa entrada. Siempre en positivo. */
   amount: number;
+  /**
+   * `charge` (por defecto) agrega un cargo y SUBE el saldo; `payment` cobra cargos y lo BAJA.
+   *
+   * FALLO REPORTADO (2026-10-20): "cuando haces un pago por actualización-pagar cargos, este
+   * genera un historial de modificación erróneo: se crea un cargo, se paga, y en el historial
+   * sale de nuevo un 'agregar cargo' donde suma los 1,000 que se pagó al monto".
+   */
+  kind?: 'charge' | 'payment';
+  /**
+   * Los pagos que registró esta entrada. Se excluyen de "lo cobrado" para no descontarlos dos
+   * veces: la entrada ya los representa con su propio `amount`.
+   */
+  paymentIds?: Array<string | null | undefined> | null;
 }
 
 export interface ChargeHistoryPaymentLike {
+  /** Id del cobro, para poder enlazarlo con la entrada que lo registró. */
+  id?: string | null;
   /** Instante del cobro (el que la pantalla tenga: `created_at`, `payment_time_local`…). */
   at?: string | null;
   /** Lo acreditado al préstamo (sin mora). */
@@ -48,6 +63,42 @@ export interface ChargeHistoryBalance {
 const msOf = (value?: string | null): number | null => {
   const ms = Date.parse(String(value ?? ''));
   return Number.isFinite(ms) ? ms : null;
+};
+
+/** Las notas de una entrada del historial, que se guardan como JSON. */
+const notasDe = (entry: unknown): Record<string, unknown> | null => {
+  const notas = (entry as { notes?: unknown })?.notes;
+  if (notas && typeof notas === 'object') return notas as Record<string, unknown>;
+  if (typeof notas === 'string' && notas.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(notas);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;   // No todas las notas son JSON: algunas son texto del usuario.
+    }
+  }
+  return null;
+};
+
+/**
+ * ¿Esta entrada del historial COBRA cargos (en vez de agregarlos)?
+ *
+ * FALLO REPORTADO (2026-10-20): "cuando haces un pago por actualización-pagar cargos, este
+ * genera un historial de modificación erróneo: se crea un cargo, se paga, y en el historial sale
+ * de nuevo un 'Agregar Cargo' donde suma los 1,000 que se pagó al monto". La pantalla decidía la
+ * etiqueta con un `description.includes('Cargo')`, y "Pago de Cargos" también lleva esa palabra.
+ */
+export const isPayChargesEntry = (entry: unknown): boolean => {
+  const notas = notasDe(entry);
+  if (notas && String(notas.update_type || '') === 'pay_charges') return true;
+  const description = (entry as { description?: string | null } | null)?.description;
+  return /^\s*pago de cargos/i.test(String(description || ''));
+};
+
+/** Los pagos que registró una entrada de "Pagar cargos" (van en sus notas). */
+export const paymentIdsOfEntry = (entry: unknown): string[] => {
+  const ids = notasDe(entry)?.payment_ids;
+  return Array.isArray(ids) ? ids.filter(Boolean).map(String) : [];
 };
 
 /**
@@ -73,12 +124,27 @@ export function chargeHistoryBalances(input: {
   });
   if (entries.length === 0) return map;
 
-  const enElHistorial = round2(entries.reduce((s, e) => s + (Number(e?.amount) || 0), 0));
+  // Los CARGOS que agregó el historial. Los cobros no cuentan aquí: no crean cuotas.
+  const enElHistorial = round2(
+    entries
+      .filter((e) => e?.kind !== 'payment')
+      .reduce((s, e) => s + (Number(e?.amount) || 0), 0)
+  );
   // Los cargos que no salen del historial (gastos de cierre) ya estaban desde el principio.
   const cargosDeSiempre = Math.max(0, round2(round2(input.chargesTotal) - enElHistorial));
   const base = round2(round2(input.baseTotal) + cargosDeSiempre);
 
+  // Los cobros que registró una entrada se excluyen: esa entrada ya los representa con su
+  // propio monto, y contarlos además como "lo cobrado" los restaría dos veces.
+  const deEntradas = new Set<string>();
+  for (const entry of entries) {
+    for (const id of entry?.paymentIds || []) {
+      if (id) deEntradas.add(String(id));
+    }
+  }
+
   const cobros = (input.payments || [])
+    .filter((p) => !(p?.id && deEntradas.has(String(p.id))))
     .map((p) => ({ ms: msOf(p?.at), amount: Number(p?.amount) || 0 }))
     .filter((p) => p.amount > 0.005);
 
@@ -86,6 +152,7 @@ export function chargeHistoryBalances(input: {
   for (const entry of entries) {
     const monto = Number(entry?.amount) || 0;
     const entryMs = msOf(entry?.created_at);
+    const esCobro = entry?.kind === 'payment';
 
     // Lo cobrado ANTES de esta entrada. Sin instante en la entrada no se descuenta nada: más
     // vale no restar que restar de más.
@@ -94,10 +161,11 @@ export function chargeHistoryBalances(input: {
       : round2(cobros.reduce((s, c) => (c.ms !== null && c.ms < entryMs ? s + c.amount : s), 0));
 
     const prev = Math.max(0, round2(base + acumulado - cobrado));
-    const next = Math.max(0, round2(prev + monto));
+    // Agregar un cargo SUBE el saldo; cobrarlo lo BAJA.
+    const next = Math.max(0, round2(esCobro ? prev - monto : prev + monto));
     map.set(entry.id, { prev, next });
 
-    acumulado = round2(acumulado + monto);
+    acumulado = round2(acumulado + (esCobro ? -monto : monto));
   }
 
   return map;
