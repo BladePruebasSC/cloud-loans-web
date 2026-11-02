@@ -433,15 +433,26 @@ export interface CashflowTotals {
   /** Dinero que entró de verdad: lo acreditado menos los descuentos */
   collected: number;
   pos: number;
-  /** Ingreso real del negocio: interés + mora + POS − descuentos (el capital es recuperación) */
+  /** Ingreso real del negocio: interés + mora + penalidad + POS − descuentos (el capital es recuperación) */
   income: number;
   /** Descuentos concedidos en los pagos del período */
   discount: number;
+  /**
+   * PENALIDADES cobradas en el período (las de los abonos a capital).
+   *
+   * CAMBIO SOLICITADO (2026-11-02): "la penalidad es dinero que entra a la empresa, tienes que
+   * representarlo como tal, como ingreso; que siga siendo penalidad pero se represente como un
+   * ingreso". Hasta ahora no se contaba en ninguna parte como dinero: el abono a capital entra
+   * como RECUPERACIÓN (es capital que vuelve) y la penalidad, que es lo que el cliente paga de
+   * más por abonar, no entraba ni en lo cobrado ni en los ingresos.
+   */
+  penalty: number;
   count: number;
 }
 
 const emptyTotals = (): CashflowTotals => ({
-  capital: 0, interest: 0, lateFee: 0, collected: 0, pos: 0, income: 0, discount: 0, count: 0,
+  capital: 0, interest: 0, lateFee: 0, collected: 0, pos: 0, income: 0, discount: 0,
+  penalty: 0, count: 0,
 });
 
 const addPayment = (t: CashflowTotals, p: PaymentLike) => {
@@ -464,10 +475,12 @@ const seal = (t: CashflowTotals): CashflowTotals => ({
   capital: round2(t.capital),
   interest: round2(t.interest),
   lateFee: round2(t.lateFee),
-  collected: round2(t.collected),
+  // La penalidad es dinero que entró: cuenta en lo cobrado y en el ingreso (2026-11-02).
+  collected: round2(t.collected + t.penalty),
   pos: round2(t.pos),
-  income: round2(t.interest + t.lateFee + t.pos - t.discount),
+  income: round2(t.interest + t.lateFee + t.penalty + t.pos - t.discount),
   discount: round2(t.discount),
+  penalty: round2(t.penalty),
   count: t.count,
 });
 
@@ -515,7 +528,12 @@ const previousMonthKey = (key: string) => {
 export const computeCashflow = (
   payments: PaymentLike[],
   sales: SaleLike[],
-  todayIso: string
+  todayIso: string,
+  /**
+   * Penalidades con su día. Son INGRESO (2026-11-02): el cliente las paga, no son capital que
+   * vuelve. Van en su propia columna —se siguen llamando penalidad— y además suman al ingreso.
+   */
+  penalties: PenaltyPoint[] = [],
 ): CashflowSummary => {
   const today = emptyTotals();
   const yesterday = emptyTotals();
@@ -555,6 +573,19 @@ export const computeCashflow = (
     else if (k === prevKey) previousMonth.pos += amt;
   }
 
+  for (const p of penalties || []) {
+    const d = dateOnly(p?.date);
+    const amt = round2(Number(p?.amount) || 0);
+    if (!d || amt <= 0.005) continue;
+    allTime.penalty += amt;
+    if (d === todayIso) today.penalty += amt;
+    if (d === yIso) yesterday.penalty += amt;
+    if (d >= weekStart && d <= todayIso) week.penalty += amt;
+    const k = monthKey(d);
+    if (k === mKey) month.penalty += amt;
+    else if (k === prevKey) previousMonth.penalty += amt;
+  }
+
   const sealedMonth = seal(month);
   const sealedPrev = seal(previousMonth);
 
@@ -582,6 +613,8 @@ export interface RecoveryMetrics {
   recoveryPct: number;
   interestEarned: number;
   lateFeeEarned: number;
+  /** Penalidades cobradas: ingreso, como el interés y la mora (2026-11-02). */
+  penaltyIncome: number;
   posIncome: number;
   totalIncome: number;
   /** Ingreso por interés sobre el capital colocado */
@@ -600,6 +633,7 @@ export const computeRecovery = (
     recoveryPct: round2(Math.min(100, pct(capitalRecovered, capitalLent))),
     interestEarned: cashflow.allTime.interest,
     lateFeeEarned: cashflow.allTime.lateFee,
+    penaltyIncome: cashflow.allTime.penalty,
     posIncome: cashflow.allTime.pos,
     totalIncome: cashflow.allTime.income,
     yieldPct: round2(pct(cashflow.allTime.interest, capitalLent)),
@@ -617,11 +651,11 @@ export interface MonthlyPoint {
   interes: number;
   mora: number;
   pos: number;
-  cobrado: number;  // capital + interés + mora
-  ingreso: number;  // interés + mora + POS
+  cobrado: number;  // capital + interés + mora + penalidad
+  ingreso: number;  // interés + mora + penalidad + POS − descuentos
   colocado: number; // capital desembolsado ese mes
   prestamos: number;
-  /** Penalidades aplicadas ese mes (las de los abonos a capital con penalidad) */
+  /** Penalidades cobradas ese mes (las de los abonos a capital). Son ingreso (2026-11-02). */
   penalidad: number;
   /** Descuentos concedidos en los pagos de ese mes */
   descuento: number;
@@ -650,7 +684,9 @@ export const buildMonthlySeries = (
   months = 6,
   /**
    * Penalidades del período (las que se cobran al hacer un abono a capital). Van en su propia
-   * columna: NO se suman al cobrado ni al ingreso, porque ya entraron con su abono.
+   * columna —se siguen llamando penalidad— y ADEMÁS suman a lo cobrado y al ingreso: es dinero
+   * que el cliente paga y que entra a la empresa (2026-11-02). Antes se dejaban fuera dando por
+   * hecho que "ya entraron con su abono", pero el abono solo trae el capital.
    */
   penalties: PenaltyPoint[] = [],
 ): MonthlyPoint[] => {
@@ -709,8 +745,9 @@ export const buildMonthlySeries = (
       interes: round2(p.interes),
       mora: round2(p.mora),
       pos: round2(p.pos),
-      cobrado: round2(p.cobrado),
-      ingreso: round2(p.interes + p.mora + p.pos - p.descuento),
+      // La penalidad entra en las dos: es dinero cobrado al cliente y es ingreso (2026-11-02).
+      cobrado: round2(p.cobrado + p.penalidad),
+      ingreso: round2(p.interes + p.mora + p.penalidad + p.pos - p.descuento),
       colocado: round2(p.colocado),
       penalidad: round2(p.penalidad),
       descuento: round2(p.descuento),

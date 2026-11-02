@@ -18,9 +18,10 @@
 // Las dos cosas se enseñan, separadas y explicadas, en vez de una sola cifra engañosa.
 
 import { getSaleAmount } from '../../portfolioMetrics';
-import { dateOnly, indexLoans, round2, type ReportData } from '../reportDataset';
+import { PENALTY_SOURCE_LABEL } from '../../loanPenalties';
+import { clientNameOf, dateOnly, indexLoans, round2, type ReportData } from '../reportDataset';
 import { inPeriod, previousPeriod } from '../reportPeriods';
-import { groupRows } from '../reportFilters';
+import { applyCommonFilters, groupRows } from '../reportFilters';
 import type { ReportDefinition, ReportRow } from '../reportTypes';
 import { breakdownOf } from './paymentReports';
 
@@ -86,7 +87,13 @@ export const financialTotals = (
     .reduce((s, l) => s + (Number(l.amount) || 0), 0);
 
   // El descuento no entró en la caja: se perdonó. Por eso se resta de las entradas.
-  const entradas = round2(capitalCobrado + interes + cargos + mora + abonos + ventas - descuentos);
+  //
+  // Las PENALIDADES sí entraron (2026-11-02): el abono a capital trae el capital y la penalidad
+  // es lo que el cliente paga de más por abonar. Estaban en el ingreso operativo pero no en las
+  // entradas de caja, así que el flujo neto se quedaba corto por ese importe.
+  const entradas = round2(
+    capitalCobrado + interes + cargos + mora + abonos + penalidades + ventas - descuentos,
+  );
   const salidas = round2(gastos + desembolsos);
   const ingresoOperativo = round2(interes + cargos + mora + penalidades + ventas - descuentos);
 
@@ -145,7 +152,7 @@ export const financialReports: ReportDefinition<ReportData>[] = [
         fila('Interés cobrado', 'interes', 'INGRESO: lo que cobra el negocio por prestar.'),
         fila('Mora cobrada', 'mora', 'INGRESO: penalidad por atraso ya cobrada.'),
         fila('Cargos cobrados', 'cargos', 'INGRESO: cargos y comisiones cobrados con las cuotas.'),
-        fila('Penalidades', 'penalidades', 'INGRESO: las penalidades cobradas al hacer un abono a capital.'),
+        fila('Penalidades cobradas', 'penalidades', 'INGRESO: lo que paga el cliente por abonar a capital. Entra en caja como el interés.'),
         fila('Ventas (punto de venta)', 'ventas', 'INGRESO bruto del punto de venta, con ITBIS incluido.'),
         fila('Descuentos otorgados', 'descuentos', 'Dinero perdonado en los cobros: nunca entró en la caja.'),
         fila('Gastos', 'gastos', 'EGRESO: gastos registrados en el período.'),
@@ -193,6 +200,9 @@ export const financialReports: ReportDefinition<ReportData>[] = [
       { key: 'mes', label: 'Mes', align: 'left' },
       { key: 'cobros', label: 'Cobros', format: 'money', total: true },
       { key: 'abonos', label: 'Abonos', format: 'money', total: true },
+      // La penalidad del abono a capital es dinero que entra: va en su columna y dentro de
+      // "Entradas", para que la fila cuadre (2026-11-02).
+      { key: 'penalidades', label: 'Penalidades', format: 'money', total: true },
       { key: 'ventas', label: 'Ventas', format: 'money', total: true },
       { key: 'entradas', label: 'Entradas', format: 'money', total: true },
       { key: 'gastos', label: 'Gastos', format: 'money', total: true },
@@ -223,6 +233,7 @@ export const financialReports: ReportDefinition<ReportData>[] = [
           mes,
           cobros: round2(t.capitalCobrado + t.interes + t.cargos + t.mora - t.descuentos),
           abonos: t.abonos,
+          penalidades: t.penalidades,
           ventas: t.ventas,
           entradas: t.entradas,
           gastos: t.gastos,
@@ -307,6 +318,77 @@ export const financialReports: ReportDefinition<ReportData>[] = [
         notes: [
           'El interés por cobrar es el del saldo vivo de hoy. En los préstamos indefinidos el '
           + 'interés no tiene final: se cuenta solo el período que está corriendo.',
+        ],
+      };
+    },
+  },
+
+  // CAMBIO SOLICITADO (2026-11-02): "la penalidad es dinero que entra a la empresa, represéntalo
+  // como ingreso; que siga siendo penalidad pero se represente como un ingreso en los reportes".
+  // Ya suma en el resumen financiero, en el flujo y en los ingresos del inicio; esto es el
+  // detalle: de dónde salió cada peso de ese ingreso.
+  {
+    id: 'fin-penalties',
+    name: 'Penalidades cobradas',
+    category: 'financiero',
+    description: 'Ingreso por penalidades: las que paga el cliente al abonar a capital, una por una.',
+    permission: 'reports.financial',
+    dataset: 'core',
+    columns: [
+      { key: 'fecha', label: 'Fecha', format: 'date' },
+      { key: 'cliente', label: 'Cliente', align: 'left' },
+      { key: 'base', label: 'Capital base', format: 'money' },
+      { key: 'porcentaje', label: '%', format: 'percent' },
+      { key: 'monto', label: 'Penalidad cobrada', format: 'money', total: true },
+      { key: 'origen', label: 'Origen', align: 'left' },
+    ],
+    filters: ['search', 'clientId', 'minAmount', 'maxAmount'],
+    defaultSort: { key: 'fecha', dir: 'desc' },
+    keywords: ['penalidad', 'penalidades', 'ingreso por penalidades', 'abono a capital'],
+    build: ctx => {
+      const { data, filters } = ctx;
+      const loans = indexLoans(data);
+      const rows: ReportRow[] = (data.penalties || [])
+        .filter(p => inPeriod(dateOnly((p as any).created_at), filters))
+        .filter(p => !filters.clientId || loans.get(p.loan_id)?.client_id === filters.clientId)
+        .map(p => {
+          const loan = loans.get(p.loan_id);
+          return {
+            _id: p.id,
+            _loanId: p.loan_id,
+            _clientId: loan?.client_id,
+            fecha: dateOnly((p as any).created_at),
+            cliente: loan ? clientNameOf(loan, data) : 'Préstamo eliminado',
+            base: p.base_amount === null || p.base_amount === undefined ? 0 : round2(p.base_amount),
+            porcentaje: p.percentage === null || p.percentage === undefined ? 0 : Number(p.percentage),
+            monto: round2(Number(p.amount) || 0),
+            origen: PENALTY_SOURCE_LABEL[p.source] || 'Otra actualización',
+          } as ReportRow;
+        });
+
+      const filtradas = applyCommonFilters(rows, filters, 'monto');
+      const total = round2(filtradas.reduce((s, r) => s + (Number(r.monto) || 0), 0));
+      const ingreso = financialTotals(data, filters).ingresoOperativo;
+
+      return {
+        rows: filtradas,
+        kpis: [
+          { key: 'monto', label: 'Penalidades cobradas', value: total, format: 'money' },
+          { key: 'cantidad', label: 'Penalidades', value: filtradas.length, format: 'number' },
+          {
+            key: 'peso', label: '% del ingreso operativo', format: 'percent',
+            value: ingreso > 0 ? round2((total / ingreso) * 100) : 0,
+          },
+        ],
+        charts: filtradas.length > 1
+          ? [{
+              kind: 'bar' as const, title: 'Penalidades cobradas', xKey: 'fecha',
+              series: [{ key: 'monto', label: 'Penalidad' }], money: true,
+            }]
+          : undefined,
+        notes: [
+          'La penalidad es INGRESO: la paga el cliente por abonar a capital, igual que el interés. '
+          + 'El abono en sí no lo es, porque es capital que vuelve.',
         ],
       };
     },

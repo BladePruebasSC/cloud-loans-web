@@ -1838,7 +1838,13 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center justify-between">
-                    <span>PENALIDAD</span>
+                    <span>
+                      PENALIDAD
+                      {/* Es ingreso de la empresa: el cliente la paga por abonar (2026-11-02). */}
+                      <span className="ml-2 align-middle text-xs font-normal text-emerald-700">
+                        ingreso cobrado
+                      </span>
+                    </span>
                     <span className={`text-lg ${penaltyTotal > 0 ? 'text-orange-600' : 'text-gray-500'}`}>
                       RD {penaltyTotal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
@@ -1848,8 +1854,9 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                   {penaltyRows.length === 0 ? (
                     <p className="text-sm text-gray-500">
                       Sin penalidades. Se suman aquí las que se cobran al hacer un abono a capital
-                      con la casilla "Penalidad" marcada. Un cargo con la razón "Cargo por
-                      Penalización" es un cargo normal y sale en los cargos, no aquí.
+                      con la casilla "Penalidad" marcada: son un ingreso de la empresa. Un cargo
+                      con la razón "Cargo por Penalización" es un cargo normal y sale en los
+                      cargos, no aquí.
                     </p>
                   ) : (
                     <div className="overflow-x-auto">
@@ -1890,9 +1897,11 @@ export const LoanDetailsView: React.FC<LoanDetailsViewProps> = ({
                         </tbody>
                       </table>
                       {/* La penalidad se cobró junto con su abono a capital: no es una deuda
-                          aparte ni se suma al balance (2026-10-14). */}
+                          aparte ni se suma al balance (2026-10-14). Pero sí es dinero que entró,
+                          así que cuenta como INGRESO del negocio (2026-11-02). */}
                       <p className="mt-3 text-xs text-gray-500">
-                        Se cobraron junto con su abono a capital: no se suman aparte al balance.
+                        Se cobraron junto con su abono a capital: no se suman al balance del
+                        préstamo —ya están pagadas— y cuentan como ingreso de la empresa.
                       </p>
                     </div>
                   )}

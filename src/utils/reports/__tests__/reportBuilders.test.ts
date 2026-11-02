@@ -296,8 +296,12 @@ describe('Financiero: la ganancia no es "todo lo que entró"', () => {
   });
 
   it('Entradas, salidas y flujo cuadran entre sí', () => {
+    // La PENALIDAD entra en caja (2026-11-02): el abono a capital trae el capital y la penalidad
+    // es lo que el cliente paga de más por abonar. Antes contaba en el ingreso operativo pero no
+    // en las entradas, así que el flujo neto se quedaba corto por ese importe.
     expect(t.entradas).toBe(
-      Math.round((t.capitalCobrado + t.interes + t.cargos + t.mora + t.abonos + t.ventas - t.descuentos) * 100) / 100,
+      Math.round((t.capitalCobrado + t.interes + t.cargos + t.mora + t.abonos
+        + t.penalidades + t.ventas - t.descuentos) * 100) / 100,
     );
     expect(t.salidas).toBe(t.gastos + t.desembolsos);
     expect(t.flujoNeto).toBe(Math.round((t.entradas - t.salidas) * 100) / 100);
@@ -316,7 +320,32 @@ describe('Financiero: la ganancia no es "todo lo que entró"', () => {
     const fila = (id: string) => res.rows.find(r => r._id === id);
     expect(fila('resultado')?.monto).toBe(t.resultado);
     expect(fila('gastos')?.monto).toBe(2000);
+    expect(fila('penalidades')?.monto).toBe(200);
     expect(res.kpis?.find(k => k.key === 'resultado')?.value).toBe(t.resultado);
+  });
+
+  // CAMBIO SOLICITADO (2026-11-02): la penalidad es dinero que entra y se presenta como ingreso,
+  // sin dejar de llamarse penalidad.
+  it('Las penalidades tienen su propio reporte de ingreso', () => {
+    const res = run('fin-penalties', data);
+    expect(res.rows).toHaveLength(1);
+    expect(res.rows[0].monto).toBe(200);
+    expect(res.rows[0]._loanId).toBe('L1');
+    expect(res.kpis?.find(k => k.key === 'monto')?.value).toBe(200);
+    expect(res.kpis?.find(k => k.key === 'cantidad')?.value).toBe(1);
+    // Cuánto pesa dentro de lo que gana el negocio.
+    expect(res.kpis?.find(k => k.key === 'peso')?.value)
+      .toBe(Math.round((200 / t.ingresoOperativo) * 100 * 100) / 100);
+  });
+
+  it('El flujo mensual enseña la penalidad en su columna y dentro de las entradas', () => {
+    const res = run('fin-cashflow', data);
+    expect(sum(res.rows, 'penalidades')).toBe(200);
+    for (const fila of res.rows) {
+      const suma = Number(fila.cobros) + Number(fila.abonos)
+        + Number(fila.penalidades) + Number(fila.ventas);
+      expect(Math.round(suma * 100) / 100).toBe(fila.entradas);
+    }
   });
 });
 

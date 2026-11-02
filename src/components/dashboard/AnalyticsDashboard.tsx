@@ -97,6 +97,7 @@ export const AnalyticsDashboard: React.FC = () => {
       ['% recuperación de capital', recovery.recoveryPct],
       ['Interés cobrado', recovery.interestEarned],
       ['Mora cobrada', recovery.lateFeeEarned],
+      ['Penalidades cobradas', recovery.penaltyIncome],
       ['Ingresos POS', recovery.posIncome],
       ['Ingreso total', recovery.totalIncome],
       ['Saldo activo', portfolio.activeBalance],
@@ -241,6 +242,8 @@ export const AnalyticsDashboard: React.FC = () => {
                   {[
                     { label: 'Interés cobrado', value: recovery.interestEarned, color: 'bg-green-500' },
                     { label: 'Mora cobrada', value: recovery.lateFeeEarned, color: 'bg-red-500' },
+                    // La penalidad del abono a capital es ingreso, como el interés (2026-11-02).
+                    { label: 'Penalidades cobradas', value: recovery.penaltyIncome, color: 'bg-orange-500' },
                     { label: 'Ventas POS', value: recovery.posIncome, color: 'bg-amber-500' },
                   ].map(r => {
                     const p = recovery.totalIncome > 0 ? (r.value / recovery.totalIncome) * 100 : 0;
@@ -264,8 +267,10 @@ export const AnalyticsDashboard: React.FC = () => {
                 </div>
               </Panel>
 
-              {/* Apartado de PENALIDADES: las que se cobran al hacer un abono a capital */}
-              <Panel title="Penalidades" subtitle="Cobradas al hacer un abono a capital"
+              {/* Apartado de PENALIDADES: las que se cobran al hacer un abono a capital.
+                  Son INGRESO (2026-11-02): ya cuentan en "Ingresos del mes", en el ingreso total
+                  y en lo cobrado; aquí se ven por separado, que es como las piensa el negocio. */}
+              <Panel title="Penalidades" subtitle="Ingreso cobrado al hacer un abono a capital"
                 action={<Button size="sm" variant="outline" onClick={() => setTab('penalidades')}>Ver detalle</Button>}>
                 <div className="space-y-4">
                   <div>
@@ -587,7 +592,7 @@ export const AnalyticsDashboard: React.FC = () => {
           {/* ---------------- PENALIDADES ---------------- */}
           <TabsContent value="penalidades" className="space-y-5">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <Kpi icon={ShieldAlert} label="Penalidad total aplicada" tone="bg-orange-100 text-orange-700"
+              <Kpi icon={ShieldAlert} label="Penalidad cobrada (ingreso)" tone="bg-orange-100 text-orange-700"
                 value={money(penaltySummary.allTime.total)}
                 sub={`${penaltySummary.allTime.count} ${penaltySummary.allTime.count === 1 ? 'penalidad' : 'penalidades'}`} />
               <Kpi icon={CalendarDays} label="Este mes" tone="bg-amber-100 text-amber-700"
@@ -598,6 +603,12 @@ export const AnalyticsDashboard: React.FC = () => {
               <Kpi icon={PiggyBank} label="En abonos a capital" tone="bg-orange-100 text-orange-700"
                 value={money(penaltySummary.bySource.capital_payment.total)}
                 sub={`${penaltySummary.bySource.capital_payment.count} abono${penaltySummary.bySource.capital_payment.count === 1 ? '' : 's'} con penalidad`} />
+              {/* Cuánto pesa la penalidad dentro de lo que gana el negocio (2026-11-02). */}
+              <Kpi icon={TrendingUp} label="Peso en el ingreso" tone="bg-emerald-100 text-emerald-700"
+                value={`${(recovery.totalIncome > 0
+                  ? (penaltySummary.allTime.total / recovery.totalIncome) * 100
+                  : 0).toFixed(1)}%`}
+                sub={`del ingreso total (${money(recovery.totalIncome)})`} />
             </div>
 
             <Panel title="Penalidades por mes" subtitle="Monto aplicado cada mes"

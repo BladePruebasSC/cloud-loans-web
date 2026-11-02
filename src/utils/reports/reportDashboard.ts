@@ -83,7 +83,7 @@ export const buildDashboard = (
         {
           key: 'cobrado', label: 'Total cobrado', value: act.entradas, format: 'money',
           previous: ant.entradas, linkTo: 'payments-received',
-          hint: 'Cobros, abonos y ventas, menos descuentos',
+          hint: 'Cobros, abonos, penalidades y ventas, menos descuentos',
         },
         {
           key: 'capital', label: 'Capital recuperado', value: round2(act.capitalCobrado + act.abonos),
@@ -96,6 +96,12 @@ export const buildDashboard = (
         {
           key: 'mora', label: 'Mora cobrada', value: act.mora, format: 'money',
           previous: ant.mora, linkTo: 'arrears-recovery',
+        },
+        // La penalidad del abono a capital es INGRESO (2026-11-02): se enseña al lado del
+        // interés y de la mora, que es lo que es.
+        {
+          key: 'penalidades', label: 'Penalidades cobradas', value: act.penalidades, format: 'money',
+          previous: ant.penalidades, linkTo: 'fin-penalties', permission: 'reports.financial',
         },
         {
           key: 'ventas', label: 'Ventas', value: act.ventas, format: 'money',

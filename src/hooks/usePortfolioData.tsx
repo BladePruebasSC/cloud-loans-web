@@ -515,7 +515,12 @@ export const usePortfolioData = () => {
     }),
     [loansForMetrics, todayIso, overdueFactsByLoan, lateFeeByLoan, awaitingApprovalCount],
   );
-  const cashflow = useMemo(() => computeCashflow(cashflowPayments, sales, todayIso), [cashflowPayments, sales, todayIso]);
+  // Las penalidades entran en el flujo como INGRESO (2026-11-02): el abono a capital es
+  // recuperación —capital que vuelve— pero la penalidad es lo que el cliente paga de más.
+  const cashflow = useMemo(
+    () => computeCashflow(cashflowPayments, sales, todayIso, penaltyPoints),
+    [cashflowPayments, sales, todayIso, penaltyPoints],
+  );
   const recovery = useMemo(() => computeRecovery(loans, cashflow), [loans, cashflow]);
 
   const agenda = useMemo(

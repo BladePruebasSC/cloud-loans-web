@@ -14,7 +14,8 @@ import {
   recordLoanPenalty, summarizePenalties,
 } from '../loanPenalties';
 import {
-  computePortfolioSnapshot, splitLoansForDashboard, buildMonthlySeries, CANCELLED_BEFORE_APPROVAL_REASON,
+  computeCashflow, computePortfolioSnapshot, splitLoansForDashboard, buildMonthlySeries,
+  CANCELLED_BEFORE_APPROVAL_REASON,
 } from '../portfolioMetrics';
 import { getFrequencyName } from '../frequencyUtils';
 
@@ -150,7 +151,12 @@ describe('dashboard: préstamos por aprobar', () => {
 });
 
 describe('dashboard: penalidades por mes', () => {
-  it('Cada penalidad cae en su mes y NO se suma al cobrado ni al ingreso', () => {
+  // CAMBIO SOLICITADO (2026-11-02): "la penalidad es dinero que entra a la empresa, tienes que
+  // representarlo como tal, como ingreso; que siga siendo penalidad pero se represente como un
+  // ingreso". Antes se dejaba fuera del cobrado y del ingreso dando por hecho que "ya entraba con
+  // su abono", pero el abono a capital solo trae el CAPITAL: la penalidad es lo que el cliente
+  // paga de más, y no se contaba en ninguna parte como dinero.
+  it('Cada penalidad cae en su mes, en su columna, y suma al cobrado y al ingreso', () => {
     const serie = buildMonthlySeries([], [], [], '2026-09-18', 3, [
       { date: '2026-09-02', amount: 3000 },
       { date: '2026-09-15', amount: 1500.5 },
@@ -161,7 +167,35 @@ describe('dashboard: penalidades por mes', () => {
     expect(serie.map(s => [s.key, s.penalidad])).toEqual([
       ['2026-07', 0], ['2026-08', 3749.5], ['2026-09', 4500.5],
     ]);
-    expect(serie.every(s => s.cobrado === 0 && s.ingreso === 0)).toBe(true);
+    // Sin pagos ni ventas, todo el cobrado y todo el ingreso del mes son la penalidad.
+    expect(serie.map(s => [s.cobrado, s.ingreso])).toEqual([
+      [0, 0], [3749.5, 3749.5], [4500.5, 4500.5],
+    ]);
+  });
+
+  it('En el flujo de caja la penalidad es ingreso, no recuperación de capital', () => {
+    const flujo = computeCashflow([], [], '2026-09-18', [
+      { date: '2026-09-18', amount: 900 },
+      { date: '2026-09-01', amount: 100 },
+      { date: null, amount: 50 },   // sin fecha: se ignora
+    ]);
+
+    expect(flujo.today.penalty).toBe(900);
+    expect(flujo.today.income).toBe(900);
+    expect(flujo.today.collected).toBe(900);
+    // No es capital recuperado: el capital que vuelve entra con el abono.
+    expect(flujo.today.capital).toBe(0);
+
+    expect(flujo.month.penalty).toBe(1000);
+    expect(flujo.month.income).toBe(1000);
+    expect(flujo.allTime.penalty).toBe(1000);
+  });
+
+  it('Sin penalidades, el flujo no cambia', () => {
+    const flujo = computeCashflow([], [], '2026-09-18');
+    expect(flujo.allTime.penalty).toBe(0);
+    expect(flujo.allTime.income).toBe(0);
+    expect(flujo.allTime.collected).toBe(0);
   });
 });
 

@@ -184,9 +184,11 @@ export const HomeModule: React.FC = () => {
                     Incluye {capitalToday.count === 1 ? 'un abono' : `${capitalToday.count} abonos`} a capital: {formatCurrency(capitalToday.amount)}
                   </span>
                 )}
+                {/* La penalidad del abono a capital también entró en caja y ya está sumada en
+                    "Cobrado hoy": se dice aparte porque es un ingreso distinto (2026-11-02). */}
                 {penaltySummary.today.count > 0 && (
                   <span className="block text-orange-600 font-medium">
-                    Penalidades aplicadas hoy: {formatCurrency(penaltySummary.today.total)}
+                    Incluye penalidades cobradas: {formatCurrency(penaltySummary.today.total)}
                   </span>
                 )}
               </>
@@ -447,14 +449,15 @@ export const HomeModule: React.FC = () => {
                         cls: 'text-teal-700',
                       }]
                     : []),
-                  // Penalidades aplicadas (las de los abonos a capital con penalidad).
+                  // Ingreso por penalidades (las de los abonos a capital). Ya están dentro de
+                  // "Cobrado este mes" y de los ingresos: aquí se ven por separado (2026-11-02).
                   {
-                    label: `Penalidades este mes${penaltySummary.month.count > 0 ? ` (${penaltySummary.month.count})` : ''}`,
+                    label: `Penalidades cobradas este mes${penaltySummary.month.count > 0 ? ` (${penaltySummary.month.count})` : ''}`,
                     value: formatCurrency(penaltySummary.month.total),
                     cls: penaltySummary.month.total > 0 ? 'text-orange-600' : '',
                   },
                   {
-                    label: 'Penalidad acumulada',
+                    label: 'Penalidades cobradas (histórico)',
                     value: formatCurrency(penaltySummary.allTime.total),
                     cls: penaltySummary.allTime.total > 0 ? 'text-orange-600' : '',
                   },
