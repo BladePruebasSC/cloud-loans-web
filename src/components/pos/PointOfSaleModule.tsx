@@ -901,6 +901,11 @@ export const PointOfSaleModule = () => {
           }));
 
           const { error: detailsError } = await supabase.from('sale_details').insert(details);
+            if (detailsError) {
+              // Por qué la venta acaba en el esquema simple. Antes este fallo se tragaba en
+              // silencio y no había forma de saber por qué los reportes no veían el detalle.
+              console.warn('[venta] no se pudo guardar el detalle; se usa el esquema simple:', detailsError);
+            }
             if (!detailsError) {
               saleSaved = true;
               // Actualizar stock
@@ -914,7 +919,8 @@ export const PointOfSaleModule = () => {
             }
           }
         } catch (inner) {
-          // Ignorar error, intentar esquema simple
+          // Se intenta el esquema simple, pero se deja dicho POR QUÉ.
+          console.warn('[venta] el esquema con detalle falló; se intenta el simple:', inner);
         }
 
         // Si no se insertó con el esquema nuevo, usar esquema simple

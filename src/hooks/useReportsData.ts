@@ -83,6 +83,27 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
     }
   }
 
+  // ESQUEMA SIMPLE (2026-11-17). Hay bases donde una venta NO tiene filas en `sale_details`:
+  // cada fila de `sales` ES una línea de venta (product_id, quantity, unit_price, total_price).
+  // Todos los reportes de ventas leen el DETALLE, así que en esas bases "Productos vendidos"
+  // salía vacío, la columna "Artículos" en 0 y el ITBIS en 0. Aquí se arma el detalle con lo que
+  // la propia fila trae, para que los reportes vean lo mismo en los dos esquemas.
+  const filasSinDetalle = (sales || []).filter((s: any) => !detailsBySale.has(s.id) && s.product_id);
+  const productosDeVentas = new Map<string, { name: string | null; itbis_rate: number | null }>();
+  if (filasSinDetalle.length > 0) {
+    const ids = [...new Set(filasSinDetalle.map((s: any) => String(s.product_id)))];
+    const { data: productos } = await supabase
+      .from('products')
+      .select('id, name, itbis_rate')
+      .in('id', ids);
+    for (const p of productos || []) {
+      productosDeVentas.set(String((p as any).id), {
+        name: (p as any).name ?? null,
+        itbis_rate: (p as any).itbis_rate ?? null,
+      });
+    }
+  }
+
   const rows: SaleRow[] = (sales || []).map((s: any) => ({
     id: s.id,
     sale_date: s.sale_date ?? null,
@@ -98,16 +119,28 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
     client_id: s.client_id ?? null,
     user_id: s.user_id ?? null,
     sale_number: s.sale_number ?? s.invoice_number ?? null,
-    details: (detailsBySale.get(s.id) || []).map((d: any) => ({
-      id: d.id,
-      sale_id: d.sale_id,
-      product_id: d.product_id ?? null,
-      product_name: d.products?.name ?? d.product_name ?? null,
-      quantity: d.quantity ?? null,
-      unit_price: d.unit_price ?? null,
-      total_price: d.total_price ?? null,
-      itbis_rate: d.products?.itbis_rate ?? d.itbis_rate ?? null,
-    })),
+    details: (detailsBySale.get(s.id) || []).length > 0
+      ? (detailsBySale.get(s.id) || []).map((d: any) => ({
+        id: d.id,
+        sale_id: d.sale_id,
+        product_id: d.product_id ?? null,
+        product_name: d.products?.name ?? d.product_name ?? null,
+        quantity: d.quantity ?? null,
+        unit_price: d.unit_price ?? null,
+        total_price: d.total_price ?? null,
+        itbis_rate: d.products?.itbis_rate ?? d.itbis_rate ?? null,
+      }))
+      // Esquema simple: la propia fila es la línea de venta.
+      : (s.product_id ? [{
+        id: `simple-${s.id}`,
+        sale_id: s.id,
+        product_id: String(s.product_id),
+        product_name: productosDeVentas.get(String(s.product_id))?.name ?? null,
+        quantity: s.quantity ?? null,
+        unit_price: s.unit_price ?? null,
+        total_price: s.total_price ?? null,
+        itbis_rate: productosDeVentas.get(String(s.product_id))?.itbis_rate ?? null,
+      }] : []),
   }));
   return { sales: rows };
 };

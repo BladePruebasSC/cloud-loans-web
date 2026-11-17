@@ -5,8 +5,8 @@
 // Los precios se enseñan SIEMPRE con ITBIS (`itbis.ts`), como el resto del sistema.
 
 import {
-  itbisRateOf, purchasePriceWithItbis, sellingPriceWithItbis, stockCostWithItbis,
-  stockValueWithItbis, withItbis,
+  DEFAULT_ITBIS_RATE, itbisRateOf, purchasePriceWithItbis, sellingPriceWithItbis,
+  stockCostWithItbis, stockValueWithItbis, withItbis,
 } from '../../itbis';
 import {
   PAYMENT_METHOD_LABEL, dateOnly, labelFor, round2, userNameOf, type ReportData,
@@ -170,17 +170,61 @@ const salesInPeriod = (data: ReportData, filters: { startDate: string; endDate: 
     .filter(s => !filters.userId || String(s.user_id || '') === filters.userId)
     .filter(s => !filters.paymentMethod || String(s.payment_method || 'cash').toLowerCase() === filters.paymentMethod);
 
+interface SaleLineLike {
+  unit_price?: number | null;
+  quantity?: number | null;
+  total_price?: number | null;
+  itbis_rate?: number | null;
+}
+interface SaleLike {
+  total_amount?: number | null;
+  total_price?: number | null;
+  subtotal?: number | null;
+  tax_amount?: number | null;
+  details?: SaleLineLike[];
+}
+
+/** Lo que vale una línea de venta CON ITBIS (lo que el cliente paga por ese renglón). */
+const lineTotalWithTax = (d: SaleLineLike): number => {
+  const porUnitario = (Number(d?.unit_price) || 0) * (Number(d?.quantity) || 0);
+  if (porUnitario > 0.005) return round2(porUnitario);
+  return withItbis(d?.total_price, itbisRateOf({ itbis_rate: d?.itbis_rate }));
+};
+
 /** Importe de una venta CON ITBIS, con las dos formas en que el sistema las ha guardado. */
-export const saleTotalWithTax = (sale: { total_amount?: number | null; total_price?: number | null; details?: Array<{ unit_price?: number | null; quantity?: number | null; total_price?: number | null; itbis_rate?: number | null }> }): number => {
+export const saleTotalWithTax = (sale: SaleLike): number => {
   const detalles = sale.details || [];
   if (detalles.length > 0) {
-    const porUnitario = detalles.reduce((s, d) => s + (Number(d.unit_price) || 0) * (Number(d.quantity) || 0), 0);
-    if (porUnitario > 0.005) return round2(porUnitario);
-    const porTotal = detalles.reduce((s, d) => s + withItbis(d.total_price, itbisRateOf({ itbis_rate: d.itbis_rate })), 0);
-    if (porTotal > 0.005) return round2(porTotal);
+    const total = detalles.reduce((s, d) => s + lineTotalWithTax(d), 0);
+    if (total > 0.005) return round2(total);
   }
   if (typeof sale.total_amount === 'number' && sale.total_amount > 0) return round2(sale.total_amount);
   return round2(sale.total_price);
+};
+
+/**
+ * El ITBIS de una venta: el que se guardó y, si la base no lo guarda, el que llevan sus líneas.
+ *
+ * FALLO REPORTADO (2026-11-17): "el monto sale en el subtotal pero no sale nada en ITBIS ni en
+ * descuento". Las ventas de ese esquema no tienen columna `tax_amount`, y el reporte la leía tal
+ * cual: ITBIS 0 y un subtotal igual al total, como si nada llevara impuesto. El impuesto se
+ * deduce de cada línea con la tasa de SU producto (un exento sigue sin ITBIS).
+ */
+export const saleTaxAmount = (sale: SaleLike): number => {
+  if (sale.tax_amount !== null && sale.tax_amount !== undefined) return round2(sale.tax_amount);
+
+  const detalles = sale.details || [];
+  if (detalles.length > 0) {
+    return round2(detalles.reduce((s, d) => {
+      const conItbis = lineTotalWithTax(d);
+      const rate = itbisRateOf({ itbis_rate: d?.itbis_rate });
+      return s + (conItbis - conItbis / (1 + rate / 100));
+    }, 0));
+  }
+
+  // Sin líneas no se sabe la tasa de los productos: se usa la dominicana.
+  const total = saleTotalWithTax(sale);
+  return round2(total - total / (1 + DEFAULT_ITBIS_RATE / 100));
 };
 
 export const salesReports: ReportDefinition<ReportData>[] = [
@@ -210,7 +254,8 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const { data, filters } = ctx;
       const rows = salesInPeriod(data, filters).map(s => {
         const total = saleTotalWithTax(s);
-        const itbis = round2(s.tax_amount);
+        // El ITBIS guardado o, si la base no lo guarda, el que llevan las líneas (2026-11-17).
+        const itbis = saleTaxAmount(s);
         return {
           _id: s.id,
           fecha: dateOnly(s.sale_date || s.created_at),

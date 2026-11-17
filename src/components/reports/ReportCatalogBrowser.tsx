@@ -4,6 +4,13 @@
 // Buscador arriba (encuentra por nombre, por lo que contesta el reporte o por palabras sueltas
 // como "mora", "zona", "ticket"), y debajo las categorías. Favoritos y recientes primero,
 // porque es lo que se abre todos los días.
+//
+// CAMBIO SOLICITADO (2026-11-17): "los módulos se ven desorganizados y mucha información en
+// pantalla; divídela bien, que sea entendible y fácil de usar". La portada volcaba las CUARENTA Y
+// NUEVE tarjetas, una detrás de otra, y había que bajar media pantalla para ver qué categorías
+// existían. Ahora la portada enseña las CATEGORÍAS —ocho tarjetas con lo que contesta cada una y
+// cuántos reportes tiene— y las tarjetas de reportes salen al entrar en una categoría o al
+// buscar. Dos niveles en vez de una lista infinita.
 
 import React from 'react';
 import { Badge } from '@/components/ui/badge';
@@ -151,11 +158,43 @@ export const ReportCatalogBrowser: React.FC<Props> = ({
             Ver todos los reportes
           </Button>
         </div>
+      ) : (!buscando && !category) ? (
+        // PORTADA: las categorías, no los 49 reportes.
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-gray-700">¿Qué quieres mirar?</h3>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {REPORT_CATEGORIES.filter(c => porCategoria.has(c.id)).map(c => {
+              const cuantos = porCategoria.get(c.id)!.length;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onCategoryChange(c.id)}
+                  className="group flex items-start gap-3 rounded-xl border bg-white p-4 text-left transition hover:border-blue-300 hover:shadow-sm"
+                >
+                  <ReportCategoryIcon category={c} size="md" className="mt-0.5" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-gray-900">{c.label}</span>
+                      <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-[10px]">
+                        {cuantos}
+                      </Badge>
+                    </span>
+                    <span className="mt-1 block text-xs leading-snug text-gray-500">{c.description}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       ) : (
         REPORT_CATEGORIES.filter(c => porCategoria.has(c.id)).map(c => (
           <section key={c.id}>
             <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-700">
               <ReportCategoryIcon category={c} size="md" /> {c.label}
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                {porCategoria.get(c.id)!.length}
+              </Badge>
             </h3>
             <p className="mb-2 ml-10 text-xs text-gray-500">{c.description}</p>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
