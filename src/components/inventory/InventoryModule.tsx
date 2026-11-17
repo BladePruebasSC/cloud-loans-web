@@ -15,7 +15,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { formatCurrencyNumber } from '@/lib/utils';
-import { purchasePriceWithItbis, sellingPriceWithItbis } from '@/utils/itbis';
+import {
+  inventoryCostWithItbis, inventoryValueWithItbis, purchasePriceWithItbis, sellingPriceWithItbis,
+  stockCostWithItbis, stockValueWithItbis,
+} from '@/utils/itbis';
 import { 
   Package, 
   Plus, 
@@ -1353,10 +1356,12 @@ const InventoryModule = () => {
     const matchesBrand = !lowStockBrandFilter || p.brand === lowStockBrandFilter;
     return matchesLowStock && matchesCategory && matchesBrand;
   });
-  // Valor del inventario a precio de COMPRA, con ITBIS: es lo que costó de verdad (2026-10-01).
-  const totalValue = products.reduce(
-    (sum, p) => sum + purchasePriceWithItbis(p) * (Number(p.current_stock) || 0), 0,
-  );
+  // DOS cifras, y cada una con su nombre (2026-11-17): lo que COSTÓ la mercancía (precio de
+  // compra) y lo que se espera COBRAR por ella (precio de venta). Enseñar solo la primera, con
+  // la etiqueta "Valor del inventario" a secas, hacía pensar que el sistema estaba tomando el
+  // precio de compra donde debía tomar el de venta.
+  const totalValue = inventoryCostWithItbis(products as any[]);
+  const totalSaleValue = inventoryValueWithItbis(products as any[]);
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
   const brands = [...new Set(products.map(p => p.brand).filter(Boolean))];
 
@@ -2402,12 +2407,15 @@ const InventoryModule = () => {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Valor Total</CardTitle>
+            <CardTitle className="text-sm font-medium">Valor del inventario</CardTitle>
             <DollarSign className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">${totalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            <p className="text-xs text-muted-foreground">Valor del inventario</p>
+            <p className="text-xs text-muted-foreground">al costo (precio de compra con ITBIS)</p>
+            <p className="text-xs text-blue-700 mt-1">
+              A precio de venta: ${totalSaleValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
           </CardContent>
         </Card>
 
@@ -2606,7 +2614,9 @@ const InventoryModule = () => {
                               <span className="font-medium">Stock Mínimo:</span> {product.min_stock}
                             </div>
                             <div>
-                              <span className="font-medium">Valor Total:</span> ${formatCurrencyNumber(purchasePriceWithItbis(product) * (Number(product.current_stock) || 0))}
+                              {/* Qué costó ese stock; al lado, lo que se espera cobrar por él. */}
+                              <span className="font-medium">En stock:</span> ${formatCurrencyNumber(stockCostWithItbis(product))} al costo
+                              {' · '}${formatCurrencyNumber(stockValueWithItbis(product))} a precio de venta
                             </div>
                           </div>
                         </div>
@@ -3444,8 +3454,12 @@ const InventoryModule = () => {
                     <span className="font-semibold">{products.length}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Valor total del inventario:</span>
+                    <span>Valor del inventario (al costo):</span>
                     <span className="font-semibold">${totalValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Valor a precio de venta:</span>
+                    <span className="font-semibold text-blue-700">${totalSaleValue.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Productos con stock bajo:</span>

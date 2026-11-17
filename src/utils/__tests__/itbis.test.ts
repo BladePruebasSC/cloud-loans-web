@@ -5,8 +5,9 @@
 // como en punto de venta, en la factura, en los reportes, etc."
 import { describe, it, expect } from 'vitest';
 import {
-  DEFAULT_ITBIS_RATE, inventoryValueWithItbis, itbisOf, itbisRateOf, purchasePriceWithItbis,
-  sellingPriceWithItbis, stockValueWithItbis, withItbis, withoutItbis,
+  DEFAULT_ITBIS_RATE, inventoryCostWithItbis, inventoryValueWithItbis, itbisOf, itbisRateOf,
+  purchasePriceWithItbis, sellingPriceWithItbis, stockCostWithItbis, stockValueWithItbis,
+  withItbis, withoutItbis,
 } from '../itbis';
 
 // El producto de la captura: HONDA NAVY AZUL 2026
@@ -48,5 +49,26 @@ describe('precios con ITBIS', () => {
     expect(sellingPriceWithItbis({})).toBe(0);
     expect(stockValueWithItbis(null)).toBe(0);
     expect(inventoryValueWithItbis([])).toBe(0);
+  });
+
+  // CAMBIO SOLICITADO (2026-11-17): "el precio que está tomando en cuenta es el precio de compra
+  // y no de venta". El valor del inventario se enseñaba AL COSTO con la etiqueta "Valor del
+  // inventario" a secas, y el reporte lo enseñaba a precio de venta con otra etiqueta igual de
+  // escueta: dos cifras distintas para la misma pregunta. Ahora las dos tienen nombre y se
+  // enseñan juntas.
+  it('El inventario tiene DOS valores y cada uno dice cuál es', () => {
+    expect(stockCostWithItbis(PRODUCTO)).toBe(306210);    // 3 × 102,070 (lo que costó)
+    expect(stockValueWithItbis(PRODUCTO)).toBe(330000);   // 3 × 110,000 (lo que se cobraría)
+
+    const inventario = [PRODUCTO, { purchase_price: 800, selling_price: 1000, itbis_rate: 18, current_stock: 2 }];
+    expect(inventoryCostWithItbis(inventario)).toBe(308098);   // 306,210 + 1,888
+    expect(inventoryValueWithItbis(inventario)).toBe(332360);  // 330,000 + 2,360
+    // El valor de venta nunca es menor que el costo si el producto deja margen.
+    expect(inventoryValueWithItbis(inventario)).toBeGreaterThan(inventoryCostWithItbis(inventario));
+  });
+
+  it('Sin precio de compra, el valor al costo es 0 (no cae al de venta)', () => {
+    expect(stockCostWithItbis({ selling_price: 1000, current_stock: 5 })).toBe(0);
+    expect(inventoryCostWithItbis([])).toBe(0);
   });
 });

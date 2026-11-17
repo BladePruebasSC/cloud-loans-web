@@ -55,12 +55,28 @@ export const sellingPriceWithItbis = (product: ProductLikeWithItbis | null | und
 export const purchasePriceWithItbis = (product: ProductLikeWithItbis | null | undefined): number =>
   withItbis(product?.purchase_price, itbisRateOf(product));
 
-/** Valor del stock de un producto, con ITBIS (precio de venta × unidades). */
+/** Valor del stock de un producto, con ITBIS (precio de VENTA × unidades). */
 export const stockValueWithItbis = (
   product: (ProductLikeWithItbis & { current_stock?: number | null }) | null | undefined,
 ): number => round2(sellingPriceWithItbis(product) * (Number(product?.current_stock) || 0));
 
-/** Valor total del inventario, con ITBIS. */
+/**
+ * Lo que COSTÓ el stock de un producto, con ITBIS (precio de compra × unidades).
+ *
+ * Son dos cifras distintas y las dos hacen falta: lo que costó la mercancía y lo que se espera
+ * cobrar por ella. Enseñar una sin decir cuál es la que hacía pensar que el sistema "toma el
+ * precio de compra en vez del de venta" (2026-11-17).
+ */
+export const stockCostWithItbis = (
+  product: (ProductLikeWithItbis & { current_stock?: number | null }) | null | undefined,
+): number => round2(purchasePriceWithItbis(product) * (Number(product?.current_stock) || 0));
+
+/** Valor total del inventario a precio de VENTA, con ITBIS. */
 export const inventoryValueWithItbis = (
   products: Array<ProductLikeWithItbis & { current_stock?: number | null }>,
 ): number => round2((products || []).reduce((sum, p) => sum + stockValueWithItbis(p), 0));
+
+/** Lo que costó todo el inventario, con ITBIS. */
+export const inventoryCostWithItbis = (
+  products: Array<ProductLikeWithItbis & { current_stock?: number | null }>,
+): number => round2((products || []).reduce((sum, p) => sum + stockCostWithItbis(p), 0));

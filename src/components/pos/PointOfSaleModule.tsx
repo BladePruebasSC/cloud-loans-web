@@ -17,6 +17,11 @@ import { toast } from 'sonner';
 import {
   itbisRateOf, purchasePriceWithItbis, sellingPriceWithItbis, withItbis, withoutItbis,
 } from '@/utils/itbis';
+import { computePosFinancing } from '@/utils/posFinancing';
+import { findMissingColumn } from '@/utils/supabaseErrors';
+import {
+  addPeriodsToDate, formatDateLocalIso, getFrequencyLabel, getFrequencyName,
+} from '@/utils/frequencyUtils';
 import { 
   DollarSign, 
   Search, 
@@ -528,10 +533,26 @@ export const PointOfSaleModule = () => {
     }
   };
 
+  /**
+   * Lo que se cobra por una línea del carrito: su base —que ya lleva el descuento— más el ITBIS.
+   * Es la cifra que paga el cliente por ese renglón.
+   */
+  const lineTotalWithTax = (item: CartItem): number =>
+    withItbis(item.subtotal, itbisRateOf(item.product));
+
   const addToCart = (product: Product) => {
     // Validar stock disponible
     if ((product.current_stock || 0) <= 0) {
       toast.error('Sin stock disponible');
+      return;
+    }
+    // Sin PRECIO DE VENTA no se vende: antes se agregaba al carrito en RD$0 y la venta se
+    // registraba por cero (2026-11-17). El precio de compra NO sirve de respaldo: es lo que
+    // costó, no lo que se cobra.
+    if ((Number(product.selling_price) || 0) <= 0) {
+      toast.error(
+        `"${product.name}" no tiene precio de venta. Ponle uno en Inventario antes de venderlo.`,
+      );
       return;
     }
     const existingItem = cart.find(item => item.product.id === product.id);
@@ -834,22 +855,40 @@ export const PointOfSaleModule = () => {
 
         // Primero intentar esquema nuevo (con sale_details)
         try {
-          const { data: saleInsert, error: saleError } = await supabase
+          // El DESGLOSE de la venta se guarda (2026-11-17): sin `subtotal` ni `tax_amount` los
+          // reportes tenían que deducirlos, y enseñaban la venta sin ITBIS o con ITBIS 0. Si la
+          // base no tiene esas columnas, se reintenta sin ellas.
+          const ventaBase = {
+            user_id: user?.id,
+            sale_date: new Date().toISOString().split('T')[0],
+            total_amount: saleData.total,
+            sale_number: `SALE-${Date.now()}`,
+            payment_method: saleData.paymentMethod?.id || 'cash',
+            status: 'completed',
+            notes: saleData.notes || null,
+            client_id: saleData.customer?.id || null,
+          };
+          const ventaConDesglose = {
+            ...ventaBase,
+            subtotal: saleData.subtotal,
+            tax_amount: saleData.tax,
+            discount_amount: saleData.discount,
+          };
+
+          let { data: saleInsert, error: saleError } = await supabase
             .from('sales')
-            .insert([
-              {
-                user_id: user?.id,
-                sale_date: new Date().toISOString().split('T')[0],
-                total_amount: saleData.total,
-                sale_number: `SALE-${Date.now()}`,
-                payment_method: saleData.paymentMethod?.id || 'cash',
-                status: 'completed',
-                notes: saleData.notes || null,
-                client_id: saleData.customer?.id || null
-              }
-            ])
+            .insert([ventaConDesglose])
             .select()
             .single();
+
+          if (saleError && findMissingColumn(saleError)) {
+            console.warn('[venta] la base no tiene las columnas del desglose; se guarda sin ellas:', saleError.message);
+            ({ data: saleInsert, error: saleError } = await supabase
+              .from('sales')
+              .insert([ventaBase])
+              .select()
+              .single());
+          }
 
           if (!saleError && saleInsert) {
             // Intentar insertar detalles
@@ -884,13 +923,19 @@ export const PointOfSaleModule = () => {
           
           // En el esquema simple, cada producto es una fila separada
           // Solo incluir campos que existen en la tabla
+          //
+          // IMPORTANTE (2026-11-17): aquí `total_price` es el total de la VENTA de esa fila —no
+          // hay otra tabla donde sumar el impuesto—, así que va CON ITBIS. Antes se guardaba
+          // `ci.subtotal`, que es la base sin impuesto: en este esquema el inicio y los reportes
+          // leen `total_price` como el importe de la venta, y la venta salía por debajo de lo
+          // que el cliente pagó.
           const rows = cart.map(ci => {
             const row: any = {
             user_id: user?.id,
             product_id: ci.product.id,
             quantity: ci.quantity,
             unit_price: ci.unitPrice,
-            total_price: ci.subtotal,
+            total_price: lineTotalWithTax(ci),
               customer_name: customerName,
               payment_method: paymentMethod,
               sale_type: saleType,
@@ -917,7 +962,7 @@ export const PointOfSaleModule = () => {
               product_id: ci.product.id,
               quantity: ci.quantity,
               unit_price: ci.unitPrice,
-              total_price: ci.subtotal,
+              total_price: lineTotalWithTax(ci),
               customer_name: customerName,
               payment_method: paymentMethod,
               sale_type: saleType,
@@ -967,7 +1012,8 @@ export const PointOfSaleModule = () => {
               }
               // Solo crear préstamo si hay monto a financiar
               if (loanAmount >= 0.01) {
-              const interestRate = financingSplit?.details?.financingRate || saleData.paymentDetails?.financingRate || saleData.financingRate || companySettings?.interest_rate_default || 20;
+              // La tasa se escribe ANUAL, como en el formulario de préstamo (2026-11-17).
+              const annualRate = financingSplit?.details?.financingRate || saleData.paymentDetails?.financingRate || saleData.financingRate || companySettings?.interest_rate_default || 20;
               termMonths = financingSplit?.details?.financingMonths || saleData.paymentDetails?.financingMonths || saleData.financingMonths || companySettings?.min_term_months || 12;
               const amortizationType = financingSplit?.details?.amortizationType || saleData.paymentDetails?.amortizationType || 'simple';
               const paymentFrequency = financingSplit?.details?.paymentFrequency || saleData.paymentDetails?.paymentFrequency || 'monthly';
@@ -975,44 +1021,32 @@ export const PointOfSaleModule = () => {
               const lateFeeRate = financingSplit?.details?.lateFeeRate || saleData.paymentDetails?.lateFeeRate || companySettings?.default_late_fee_rate || 3;
               const gracePeriodDays = financingSplit?.details?.gracePeriodDays || saleData.paymentDetails?.gracePeriodDays || companySettings?.grace_period_days || 3;
               
-              // Calcular cuota mensual según el tipo de amortización
-              let monthlyInterest = 0;
-              let monthlyPrincipal = 0;
-              
-              if (amortizationType === 'french') {
-                // Amortización francesa - cuota fija
-                const periodRate = interestRate / 100;
-                if (periodRate > 0) {
-                  monthlyPayment = (loanAmount * periodRate * Math.pow(1 + periodRate, termMonths)) / 
-                                  (Math.pow(1 + periodRate, termMonths) - 1);
-                  monthlyInterest = loanAmount * periodRate;
-                  monthlyPrincipal = monthlyPayment - monthlyInterest;
-                } else {
-                  monthlyPayment = loanAmount / termMonths;
-                  monthlyPrincipal = monthlyPayment;
-                  monthlyInterest = 0;
-                }
-              } else {
-                // Amortización simple (por defecto)
-                // Interés mensual = (monto * tasa) / 100
-                // Capital mensual = monto / plazo
-                // Cuota mensual = interés mensual + capital mensual
-                monthlyInterest = Math.round((loanAmount * interestRate / 100) * 100) / 100;
-                monthlyPrincipal = Math.round((loanAmount / termMonths) * 100) / 100;
-                monthlyPayment = Math.round((monthlyInterest + monthlyPrincipal) * 100) / 100;
-              }
-              
-              // Calcular fechas
+              // EL CUADRO DEL FINANCIAMIENTO (2026-11-17). La tasa escrita es ANUAL: se guarda
+              // mensual (anual ÷ 12) y el interés de cada cuota sale de la tasa del período
+              // —quincenal = ½ de la mensual, semanal = ¼, diaria = 1/30—, exactamente como al
+              // crear un préstamo. Antes el número escrito se cobraba TAL CUAL en cada cuota y
+              // además se guardaba como tasa mensual: el préstamo que nacía de la venta cobraba
+              // una tasa distinta de la que se le había enseñado al cliente.
+              const plan = computePosFinancing({
+                amount: loanAmount,
+                annualRate,
+                periods: termMonths,
+                frequency: paymentFrequency,
+                amortizationType,
+              });
+              const interestRate = plan.monthlyRate;   // lo que guarda `loans.interest_rate`
+              monthlyPayment = plan.payment;
+
+              // Las fechas van por FRECUENCIA, no de mes en mes: un financiamiento quincenal
+              // vencía mensualmente y el préstamo salía con un cronograma que no era el suyo.
               const startDate = new Date();
-              const endDate = new Date();
-              endDate.setMonth(endDate.getMonth() + termMonths);
-              const nextPaymentDate = new Date();
-              nextPaymentDate.setMonth(nextPaymentDate.getMonth() + 1);
+              const nextPaymentDate = addPeriodsToDate(startDate, 1, paymentFrequency);
+              const endDate = addPeriodsToDate(startDate, termMonths, paymentFrequency);
               const firstPaymentDate = new Date(nextPaymentDate); // first_payment_date es la fecha base fija
-              
-              // Calcular el total del préstamo (capital + interés total)
-              const totalLoanAmount = loanAmount + (monthlyInterest * termMonths);
-              
+
+              // Capital + interés de todo el plazo.
+              const totalLoanAmount = plan.totalAmount;
+
               // Crear el préstamo
               const { data: loanData, error: loanError } = await supabase
                 .from('loans')
@@ -1026,10 +1060,12 @@ export const PointOfSaleModule = () => {
                     monthly_payment: Math.round(monthlyPayment * 100) / 100,
                     total_amount: totalLoanAmount,
                     remaining_balance: totalLoanAmount, // Balance pendiente incluye capital + interés total
-                    start_date: startDate.toISOString().split('T')[0],
-                    end_date: endDate.toISOString().split('T')[0],
-                    next_payment_date: nextPaymentDate.toISOString().split('T')[0],
-                    first_payment_date: firstPaymentDate.toISOString().split('T')[0], // Campo requerido
+                    // Fechas LOCALES: con `toISOString()` una venta de la tarde en Santo Domingo
+                    // se guardaba con la fecha del día siguiente (UTC).
+                    start_date: formatDateLocalIso(startDate),
+                    end_date: formatDateLocalIso(endDate),
+                    next_payment_date: formatDateLocalIso(nextPaymentDate),
+                    first_payment_date: formatDateLocalIso(firstPaymentDate), // Campo requerido
                     status: 'pending', // Pendiente de aprobación
                     loan_type: 'personal',
                     purpose: `Financiamiento de venta POS - ${cart.map(ci => ci.product.name).join(', ')}`,
@@ -1050,21 +1086,20 @@ export const PointOfSaleModule = () => {
                 loanErrorMsg = loanError.message;
               } else {
                 loanCreated = true;
-                // Crear las cuotas del préstamo
-                const installments = [];
-                for (let i = 1; i <= termMonths; i++) {
-                  const dueDate = new Date(nextPaymentDate);
-                  dueDate.setMonth(dueDate.getMonth() + (i - 1));
-                  installments.push({
-                    loan_id: loanData.id,
-                    installment_number: i,
-                    due_date: dueDate.toISOString().split('T')[0],
-                    principal_amount: monthlyPrincipal,
-                    interest_amount: monthlyInterest,
-                    total_amount: monthlyPayment,
-                    is_paid: false
-                  });
-                }
+                // Crear las cuotas del préstamo, con su fecha por FRECUENCIA y el desglose que
+                // corresponde a su amortización (antes todas llevaban el mismo capital e interés
+                // y vencían de mes en mes).
+                const installments = plan.installments.map(cuota => ({
+                  loan_id: loanData.id,
+                  installment_number: cuota.number,
+                  due_date: formatDateLocalIso(
+                    addPeriodsToDate(firstPaymentDate, cuota.number - 1, paymentFrequency),
+                  ),
+                  principal_amount: cuota.principal,
+                  interest_amount: cuota.interest,
+                  total_amount: cuota.total,
+                  is_paid: false,
+                }));
                 
                 const { error: installmentsError } = await supabase
                   .from('installments')
@@ -2563,7 +2598,10 @@ export const PointOfSaleModule = () => {
                             <Label className="text-sm font-semibold">Detalles de Financiamiento</Label>
                             <div className="grid grid-cols-2 gap-2">
                               <div>
-                                <Label className="text-xs">Plazo (meses)</Label>
+                                {/* Plazo en PERÍODOS de la frecuencia (2026-11-17). */}
+                                <Label className="text-xs">
+                                  Plazo ({getFrequencyLabel(split.details?.paymentFrequency || saleData.paymentDetails?.paymentFrequency || 'monthly')})
+                                </Label>
                                 <NumberInput
                                   min="1"
                                   max="60"
@@ -2586,7 +2624,8 @@ export const PointOfSaleModule = () => {
                                 />
                               </div>
                               <div>
-                                <Label className="text-xs">Tasa de Interés (%)</Label>
+                                {/* ANUAL, como en el formulario de préstamo (2026-11-17). */}
+                                <Label className="text-xs">Tasa de interés (anual %)</Label>
               <NumberInput
                 step="0.01"
                                   min="0"
@@ -2922,7 +2961,11 @@ export const PointOfSaleModule = () => {
                 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <Label className="text-sm">Plazo (meses)</Label>
+                    {/* El plazo va en PERÍODOS de la frecuencia, como en el préstamo: 12
+                        quincenas no son 12 meses (2026-11-17). */}
+                    <Label className="text-sm">
+                      Plazo ({getFrequencyLabel(saleData.paymentDetails?.paymentFrequency || 'monthly')})
+                    </Label>
                     <NumberInput
                       min="1"
                       max="60"
@@ -2938,7 +2981,9 @@ export const PointOfSaleModule = () => {
                     />
                   </div>
                   <div>
-                    <Label className="text-sm">Tasa de Interés (%)</Label>
+                    {/* La tasa se escribe ANUAL y no cambia al cambiar la frecuencia: lo que
+                        cambia es lo que se cobra en cada cuota. */}
+                    <Label className="text-sm">Tasa de interés (anual %)</Label>
                     <NumberInput
                       step="0.01"
                       min="0"
@@ -3044,34 +3089,37 @@ export const PointOfSaleModule = () => {
                         <span>Monto a financiar:</span>
                         <span className="font-semibold">${saleData.total.toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Cuota mensual estimada:</span>
-                        <span className="font-semibold text-blue-600">
-                          {(() => {
-                            const loanAmount = saleData.total;
-                            const interestRate = saleData.paymentDetails?.financingRate || saleData.financingRate || 20;
-                            const termMonths = saleData.paymentDetails?.financingMonths || saleData.financingMonths || 12;
-                            const amortizationType = saleData.paymentDetails?.amortizationType || 'simple';
-                            
-                            let estimatedPayment = 0;
-                            if (amortizationType === 'french') {
-                              const periodRate = interestRate / 100;
-                              if (periodRate > 0) {
-                                estimatedPayment = (loanAmount * periodRate * Math.pow(1 + periodRate, termMonths)) / 
-                                                  (Math.pow(1 + periodRate, termMonths) - 1);
-                              } else {
-                                estimatedPayment = loanAmount / termMonths;
-                              }
-                            } else {
-                              // Amortización simple
-                              const monthlyInterest = (loanAmount * interestRate) / 100;
-                              const monthlyPrincipal = loanAmount / termMonths;
-                              estimatedPayment = monthlyInterest + monthlyPrincipal;
-                            }
-                            return `$${estimatedPayment.toFixed(2)}`;
-                          })()}
-                        </span>
-                      </div>
+                      {/* La misma cuenta que al guardar (`computePosFinancing`): la tasa escrita
+                          es ANUAL y el interés de cada cuota sale de la tasa del período. */}
+                      {(() => {
+                        const frecuencia = saleData.paymentDetails?.paymentFrequency || 'monthly';
+                        const plan = computePosFinancing({
+                          amount: saleData.total,
+                          annualRate: saleData.paymentDetails?.financingRate || saleData.financingRate || 20,
+                          periods: saleData.paymentDetails?.financingMonths || saleData.financingMonths || 12,
+                          frequency: frecuencia,
+                          amortizationType: saleData.paymentDetails?.amortizationType || 'simple',
+                        });
+                        return (
+                          <>
+                            <div className="flex justify-between">
+                              <span>Cuota {getFrequencyName(frecuencia).toLowerCase()} estimada:</span>
+                              <span className="font-semibold text-blue-600">${plan.payment.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Total a pagar ({plan.installments.length} {getFrequencyLabel(frecuencia)}):</span>
+                              <span className="font-semibold">${plan.totalAmount.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-xs text-gray-500">
+                              <span>Tasa del período:</span>
+                              <span>
+                                {(plan.periodRate * 100).toFixed(4)}% por {getFrequencyLabel(frecuencia, false)}
+                                {' · '}{plan.monthlyRate.toFixed(4)}% mensual
+                              </span>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>

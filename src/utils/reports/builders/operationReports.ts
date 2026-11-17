@@ -5,7 +5,8 @@
 // Los precios se enseñan SIEMPRE con ITBIS (`itbis.ts`), como el resto del sistema.
 
 import {
-  itbisRateOf, purchasePriceWithItbis, sellingPriceWithItbis, stockValueWithItbis, withItbis,
+  itbisRateOf, purchasePriceWithItbis, sellingPriceWithItbis, stockCostWithItbis,
+  stockValueWithItbis, withItbis,
 } from '../../itbis';
 import {
   PAYMENT_METHOD_LABEL, dateOnly, labelFor, round2, userNameOf, type ReportData,
@@ -410,9 +411,12 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
       { key: 'categoria', label: 'Categoría', align: 'left' },
       { key: 'existencia', label: 'Existencia', format: 'number', total: true },
       { key: 'minimo', label: 'Mínimo', format: 'number', hiddenByDefault: true },
-      { key: 'costo', label: 'Costo con ITBIS', format: 'money' },
-      { key: 'precio', label: 'Precio con ITBIS', format: 'money' },
-      { key: 'valor', label: 'Valor en existencia', format: 'money', total: true },
+      { key: 'costo', label: 'Costo unitario con ITBIS', format: 'money' },
+      { key: 'precio', label: 'Precio de venta con ITBIS', format: 'money' },
+      // Las DOS cifras del stock, cada una con su nombre (2026-11-17): lo que costó y lo que se
+      // espera cobrar. Con una sola no se sabía cuál era.
+      { key: 'valorCosto', label: 'Valor al costo', format: 'money', total: true },
+      { key: 'valor', label: 'Valor a precio de venta', format: 'money', total: true },
       { key: 'estado', label: 'Estado', format: 'badge' },
     ],
     filters: ['search', 'category'],
@@ -434,6 +438,7 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
           minimo,
           costo: purchasePriceWithItbis(p as any),
           precio: sellingPriceWithItbis(p as any),
+          valorCosto: stockCostWithItbis(p as any),
           valor: stockValueWithItbis(p as any),
           estado: existencia <= 0 ? 'Agotado' : (minimo > 0 && existencia <= minimo) ? 'Stock bajo' : 'Disponible',
         } as ReportRow;
@@ -453,8 +458,14 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
             value: filtradas.reduce((s, r) => s + (Number(r.existencia) || 0), 0),
           },
           {
-            key: 'valor', label: 'Valor del inventario', format: 'money',
+            key: 'valorCosto', label: 'Valor al costo', format: 'money',
+            value: round2(filtradas.reduce((s, r) => s + (Number(r.valorCosto) || 0), 0)),
+            hint: 'Lo que costó la mercancía que hay en existencia',
+          },
+          {
+            key: 'valor', label: 'Valor a precio de venta', format: 'money',
             value: round2(filtradas.reduce((s, r) => s + (Number(r.valor) || 0), 0)),
+            hint: 'Lo que se cobraría si se vendiera todo',
           },
           {
             key: 'agotados', label: 'Agotados', format: 'number',
