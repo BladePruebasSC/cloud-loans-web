@@ -67,7 +67,12 @@ interface SaleReceipt {
     method: string;
     amount: number;
   }>;
+  /** Lo rebajado, SIN ITBIS (cuadra con el subtotal). */
   discount?: number;
+  /** Lo que valía sin descuento, SIN ITBIS. Solo hace falta si hubo descuento. */
+  listAmount?: number;
+  /** El % de descuento, para decirlo en el recibo. */
+  discountPercent?: number;
   tax?: number;
   saleId?: string;
 }
@@ -279,10 +284,16 @@ export const generateSaleReceipt = (receipt: SaleReceipt): string => {
   });
   
   message += `*Información de Pago*\n`;
-  message += `Subtotal: ${formatCurrency(receipt.totalAmount - (receipt.tax || 0))}\n`;
-  if (receipt.discount && receipt.discount > 0) {
-    message += `Descuento: ${formatCurrency(receipt.discount)}\n`;
+  // Con descuento, el recibo dice de qué precio se partió: si no, el "Descuento" aparecía
+  // restado de un subtotal que YA lo llevaba descontado y las cuentas no daban (2026-11-18).
+  const descuento = receipt.discount || 0;
+  if (descuento > 0) {
+    const lista = receipt.listAmount || (receipt.totalAmount - (receipt.tax || 0) + descuento);
+    const pct = receipt.discountPercent ?? (lista > 0 ? Math.round((descuento / lista) * 10000) / 100 : 0);
+    message += `Precio de lista: ${formatCurrency(lista)}\n`;
+    message += `Descuento (${pct}%): -${formatCurrency(descuento)}\n`;
   }
+  message += `Subtotal: ${formatCurrency(receipt.totalAmount - (receipt.tax || 0))}\n`;
   if (receipt.tax && receipt.tax > 0) {
     message += `ITBIS: ${formatCurrency(receipt.tax)}\n`;
   }

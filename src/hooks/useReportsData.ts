@@ -15,6 +15,7 @@
 import { useEffect, useMemo } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { saleLineBaseWithoutItbis } from '@/utils/itbis';
 import { useAuth } from '@/hooks/useAuth';
 import { usePortfolioData } from '@/hooks/usePortfolioData';
 import type {
@@ -74,7 +75,7 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
   if (ids.length > 0) {
     const { data: details } = await supabase
       .from('sale_details')
-      .select('*, products(id, name, itbis_rate)')
+      .select('*, products(id, name, itbis_rate, selling_price)')
       .in('sale_id', ids);
     for (const d of details || []) {
       const list = detailsBySale.get((d as any).sale_id) || [];
@@ -89,17 +90,22 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
   // salía vacío, la columna "Artículos" en 0 y el ITBIS en 0. Aquí se arma el detalle con lo que
   // la propia fila trae, para que los reportes vean lo mismo en los dos esquemas.
   const filasSinDetalle = (sales || []).filter((s: any) => !detailsBySale.has(s.id) && s.product_id);
-  const productosDeVentas = new Map<string, { name: string | null; itbis_rate: number | null }>();
+  const productosDeVentas = new Map<string, {
+    name: string | null; itbis_rate: number | null; selling_price: number | null;
+  }>();
   if (filasSinDetalle.length > 0) {
     const ids = [...new Set(filasSinDetalle.map((s: any) => String(s.product_id)))];
     const { data: productos } = await supabase
       .from('products')
-      .select('id, name, itbis_rate')
+      .select('id, name, itbis_rate, selling_price')
       .in('id', ids);
     for (const p of productos || []) {
       productosDeVentas.set(String((p as any).id), {
         name: (p as any).name ?? null,
         itbis_rate: (p as any).itbis_rate ?? null,
+        // El precio de venta de hoy, para deducir el descuento de una venta que no guardó el
+        // precio de lista (2026-11-18).
+        selling_price: (p as any).selling_price ?? null,
       });
     }
   }
@@ -114,6 +120,8 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
     tax_amount: s.tax_amount ?? s.itbis_amount ?? null,
     discount_amount: s.discount_amount ?? null,
     payment_method: s.payment_method ?? null,
+    payment_details: Array.isArray(s.payment_details) ? s.payment_details : null,
+    sale_type: s.sale_type ?? null,
     status: s.status ?? null,
     customer_name: s.customer_name ?? null,
     client_id: s.client_id ?? null,
@@ -128,9 +136,15 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
         quantity: d.quantity ?? null,
         unit_price: d.unit_price ?? null,
         total_price: d.total_price ?? null,
-        itbis_rate: d.products?.itbis_rate ?? d.itbis_rate ?? null,
+        itbis_rate: d.itbis_rate ?? d.products?.itbis_rate ?? null,
+        list_unit_price: d.list_unit_price ?? null,
+        product_selling_price: d.products?.selling_price ?? null,
       }))
       // Esquema simple: la propia fila es la línea de venta.
+      //
+      // `sales.total_price` ahí es el total de la línea CON ITBIS, pero el resto de los reportes
+      // trata `total_price` como la BASE: se convierte aquí, en el único sitio que sabe de qué
+      // esquema viene la fila, para que todos lean lo mismo (2026-11-18).
       : (s.product_id ? [{
         id: `simple-${s.id}`,
         sale_id: s.id,
@@ -138,8 +152,15 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
         product_name: productosDeVentas.get(String(s.product_id))?.name ?? null,
         quantity: s.quantity ?? null,
         unit_price: s.unit_price ?? null,
-        total_price: s.total_price ?? null,
+        total_price: saleLineBaseWithoutItbis({
+          quantity: s.quantity ?? null,
+          unit_price: s.unit_price ?? null,
+          total_price: s.total_price ?? null,
+          itbis_rate: productosDeVentas.get(String(s.product_id))?.itbis_rate ?? null,
+        }, true),
         itbis_rate: productosDeVentas.get(String(s.product_id))?.itbis_rate ?? null,
+        list_unit_price: s.list_unit_price ?? null,
+        product_selling_price: productosDeVentas.get(String(s.product_id))?.selling_price ?? null,
       }] : []),
   }));
   return { sales: rows };

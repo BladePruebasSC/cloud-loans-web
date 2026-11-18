@@ -68,9 +68,19 @@ export interface SaleDetailRow {
   product_id: string | null;
   product_name: string | null;
   quantity: number | null;
+  /** Precio por unidad REALMENTE cobrado, con ITBIS. */
   unit_price: number | null;
+  /** La base de la línea, sin ITBIS (normalizado para los dos esquemas de venta). */
   total_price: number | null;
   itbis_rate: number | null;
+  /**
+   * Precio de LISTA por unidad, con ITBIS. Guardado con la venta desde la migración
+   * `20261118000000`; en las anteriores se toma el del producto. De comparar este con
+   * `unit_price` sale el descuento que se aplicó (2026-11-18).
+   */
+  list_unit_price: number | null;
+  /** El precio de venta actual del producto, para deducir el descuento de una venta vieja. */
+  product_selling_price: number | null;
 }
 
 export interface SaleRow {
@@ -83,6 +93,10 @@ export interface SaleRow {
   tax_amount: number | null;
   discount_amount: number | null;
   payment_method: string | null;
+  /** Reparto entre formas de pago cuando la venta se cobró con varias. */
+  payment_details: Array<{ method?: string; label?: string; amount?: number }> | null;
+  /** 'cash' o 'credit': una venta financiada se guarda a crédito. */
+  sale_type: string | null;
   status: string | null;
   customer_name: string | null;
   client_id: string | null;
@@ -248,6 +262,8 @@ export const LOAN_STATUS_LABEL: Record<string, string> = {
 export const PAYMENT_METHOD_LABEL: Record<string, string> = {
   cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia',
   check: 'Cheque', financing: 'Financiamiento', deposit: 'Depósito',
+  // Formas de pago que la venta puede guardar desde la migración 20261118000000.
+  credit: 'Crédito', mixed: 'Pago mixto', other: 'Otro',
 };
 
 export const labelFor = (dict: Record<string, string>, value: unknown, fallback = '—'): string => {

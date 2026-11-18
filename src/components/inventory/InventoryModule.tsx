@@ -19,6 +19,7 @@ import {
   inventoryCostWithItbis, inventoryValueWithItbis, purchasePriceWithItbis,
   saleLineBaseWithoutItbis, sellingPriceWithItbis, stockCostWithItbis, stockValueWithItbis,
 } from '@/utils/itbis';
+import { saleAmounts } from '@/utils/saleAmounts';
 import { 
   Package, 
   Plus, 
@@ -76,8 +77,12 @@ interface SaleDetail {
   sale_id: string;
   product_id: string;
   quantity: number;
+  /** Precio por unidad REALMENTE cobrado, con ITBIS. */
   unit_price: number;
   total_price: number;
+  /** Precio de LISTA por unidad el día de la venta, con ITBIS: de ahí sale el descuento. */
+  list_unit_price?: number | null;
+  itbis_rate?: number | null;
   product?: Product;
 }
 
@@ -96,6 +101,21 @@ interface Movement {
   reference: string;
   user_name?: string;
 }
+
+/** La forma de pago, en castellano. Incluye las que llegaron con la migración 20261118000000. */
+const translatePaymentMethod = (method: string | null | undefined): string => {
+  const methods: { [key: string]: string } = {
+    cash: 'Efectivo',
+    card: 'Tarjeta',
+    transfer: 'Transferencia',
+    check: 'Cheque',
+    financing: 'Financiamiento',
+    credit: 'Crédito',
+    mixed: 'Pago mixto',
+    other: 'Otro',
+  };
+  return methods[method || 'cash'] || method || 'Efectivo';
+};
 
 const getUnitLabelEs = (unitType: string | null | undefined, quantity: number): string => {
   const unit = String(unitType || 'unit').toLowerCase();
@@ -737,24 +757,13 @@ const InventoryModule = () => {
     }
   };
 
-  // Función auxiliar para calcular el total con ITBIS de una venta
+  // Función auxiliar para calcular el total con ITBIS de una venta.
+  //
+  // La cuenta vive en `saleAmounts` (2026-11-18), que es la misma que usan la factura, el
+  // detalle de la venta y los reportes: así una venta no puede valer una cosa en la lista y otra
+  // en su propia factura.
   const calculateSaleTotalWithTax = (sale: SaleWithDetails): number => {
-    if (sale.details && sale.details.length > 0) {
-      return sale.details.reduce((sum: number, detail: any) => {
-        // Si total_price tiene valor, usarlo (ya es sin ITBIS) y agregar ITBIS
-        if (detail.total_price && detail.total_price > 0) {
-          const itbisRate = detail.product?.itbis_rate ?? 18;
-          const itemSubtotal = detail.total_price; // Sin ITBIS
-          const itemTax = itemSubtotal * (itbisRate / 100);
-          return sum + itemSubtotal + itemTax;
-        }
-        // Si total_price es 0 o no existe, calcular desde unit_price (que tiene ITBIS)
-        if (detail.unit_price && detail.unit_price > 0 && detail.quantity) {
-          return sum + (detail.unit_price * detail.quantity);
-        }
-        return sum;
-      }, 0);
-    }
+    if (sale.details && sale.details.length > 0) return saleAmounts(sale.details).total;
     // Si no hay detalles, usar total_amount (que debería tener ITBIS)
     return sale.total_amount || 0;
   };
@@ -858,21 +867,21 @@ const InventoryModule = () => {
           .filter((id): id is string => !!id);
 
         // Obtener todos los sale_details en una sola consulta
+        // Se piden TODAS las columnas: el detalle ganó `list_unit_price` e `itbis_rate` con la
+        // migración 20261118000000, y nombrarlas una a una rompería la pantalla entera en las
+        // bases que todavía no la tienen (PostgREST falla si una columna del select no existe).
         const { data: allSaleDetails, error: detailsError } = await supabase
           .from('sale_details')
           .select(`
-            id,
-            sale_id,
-            product_id,
-            quantity,
-            unit_price,
-            total_price,
+            *,
             products (
               id,
               name,
               sku,
               category,
-              brand
+              brand,
+              itbis_rate,
+              selling_price
             )
           `)
           .in('sale_id', saleIds);
@@ -912,6 +921,8 @@ const InventoryModule = () => {
               quantity: detail.quantity,
               unit_price: detail.unit_price,
               total_price: detail.total_price,
+              list_unit_price: detail.list_unit_price ?? null,
+              itbis_rate: detail.itbis_rate ?? detail.products?.itbis_rate ?? null,
               product: detail.products as any
             });
           });
@@ -962,6 +973,9 @@ const InventoryModule = () => {
               quantity: fila.quantity,
               unit_price: fila.unit_price,
               total_price: saleLineBaseWithoutItbis(fila, true),
+              // El precio de lista del día de la venta, si la venta lo guardó (2026-11-18).
+              list_unit_price: saleAny.list_unit_price ?? null,
+              itbis_rate: (product as any).itbis_rate ?? null,
               product
             }];
           }
@@ -1579,6 +1593,8 @@ const InventoryModule = () => {
               quantity: fila.quantity,
               unit_price: fila.unit_price,
               total_price: saleLineBaseWithoutItbis(fila, true),
+              list_unit_price: sale.list_unit_price ?? null,
+              itbis_rate: (oldProduct as any).itbis_rate ?? null,
               products: oldProduct
             });
           }
@@ -1612,61 +1628,30 @@ const InventoryModule = () => {
       let totalTax = 0;
       let totalByPaymentMethod: Record<string, number> = {};
 
+      // El cuadre sale de la MISMA cuenta que la factura y los reportes (2026-11-18): total con
+      // ITBIS, impuesto por la tasa de cada producto y lo que se dejó de cobrar en descuentos.
+      let totalDiscount = 0;
       enrichedSales.forEach((sale: any) => {
-        let saleTotal = 0;
-        
-        // Si hay sale_details, calcular desde ellos
-        if (sale.sale_details && sale.sale_details.length > 0) {
-          // Mapear sale_details a details con la estructura correcta
-          const mappedDetails = sale.sale_details.map((detail: any) => ({
-            ...detail,
-            product: detail.products || detail.product // Asegurar que product esté disponible
-          }));
-          
-          const saleWithMappedDetails = { ...sale, details: mappedDetails };
-          saleTotal = calculateSaleTotalWithTax(saleWithMappedDetails as SaleWithDetails);
-        } else {
-          // Si no hay detalles, usar total_amount directamente
-          // Si total_amount es 0 o null, intentar calcular desde unit_price si está disponible
-          if (sale.total_amount && sale.total_amount > 0) {
-            saleTotal = sale.total_amount;
-          } else if (sale.unit_price && sale.quantity) {
-            // Para ventas antiguas sin sale_details, usar unit_price * quantity
-            saleTotal = sale.unit_price * sale.quantity;
-          } else {
-            saleTotal = 0;
-          }
-          console.log('No sale_details found, using total_amount:', saleTotal, 'for sale:', sale.id, 'total_amount:', sale.total_amount);
-        }
-        
-        console.log('Sale total calculated:', saleTotal, 'for sale:', sale.id);
-        totalSales += saleTotal;
+        const lineas = (sale.sale_details || []).map((detail: any) => ({
+          ...detail,
+          product: detail.products || detail.product, // Asegurar que product esté disponible
+        }));
+        const resumen = saleAmounts(lineas);
 
-        // Calcular ITBIS solo si hay sale_details
-        if (sale.sale_details && sale.sale_details.length > 0) {
-          sale.sale_details.forEach((detail: any) => {
-            const itbisRate = detail.products?.itbis_rate ?? detail.product?.itbis_rate ?? 18;
-            // Si total_price tiene valor, usarlo para calcular ITBIS
-            if (detail.total_price && detail.total_price > 0) {
-              const itemSubtotal = detail.total_price;
-              const itemTax = itemSubtotal * (itbisRate / 100);
-              totalTax += itemTax;
-            } else if (detail.unit_price && detail.unit_price > 0 && detail.quantity) {
-              // Si total_price no tiene valor, calcular desde unit_price
-              const priceWithTax = detail.unit_price;
-              const priceWithoutTax = priceWithTax / (1 + itbisRate / 100);
-              const itemSubtotal = priceWithoutTax * detail.quantity;
-              const itemTax = itemSubtotal * (itbisRate / 100);
-              totalTax += itemTax;
-            }
-          });
+        let saleTotal = resumen.total;
+        if (lineas.length === 0 || saleTotal <= 0.005) {
+          // Sin detalles: lo que la venta guardó de sí misma.
+          if (sale.total_amount && sale.total_amount > 0) saleTotal = sale.total_amount;
+          else if (sale.unit_price && sale.quantity) saleTotal = sale.unit_price * sale.quantity;
+          else saleTotal = 0;
+          // Sin líneas no se sabe la tasa de cada producto: se usa la dominicana.
+          totalTax += saleTotal - saleTotal / 1.18;
         } else {
-          // Si no hay detalles, estimar ITBIS desde total_amount (asumiendo 18%)
-          // Esto es una aproximación, pero mejor que 0
-          const estimatedSubtotal = saleTotal / 1.18;
-          const estimatedTax = saleTotal - estimatedSubtotal;
-          totalTax += estimatedTax;
+          totalTax += resumen.tax;
+          totalDiscount += resumen.discountWithTax;
         }
+
+        totalSales += saleTotal;
 
         // Agrupar por método de pago
         const paymentMethod = sale.payment_method || 'cash';
@@ -1770,6 +1755,10 @@ const InventoryModule = () => {
                   <td>TOTAL:</td>
                   <td class="text-right">${money(totalSales)}</td>
                 </tr>
+                ${totalDiscount > 0.005 ? `<tr>
+                  <td>Descuentos del período:</td>
+                  <td class="text-right">- ${money(totalDiscount)}</td>
+                </tr>` : ''}
               </table>
             </div>
 
@@ -1783,21 +1772,12 @@ const InventoryModule = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  ${Object.entries(totalByPaymentMethod).map(([method, amount]) => {
-                    const methodNames: Record<string, string> = {
-                      'cash': 'Efectivo',
-                      'card': 'Tarjeta',
-                      'transfer': 'Transferencia',
-                      'check': 'Cheque',
-                      'financing': 'Financiamiento'
-                    };
-                    return `
+                  ${Object.entries(totalByPaymentMethod).map(([method, amount]) => `
                       <tr>
-                        <td>${methodNames[method] || method}</td>
+                        <td>${translatePaymentMethod(method)}</td>
                         <td class="text-right">${money(amount)}</td>
                       </tr>
-                    `;
-                  }).join('')}
+                    `).join('')}
                 </tbody>
               </table>
             </div>
@@ -1943,44 +1923,53 @@ const InventoryModule = () => {
     const isThermal = format === 'POS80' || format === 'POS58';
     const isPOS58 = format === 'POS58';
     
-    // Calcular subtotal e ITBIS desde los detalles
-    let subtotal = 0;
-    let totalTax = 0;
-    
-    const itemsRows = sale.details.map(detail => {
-      const itbisRate = detail.product?.itbis_rate ?? 18;
-      
-      // unit_price se guarda CON ITBIS, total_price se guarda SIN ITBIS (subtotal)
-      // Calcular el total con ITBIS: total_price (sin ITBIS) + ITBIS
-      const itemSubtotal = detail.total_price; // Ya es sin ITBIS
-      const itemTax = itemSubtotal * (itbisRate / 100);
-      const itemTotalWithTax = itemSubtotal + itemTax;
-      
-      subtotal += itemSubtotal;
-      totalTax += itemTax;
-      
-      // El precio unitario con ITBIS es unit_price (que ya tiene ITBIS)
-      // O calcularlo: (total_price / cantidad) * (1 + itbisRate / 100)
-      const unitPriceWithTax = detail.unit_price; // Ya tiene ITBIS
-      
+    // LO QUE PASÓ EN CADA LÍNEA: precio de lista, descuento y lo cobrado (2026-11-18).
+    //
+    // FALLO REPORTADO: "en las facturas no se ve el descuento". La columna "Desct" estaba
+    // escrita a mano en `0%` —literalmente, un cero fijo—, así que una venta con un 10% de
+    // descuento se imprimía igual que una a precio entero. El descuento sale de comparar lo
+    // cobrado con el precio de lista que la venta guardó (`saleAmounts`).
+    const resumen = saleAmounts(sale.details);
+    const subtotal = resumen.base;
+    const totalTax = resumen.tax;
+
+    const itemsRows = sale.details.map((detail, i) => {
+      const linea = resumen.lines[i];
+
       const maxNameLength = isPOS58 ? 18 : 28;
-      const productName = (detail.product?.name || 'Producto desconocido').length > maxNameLength 
-        ? (detail.product?.name || 'Producto desconocido').substring(0, maxNameLength - 3) + '...' 
-        : (detail.product?.name || 'Producto desconocido');
-      
-      const discountCol = isPOS58 ? '' : '<td class="right">0%</td>';
-      const unitPrice = `<td class="right">${money(unitPriceWithTax)}</td>`;
-      
+      const nombreCompleto = detail.product?.name || 'Producto desconocido';
+      const productName = nombreCompleto.length > maxNameLength
+        ? nombreCompleto.substring(0, maxNameLength - 3) + '...'
+        : nombreCompleto;
+
+      const discountCol = isPOS58 ? '' : `<td class="right">${linea.discountPercent.toFixed(0)}%</td>`;
+      // En el ticket de 58 mm no cabe la columna del descuento: se dice en el nombre.
+      const nombre = isPOS58 && linea.discountWithTax > 0.005
+        ? `${productName} (-${linea.discountPercent.toFixed(0)}%)`
+        : productName;
+      const unitPrice = `<td class="right">${money(linea.unitCharged)}</td>`;
+
       return `
         <tr>
-          <td>${productName}</td>
+          <td>${nombre}</td>
         <td class="right">${detail.quantity}</td>
           ${unitPrice}
           ${discountCol}
-          <td class="right">${money(itemTotalWithTax)}</td>
+          <td class="right">${money(linea.total)}</td>
       </tr>
       `;
     }).join('');
+
+    /** Las filas del resumen: con descuento, la factura dice de cuánto se partió y cuánto se rebajó. */
+    const resumenRows = (colon: boolean, totalLabel: string) => {
+      const c = colon ? ':' : '';
+      return `
+            ${resumen.discount > 0.005 ? `<div class="sum-row"><span>Precio de lista${c}</span><span>${money(resumen.listBase)}</span></div>
+            <div class="sum-row"><span>Descuento (${resumen.discountPercent.toFixed(2)}%)${c}</span><span>- ${money(resumen.discount)}</span></div>` : ''}
+            <div class="sum-row"><span>Subtotal${c}</span><span>${money(subtotal)}</span></div>
+            <div class="sum-row"><span>ITBIS${c}</span><span>${money(totalTax)}</span></div>
+            <div class="sum-row total"><span>${totalLabel}</span><span>${money(subtotal + totalTax)}</span></div>`;
+    };
 
     // CSS específico para cada formato
     const pageCss = format === 'A4'
@@ -2092,10 +2081,7 @@ const InventoryModule = () => {
 
           <div class="divider"></div>
 
-          <div class="summary">
-            <div class="sum-row"><span>Subtotal:</span><span>${money(subtotal)}</span></div>
-            <div class="sum-row"><span>ITBIS:</span><span>${money(totalTax)}</span></div>
-            <div class="sum-row total"><span>TOTAL:</span><span>${money(subtotal + totalTax)}</span></div>
+          <div class="summary">${resumenRows(true, 'TOTAL:')}
           </div>
 
           <div class="footer">
@@ -2166,13 +2152,7 @@ const InventoryModule = () => {
               ${itemsRows}
             </tbody>
           </table>
-          <div class="summary">
-            <div class="sum-row"><span>Subtotal:</span><span>${money(subtotal)}</span></div>
-            <div class="sum-row"><span>ITBIS:</span><span>${money(totalTax)}</span></div>
-            <div class="sum-row total">
-              <span>Total</span>
-              <span>${money(subtotal + totalTax)}</span>
-            </div>
+          <div class="summary">${resumenRows(true, 'Total')}
           </div>
         </div>
       </body>
@@ -2196,17 +2176,6 @@ const InventoryModule = () => {
     const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
     
     // Traducir método de pago
-    const translatePaymentMethod = (method: string | null) => {
-      const methods: { [key: string]: string } = {
-        'cash': 'Efectivo',
-        'card': 'Tarjeta',
-        'transfer': 'Transferencia',
-        'check': 'Cheque',
-        'financing': 'Financiamiento'
-      };
-      return methods[method || 'cash'] || method || 'Efectivo';
-    };
-    
     // Obtener información de la empresa
     const { data: companySettings } = await supabase
       .from('company_settings')
@@ -2218,29 +2187,23 @@ const InventoryModule = () => {
     const companyAddress = companySettings?.address || '';
     const companyPhone = companySettings?.phone || '';
 
-    // Calcular subtotal e ITBIS desde los detalles
-    let subtotal = 0;
-    let totalTax = 0;
-    
-    const tableData = sale.details.map(detail => {
-      const itbisRate = detail.product?.itbis_rate ?? 18;
-      const itemSubtotal = detail.total_price; // Ya es sin ITBIS
-      const itemTax = itemSubtotal * (itbisRate / 100);
-      const itemTotalWithTax = itemSubtotal + itemTax;
-      
-      subtotal += itemSubtotal;
-      totalTax += itemTax;
-      
+    // El desglose de la venta, con el descuento de cada línea a la vista (2026-11-18).
+    const resumen = saleAmounts(sale.details);
+    const subtotal = resumen.base;
+    const totalTax = resumen.tax;
+
+    const tableData = sale.details.map((detail, i) => {
+      const linea = resumen.lines[i];
       return [
         detail.product?.name || 'Producto desconocido',
         detail.quantity.toString(),
-        money(detail.unit_price), // Precio unitario con ITBIS
-        money(itemTotalWithTax) // Total del item con ITBIS
+        money(linea.unitCharged), // Precio por unidad REALMENTE cobrado, con ITBIS
+        linea.discountWithTax > 0.005 ? `${linea.discountPercent.toFixed(0)}%` : '—',
+        money(linea.total), // Importe de la línea con ITBIS
       ];
     });
-    
-    // Calcular total con ITBIS usando la función existente
-    const totalWithTax = calculateSaleTotalWithTax(sale);
+
+    const totalWithTax = resumen.total;
 
     // Crear documento PDF
     const doc = new jsPDF('p', 'mm', 'a4');
@@ -2325,13 +2288,13 @@ const InventoryModule = () => {
 
     // Agregar tabla con autoTable
     autoTable(doc, {
-      head: [['Descripción', 'Cant.', 'Precio', 'Importe']],
+      head: [['Descripción', 'Cant.', 'Precio', 'Desc.', 'Importe']],
       body: tableData,
       startY: yPos,
       styles: { fontSize: 9, cellPadding: 3 },
-      headStyles: { 
-        fillColor: [66, 139, 202], 
-        textColor: 255, 
+      headStyles: {
+        fillColor: [66, 139, 202],
+        textColor: 255,
         fontStyle: 'bold',
         halign: 'center'
       },
@@ -2339,7 +2302,8 @@ const InventoryModule = () => {
         0: { cellWidth: 'auto' },
         1: { halign: 'center' },
         2: { halign: 'right' },
-        3: { halign: 'right' }
+        3: { halign: 'center' },
+        4: { halign: 'right' }
       },
       margin: { left: margin, right: margin },
       didDrawPage: (data) => {
@@ -2355,6 +2319,16 @@ const InventoryModule = () => {
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
     
+    // Con descuento, la factura dice de cuánto se partió y cuánto se rebajó.
+    if (resumen.discount > 0.005) {
+      const listaText = `Precio de lista: ${money(resumen.listBase)}`;
+      doc.text(listaText, pageWidth - margin - doc.getTextWidth(listaText), yPos);
+      yPos += 6;
+      const descText = `Descuento (${resumen.discountPercent.toFixed(2)}%): - ${money(resumen.discount)}`;
+      doc.text(descText, pageWidth - margin - doc.getTextWidth(descText), yPos);
+      yPos += 6;
+    }
+
     const subtotalText = `Subtotal: ${money(subtotal)}`;
     const subtotalWidth = doc.getTextWidth(subtotalText);
     doc.text(subtotalText, pageWidth - margin - subtotalWidth, yPos);
@@ -3071,7 +3045,10 @@ const InventoryModule = () => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {sales.map((sale) => (
+                  {sales.map((sale) => {
+                    // Lo que pasó en la venta: precio de lista, descuento, ITBIS y lo cobrado.
+                    const resumen = saleAmounts(sale.details);
+                    return (
                     <div key={sale.id} className="border rounded-lg p-4">
                       <div className="flex items-start justify-between mb-3">
                         <div>
@@ -3084,34 +3061,41 @@ const InventoryModule = () => {
                           <div className="text-sm text-gray-600 space-y-1">
                             <p><span className="font-medium">Fecha:</span> {sale.sale_date ? new Date(sale.sale_date).toLocaleDateString('es-DO') : 'N/A'}</p>
                             <p><span className="font-medium">Cliente:</span> {sale.client_name || 'Cliente General'}</p>
-                            <p><span className="font-medium">Método de pago:</span> {sale.payment_method || 'N/A'}</p>
+                            <p><span className="font-medium">Método de pago:</span> {translatePaymentMethod(sale.payment_method)}</p>
                             {sale.notes && <p><span className="font-medium">Notas:</span> {sale.notes}</p>}
                           </div>
                         </div>
+                        {/* Si la venta se rebajó, se dice aquí mismo (2026-11-18). */}
                         <div className="text-right">
                           <div className="text-2xl font-bold text-green-600">
                             ${calculateSaleTotalWithTax(sale).toFixed(2)}
                           </div>
+                          {resumen.discountWithTax > 0.005 && (
+                            <div className="text-xs text-red-600 mt-1">
+                              Descuento {resumen.discountPercent.toFixed(2)}% · −$
+                              {resumen.discountWithTax.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="border-t pt-3 mt-3">
                         <h4 className="font-medium mb-2">Productos:</h4>
                         <div className="space-y-2">
-                          {sale.details.map((detail) => {
-                            // Calcular el total con ITBIS para mostrar
-                            const itbisRate = detail.product?.itbis_rate ?? 18;
-                            const itemSubtotal = detail.total_price; // Ya es sin ITBIS
-                            const itemTax = itemSubtotal * (itbisRate / 100);
-                            const itemTotalWithTax = itemSubtotal + itemTax;
-                            
+                          {sale.details.map((detail, i) => {
+                            // Precio cobrado, descuento e importe: la misma cuenta que la factura.
+                            const linea = resumen.lines[i];
+
                             return (
                             <div key={detail.id} className="flex justify-between text-sm bg-gray-50 p-2 rounded">
                               <span>
-                                {detail.product?.name || 'Producto desconocido'} 
+                                {detail.product?.name || 'Producto desconocido'}
                                 {detail.product?.sku && ` (Código: ${detail.product.sku})`}
+                                {linea.discountWithTax > 0.005 && (
+                                  <span className="text-red-600"> · −{linea.discountPercent.toFixed(0)}%</span>
+                                )}
                               </span>
                               <span className="font-medium">
-                                  {detail.quantity} x ${detail.unit_price.toFixed(2)} = ${itemTotalWithTax.toFixed(2)}
+                                  {linea.quantity} x ${linea.unitCharged.toFixed(2)} = ${linea.total.toFixed(2)}
                               </span>
                             </div>
                             );
@@ -3193,7 +3177,8 @@ const InventoryModule = () => {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -3675,7 +3660,7 @@ const InventoryModule = () => {
                 </div>
                 <div>
                   <Label className="text-sm text-gray-600">Método de Pago</Label>
-                  <p className="font-medium">{selectedSale.payment_method || 'N/A'}</p>
+                  <p className="font-medium">{translatePaymentMethod(selectedSale.payment_method)}</p>
                 </div>
                 {selectedSale.notes && (
                   <div className="col-span-2">
@@ -3684,36 +3669,68 @@ const InventoryModule = () => {
                   </div>
                 )}
               </div>
-              <div className="border-t pt-4">
-                <h4 className="font-semibold mb-3">Productos</h4>
-                <div className="space-y-2">
-                  {selectedSale.details.map((detail) => (
-                    <div key={detail.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
-                      <div>
-                        <p className="font-medium">{detail.product?.name || 'Producto desconocido'}</p>
-                        {detail.product?.sku && (
-                          <p className="text-sm text-gray-600">Código: {detail.product.sku}</p>
-                        )}
-                        {detail.product?.category && (
-                          <p className="text-sm text-gray-600">Categoría: {detail.product.category}</p>
-                        )}
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm text-gray-600">Cantidad: {detail.quantity}</p>
-                        <p className="text-sm text-gray-600">Precio unitario: ${detail.unit_price.toFixed(2)}</p>
-                        <p className="font-semibold">Subtotal: ${detail.total_price.toFixed(2)}</p>
+              {/* EL DESCUENTO, A LA VISTA (2026-11-18). El detalle enseñaba el precio cobrado a
+                  secas: una venta rebajada y una a precio entero se veían igual. Ahora cada
+                  línea dice de qué precio se partió y cuánto se rebajó, y el resumen de abajo
+                  cuadra con la factura. */}
+              {(() => {
+                const resumen = saleAmounts(selectedSale.details);
+                const money = (n: number) => `$${(n || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                return (
+                  <>
+                    <div className="border-t pt-4">
+                      <h4 className="font-semibold mb-3">Productos</h4>
+                      <div className="space-y-2">
+                        {selectedSale.details.map((detail, i) => {
+                          const linea = resumen.lines[i];
+                          return (
+                            <div key={detail.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
+                              <div>
+                                <p className="font-medium">{detail.product?.name || 'Producto desconocido'}</p>
+                                {detail.product?.sku && (
+                                  <p className="text-sm text-gray-600">Código: {detail.product.sku}</p>
+                                )}
+                                {linea.discountWithTax > 0.005 && (
+                                  <Badge variant="secondary" className="mt-1">
+                                    Descuento {linea.discountPercent.toFixed(2)}% · {money(linea.discountWithTax)}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="text-right">
+                                <p className="text-sm text-gray-600">Cantidad: {linea.quantity}</p>
+                                <p className="text-sm text-gray-600">
+                                  {linea.discountWithTax > 0.005 && (
+                                    <span className="line-through mr-2 text-gray-400">{money(linea.unitList)}</span>
+                                  )}
+                                  Precio unitario: {money(linea.unitCharged)}
+                                </p>
+                                <p className="font-semibold">Importe: {money(linea.total)}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-              <div className="border-t pt-4 flex justify-end">
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-green-600">
-                    Total: ${selectedSale ? calculateSaleTotalWithTax(selectedSale).toFixed(2) : '0.00'}
-                  </p>
-                </div>
-              </div>
+                    <div className="border-t pt-4 flex justify-end">
+                      <div className="text-right space-y-1 text-sm">
+                        {resumen.discount > 0.005 && (
+                          <>
+                            <p className="text-gray-600">Precio de lista: {money(resumen.listBase)}</p>
+                            <p className="text-red-600">
+                              Descuento ({resumen.discountPercent.toFixed(2)}%): − {money(resumen.discount)}
+                            </p>
+                          </>
+                        )}
+                        <p className="text-gray-600">Subtotal: {money(resumen.base)}</p>
+                        <p className="text-gray-600">ITBIS: {money(resumen.tax)}</p>
+                        <p className="text-2xl font-bold text-green-600 pt-1">
+                          Total: {money(resumen.total)}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
               <div className="flex gap-2 justify-end pt-4 border-t">
                 <Button variant="outline" onClick={() => generateReceiptFromSale(selectedSale)}>
                   <Printer className="h-4 w-4 mr-2" />

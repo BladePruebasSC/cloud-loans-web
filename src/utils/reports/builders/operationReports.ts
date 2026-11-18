@@ -5,11 +5,14 @@
 // Los precios se enseñan SIEMPRE con ITBIS (`itbis.ts`), como el resto del sistema.
 
 import {
-  DEFAULT_ITBIS_RATE, itbisRateOf, purchasePriceWithItbis, sellingPriceWithItbis,
-  stockCostWithItbis, stockValueWithItbis, withItbis,
+  DEFAULT_ITBIS_RATE, purchasePriceWithItbis, sellingPriceWithItbis,
+  stockCostWithItbis, stockValueWithItbis,
 } from '../../itbis';
+import { saleAmounts, type SaleAmounts } from '../../saleAmounts';
+import { getFrequencyLabel, toAnnualRate } from '../../frequencyUtils';
 import {
-  PAYMENT_METHOD_LABEL, dateOnly, labelFor, round2, userNameOf, type ReportData,
+  LOAN_STATUS_LABEL, PAYMENT_METHOD_LABEL, clientNameOf, dateOnly, labelFor, round2, userNameOf,
+  type ReportData,
 } from '../reportDataset';
 import { inPeriod } from '../reportPeriods';
 import { applyCommonFilters, groupRows } from '../reportFilters';
@@ -175,32 +178,78 @@ interface SaleLineLike {
   quantity?: number | null;
   total_price?: number | null;
   itbis_rate?: number | null;
+  product_name?: string | null;
+  product_id?: string | null;
+  /** Precio de LISTA por unidad, con ITBIS, guardado con la venta. */
+  list_unit_price?: number | null;
+  /** Precio de venta de hoy del producto, para deducirlo en las ventas que no lo guardaron. */
+  product_selling_price?: number | null;
 }
 interface SaleLike {
   total_amount?: number | null;
   total_price?: number | null;
   subtotal?: number | null;
   tax_amount?: number | null;
+  discount_amount?: number | null;
   details?: SaleLineLike[];
 }
 
-/** Lo que vale una línea de venta CON ITBIS (lo que el cliente paga por ese renglón). */
-const lineTotalWithTax = (d: SaleLineLike): number => {
-  const porUnitario = (Number(d?.unit_price) || 0) * (Number(d?.quantity) || 0);
-  if (porUnitario > 0.005) return round2(porUnitario);
-  return withItbis(d?.total_price, itbisRateOf({ itbis_rate: d?.itbis_rate }));
+const comoLinea = (d: SaleLineLike) => ({
+  quantity: d?.quantity,
+  unit_price: d?.unit_price,
+  total_price: d?.total_price,
+  itbis_rate: d?.itbis_rate,
+  list_unit_price: d?.list_unit_price,
+  product: (Number(d?.product_selling_price) || 0) > 0
+    ? { selling_price: d?.product_selling_price, itbis_rate: d?.itbis_rate }
+    : null,
+});
+
+/**
+ * EL DESGLOSE DE UNA VENTA: precio de lista, descuento, base, ITBIS y total.
+ *
+ * FALLO REPORTADO (2026-11-18): "muchas de esas ventas fue con descuento pero no hay forma de
+ * saberlo porque no lo indica". El descuento sale de comparar lo cobrado con el precio de lista
+ * (`saleAmounts`); la cuenta es la misma que usan la factura y el módulo de inventario, así que
+ * una venta no puede decir una cosa en el reporte y otra en su propio papel.
+ */
+export const saleBreakdown = (sale: SaleLike): SaleAmounts => {
+  const detalle = saleAmounts((sale.details || []).map(comoLinea));
+  const guardadoElItbis = sale.tax_amount !== null && sale.tax_amount !== undefined;
+
+  if (detalle.total > 0.005) {
+    // Si la base guardó el ITBIS, ese manda: es lo que se declaró.
+    if (guardadoElItbis) {
+      const tax = round2(sale.tax_amount);
+      return { ...detalle, tax, base: round2(detalle.total - tax) };
+    }
+    return detalle;
+  }
+
+  // Sin líneas: lo que la venta guardó de sí misma.
+  const total = typeof sale.total_amount === 'number' && sale.total_amount > 0
+    ? round2(sale.total_amount)
+    : round2(sale.total_price);
+  // Sin líneas no se sabe la tasa de los productos: se usa la dominicana.
+  const tax = guardadoElItbis ? round2(sale.tax_amount) : round2(total - total / (1 + DEFAULT_ITBIS_RATE / 100));
+  const base = round2(total - tax);
+  const discount = round2(Math.max(0, Number(sale.discount_amount) || 0));
+  const listBase = round2(base + discount);
+  const factor = base > 0.005 ? total / base : 1;
+  const listTotal = round2(listBase * factor);
+  return {
+    items: 0,
+    listBase, listTotal, base, tax, total,
+    discount,
+    discountWithTax: round2(Math.max(0, listTotal - total)),
+    discountPercent: listTotal > 0.005 ? round2(((listTotal - total) / listTotal) * 100) : 0,
+    discountSource: discount > 0.005 ? 'guardado' : 'ninguno',
+    lines: [],
+  };
 };
 
 /** Importe de una venta CON ITBIS, con las dos formas en que el sistema las ha guardado. */
-export const saleTotalWithTax = (sale: SaleLike): number => {
-  const detalles = sale.details || [];
-  if (detalles.length > 0) {
-    const total = detalles.reduce((s, d) => s + lineTotalWithTax(d), 0);
-    if (total > 0.005) return round2(total);
-  }
-  if (typeof sale.total_amount === 'number' && sale.total_amount > 0) return round2(sale.total_amount);
-  return round2(sale.total_price);
-};
+export const saleTotalWithTax = (sale: SaleLike): number => saleBreakdown(sale).total;
 
 /**
  * El ITBIS de una venta: el que se guardó y, si la base no lo guarda, el que llevan sus líneas.
@@ -210,29 +259,46 @@ export const saleTotalWithTax = (sale: SaleLike): number => {
  * cual: ITBIS 0 y un subtotal igual al total, como si nada llevara impuesto. El impuesto se
  * deduce de cada línea con la tasa de SU producto (un exento sigue sin ITBIS).
  */
-export const saleTaxAmount = (sale: SaleLike): number => {
-  if (sale.tax_amount !== null && sale.tax_amount !== undefined) return round2(sale.tax_amount);
+export const saleTaxAmount = (sale: SaleLike): number => saleBreakdown(sale).tax;
 
-  const detalles = sale.details || [];
-  if (detalles.length > 0) {
-    return round2(detalles.reduce((s, d) => {
-      const conItbis = lineTotalWithTax(d);
-      const rate = itbisRateOf({ itbis_rate: d?.itbis_rate });
-      return s + (conItbis - conItbis / (1 + rate / 100));
-    }, 0));
-  }
-
-  // Sin líneas no se sabe la tasa de los productos: se usa la dominicana.
-  const total = saleTotalWithTax(sale);
-  return round2(total - total / (1 + DEFAULT_ITBIS_RATE / 100));
+/** Contado, financiada o a crédito. */
+const tipoDeVenta = (sale: { payment_method?: string | null; sale_type?: string | null }): string => {
+  if (String(sale.payment_method || '').toLowerCase() === 'financing') return 'Financiada';
+  if (String(sale.sale_type || '').toLowerCase() === 'credit') return 'A crédito';
+  return 'Contado';
 };
+
+/** La forma de pago, y su reparto cuando la venta se cobró con varias. */
+const formasDePago = (sale: {
+  payment_method?: string | null;
+  payment_details?: Array<{ method?: string; label?: string; amount?: number }> | null;
+}): string => {
+  const partes = (sale.payment_details || []).filter(p => (Number(p?.amount) || 0) > 0.005);
+  if (partes.length > 1) {
+    return partes
+      .map(p => `${labelFor(PAYMENT_METHOD_LABEL, p.method || 'cash')} ${round2(p.amount).toLocaleString('es-DO')}`)
+      .join(' + ');
+  }
+  return labelFor(PAYMENT_METHOD_LABEL, sale.payment_method || 'cash');
+};
+
+/**
+ * Aviso para el pie del reporte cuando el descuento no se guardó y hubo que deducirlo del precio
+ * de venta de hoy: si al producto le cambiaron el precio después, la cifra es aproximada.
+ */
+const notaDeDescuentos = (deducido: boolean): string[] => deducido
+  ? ['Las ventas anteriores al 18/11/2026 no guardaban el precio de lista: su descuento se deduce '
+    + 'del precio de venta actual del producto, así que si a alguno le cambiaron el precio después, '
+    + 'esa cifra es aproximada. Las ventas nuevas guardan el precio del día y ya no se deduce nada.']
+  : [];
 
 export const salesReports: ReportDefinition<ReportData>[] = [
   {
     id: 'sales-detail',
     name: 'Ventas del período',
     category: 'ventas',
-    description: 'Cada venta del punto de venta, con su cliente, método de pago y total con ITBIS.',
+    description: 'Cada venta con lo que de verdad pasó en ella: precio de lista, descuento, ITBIS, '
+      + 'forma de pago y quién la hizo.',
     permission: 'reports.inventory',
     dataset: 'sales',
     columns: [
@@ -240,47 +306,69 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       { key: 'numero', label: 'Venta', align: 'left' },
       { key: 'cliente', label: 'Cliente', align: 'left' },
       { key: 'articulos', label: 'Artículos', format: 'number', total: true },
-      { key: 'subtotal', label: 'Subtotal', format: 'money', total: true },
+      { key: 'precioLista', label: 'Precio de lista', format: 'money', total: true, help: 'Lo que valía sin descuento, sin ITBIS' },
+      { key: 'descuento', label: 'Descuento', format: 'money', total: true, help: 'Lo rebajado, sin ITBIS' },
+      { key: 'descuentoPct', label: '% Desc.', format: 'percent' },
+      { key: 'subtotal', label: 'Subtotal', format: 'money', total: true, help: 'Precio de lista menos el descuento' },
       { key: 'itbis', label: 'ITBIS', format: 'money', total: true },
-      { key: 'descuento', label: 'Descuento', format: 'money', total: true },
       { key: 'total', label: 'Total', format: 'money', total: true },
       { key: 'metodo', label: 'Método', align: 'left' },
+      { key: 'tipo', label: 'Tipo', format: 'badge', hiddenByDefault: true, help: 'Contado, financiada o a crédito' },
+      { key: 'reparto', label: 'Reparto del pago', align: 'left', width: 40, hiddenByDefault: true },
       { key: 'usuario', label: 'Vendió', align: 'left' },
     ],
     filters: ['search', 'userId', 'paymentMethod', 'minAmount', 'maxAmount'],
     defaultSort: { key: 'fecha', dir: 'desc' },
-    keywords: ['ventas', 'punto de venta', 'facturas', 'recibos', 'pos'],
+    keywords: ['ventas', 'punto de venta', 'facturas', 'recibos', 'pos', 'descuento'],
     build: ctx => {
       const { data, filters } = ctx;
-      const rows = salesInPeriod(data, filters).map(s => {
-        const total = saleTotalWithTax(s);
-        // El ITBIS guardado o, si la base no lo guarda, el que llevan las líneas (2026-11-17).
-        const itbis = saleTaxAmount(s);
+      const ventas = salesInPeriod(data, filters);
+      let deducido = false;
+      const rows = ventas.map(s => {
+        // Precio de lista, descuento, base, ITBIS y total: la misma cuenta que la factura.
+        const v = saleBreakdown(s);
+        if (v.discountSource === 'deducido') deducido = true;
         return {
           _id: s.id,
+          _clientId: s.client_id || undefined,
           fecha: dateOnly(s.sale_date || s.created_at),
           numero: String(s.sale_number || s.id.slice(0, 8)),
           cliente: String(s.customer_name || 'Consumidor final'),
           articulos: (s.details || []).reduce((n, d) => n + (Number(d.quantity) || 0), 0),
-          subtotal: round2(s.subtotal ?? (total - itbis)),
-          itbis,
-          descuento: round2(s.discount_amount),
-          total,
+          precioLista: v.listBase,
+          descuento: v.discount,
+          descuentoPct: v.discountPercent,
+          subtotal: v.base,
+          itbis: v.tax,
+          total: v.total,
           metodo: labelFor(PAYMENT_METHOD_LABEL, s.payment_method || 'cash'),
+          tipo: tipoDeVenta(s),
+          reparto: formasDePago(s),
           usuario: userNameOf(data, s.user_id),
         } as ReportRow;
       });
       const filtradas = applyCommonFilters(rows, filters, 'total');
       const total = round2(filtradas.reduce((s, r) => s + (Number(r.total) || 0), 0));
+      const descuento = round2(filtradas.reduce((s, r) => s + (Number(r.descuento) || 0), 0));
+      const lista = round2(filtradas.reduce((s, r) => s + (Number(r.precioLista) || 0), 0));
       return {
         rows: filtradas,
-        notes: ['Los importes van con ITBIS incluido, igual que en el punto de venta y en la factura.'],
+        notes: [
+          'Los importes van con ITBIS incluido, igual que en el punto de venta y en la factura. '
+          + 'El "Precio de lista" y el "Descuento" van sin ITBIS, para que cuadren con el subtotal.',
+          ...notaDeDescuentos(deducido),
+        ],
         kpis: [
           { key: 'cantidad', label: 'Ventas', value: filtradas.length, format: 'number' },
           { key: 'total', label: 'Total vendido', value: total, format: 'money' },
           {
             key: 'ticket', label: 'Ticket promedio', format: 'money',
             value: filtradas.length ? round2(total / filtradas.length) : 0,
+          },
+          {
+            key: 'descuento', label: 'Descontado', value: descuento, format: 'money',
+            hint: lista > 0 ? `${round2((descuento / lista) * 100)}% del precio de lista` : undefined,
+            linkTo: 'sales-discounts',
           },
         ],
       };
@@ -291,45 +379,178 @@ export const salesReports: ReportDefinition<ReportData>[] = [
     id: 'sales-by-product',
     name: 'Productos vendidos',
     category: 'ventas',
-    description: 'Qué se vende y qué no: unidades e importe por producto.',
+    description: 'Qué se vende y a qué precio: unidades, precio de lista, lo rebajado y lo cobrado.',
     permission: 'reports.inventory',
     dataset: 'sales',
     columns: [
       { key: 'producto', label: 'Producto', align: 'left' },
       { key: 'ventas', label: 'Ventas', format: 'number', total: true },
       { key: 'unidades', label: 'Unidades', format: 'number', total: true },
+      { key: 'precioLista', label: 'Precio de lista', format: 'money', help: 'Por unidad, con ITBIS' },
+      { key: 'precioPromedio', label: 'Precio real', format: 'money', help: 'Lo que se cobró por unidad, con ITBIS' },
+      { key: 'descuento', label: 'Descontado', format: 'money', total: true },
+      { key: 'descuentoPct', label: '% Desc.', format: 'percent' },
       { key: 'importe', label: 'Importe con ITBIS', format: 'money', total: true },
-      { key: 'precioPromedio', label: 'Precio promedio', format: 'money' },
     ],
     filters: ['search', 'userId'],
     defaultSort: { key: 'importe', dir: 'desc' },
-    keywords: ['productos', 'más vendidos', 'menos vendidos', 'artículos'],
+    keywords: ['productos', 'más vendidos', 'menos vendidos', 'artículos', 'descuento'],
     build: ctx => {
       const { data, filters } = ctx;
-      const detalles = salesInPeriod(data, filters).flatMap(s => (s.details || []).map(d => ({ sale: s, detail: d })));
+      const detalles = salesInPeriod(data, filters).flatMap(s => (s.details || []).map(d => ({
+        sale: s, detail: d, linea: saleAmounts([comoLinea(d)]).lines[0],
+      })));
       const grupos = groupRows(detalles, d => String(d.detail.product_name || d.detail.product_id || 'Producto'));
+      let deducido = false;
       const rows: ReportRow[] = [...grupos.entries()].map(([producto, lista]) => {
-        const unidades = lista.reduce((n, d) => n + (Number(d.detail.quantity) || 0), 0);
-        const importe = round2(lista.reduce((s, d) => {
-          const porUnitario = (Number(d.detail.unit_price) || 0) * (Number(d.detail.quantity) || 0);
-          return s + (porUnitario > 0.005
-            ? porUnitario
-            : withItbis(d.detail.total_price, itbisRateOf({ itbis_rate: d.detail.itbis_rate })));
-        }, 0));
+        const unidades = lista.reduce((n, d) => n + d.linea.quantity, 0);
+        const importe = round2(lista.reduce((s, d) => s + d.linea.total, 0));
+        const porLista = round2(lista.reduce((s, d) => s + d.linea.listTotal, 0));
+        const descuento = round2(lista.reduce((s, d) => s + d.linea.discountWithTax, 0));
+        if (lista.some(d => d.linea.discountSource === 'deducido')) deducido = true;
         return {
           _id: producto,
           producto,
           ventas: new Set(lista.map(d => d.sale.id)).size,
           unidades,
-          importe,
+          precioLista: unidades > 0 ? round2(porLista / unidades) : 0,
           precioPromedio: unidades > 0 ? round2(importe / unidades) : 0,
+          descuento,
+          descuentoPct: porLista > 0.005 ? round2((descuento / porLista) * 100) : 0,
+          importe,
         };
       });
       return {
         rows: applyCommonFilters(rows, filters, 'importe'),
+        notes: [
+          'El "Precio real" es lo que de verdad se cobró por unidad: si un producto se vendió con '
+          + 'descuento, no coincide con el de lista.',
+          ...notaDeDescuentos(deducido),
+        ],
         charts: [{
           kind: 'bar', title: 'Importe por producto', xKey: 'producto',
           series: [{ key: 'importe', label: 'Importe' }], money: true,
+        }],
+      };
+    },
+  },
+
+  {
+    id: 'sales-discounts',
+    name: 'Descuentos aplicados',
+    category: 'ventas',
+    description: 'Qué se rebajó y en qué venta: el precio de lista, lo que se cobró y cuánto se dejó de cobrar.',
+    permission: 'reports.inventory',
+    dataset: 'sales',
+    columns: [
+      { key: 'fecha', label: 'Fecha', format: 'date' },
+      { key: 'numero', label: 'Venta', align: 'left' },
+      { key: 'cliente', label: 'Cliente', align: 'left' },
+      { key: 'producto', label: 'Producto', align: 'left' },
+      { key: 'cantidad', label: 'Cant.', format: 'number', total: true },
+      { key: 'precioLista', label: 'Precio de lista', format: 'money' },
+      { key: 'precioCobrado', label: 'Se cobró', format: 'money' },
+      { key: 'descuentoPct', label: '% Desc.', format: 'percent' },
+      { key: 'descuento', label: 'Descontado', format: 'money', total: true },
+      { key: 'importe', label: 'Importe', format: 'money', total: true },
+      { key: 'origen', label: 'Origen del dato', format: 'badge', hiddenByDefault: true },
+      { key: 'usuario', label: 'Vendió', align: 'left' },
+    ],
+    filters: ['search', 'userId', 'paymentMethod', 'minAmount'],
+    defaultSort: { key: 'descuento', dir: 'desc' },
+    keywords: ['descuento', 'rebaja', 'promoción', 'precio especial'],
+    build: ctx => {
+      const { data, filters } = ctx;
+      const ventas = salesInPeriod(data, filters);
+      let deducido = false;
+      const rows: ReportRow[] = [];
+      let listaTotal = 0;
+      for (const s of ventas) {
+        (s.details || []).forEach(d => {
+          const linea = saleAmounts([comoLinea(d)]).lines[0];
+          listaTotal += linea.listTotal;
+          if (linea.discountWithTax <= 0.005) return;
+          if (linea.discountSource === 'deducido') deducido = true;
+          rows.push({
+            _id: `${s.id}-${d.id}`,
+            _clientId: s.client_id || undefined,
+            fecha: dateOnly(s.sale_date || s.created_at),
+            numero: String(s.sale_number || s.id.slice(0, 8)),
+            cliente: String(s.customer_name || 'Consumidor final'),
+            producto: String(d.product_name || d.product_id || 'Producto'),
+            cantidad: linea.quantity,
+            precioLista: linea.unitList,
+            precioCobrado: linea.unitCharged,
+            descuentoPct: linea.discountPercent,
+            descuento: linea.discountWithTax,
+            importe: linea.total,
+            origen: linea.discountSource === 'guardado' ? 'Guardado' : 'Deducido',
+            usuario: userNameOf(data, s.user_id),
+          });
+        });
+      }
+      const filtradas = applyCommonFilters(rows, filters, 'descuento');
+      const descontado = round2(filtradas.reduce((s, r) => s + (Number(r.descuento) || 0), 0));
+      return {
+        rows: filtradas,
+        notes: [
+          'Solo salen las líneas que se vendieron por debajo del precio de lista. Los importes van '
+          + 'con ITBIS: un descuento también rebaja el impuesto.',
+          ...notaDeDescuentos(deducido),
+        ],
+        kpis: [
+          { key: 'lineas', label: 'Líneas con descuento', value: filtradas.length, format: 'number' },
+          { key: 'descontado', label: 'Dejado de cobrar', value: descontado, format: 'money' },
+          {
+            key: 'peso', label: '% sobre el precio de lista', format: 'percent',
+            value: listaTotal > 0.005 ? round2((descontado / round2(listaTotal)) * 100) : 0,
+          },
+        ],
+      };
+    },
+  },
+
+  {
+    id: 'sales-by-payment',
+    name: 'Ventas por forma de pago',
+    category: 'ventas',
+    description: 'Cómo entra el dinero de las ventas: efectivo, tarjeta, transferencia o financiamiento.',
+    permission: 'reports.inventory',
+    dataset: 'sales',
+    columns: [
+      { key: 'metodo', label: 'Forma de pago', align: 'left' },
+      { key: 'ventas', label: 'Ventas', format: 'number', total: true },
+      { key: 'total', label: 'Total', format: 'money', total: true },
+      { key: 'participacion', label: '% del total', format: 'percent' },
+      { key: 'ticket', label: 'Ticket promedio', format: 'money' },
+      { key: 'descuento', label: 'Descontado', format: 'money', total: true },
+    ],
+    filters: ['userId'],
+    defaultSort: { key: 'total', dir: 'desc' },
+    keywords: ['método de pago', 'forma de pago', 'efectivo', 'tarjeta', 'transferencia', 'financiamiento'],
+    build: ctx => {
+      const lista = salesInPeriod(ctx.data, ctx.filters);
+      const total = round2(lista.reduce((s, v) => s + saleTotalWithTax(v), 0));
+      const grupos = groupRows(lista, s => labelFor(PAYMENT_METHOD_LABEL, s.payment_method || 'cash'));
+      const rows: ReportRow[] = [...grupos.entries()].map(([metodo, items]) => {
+        const suma = round2(items.reduce((s, v) => s + saleTotalWithTax(v), 0));
+        return {
+          _id: metodo,
+          metodo,
+          ventas: items.length,
+          total: suma,
+          participacion: total > 0 ? round2((suma / total) * 100) : 0,
+          ticket: items.length ? round2(suma / items.length) : 0,
+          descuento: round2(items.reduce((s, v) => s + saleBreakdown(v).discountWithTax, 0)),
+        };
+      });
+      return {
+        rows,
+        notes: ['Una venta financiada aparece aquí como "Financiamiento": lo que se cobra después '
+          + 'son las cuotas del préstamo, que van en los reportes de pagos.'],
+        charts: [{
+          kind: 'pie', title: 'Reparto por forma de pago', xKey: 'metodo',
+          series: [{ key: 'total', label: 'Total' }], money: true,
         }],
       };
     },
@@ -433,6 +654,82 @@ export const salesReports: ReportDefinition<ReportData>[] = [
         };
       });
       return { rows };
+    },
+  },
+
+  {
+    id: 'sales-financed',
+    name: 'Ventas financiadas',
+    category: 'ventas',
+    description: 'Las ventas que se cobran a plazo: qué se financió, a qué tasa, en cuántas cuotas y cómo va.',
+    permission: 'reports.inventory',
+    dataset: 'core',
+    columns: [
+      { key: 'fecha', label: 'Fecha', format: 'date' },
+      { key: 'cliente', label: 'Cliente', align: 'left' },
+      { key: 'productos', label: 'Qué se financió', align: 'left', width: 50 },
+      { key: 'financiado', label: 'Financiado', format: 'money', total: true },
+      { key: 'tasa', label: 'Tasa anual', format: 'percent', help: 'La tasa escrita en la venta, anual' },
+      { key: 'plazo', label: 'Plazo', align: 'left' },
+      { key: 'cuota', label: 'Cuota', format: 'money' },
+      { key: 'total', label: 'Total a pagar', format: 'money', total: true },
+      { key: 'interes', label: 'Interés', format: 'money', total: true },
+      { key: 'balance', label: 'Por cobrar', format: 'money', total: true },
+      { key: 'estado', label: 'Estado', format: 'badge' },
+    ],
+    filters: ['search', 'clientId', 'frequency', 'minAmount', 'maxAmount'],
+    defaultSort: { key: 'fecha', dir: 'desc' },
+    keywords: ['financiamiento', 'financiadas', 'a plazo', 'crédito', 'cuotas', 'pos'],
+    build: ctx => {
+      const { data, filters } = ctx;
+      // El préstamo que nace de una venta se guarda con este propósito (ver `PointOfSaleModule`).
+      const MARCA = 'Financiamiento de venta POS';
+      const prestamos = (data.loans || []).filter(l => {
+        const purpose = String((l as any).purpose || '');
+        return purpose.startsWith(MARCA)
+          && inPeriod(dateOnly(l.start_date || l.created_at), filters);
+      });
+      const rows: ReportRow[] = prestamos.map(l => {
+        const capital = round2(l.amount);
+        const total = round2(l.total_amount ?? 0) || capital;
+        const periodos = Number((l as any).term_months) || 0;
+        const balance = round2(data.balanceByLoan.get(l.id) ?? l.remaining_balance);
+        return {
+          _id: l.id,
+          _loanId: l.id,
+          _clientId: l.client_id,
+          fecha: dateOnly(l.start_date || l.created_at),
+          cliente: clientNameOf(l, data),
+          productos: String((l as any).purpose || '').slice(MARCA.length).replace(/^\s*-\s*/, '') || '—',
+          financiado: capital,
+          // `loans.interest_rate` se guarda MENSUAL; en la venta se escribe ANUAL.
+          tasa: toAnnualRate(l.interest_rate),
+          plazo: periodos > 0 ? `${periodos} ${getFrequencyLabel(l.payment_frequency, periodos !== 1)}` : '—',
+          cuota: round2(l.monthly_payment),
+          total,
+          interes: round2(Math.max(0, total - capital)),
+          balance,
+          estado: labelFor(LOAN_STATUS_LABEL, l.status || 'pending'),
+        };
+      });
+      const filtradas = applyCommonFilters(rows, filters, 'financiado');
+      const financiado = round2(filtradas.reduce((s, r) => s + (Number(r.financiado) || 0), 0));
+      return {
+        rows: filtradas,
+        notes: [
+          'Son los préstamos que creó el punto de venta al cobrar una venta a plazo. La tasa se '
+          + 'enseña ANUAL, como se escribe en la venta y en el formulario de préstamo.',
+          'Lo que se cobra de estas ventas son las cuotas del préstamo: van en los reportes de pagos.',
+        ],
+        kpis: [
+          { key: 'cantidad', label: 'Ventas financiadas', value: filtradas.length, format: 'number' },
+          { key: 'financiado', label: 'Capital financiado', value: financiado, format: 'money' },
+          {
+            key: 'balance', label: 'Por cobrar', format: 'money',
+            value: round2(filtradas.reduce((s, r) => s + (Number(r.balance) || 0), 0)),
+          },
+        ],
+      };
     },
   },
 ];

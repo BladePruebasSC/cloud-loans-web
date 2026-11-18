@@ -52,6 +52,8 @@ import {
   MessageCircle
 } from 'lucide-react';
 
+const round2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+
 interface Product {
   id: string;
   name: string;
@@ -346,65 +348,36 @@ export const PointOfSaleModule = () => {
     }
   }, [customers, customerSearch]);
 
-  // Actualizar totales cuando cambia el carrito
+  // Actualizar totales cuando cambia el carrito.
+  //
+  // UNA SOLA CUENTA (2026-11-18): los totales salen de las MISMAS líneas que la factura
+  // (`cartLineAmounts`). Antes esta pantalla hacía su propia suma y la factura la suya, así que
+  // podían separarse por céntimos; y el "Descuento" se medía con ITBIS en el modo "al total" y
+  // sin él en el modo "por ítem", dos cosas distintas con el mismo nombre. Ahora el descuento es
+  // siempre SIN ITBIS, como el subtotal del que se resta.
   useEffect(() => {
-    const round2 = (n: number) => Math.round((n || 0) * 100) / 100;
-    const useTotalDiscountMode = saleData.discountMode === 'total';
+    const lineas = cart.map(item => cartLineAmounts(
+      {
+        unitPrice: item.unitPrice,
+        quantity: item.quantity,
+        discountPercent: item.discountPercent,
+        subtotal: item.subtotal,
+        itbisRate: itbisRateOf(item.product),
+      },
+      { mode: saleData.discountMode, totalPercent: saleData.discountPercentTotal },
+    ));
+    const suma = (pick: (l: ReturnType<typeof cartLineAmounts>) => number) =>
+      round2(lineas.reduce((s, l) => s + pick(l), 0));
 
-    // Cuando modo es "Al total (%)", ignorar descuento por ítem: usar base sin descuento por ítem
-    const getItemBaseSubtotal = (item: CartItem) => {
-      const itbisRate = item.product.itbis_rate ?? 18;
-      const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
-      return priceWithoutTax * item.quantity;
-    };
-    const getItemEffectiveSubtotal = (item: CartItem) => {
-      if (useTotalDiscountMode) return getItemBaseSubtotal(item);
-      return item.subtotal;
-    };
+    const subtotal = suma(l => l.base);
+    const tax = suma(l => l.tax);
 
-    const subtotalBase = cart.reduce((sum, item) => sum + getItemEffectiveSubtotal(item), 0);
-
-    let discountAmount = 0;
-    if (saleData.discountMode === 'total') {
-      const totalTaxBeforeDiscount = cart.reduce((sum, item) => {
-        const itbisRate = item.product.itbis_rate ?? 18;
-        const effectiveBase = getItemEffectiveSubtotal(item);
-        const itemTax = effectiveBase * (itbisRate / 100);
-        return sum + itemTax;
-      }, 0);
-      const grossBeforeDiscount = subtotalBase + totalTaxBeforeDiscount;
-      discountAmount = (grossBeforeDiscount * (saleData.discountPercentTotal || 0)) / 100;
-    } else if (saleData.discountMode === 'item') {
-      discountAmount = cart.reduce((sum, item) => {
-        const baseAmount = getItemBaseSubtotal(item);
-        const discountedSubtotal = item.subtotal;
-        return sum + Math.max(0, baseAmount - discountedSubtotal);
-      }, 0);
-    }
-
-    const totalTax = cart.reduce((sum, item) => {
-      const itbisRate = item.product.itbis_rate ?? 18;
-      const effectiveBase = getItemEffectiveSubtotal(item);
-      return sum + effectiveBase * (itbisRate / 100);
-    }, 0);
-
-    let finalTax = totalTax;
-    let finalSubtotal = subtotalBase;
-    if (saleData.discountMode === 'total' && saleData.discountPercentTotal) {
-      const totalBeforeDiscount = subtotalBase + totalTax;
-      const discountRatio = totalBeforeDiscount > 0 ? discountAmount / totalBeforeDiscount : 0;
-      finalSubtotal = subtotalBase * (1 - discountRatio);
-      finalTax = totalTax * (1 - discountRatio);
-    }
-
-    const total = finalSubtotal + finalTax;
-    
     setSaleData(prev => ({
       ...prev,
-      subtotal: round2(finalSubtotal),
-      discount: round2(discountAmount),
-      tax: round2(finalTax),
-      total: round2(total),
+      subtotal,
+      discount: round2(Math.max(0, suma(l => l.listBase) - subtotal)),
+      tax,
+      total: round2(subtotal + tax),
       items: cart
     }));
   }, [cart, saleData.discountMode, saleData.discountPercentTotal]);
@@ -555,6 +528,57 @@ export const PointOfSaleModule = () => {
 
   /** Lo que paga el cliente por esa línea (con su descuento y su ITBIS). */
   const lineTotalWithTax = (item: CartItem): number => lineAmounts(item).total;
+
+  /**
+   * EL RESUMEN DE LA FACTURA, sacado de las mismas líneas que enseña la tabla de arriba.
+   *
+   * FALLO REPORTADO (2026-11-18): "en las facturas no se ve el descuento". El resumen decía
+   * "Subtotal / ITBIS / TOTAL" con el subtotal YA rebajado, así que un descuento del 10% no
+   * aparecía por ningún lado; y cuando aparecía, restado de un subtotal que ya lo llevaba
+   * descontado, las cuentas no cuadraban. Ahora, cuando hubo descuento, la factura lo dice:
+   *
+   *   Precio de lista   105,000.00
+   *   Descuento (10%)   −10,500.00
+   *   Subtotal           94,500.00
+   *   ITBIS              17,010.00
+   *   TOTAL             111,510.00
+   */
+  const invoiceSummary = (items: CartItem[]) => {
+    const lineas = items.map(lineAmounts);
+    const suma = (pick: (l: ReturnType<typeof cartLineAmounts>) => number) =>
+      round2(lineas.reduce((s, l) => s + pick(l), 0));
+    const listBase = suma(l => l.listBase);
+    const base = suma(l => l.base);
+    const tax = suma(l => l.tax);
+    const discount = round2(Math.max(0, listBase - base));
+    return {
+      listBase, base, tax, total: round2(base + tax), discount,
+      discountPercent: listBase > 0.005 ? round2((discount / listBase) * 100) : 0,
+    };
+  };
+
+  /** Las filas del resumen, con el descuento a la vista cuando lo hubo. */
+  const invoiceSummaryRows = (
+    items: CartItem[],
+    money: (n: number) => string,
+    opts: { colon?: boolean; totalLabel?: string; fallback?: { subtotal?: number; tax?: number; total?: number } } = {},
+  ): string => {
+    const c = opts.colon === false ? '' : ':';
+    const totalLabel = opts.totalLabel || `TOTAL${c}`;
+    const r = invoiceSummary(items);
+    // Sin líneas a mano (una factura que se reimprime sin su carrito) se usa lo guardado.
+    const vacio = r.total < 0.005 && (opts.fallback?.total || 0) > 0;
+    const base = vacio ? (opts.fallback?.subtotal || 0) : r.base;
+    const tax = vacio ? (opts.fallback?.tax || 0) : r.tax;
+    const total = vacio ? (opts.fallback?.total || 0) : r.total;
+    const descuento = vacio ? 0 : r.discount;
+    return `
+            ${descuento > 0.005 ? `<div class="sum-row"><span>Precio de lista${c}</span><span>${money(r.listBase)}</span></div>
+            <div class="sum-row"><span>Descuento (${r.discountPercent.toFixed(2)}%)${c}</span><span>- ${money(descuento)}</span></div>` : ''}
+            <div class="sum-row"><span>Subtotal${c}</span><span>${money(base)}</span></div>
+            <div class="sum-row"><span>ITBIS${c}</span><span>${money(tax)}</span></div>
+            <div class="sum-row total"><span>${totalLabel}</span><span>${money(total)}</span></div>`;
+  };
 
   const addToCart = (product: Product) => {
     // Validar stock disponible
@@ -852,8 +876,28 @@ export const PointOfSaleModule = () => {
       try {
           // Para financiamiento, usar 'cash' como payment_method y 'credit' como sale_type
           // (los constraints solo permiten valores específicos)
-          const paymentMethod = saleData.paymentMethod?.type === 'financing' ? 'cash' : (saleData.paymentMethod?.id || 'cash');
+          const paymentMethodSeguro = saleData.paymentMethod?.type === 'financing' ? 'cash' : (saleData.paymentMethod?.id || 'cash');
           const saleType = saleData.paymentMethod?.type === 'financing' ? 'credit' : (saleData.saleType || 'cash');
+
+          // LA FORMA DE PAGO REAL (2026-11-18). La tabla solo admitía efectivo/tarjeta/
+          // transferencia/cheque, así que una venta FINANCIADA se guardaba como EFECTIVO y en los
+          // reportes salía mezclada con las de contado; y una venta pagada con dos formas solo
+          // dejaba rastro de la primera. Con la migración `20261118000000` se admiten también
+          // 'financing' y 'mixed', y el reparto va en `payment_details`. Si la base todavía no
+          // tiene esa migración, el insert se reintenta con el valor de siempre.
+          const cobros = (saleData.paymentSplits || []).filter(s => (s.amount || 0) > 0.005);
+          const hayFinanciamiento = saleData.paymentMethod?.type === 'financing'
+            || cobros.some(s => s.method?.type === 'financing');
+          const paymentMethod = hayFinanciamiento
+            ? 'financing'
+            : cobros.length > 1 ? 'mixed' : (cobros[0]?.method?.id || paymentMethodSeguro);
+          const paymentDetails = cobros.length > 0
+            ? cobros.map(s => ({
+              method: s.method?.type || s.method?.id || 'cash',
+              label: s.method?.name || '',
+              amount: round2(s.amount),
+            }))
+            : null;
         // Verificar stock en servidor antes de persistir
         const productIds = cart.map(ci => ci.product.id);
         const { data: latestProducts } = await supabase
@@ -879,16 +923,22 @@ export const PointOfSaleModule = () => {
             sale_date: new Date().toISOString().split('T')[0],
             total_amount: saleData.total,
             sale_number: `SALE-${Date.now()}`,
-            payment_method: saleData.paymentMethod?.id || 'cash',
+            payment_method: paymentMethodSeguro,
             status: 'completed',
             notes: saleData.notes || null,
             client_id: saleData.customer?.id || null,
           };
+          // El descuento se guarda SIN ITBIS, como el subtotal: así la venta guardada cuadra con
+          // la factura (precio de lista − descuento = subtotal; subtotal + ITBIS = total).
+          const resumen = invoiceSummary(cart);
           const ventaConDesglose = {
             ...ventaBase,
-            subtotal: saleData.subtotal,
-            tax_amount: saleData.tax,
-            discount_amount: saleData.discount,
+            payment_method: paymentMethod,
+            payment_details: paymentDetails,
+            subtotal: resumen.base,
+            tax_amount: resumen.tax,
+            discount_amount: resumen.discount,
+            discount_percent: resumen.discountPercent,
           };
 
           let { data: saleInsert, error: saleError } = await supabase
@@ -897,7 +947,7 @@ export const PointOfSaleModule = () => {
             .select()
             .single();
 
-          if (saleError && findMissingColumn(saleError)) {
+          if (saleError && (findMissingColumn(saleError) || (saleError as any)?.code === '23514')) {
             console.warn('[venta] la base no tiene las columnas del desglose; se guarda sin ellas:', saleError.message);
             ({ data: saleInsert, error: saleError } = await supabase
               .from('sales')
@@ -924,8 +974,26 @@ export const PointOfSaleModule = () => {
               total_price: linea.base,
             };
           });
+          // EL PRECIO DE LISTA QUEDA ESCRITO (2026-11-18): sin él, una venta rebajada y una a
+          // precio entero son indistinguibles una vez guardadas, y el descuento no podía
+          // enseñarse ni en la factura ni en los reportes. Queda congelado el del día de la
+          // venta, así que subir mañana el precio del producto no cambia lo que dice esta venta.
+          const detailsConDescuento = cart.map((ci, i) => {
+            const linea = lineAmounts(ci);
+            return {
+              ...details[i],
+              list_unit_price: round2(ci.unitPrice),
+              discount_amount: linea.discount,
+              discount_percent: linea.discountPercent,
+              itbis_rate: itbisRateOf(ci.product),
+            };
+          });
 
-          const { error: detailsError } = await supabase.from('sale_details').insert(details);
+          let { error: detailsError } = await supabase.from('sale_details').insert(detailsConDescuento);
+          if (detailsError && findMissingColumn(detailsError)) {
+            console.warn('[venta] el detalle no guarda el precio de lista; se guarda sin él:', detailsError.message);
+            ({ error: detailsError } = await supabase.from('sale_details').insert(details));
+          }
             if (detailsError) {
               // Por qué la venta acaba en el esquema simple. Antes este fallo se tragaba en
               // silencio y no había forma de saber por qué los reportes no veían el detalle.
@@ -972,9 +1040,17 @@ export const PointOfSaleModule = () => {
               customer_name: customerName,
               payment_method: paymentMethod,
               sale_type: saleType,
-              sale_date: new Date().toISOString()
+              sale_date: new Date().toISOString(),
+              // Y, al lado, el precio de LISTA del día: sin él la venta rebajada no se distingue
+              // de la entera, y el descuento no puede enseñarse después (2026-11-18).
+              list_unit_price: round2(ci.unitPrice),
+              discount_amount: linea.discount,
+              discount_percent: linea.discountPercent,
+              subtotal: linea.base,
+              tax_amount: linea.tax,
+              payment_details: paymentDetails,
             };
-            
+
             // Campos opcionales - solo agregar si tienen valor
             if (saleData.customer?.phone) row.customer_phone = saleData.customer.phone;
             if (saleData.customer?.email) row.customer_email = saleData.customer.email;
@@ -986,7 +1062,21 @@ export const PointOfSaleModule = () => {
             return row;
           });
 
-          const { error: simpleError } = await supabase.from('sales').insert(rows);
+          let { error: simpleError } = await supabase.from('sales').insert(rows);
+          if (simpleError && (findMissingColumn(simpleError) || (simpleError as any)?.code === '23514')) {
+            // La base todavía no tiene la migración `20261118000000`: se guarda como siempre,
+            // pero se deja dicho por qué esa venta no va a poder enseñar su descuento.
+            console.warn('[venta] esta base no guarda el precio de lista ni la forma de pago real; '
+              + 'aplica la migración 20261118000000_descuento_visible_en_la_venta.sql:', simpleError.message);
+            const sinExtras = rows.map((row: any) => {
+              const {
+                list_unit_price, discount_amount, discount_percent, subtotal, tax_amount,
+                payment_details, ...resto
+              } = row;
+              return { ...resto, payment_method: paymentMethodSeguro };
+            });
+            ({ error: simpleError } = await supabase.from('sales').insert(sinExtras));
+          }
           if (simpleError) {
             // Si falla, intentar sin campos opcionales que pueden no existir
             console.warn('First insert attempt failed, trying minimal fields:', simpleError);
@@ -997,7 +1087,7 @@ export const PointOfSaleModule = () => {
               unit_price: lineAmounts(ci).unitCharged,
               total_price: lineAmounts(ci).total,
               customer_name: customerName,
-              payment_method: paymentMethod,
+              payment_method: paymentMethodSeguro,
               sale_type: saleType,
               sale_date: new Date().toISOString()
             }));
@@ -1376,10 +1466,7 @@ export const PointOfSaleModule = () => {
           <div class="divider"></div>
 
           <div class="summary">
-            <div class="sum-row"><span>Subtotal:</span><span>${money(dataToUse.subtotal || 0)}</span></div>
-            ${(dataToUse.discount || 0) > 0 ? `<div class="sum-row"><span>Descuento:</span><span>-${money(dataToUse.discount)}</span></div>` : ''}
-            <div class="sum-row"><span>ITBIS:</span><span>${money(dataToUse.tax || 0)}</span></div>
-            <div class="sum-row total"><span>TOTAL:</span><span>${money(dataToUse.total || 0)}</span></div>
+${invoiceSummaryRows(itemsToShow, money, { fallback: dataToUse })}
           </div>
 
           ${dataToUse.notes ? `<div class="notes"><strong>Notas:</strong> ${dataToUse.notes}</div>` : ''}
@@ -1501,10 +1588,7 @@ export const PointOfSaleModule = () => {
               ${saleData.notes || '—'}
           </div>
             <div class="summary">
-              <div class="sum-row"><span>Subtotal</span><span>${money(dataToUse.subtotal || 0)}</span></div>
-              ${(dataToUse.discount || 0) > 0 ? `<div class="sum-row"><span>Descuento</span><span>- ${money(dataToUse.discount)}</span></div>` : ''}
-              <div class="sum-row"><span>ITBIS</span><span>${money(dataToUse.tax || 0)}</span></div>
-              <div class="sum-row total"><span>Total a Pagar</span><span>${money(dataToUse.total || 0)}</span></div>
+${invoiceSummaryRows(itemsToShow, money, { colon: false, totalLabel: 'Total a Pagar', fallback: dataToUse })}
           </div>
         </div>
 
@@ -1711,10 +1795,7 @@ export const PointOfSaleModule = () => {
           <div class="divider"></div>
 
           <div class="summary">
-            <div class="sum-row"><span>Subtotal:</span><span>${money(dataToUse.subtotal || 0)}</span></div>
-            ${(dataToUse.discount || 0) > 0 ? `<div class="sum-row"><span>Descuento:</span><span>-${money(dataToUse.discount)}</span></div>` : ''}
-            <div class="sum-row"><span>ITBIS:</span><span>${money(dataToUse.tax || 0)}</span></div>
-            <div class="sum-row total"><span>TOTAL:</span><span>${money(dataToUse.total || 0)}</span></div>
+${invoiceSummaryRows(itemsToShow, money, { fallback: dataToUse })}
           </div>
 
           ${dataToUse.notes ? `<div class="notes"><strong>Notas:</strong> ${dataToUse.notes}</div>` : ''}
@@ -1836,10 +1917,7 @@ export const PointOfSaleModule = () => {
               ${dataToUse.notes || '—'}
           </div>
             <div class="summary">
-              <div class="sum-row"><span>Subtotal</span><span>${money(dataToUse.subtotal || 0)}</span></div>
-              ${(dataToUse.discount || 0) > 0 ? `<div class="sum-row"><span>Descuento</span><span>- ${money(dataToUse.discount)}</span></div>` : ''}
-              <div class="sum-row"><span>ITBIS</span><span>${money(dataToUse.tax || 0)}</span></div>
-              <div class="sum-row total"><span>Total a Pagar</span><span>${money(dataToUse.total || 0)}</span></div>
+${invoiceSummaryRows(itemsToShow, money, { colon: false, totalLabel: 'Total a Pagar', fallback: dataToUse })}
           </div>
         </div>
 
@@ -2183,10 +2261,6 @@ export const PointOfSaleModule = () => {
           {/* Cart Summary */}
           <div className="border-t border-gray-200 bg-white p-3 sm:p-4 lg:static fixed bottom-0 left-0 right-0 z-30 shadow-[0_-4px_10px_rgba(0,0,0,0.1)] lg:shadow-none">
             <div className="space-y-2 mb-4">
-              <div className="flex justify-between text-sm">
-                <span>Subtotal (sin ITBIS):</span>
-                <span>${saleData.subtotal.toFixed(2)}</span>
-              </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
               <div>
                 <Label className="text-xs">Modo de Descuento</Label>
@@ -2217,19 +2291,41 @@ export const PointOfSaleModule = () => {
                 </div>
               )}
               </div>
-              <div className="flex justify-between text-xs sm:text-sm">
-                <span>Descuento:</span>
-                <span className="text-red-600">-${saleData.discount.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-xs sm:text-sm">
-                <span>ITBIS:</span>
-                <span>${saleData.tax.toFixed(2)}</span>
-              </div>
-              <Separator />
-              <div className="flex justify-between text-base sm:text-lg font-bold">
-                <span>TOTAL:</span>
-                <span className="text-green-600">${saleData.total.toFixed(2)}</span>
-              </div>
+              {/* El resumen del carrito es el MISMO que el de la factura (2026-11-18): antes el
+                  subtotal ya venía rebajado y encima se le restaba el descuento, así que las
+                  cuentas de este cuadro no daban el total que se cobraba. */}
+              {(() => {
+                const r = invoiceSummary(cart);
+                return (
+                  <>
+                    {r.discount > 0.005 && (
+                      <>
+                        <div className="flex justify-between text-xs sm:text-sm">
+                          <span>Precio de lista (sin ITBIS):</span>
+                          <span>${r.listBase.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-xs sm:text-sm">
+                          <span>Descuento ({r.discountPercent.toFixed(2)}%):</span>
+                          <span className="text-red-600">-${r.discount.toFixed(2)}</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="flex justify-between text-xs sm:text-sm">
+                      <span>Subtotal (sin ITBIS):</span>
+                      <span>${r.base.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs sm:text-sm">
+                      <span>ITBIS:</span>
+                      <span>${r.tax.toFixed(2)}</span>
+                    </div>
+                    <Separator />
+                    <div className="flex justify-between text-base sm:text-lg font-bold">
+                      <span>TOTAL:</span>
+                      <span className="text-green-600">${r.total.toFixed(2)}</span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
             
             <Button 
@@ -3283,7 +3379,9 @@ export const PointOfSaleModule = () => {
                   });
                   
                   // Precio e importe tal como se cobraron: con su descuento y su ITBIS.
-                  const items = (dataToUse.items && dataToUse.items.length > 0 ? dataToUse.items : cart).map((item: any) => {
+                  const lineasRecibo = (dataToUse.items && dataToUse.items.length > 0 ? dataToUse.items : cart);
+                  const resumenRecibo = invoiceSummary(lineasRecibo);
+                  const items = lineasRecibo.map((item: any) => {
                     const linea = lineAmounts(item);
                     return {
                       name: item.product.name,
@@ -3306,7 +3404,11 @@ export const PointOfSaleModule = () => {
                     totalAmount: dataToUse.total,
                     items,
                     paymentMethods,
-                    discount: dataToUse.discount || 0,
+                    // El descuento, SIN ITBIS, y de qué precio se partió: así el recibo cuadra
+                    // igual que la factura (2026-11-18).
+                    discount: resumenRecibo.discount,
+                    listAmount: resumenRecibo.listBase,
+                    discountPercent: resumenRecibo.discountPercent,
                     tax: dataToUse.tax || 0,
                     saleId: dataToUse.ncfNumber ? `${dataToUse.ncfType || '01'}-${dataToUse.ncfNumber}` : undefined
                   });
@@ -3554,7 +3656,10 @@ export const PointOfSaleModule = () => {
                     paymentMethods,
                     // El ITBIS y el descuento ya calculados de la venta. Antes era
                     // `total * 0.18`, que sobre un total que YA incluye el impuesto da de más.
-                    discount: Number(lastSaleData.saleData.discount) || 0,
+                    // El descuento va SIN ITBIS, con el precio de lista al lado (2026-11-18).
+                    discount: invoiceSummary(lastSaleData.cart).discount,
+                    listAmount: invoiceSummary(lastSaleData.cart).listBase,
+                    discountPercent: invoiceSummary(lastSaleData.cart).discountPercent,
                     tax: Number(lastSaleData.saleData.tax) || 0,
                     saleId: lastSaleData.saleData.ncfNumber || undefined
                   });
