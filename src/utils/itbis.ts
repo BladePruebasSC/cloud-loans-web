@@ -55,6 +55,46 @@ export const sellingPriceWithItbis = (product: ProductLikeWithItbis | null | und
 export const purchasePriceWithItbis = (product: ProductLikeWithItbis | null | undefined): number =>
   withItbis(product?.purchase_price, itbisRateOf(product));
 
+// ---------------------------------------------------------------------------
+// LÍNEAS DE VENTA
+// ---------------------------------------------------------------------------
+// Las ventas se han guardado de dos maneras y el impuesto no vive igual en las dos:
+//   · con `sale_details`: `unit_price` lleva ITBIS y `total_price` es la BASE, sin él;
+//   · esquema simple (cada fila de `sales` es una línea): `total_price` es el TOTAL de la línea,
+//     con ITBIS, porque no hay otra tabla donde sumarlo.
+//
+// FALLO REPORTADO (2026-11-18): "en el reporte sigue diciendo 138,891.90, que es el monto de
+// venta (con impuestos) + un 18% que también le está sumando; ese precio ya tiene el impuesto
+// incluido". El módulo de inventario daba por hecho la PRIMERA forma en todas partes, así que a
+// una venta del esquema simple le volvía a sumar el ITBIS.
+//
+// El `unit_price` SIEMPRE lleva impuesto, en los dos esquemas, así que es de donde se parte.
+
+export interface SaleLineRowLike {
+  quantity?: number | null;
+  /** Precio por unidad: SIEMPRE con ITBIS. */
+  unit_price?: number | null;
+  total_price?: number | null;
+  itbis_rate?: number | null;
+}
+
+/** Lo que se cobró por una línea de venta, CON ITBIS. */
+export const saleLineTotalWithItbis = (
+  line: SaleLineRowLike | null | undefined,
+  totalPriceHasItbis = false,
+): number => {
+  const porUnitario = (Number(line?.unit_price) || 0) * (Number(line?.quantity) || 0);
+  if (porUnitario > 0.005) return round2(porUnitario);
+  const total = Number(line?.total_price) || 0;
+  return totalPriceHasItbis ? round2(total) : withItbis(total, itbisRateOf(line));
+};
+
+/** La BASE de una línea de venta, sin ITBIS (lo que el resto del sistema llama `total_price`). */
+export const saleLineBaseWithoutItbis = (
+  line: SaleLineRowLike | null | undefined,
+  totalPriceHasItbis = false,
+): number => withoutItbis(saleLineTotalWithItbis(line, totalPriceHasItbis), itbisRateOf(line));
+
 /** Valor del stock de un producto, con ITBIS (precio de VENTA × unidades). */
 export const stockValueWithItbis = (
   product: (ProductLikeWithItbis & { current_stock?: number | null }) | null | undefined,

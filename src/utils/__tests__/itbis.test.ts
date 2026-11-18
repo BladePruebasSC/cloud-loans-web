@@ -6,8 +6,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_ITBIS_RATE, inventoryCostWithItbis, inventoryValueWithItbis, itbisOf, itbisRateOf,
-  purchasePriceWithItbis, sellingPriceWithItbis, stockCostWithItbis, stockValueWithItbis,
-  withItbis, withoutItbis,
+  purchasePriceWithItbis, saleLineBaseWithoutItbis, saleLineTotalWithItbis, sellingPriceWithItbis,
+  stockCostWithItbis, stockValueWithItbis, withItbis, withoutItbis,
 } from '../itbis';
 
 // El producto de la captura: HONDA NAVY AZUL 2026
@@ -70,5 +70,44 @@ describe('precios con ITBIS', () => {
   it('Sin precio de compra, el valor al costo es 0 (no cae al de venta)', () => {
     expect(stockCostWithItbis({ selling_price: 1000, current_stock: 5 })).toBe(0);
     expect(inventoryCostWithItbis([])).toBe(0);
+  });
+});
+
+// FALLO REPORTADO (2026-11-18): "en el reporte sigue diciendo 138,891.90, que es el monto de
+// venta (con impuestos) + un 18% que también le está sumando; ese precio ya tiene el impuesto
+// incluido". Las ventas del esquema SIMPLE guardan en `total_price` el total de la línea CON
+// ITBIS, pero el módulo de inventario da por hecho que es la base SIN él: le volvía a sumar el
+// impuesto.
+describe('líneas de venta: dónde vive el ITBIS en cada esquema', () => {
+  // La venta del caso: una unidad de 123,900 con 5% de descuento = 117,705 con ITBIS.
+  const LINEA_SIMPLE = { quantity: 1, unit_price: 117705, total_price: 117705, itbis_rate: 18 };
+
+  it('EL CASO REPORTADO: no se le suma el ITBIS dos veces', () => {
+    expect(saleLineTotalWithItbis(LINEA_SIMPLE, true)).toBe(117705);   // antes: 138,891.90
+    expect(saleLineBaseWithoutItbis(LINEA_SIMPLE, true)).toBe(99750);
+    // Y la base + su ITBIS vuelve a dar lo que se cobró.
+    expect(withItbis(saleLineBaseWithoutItbis(LINEA_SIMPLE, true), 18)).toBe(117705);
+  });
+
+  it('Con `sale_details`, `total_price` es la base y sí lleva ITBIS encima', () => {
+    const linea = { quantity: 1, unit_price: 117705, total_price: 99750, itbis_rate: 18 };
+    expect(saleLineTotalWithItbis(linea)).toBe(117705);
+    expect(saleLineBaseWithoutItbis(linea)).toBe(99750);
+  });
+
+  it('Sin precio unitario se usa el total, con o sin impuesto según el esquema', () => {
+    expect(saleLineTotalWithItbis({ total_price: 1000, itbis_rate: 18 }, true)).toBe(1000);
+    expect(saleLineTotalWithItbis({ total_price: 1000, itbis_rate: 18 }, false)).toBe(1180);
+  });
+
+  it('Un producto exento no gana impuesto por el camino', () => {
+    const exento = { quantity: 2, unit_price: 500, total_price: 1000, itbis_rate: 0 };
+    expect(saleLineTotalWithItbis(exento, true)).toBe(1000);
+    expect(saleLineBaseWithoutItbis(exento, true)).toBe(1000);
+  });
+
+  it('Una línea vacía no rompe nada', () => {
+    expect(saleLineTotalWithItbis(null)).toBe(0);
+    expect(saleLineBaseWithoutItbis(undefined)).toBe(0);
   });
 });

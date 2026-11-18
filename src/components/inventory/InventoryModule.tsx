@@ -16,8 +16,8 @@ import { toast } from 'sonner';
 import { PasswordVerificationDialog } from '@/components/common/PasswordVerificationDialog';
 import { formatCurrencyNumber } from '@/lib/utils';
 import {
-  inventoryCostWithItbis, inventoryValueWithItbis, purchasePriceWithItbis, sellingPriceWithItbis,
-  stockCostWithItbis, stockValueWithItbis,
+  inventoryCostWithItbis, inventoryValueWithItbis, purchasePriceWithItbis,
+  saleLineBaseWithoutItbis, sellingPriceWithItbis, stockCostWithItbis, stockValueWithItbis,
 } from '@/utils/itbis';
 import { 
   Package, 
@@ -941,16 +941,27 @@ const InventoryModule = () => {
           if (details && details.length > 0) {
             saleDetails = details;
           } else if (saleAny.product_id) {
-            // Esquema simple: datos directos en sales
+            // Esquema simple: datos directos en sales.
+            //
+            // En ese esquema `sales.total_price` es el total de la línea CON ITBIS, pero todo
+            // este módulo trata `total_price` como la BASE, sin impuesto: sin convertirlo, a la
+            // venta se le sumaba el ITBIS otra vez (2026-11-18). Se normaliza aquí, en el único
+            // sitio donde se sabe de qué esquema viene la fila.
             const product = productsMap.get(saleAny.product_id);
           if (product) {
+            const fila = {
+              quantity: saleAny.quantity || 0,
+              unit_price: saleAny.unit_price || 0,
+              total_price: saleAny.total_price || 0,
+              itbis_rate: (product as any).itbis_rate,
+            };
             saleDetails = [{
               id: sale.id,
               sale_id: sale.id,
               product_id: product.id,
-              quantity: saleAny.quantity || 0,
-              unit_price: saleAny.unit_price || 0,
-              total_price: saleAny.total_price || 0,
+              quantity: fila.quantity,
+              unit_price: fila.unit_price,
+              total_price: saleLineBaseWithoutItbis(fila, true),
               product
             }];
           }
@@ -1553,13 +1564,21 @@ const InventoryModule = () => {
         if (saleDetails.length === 0 && sale.product_id) {
           const oldProduct = oldProductsMap.get(sale.product_id);
           if (oldProduct) {
+            // `sales.total_price` del esquema simple viene CON ITBIS; aquí se trabaja con la
+            // base, sin él (ver la nota de `fetchSales`).
+            const fila = {
+              quantity: sale.quantity || 1,
+              unit_price: sale.unit_price || 0,
+              total_price: sale.total_price || 0,
+              itbis_rate: (oldProduct as any).itbis_rate,
+            };
             saleDetails.push({
               id: sale.id,
               sale_id: sale.id,
               product_id: sale.product_id,
-              quantity: sale.quantity || 1,
-              unit_price: sale.unit_price || 0,
-              total_price: sale.total_price || 0,
+              quantity: fila.quantity,
+              unit_price: fila.unit_price,
+              total_price: saleLineBaseWithoutItbis(fila, true),
               products: oldProduct
             });
           }
