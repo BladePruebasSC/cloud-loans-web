@@ -80,15 +80,23 @@ const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
 const dateOnly = (v: unknown) => String(v ?? '').split('T')[0];
 const pct = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : 0);
 
-/** Importe de una venta POS, tolerando los dos esquemas históricos de `sales`. */
+/**
+ * Importe de una venta POS, tolerando los dos esquemas históricos de `sales`.
+ *
+ * En el esquema SIMPLE —cada fila de `sales` es una línea de venta— manda `cantidad × precio
+ * unitario`: el unitario siempre se ha guardado CON ITBIS y, desde 2026-11-18, ya es el precio
+ * cobrado (con su descuento). `total_price` se dejó escrito de dos formas a lo largo del tiempo
+ * —con y sin impuesto—, así que se usa solo cuando no hay unitario.
+ */
 export const getSaleAmount = (sale: SaleLike): number => {
   if (typeof sale.total_amount === 'number') return sale.total_amount;
+  if (typeof sale.quantity === 'number' && typeof sale.unit_price === 'number'
+      && sale.quantity > 0 && sale.unit_price > 0) {
+    return round2(sale.quantity * sale.unit_price);
+  }
   if (typeof sale.total_price === 'number') return sale.total_price;
   if (typeof sale.total === 'number') return sale.total;
   if (typeof sale.amount === 'number') return sale.amount;
-  if (typeof sale.quantity === 'number' && typeof sale.unit_price === 'number') {
-    return sale.quantity * sale.unit_price;
-  }
   return 0;
 };
 

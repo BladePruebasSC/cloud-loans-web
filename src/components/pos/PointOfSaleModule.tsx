@@ -18,6 +18,7 @@ import {
   itbisRateOf, purchasePriceWithItbis, sellingPriceWithItbis, withItbis, withoutItbis,
 } from '@/utils/itbis';
 import { computePosFinancing } from '@/utils/posFinancing';
+import { cartLineAmounts } from '@/utils/posCartLine';
 import { findMissingColumn } from '@/utils/supabaseErrors';
 import {
   addPeriodsToDate, formatDateLocalIso, getFrequencyLabel, getFrequencyName,
@@ -534,11 +535,26 @@ export const PointOfSaleModule = () => {
   };
 
   /**
-   * Lo que se cobra por una línea del carrito: su base —que ya lleva el descuento— más el ITBIS.
-   * Es la cifra que paga el cliente por ese renglón.
+   * Lo que de verdad se cobra por una línea: su base con el descuento aplicado —venga del ítem o
+   * del total de la venta—, su ITBIS, su total y el precio por unidad realmente cobrado.
+   *
+   * De aquí salen la factura, lo que se guarda de cada línea y, por tanto, los reportes: antes
+   * cada sitio hacía su propia cuenta y el descuento "al total" no llegaba a ninguna
+   * (2026-11-18).
    */
-  const lineTotalWithTax = (item: CartItem): number =>
-    withItbis(item.subtotal, itbisRateOf(item.product));
+  const lineAmounts = (item: CartItem) => cartLineAmounts(
+    {
+      unitPrice: item.unitPrice,
+      quantity: item.quantity,
+      discountPercent: item.discountPercent,
+      subtotal: item.subtotal,
+      itbisRate: itbisRateOf(item.product),
+    },
+    { mode: saleData.discountMode, totalPercent: saleData.discountPercentTotal },
+  );
+
+  /** Lo que paga el cliente por esa línea (con su descuento y su ITBIS). */
+  const lineTotalWithTax = (item: CartItem): number => lineAmounts(item).total;
 
   const addToCart = (product: Product) => {
     // Validar stock disponible
@@ -892,13 +908,22 @@ export const PointOfSaleModule = () => {
 
           if (!saleError && saleInsert) {
             // Intentar insertar detalles
-          const details = cart.map(ci => ({
-            sale_id: saleInsert.id,
-            product_id: ci.product.id,
-            quantity: ci.quantity,
-            unit_price: ci.unitPrice,
-            total_price: ci.subtotal
-          }));
+            //
+            // Se guarda lo que SE COBRÓ, no el precio de lista (2026-11-18): `unit_price` es el
+            // precio por unidad con su descuento y su ITBIS —el que lleva la factura— y
+            // `total_price` la base de la línea con el descuento, sin ITBIS, que es como lo lee
+            // el resto del sistema. Antes se guardaba el precio de lista, así que en los
+            // reportes todas las ventas de un producto salían al mismo precio.
+          const details = cart.map(ci => {
+            const linea = lineAmounts(ci);
+            return {
+              sale_id: saleInsert.id,
+              product_id: ci.product.id,
+              quantity: ci.quantity,
+              unit_price: linea.unitCharged,
+              total_price: linea.base,
+            };
+          });
 
           const { error: detailsError } = await supabase.from('sale_details').insert(details);
             if (detailsError) {
@@ -936,12 +961,14 @@ export const PointOfSaleModule = () => {
           // leen `total_price` como el importe de la venta, y la venta salía por debajo de lo
           // que el cliente pagó.
           const rows = cart.map(ci => {
+            const linea = lineAmounts(ci);
             const row: any = {
             user_id: user?.id,
             product_id: ci.product.id,
             quantity: ci.quantity,
-            unit_price: ci.unitPrice,
-            total_price: lineTotalWithTax(ci),
+            // El precio REALMENTE cobrado por unidad, no el de lista (2026-11-18).
+            unit_price: linea.unitCharged,
+            total_price: linea.total,
               customer_name: customerName,
               payment_method: paymentMethod,
               sale_type: saleType,
@@ -967,8 +994,8 @@ export const PointOfSaleModule = () => {
               user_id: user?.id,
               product_id: ci.product.id,
               quantity: ci.quantity,
-              unit_price: ci.unitPrice,
-              total_price: lineTotalWithTax(ci),
+              unit_price: lineAmounts(ci).unitCharged,
+              total_price: lineAmounts(ci).total,
               customer_name: customerName,
               payment_method: paymentMethod,
               sale_type: saleType,
@@ -1182,47 +1209,41 @@ export const PointOfSaleModule = () => {
       ? receiptData.items 
       : (saleData.items && saleData.items.length > 0 ? saleData.items : cart);
     
-    // Para impresoras térmicas, formato más compacto
+    // LA FACTURA ENSEÑA LO QUE SE COBRA (2026-11-18): el precio por unidad ya lleva su descuento
+    // —venga del ítem o del total de la venta— y su ITBIS, y el importe es ese precio por la
+    // cantidad. Antes la columna "Precio" era el de LISTA con el impuesto encima, así que no
+    // cuadraba con el importe de su propia fila ni con el total de la factura.
     const itemsRows = isThermal
       ? itemsToShow.map(item => {
           const maxNameLength = isPOS58 ? 18 : 28;
-          const productName = item.product.name.length > maxNameLength 
-            ? item.product.name.substring(0, maxNameLength - 3) + '...' 
+          const productName = item.product.name.length > maxNameLength
+            ? item.product.name.substring(0, maxNameLength - 3) + '...'
             : item.product.name;
-          const discountCol = isPOS58 ? '' : `<td class="right">${(item.discountPercent || 0).toFixed(0)}%</td>`;
-          const unitPrice = `<td class="right">${money(item.unitPrice)}</td>`;
-          // Calcular el total del item con ITBIS y descuento
-          const itbisRate = item.product.itbis_rate ?? 18;
-          const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
-          const baseAmount = priceWithoutTax * item.quantity;
-          const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
-          const itemTax = discounted * (itbisRate / 100);
-          const itemTotal = discounted + itemTax;
+          const linea = lineAmounts(item);
+          const discountCol = isPOS58 ? '' : `<td class="right">${linea.discountPercent.toFixed(0)}%</td>`;
+          // En el ticket de 58 mm no cabe la columna del descuento: se dice en el nombre.
+          const nombre = isPOS58 && linea.discount > 0.005
+            ? `${productName} (-${linea.discountPercent.toFixed(0)}%)`
+            : productName;
           return `
             <tr>
-              <td>${productName}</td>
+              <td>${nombre}</td>
               <td class="right">${item.quantity}</td>
-              ${unitPrice}
+              <td class="right">${money(linea.unitCharged)}</td>
               ${discountCol}
-              <td class="right">${money(itemTotal)}</td>
+              <td class="right">${money(linea.total)}</td>
             </tr>
           `;
         }).join('')
       : itemsToShow.map(item => {
-          // Calcular el total del item con ITBIS y descuento
-          const itbisRate = item.product.itbis_rate ?? 18;
-          const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
-          const baseAmount = priceWithoutTax * item.quantity;
-          const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
-          const itemTax = discounted * (itbisRate / 100);
-          const itemTotal = discounted + itemTax;
+          const linea = lineAmounts(item);
           return `
               <tr>
                 <td>${item.product.name}</td>
                 <td class="right">${item.quantity}</td>
-                <td class="right">${money(item.unitPrice)}</td>
-                <td class="right">${(item.discountPercent || 0).toFixed(2)}%</td>
-                <td class="right">${money(itemTotal)}</td>
+                <td class="right">${money(linea.unitCharged)}</td>
+                <td class="right">${linea.discountPercent.toFixed(2)}%</td>
+                <td class="right">${money(linea.total)}</td>
               </tr>
             `;
         }).join('');
@@ -1528,47 +1549,37 @@ export const PointOfSaleModule = () => {
       ? receiptData.items 
       : (saleData.items && saleData.items.length > 0 ? saleData.items : cart);
     
-    // Para impresoras térmicas, formato más compacto
+    // El precio que se enseña es el COBRADO: con su descuento y su ITBIS (2026-11-18).
     const itemsRows = isThermal
       ? itemsToShow.map(item => {
           const maxNameLength = isPOS58 ? 18 : 28;
-          const productName = item.product.name.length > maxNameLength 
-            ? item.product.name.substring(0, maxNameLength - 3) + '...' 
+          const productName = item.product.name.length > maxNameLength
+            ? item.product.name.substring(0, maxNameLength - 3) + '...'
             : item.product.name;
-          const discountCol = isPOS58 ? '' : `<td class="right">${(item.discountPercent || 0).toFixed(0)}%</td>`;
-          const unitPrice = `<td class="right">${money(item.unitPrice)}</td>`;
-          // Calcular el total del item con ITBIS y descuento
-          const itbisRate = item.product.itbis_rate ?? 18;
-          const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
-          const baseAmount = priceWithoutTax * item.quantity;
-          const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
-          const itemTax = discounted * (itbisRate / 100);
-          const itemTotal = discounted + itemTax;
+          const linea = lineAmounts(item);
+          const discountCol = isPOS58 ? '' : `<td class="right">${linea.discountPercent.toFixed(0)}%</td>`;
+          const nombre = isPOS58 && linea.discount > 0.005
+            ? `${productName} (-${linea.discountPercent.toFixed(0)}%)`
+            : productName;
           return `
             <tr>
-              <td>${productName}</td>
+              <td>${nombre}</td>
               <td class="right">${item.quantity}</td>
-              ${unitPrice}
+              <td class="right">${money(linea.unitCharged)}</td>
               ${discountCol}
-              <td class="right">${money(itemTotal)}</td>
+              <td class="right">${money(linea.total)}</td>
             </tr>
           `;
         }).join('')
       : itemsToShow.map(item => {
-          // Calcular el total del item con ITBIS y descuento
-          const itbisRate = item.product.itbis_rate ?? 18;
-          const priceWithoutTax = item.unitPrice / (1 + itbisRate / 100);
-          const baseAmount = priceWithoutTax * item.quantity;
-          const discounted = baseAmount * (1 - (item.discountPercent || 0) / 100);
-          const itemTax = discounted * (itbisRate / 100);
-          const itemTotal = discounted + itemTax;
+          const linea = lineAmounts(item);
           return `
           <tr>
             <td>${item.product.name}</td>
             <td class="right">${item.quantity}</td>
-            <td class="right">${money(item.unitPrice)}</td>
-            <td class="right">${(item.discountPercent || 0).toFixed(2)}%</td>
-            <td class="right">${money(itemTotal)}</td>
+            <td class="right">${money(linea.unitCharged)}</td>
+            <td class="right">${linea.discountPercent.toFixed(2)}%</td>
+            <td class="right">${money(linea.total)}</td>
           </tr>
         `;
         }).join('');
@@ -2148,17 +2159,18 @@ export const PointOfSaleModule = () => {
                         </div>
                         
                         <div className="text-right">
-                          {/* Lo que paga el cliente por esta línea: CON ITBIS (2026-10-01). */}
+                          {/* Lo que paga el cliente por esta línea: con su descuento y su ITBIS
+                              (2026-10-01, repartido también el descuento al total: 2026-11-18). */}
                           <Label className="text-xs">Subtotal (con ITBIS)</Label>
                           <div className="font-semibold text-green-600 text-xs sm:text-sm">
-                            ${(() => {
-                              const rate = itbisRateOf(item.product);
-                              const base = saleData.discountMode === 'total'
-                                ? withoutItbis(item.unitPrice, rate) * item.quantity
-                                : item.subtotal;
-                              return withItbis(base, rate).toFixed(2);
-                            })()}
+                            ${lineAmounts(item).total.toFixed(2)}
                           </div>
+                          {lineAmounts(item).discount > 0.005 && (
+                            <div className="text-[10px] text-gray-500">
+                              ${lineAmounts(item).unitCharged.toFixed(2)} c/u
+                              {' · '}−{lineAmounts(item).discountPercent.toFixed(0)}%
+                            </div>
+                          )}
                         </div>
                       </div>
                     </CardContent>
@@ -3270,14 +3282,17 @@ export const PointOfSaleModule = () => {
                     day: 'numeric'
                   });
                   
-                  // Precio e importe CON ITBIS (`item.subtotal` se guarda sin él).
-                  const items = (dataToUse.items && dataToUse.items.length > 0 ? dataToUse.items : cart).map((item: any) => ({
-                    name: item.product.name,
-                    quantity: item.quantity,
-                    unitPrice: item.unitPrice,
-                    subtotal: withItbis(item.subtotal, itbisRateOf(item.product)),
-                  }));
-                  
+                  // Precio e importe tal como se cobraron: con su descuento y su ITBIS.
+                  const items = (dataToUse.items && dataToUse.items.length > 0 ? dataToUse.items : cart).map((item: any) => {
+                    const linea = lineAmounts(item);
+                    return {
+                      name: item.product.name,
+                      quantity: item.quantity,
+                      unitPrice: linea.unitCharged,
+                      subtotal: linea.total,
+                    };
+                  });
+
                   const paymentMethods = (dataToUse.paymentSplits || []).map((split: any) => ({
                     method: split.method.type || split.method.id || 'cash',
                     amount: split.amount
@@ -3513,13 +3528,16 @@ export const PointOfSaleModule = () => {
                   const companyName = companyInfo.company_name || 'LA EMPRESA';
                   const saleDate = formatDateStringForSantoDomingo(new Date().toISOString().split('T')[0]);
                   
-                  // El recibo enseña precio e importe CON ITBIS (`item.subtotal` es sin él).
-                  const items = lastSaleData.cart.map((item: any) => ({
-                    name: item.product.name,
-                    quantity: item.quantity,
-                    unitPrice: item.unitPrice,
-                    subtotal: withItbis(item.subtotal, itbisRateOf(item.product)),
-                  }));
+                  // El recibo enseña precio e importe tal como se cobraron (con descuento e ITBIS).
+                  const items = lastSaleData.cart.map((item: any) => {
+                    const linea = lineAmounts(item);
+                    return {
+                      name: item.product.name,
+                      quantity: item.quantity,
+                      unitPrice: linea.unitCharged,
+                      subtotal: linea.total,
+                    };
+                  });
                   
                   const paymentMethods = lastSaleData.paymentMethods.map((split: any) => ({
                     method: split.method.type || split.method.id || 'cash',
