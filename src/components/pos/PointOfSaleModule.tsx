@@ -19,6 +19,7 @@ import {
 } from '@/utils/itbis';
 import { computePosFinancing } from '@/utils/posFinancing';
 import { cartLineAmounts } from '@/utils/posCartLine';
+import { downloadInvoicePdf, type InvoiceFormat } from '@/utils/posInvoicePdf';
 import { findMissingColumn } from '@/utils/supabaseErrors';
 import {
   addPeriodsToDate, formatDateLocalIso, getFrequencyLabel, getFrequencyName,
@@ -1614,331 +1615,85 @@ ${invoiceSummaryRows(itemsToShow, money, { colon: false, totalLabel: 'Total a Pa
     }
   };
 
-  const downloadReceipt = () => {
+  /**
+   * DESCARGAR LA FACTURA EN PDF.
+   *
+   * FALLO REPORTADO (2026-11-18): "cuando haces una venta en el POS y le das a descargar PDF se
+   * descarga un archivo HTML y no PDF". El botón decía PDF pero guardaba el HTML de la factura
+   * con extensión `.html`: se abría en el navegador y no servía ni para adjuntar ni para
+   * archivar. Además era una COPIA del HTML de imprimir, así que cada arreglo había que hacerlo
+   * dos veces (el descuento, sin ir más lejos).
+   *
+   * Ahora sale un PDF de verdad —texto, no una foto— en el mismo formato elegido para imprimir:
+   * A4, 80 mm o 58 mm. La maquetación vive en `utils/posInvoicePdf.ts`.
+   */
+  const downloadReceipt = async () => {
     // Usar receiptData si está disponible (datos guardados antes de limpiar), sino usar saleData
     const dataToUse = receiptData || saleData;
-    const invoiceNumber = `${dataToUse.ncfType || '01'}-${dataToUse.ncfNumber || '0000000000'}`;
-    const companyName = companyInfo.company_name;
-    const companyAddress = companyInfo.address;
-    const companyPhone = companyInfo.phone;
-    const companyEmail = companyInfo.email;
-    const cashier = user?.email || 'Cajero';
-    const money = (n: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(n || 0);
-    
-    const isThermal = receiptFormat === 'POS80' || receiptFormat === 'POS58';
-    const isPOS58 = receiptFormat === 'POS58';
-    
-    // Usar receiptData.items si está disponible, sino usar saleData.items o cart
-    const itemsToShow = (receiptData?.items && receiptData.items.length > 0) 
-      ? receiptData.items 
+    const itemsToShow = (receiptData?.items && receiptData.items.length > 0)
+      ? receiptData.items
       : (saleData.items && saleData.items.length > 0 ? saleData.items : cart);
-    
-    // El precio que se enseña es el COBRADO: con su descuento y su ITBIS (2026-11-18).
-    const itemsRows = isThermal
-      ? itemsToShow.map(item => {
-          const maxNameLength = isPOS58 ? 18 : 28;
-          const productName = item.product.name.length > maxNameLength
-            ? item.product.name.substring(0, maxNameLength - 3) + '...'
-            : item.product.name;
-          const linea = lineAmounts(item);
-          const discountCol = isPOS58 ? '' : `<td class="right">${linea.discountPercent.toFixed(0)}%</td>`;
-          const nombre = isPOS58 && linea.discount > 0.005
-            ? `${productName} (-${linea.discountPercent.toFixed(0)}%)`
-            : productName;
-          return `
-            <tr>
-              <td>${nombre}</td>
-              <td class="right">${item.quantity}</td>
-              <td class="right">${money(linea.unitCharged)}</td>
-              ${discountCol}
-              <td class="right">${money(linea.total)}</td>
-            </tr>
-          `;
-        }).join('')
-      : itemsToShow.map(item => {
-          const linea = lineAmounts(item);
-          return `
-          <tr>
-            <td>${item.product.name}</td>
-            <td class="right">${item.quantity}</td>
-            <td class="right">${money(linea.unitCharged)}</td>
-            <td class="right">${linea.discountPercent.toFixed(2)}%</td>
-            <td class="right">${money(linea.total)}</td>
-          </tr>
-        `;
-        }).join('');
 
-    const customerExtra = dataToUse.ncfNumber && !isThermal
-      ? `
-        <div class="field"><span class="label">Teléfono</span><span class="value">${dataToUse.customer?.phone || '—'}</span></div>
-        ${dataToUse.customer?.address ? `<div class="field" style="grid-column: 1 / span 2"><span class="label">Dirección</span><span class="value">${dataToUse.customer.address}</span></div>` : ''}
-      `
-      : '';
+    const resumen = invoiceSummary(itemsToShow);
+    const vacio = resumen.total < 0.005 && (dataToUse.total || 0) > 0;
 
-    const pageCss = receiptFormat === 'A4'
-      ? '@page { size: A4; margin: 18mm; } .invoice{max-width:800px;margin:0 auto;}'
-      : receiptFormat === 'POS80'
-        ? '@page { size: 80mm auto; margin: 2mm; } .invoice{width:76mm;margin:0 auto;font-size:9px;}'
-        : '@page { size: 58mm auto; margin: 2mm; } .invoice{width:54mm;margin:0 auto;font-size:8px;}';
-    
-    // CSS compacto para térmicas
-    const thermalCss = isThermal ? `
-      body { font-size: ${isPOS58 ? '8px' : '9px'}; font-family: 'Courier New', monospace; }
-      .invoice { width: ${isPOS58 ? '54mm' : '76mm'}; margin: 0 auto; }
-      .header { padding: 4px 0; border-bottom: 1px solid #000; text-align: center; }
-      .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
-      .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
-      .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; }
-      .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
-      .section { padding: 4px 0; margin: 4px 0; border: none; }
-      .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 2px; }
-      .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
-      .label { font-weight: bold; }
-      table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
-      th, td { padding: 2px 1px; border-bottom: 1px dashed #ccc; }
-      thead th { background: transparent; border-bottom: 1px solid #000; font-size: ${isPOS58 ? '7px' : '8px'}; }
-      tbody td { font-size: ${isPOS58 ? '7px' : '8px'}; }
-      .summary { padding: 4px 0; border-top: 1px solid #000; margin-top: 4px; }
-      .sum-row { padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
-      .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
-      .footer { margin-top: 8px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
-      .notes { padding: 4px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
-      .brand-logo { display: none; }
-      .grid-2 { grid-template-columns: 1fr; gap: 2px; }
-      .row { flex-direction: column; gap: 4px; }
-      .totals { grid-template-columns: 1fr; gap: 4px; }
-    ` : '';
+    // Lo recibido en efectivo y el cambio, igual que en la factura impresa.
+    const enEfectivo = (dataToUse.paymentSplits || [])
+      .filter((split: any) => split.method?.type === 'cash')
+      .reduce((sum: number, split: any) => sum + (split.amount || 0), 0);
+    const cambio = enEfectivo > (dataToUse.total || 0)
+      ? enEfectivo - (dataToUse.total || 0)
+      : (dataToUse.change || 0);
 
-    // Generar HTML según el formato (igual que generateReceipt)
-    const receiptHTML = isThermal ? `
-      <!DOCTYPE html>
-      <html lang="es">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Factura</title>
-        <style>
-          ${pageCss}
-          ${thermalCss}
-          body { font-family: 'Courier New', monospace; color: #000; margin: 0; padding: 0; }
-          .invoice { }
-          .header { text-align: center; padding: 4px 0; border-bottom: 1px solid #000; }
-          .brand-name { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
-          .brand-meta { font-size: ${isPOS58 ? '7px' : '8px'}; margin: 1px 0; }
-          .doc-type { font-size: ${isPOS58 ? '10px' : '12px'}; font-weight: bold; margin: 2px 0; }
-          .doc-number { font-size: ${isPOS58 ? '7px' : '8px'}; }
-          .section { padding: 2px 0; margin: 2px 0; }
-          .section-title { font-size: ${isPOS58 ? '8px' : '9px'}; font-weight: bold; margin-bottom: 1px; }
-          .field { margin: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; display: flex; justify-content: space-between; }
-          .label { font-weight: bold; }
-          table { width: 100%; border-collapse: collapse; margin: 2px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
-          th, td { padding: 1px 0; text-align: left; }
-          th.right, td.right { text-align: right; }
-          thead th { border-bottom: 1px solid #000; font-weight: bold; font-size: ${isPOS58 ? '7px' : '8px'}; }
-          .summary { padding: 2px 0; border-top: 1px solid #000; margin-top: 2px; }
-          .sum-row { display: flex; justify-content: space-between; padding: 1px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
-          .sum-row.total { border-top: 1px solid #000; padding-top: 2px; font-weight: bold; font-size: ${isPOS58 ? '9px' : '10px'}; }
-          .footer { margin-top: 4px; font-size: ${isPOS58 ? '7px' : '8px'}; text-align: center; }
-          .notes { padding: 2px 0; font-size: ${isPOS58 ? '7px' : '8px'}; }
-          .divider { border-top: 1px dashed #000; margin: 2px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="invoice">
-          <div class="header">
-            <div class="brand-name">${companyName}</div>
-            <div class="brand-meta">${companyAddress}</div>
-            <div class="brand-meta">${companyPhone}</div>
-            <div class="doc-type">FACTURA</div>
-            <div class="doc-number">NCF: ${invoiceNumber}</div>
-          </div>
+    const condicion = dataToUse.saleType === 'credit'
+      ? 'Crédito'
+      : dataToUse.saleType === 'financing' ? 'Financiamiento' : 'Contado';
 
-          <div class="section">
-            <div class="section-title">Cliente</div>
-            <div class="field"><span class="label">Nombre:</span><span>${saleData.customer?.full_name || 'Cliente General'}</span></div>
-            ${saleData.customer?.phone ? `<div class="field"><span class="label">Teléfono:</span><span>${saleData.customer.phone}</span></div>` : ''}
-            <div class="section-title" style="margin-top:4px;">Venta</div>
-            <div class="field"><span class="label">Fecha:</span><span>${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span></div>
-            <div class="field"><span class="label">Método de Pago:</span><span>${saleData.paymentSplits.map(s => s.method.name).join(', ') || saleData.paymentMethod?.name || 'Efectivo'}</span></div>
-            ${(() => {
-              const dataToUseForChange = receiptData || saleData;
-              const cashPayments = dataToUseForChange.paymentSplits?.filter((split: any) => split.method.type === 'cash') || [];
-              const totalCashPaid = cashPayments.reduce((sum: number, split: any) => sum + split.amount, 0);
-              const calculatedChange = totalCashPaid > dataToUseForChange.total ? totalCashPaid - dataToUseForChange.total : (dataToUseForChange.change || 0);
-              if (calculatedChange > 0 && totalCashPaid > 0) {
-                return `
-                  <div class="field"><span class="label">Recibido (Efectivo):</span><span>${money(totalCashPaid)}</span></div>
-                  <div class="field"><span class="label">Cambio a Devolver:</span><span>${money(calculatedChange)}</span></div>
-                `;
-              }
-              return '';
-            })()}
-          </div>
+    const factura = {
+      companyName: companyInfo.company_name || 'Mi Empresa',
+      companyAddress: companyInfo.address || undefined,
+      companyPhone: companyInfo.phone || undefined,
+      companyEmail: receiptFormat === 'A4' ? (companyInfo.email || undefined) : undefined,
+      docType: 'FACTURA',
+      number: dataToUse.ncfNumber
+        ? `NCF: ${dataToUse.ncfType || '01'}-${dataToUse.ncfNumber}`
+        : undefined,
+      dateLabel: `${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}`,
+      customerName: dataToUse.customer?.full_name || 'Cliente General',
+      customerPhone: dataToUse.customer?.phone || undefined,
+      customerAddress: dataToUse.customer?.address || undefined,
+      customerRnc: (dataToUse.customer as any)?.rnc || undefined,
+      seller: user?.email || 'Cajero',
+      condition: condicion,
+      paymentLabel: dataToUse.paymentMethod?.name || undefined,
+      lines: itemsToShow.map((item: CartItem) => {
+        const linea = lineAmounts(item);
+        return {
+          name: item.product.name,
+          quantity: item.quantity,
+          unitPrice: linea.unitCharged,
+          discountPercent: linea.discountPercent,
+          total: linea.total,
+        };
+      }),
+      listBase: resumen.listBase,
+      discount: vacio ? 0 : resumen.discount,
+      discountPercent: resumen.discountPercent,
+      base: vacio ? (dataToUse.subtotal || 0) : resumen.base,
+      tax: vacio ? (dataToUse.tax || 0) : resumen.tax,
+      total: vacio ? (dataToUse.total || 0) : resumen.total,
+      received: enEfectivo,
+      change: cambio,
+      notes: dataToUse.notes || undefined,
+    };
 
-          <div class="divider"></div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Descripción</th>
-                <th class="right">Cant</th>
-                <th class="right">Precio</th>
-                ${isPOS58 ? '' : '<th class="right">Desc%</th>'}
-                <th class="right">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsRows}
-            </tbody>
-          </table>
-
-          <div class="divider"></div>
-
-          <div class="summary">
-${invoiceSummaryRows(itemsToShow, money, { fallback: dataToUse })}
-          </div>
-
-          ${dataToUse.notes ? `<div class="notes"><strong>Notas:</strong> ${dataToUse.notes}</div>` : ''}
-
-          <div class="footer">
-            <div>Gracias por su preferencia</div>
-            <div>${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</div>
-          </div>
-        </div>
-      </body>
-      </html>
-    ` : `
-      <!DOCTYPE html>
-      <html lang="es">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Factura</title>
-        <style>
-          ${pageCss}
-          body { font-family: Arial, sans-serif; font-size: 12px; color: #1f2937; }
-          .invoice { }
-          .row { display: flex; gap: 16px; }
-          .col { flex: 1; }
-          .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 2px solid #111827; }
-          .brand { display: flex; align-items: center; gap: 12px; }
-          .brand-logo { width: 48px; height: 48px; background: #e5e7eb; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #374151; }
-          .brand-text { line-height: 1.2; }
-          .brand-name { font-size: 18px; font-weight: 700; }
-          .brand-meta { font-size: 11px; color: #6b7280; }
-          .doc-title { text-align: right; }
-          .doc-type { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
-          .doc-number { font-size: 12px; color: #374151; margin-top: 4px; }
-          .section { margin-top: 14px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
-          .section-title { font-size: 12px; font-weight: 700; color: #111827; margin-bottom: 8px; text-transform: uppercase; }
-          .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
-          .field { display: flex; justify-content: space-between; gap: 8px; }
-          .label { color: #6b7280; }
-          .value { font-weight: 600; color: #111827; }
-          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-          th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
-          thead th { background: #f9fafb; font-size: 12px; text-align: left; color: #374151; border-top: 1px solid #e5e7eb; border-bottom: 2px solid #e5e7eb; }
-          tbody td { font-size: 12px; vertical-align: top; }
-          .right { text-align: right; }
-          .totals { width: 100%; margin-top: 10px; display: grid; grid-template-columns: 1fr 260px; gap: 16px; }
-          .notes { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; font-size: 12px; color: #374151; min-height: 72px; }
-          .summary { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
-          .sum-row { display: flex; justify-content: space-between; padding: 6px 0; }
-          .sum-row.total { border-top: 2px solid #111827; margin-top: 6px; padding-top: 10px; font-weight: 800; font-size: 14px; }
-          .footer { margin-top: 16px; font-size: 11px; color: #6b7280; display: flex; justify-content: space-between; align-items: center; }
-        </style>
-      </head>
-      <body>
-        <div class="invoice">
-        <div class="header">
-            <div class="brand">
-              <div class="brand-logo">CL</div>
-              <div class="brand-text">
-                <div class="brand-name">${companyName}</div>
-                <div class="brand-meta">${companyAddress} · ${companyPhone}</div>
-              </div>
-            </div>
-            <div class="doc-title">
-              <div class="doc-type">FACTURA</div>
-              <div class="doc-number">NCF: ${invoiceNumber}</div>
-            </div>
-        </div>
-
-          <div class="row" style="margin-top:12px;">
-            <div class="col section">
-              <div class="section-title">Datos del Cliente</div>
-              <div class="grid-2">
-                <div class="field"><span class="label">Nombre</span><span class="value">${saleData.customer?.full_name || 'Cliente General'}</span></div>
-                <div class="field"><span class="label">Fecha</span><span class="value">${new Date().toLocaleDateString('es-DO')}</span></div>
-                ${customerExtra}
-          </div>
-          </div>
-            <div class="col section">
-              <div class="section-title">Detalles</div>
-              <div class="grid-2">
-                <div class="field"><span class="label">Vendedor</span><span class="value">${cashier}</span></div>
-                <div class="field"><span class="label">Condición</span><span class="value">${saleData.saleType === 'cash' ? 'Contado' : saleData.saleType === 'credit' ? 'Crédito' : 'Financiamiento'}</span></div>
-                <div class="field"><span class="label">Método de pago</span><span class="value">${saleData.paymentMethod?.name || '—'}</span></div>
-                ${(() => {
-                  const dataToUseForChange = receiptData || saleData;
-                  const cashPayments = dataToUseForChange.paymentSplits?.filter((split: any) => split.method.type === 'cash') || [];
-                  const totalCashPaid = cashPayments.reduce((sum: number, split: any) => sum + split.amount, 0);
-                  const calculatedChange = totalCashPaid > dataToUseForChange.total ? totalCashPaid - dataToUseForChange.total : (dataToUseForChange.change || 0);
-                  if (calculatedChange > 0 && totalCashPaid > 0) {
-                    return `
-                      <div class="field"><span class="label">Recibido (Efectivo)</span><span class="value">${money(totalCashPaid)}</span></div>
-                      <div class="field"><span class="label">Cambio a Devolver</span><span class="value">${money(calculatedChange)}</span></div>
-                    `;
-                  }
-                  return '<div class="field"><span class="label">Cambio</span><span class="value">—</span></div>';
-                })()}
-          </div>
-          </div>
-        </div>
-
-          <table>
-          <thead>
-            <tr>
-                <th style="width:45%">Descripción</th>
-                <th class="right" style="width:10%">Cant.</th>
-                <th class="right" style="width:15%">Precio</th>
-                <th class="right" style="width:15%">Desc.</th>
-                <th class="right" style="width:15%">Importe</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsRows}
-          </tbody>
-        </table>
-
-          <div class="totals">
-            <div class="notes">
-              <div style="font-weight:700; margin-bottom:6px;">Notas</div>
-              ${dataToUse.notes || '—'}
-          </div>
-            <div class="summary">
-${invoiceSummaryRows(itemsToShow, money, { colon: false, totalLabel: 'Total a Pagar', fallback: dataToUse })}
-          </div>
-        </div>
-
-        <div class="footer">
-            <div>Gracias por su preferencia</div>
-            <div>Generado el ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}</div>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-
-    const blob = new Blob([receiptHTML], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `factura_${new Date().toISOString().split('T')[0]}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      await downloadInvoicePdf(factura, receiptFormat as InvoiceFormat);
+      toast.success('Factura descargada en PDF');
+    } catch (error) {
+      console.error('No se pudo generar el PDF de la factura:', error);
+      toast.error('No se pudo generar el PDF de la factura');
+    }
   };
 
   return (
