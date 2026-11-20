@@ -5,12 +5,13 @@ import { getCurrentDateStringForSantoDomingo } from '@/utils/dateUtils';
 import { daysBetweenIso } from '@/utils/frequencyUtils';
 import {
   buildMonthlySeries, computeCashflow, computePortfolioSnapshot, computeRecovery, computeTodayAgenda,
-  topRiskLoans, addDaysIso, isActiveLoan, overdueFromDues, splitLoansForDashboard,
+  topRiskLoans, addDaysIso, getSaleAmount, isActiveLoan, overdueFromDues, splitLoansForDashboard,
   type LoanLike, type PaymentLike, type SaleLike, type OverdueFacts,
 } from '@/utils/portfolioMetrics';
 import { computeInstallmentDues, type IndefiniteSchedule } from '@/utils/installmentDues';
 import { getAmortizationLabel } from '@/utils/amortizationLabels';
 import { activityInstant } from '@/utils/activityTime';
+import { groupSaleTickets, type SaleTicket } from '@/utils/saleTickets';
 import { computeLateFeesByLoan } from '@/utils/portfolioLateFees';
 import { computeLoanBalanceBreakdown } from '@/utils/loanBalanceBreakdown';
 import {
@@ -18,7 +19,9 @@ import {
 } from '@/utils/indefiniteInterest';
 import { indefiniteScheduleFor } from '@/utils/loanArrears';
 import { formatCurrency, formatCurrencyNumber } from '@/lib/utils';
-import { fetchLoanPenalties, summarizePenalties, type LoanPenalty } from '@/utils/loanPenalties';
+import {
+  PENALTY_SOURCE_LABEL, fetchLoanPenalties, summarizePenalties, type LoanPenalty,
+} from '@/utils/loanPenalties';
 
 const round2 = (v: number) => Math.round((Number(v) || 0) * 100) / 100;
 
@@ -127,7 +130,10 @@ export interface LoanHistoryLike {
 
 export interface ActivityItem {
   id: string;
-  kind: 'payment' | 'capital_payment' | 'loan' | 'client' | 'contact' | 'loan_update' | 'deletion';
+  kind: 'payment' | 'capital_payment' | 'loan' | 'client' | 'contact' | 'loan_update' | 'deletion'
+    // PEDIDO (2026-11-20): "al dashboard inicial agrégale que salgan las ventas o empeños, que
+    // también salga lo de penalidad en movimientos recientes". El negocio no es solo prestar.
+    | 'sale' | 'pawn' | 'penalty';
   at: string;          // ISO datetime o fecha
   title: string;
   subtitle?: string;
@@ -174,6 +180,8 @@ export const usePortfolioData = () => {
   /** Préstamos por aprobar: no entran en ninguna métrica, solo se informa cuántos hay. */
   const [awaitingApprovalCount, setAwaitingApprovalCount] = useState(0);
   const [penalties, setPenalties] = useState<LoanPenalty[]>([]);
+  /** Empeños (módulo Compra/Venta). La tabla es opcional: puede no estar desplegada. */
+  const [pawns, setPawns] = useState<any[]>([]);
   const [promises, setPromises] = useState<any[]>([]);
   const [legalTasks, setLegalTasks] = useState<any[]>([]);
   const [legalApprovals, setLegalApprovals] = useState<any[]>([]);
@@ -194,7 +202,7 @@ export const usePortfolioData = () => {
     inFlight.current = true;
     if (silent) setRefreshing(true); else setLoading(true);
     try {
-      const [settingsRes, clientsRes, loansRes, salesRes] = await Promise.all([
+      const [settingsRes, clientsRes, loansRes, salesRes, pawnsRes] = await Promise.all([
         supabase.from('company_settings').select('company_name, phone').eq('user_id', companyId).maybeSingle(),
         supabase.from('clients').select('id, full_name, dni, phone, status, created_at, credit_score').eq('user_id', companyId),
         // Se traen TAMBIÉN los borrados: las métricas los descartan un par de líneas más
@@ -207,6 +215,14 @@ export const usePortfolioData = () => {
           .select('id, client_id, amount, remaining_balance, total_amount, monthly_payment, status, start_date, next_payment_date, term_months, grace_period_days, current_late_fee, late_fee_enabled, late_fee_rate, max_late_fee, late_fee_calculation_type, interest_rate, amortization_type, payment_frequency, collection_stage, created_at, deleted_at, deleted_reason, client:client_id(full_name, dni, phone)')
           .eq('loan_officer_id', companyId),
         supabase.from('sales').select('*').eq('user_id', companyId),
+        // Los empeños, para la actividad reciente. La tabla puede no existir en una base sin el
+        // módulo de Compra/Venta: si falla, el inicio sigue funcionando sin ellos.
+        supabase.from('pawn_transactions')
+          .select('id, client_id, product_name, loan_amount, estimated_value, status, start_date, created_at')
+          .eq('user_id', companyId)
+          .order('created_at', { ascending: false })
+          .limit(50)
+          .then(r => r, () => ({ data: [] as any[], error: null })),
       ]);
 
       if (settingsRes.data) {
@@ -217,6 +233,7 @@ export const usePortfolioData = () => {
       }
       setClients((clientsRes.data || []) as ClientLike[]);
       setSales((salesRes.data || []) as SaleLike[]);
+      setPawns(((pawnsRes as any)?.data || []) as any[]);
 
       if (loansRes.error) console.error('[portfolio] fallo al leer préstamos:', loansRes.error);
       const allLoanRows = ((loansRes.data || []) as any[]) as LoanLike[];
@@ -639,6 +656,38 @@ export const usePortfolioData = () => {
     );
   }, [agenda, tracking, promises, legalTasks, legalApprovals, legalCases, loanById, clientById, lastContactByLoan, todayIso]);
 
+  const saleTickets = useMemo(() => groupSaleTickets(sales), [sales]);
+
+  /**
+   * VENTAS Y EMPEÑOS EN EL INICIO (2026-11-20): "al dashboard inicial agrégale que salgan las
+   * ventas o empeños". Hasta ahora el inicio solo hablaba de préstamos, aunque el negocio
+   * también vende y empeña.
+   */
+  const salesSummary = useMemo(() => {
+    const suma = (lista: SaleTicket[]) => ({
+      count: lista.length,
+      total: round2(lista.reduce((s, v) => s + v.total, 0)),
+    });
+    return {
+      today: suma(saleTickets.filter(v => v.day === todayIso)),
+      month: suma(saleTickets.filter(v => v.day.slice(0, 7) === todayIso.slice(0, 7))),
+      allTime: suma(saleTickets),
+    };
+  }, [saleTickets, todayIso]);
+
+  const pawnSummary = useMemo(() => {
+    const dia = (p: any) => String(p.start_date || p.created_at || '').split('T')[0];
+    const activos = pawns.filter(p => String(p.status || 'active') === 'active');
+    const hoy = pawns.filter(p => dia(p) === todayIso);
+    return {
+      activeCount: activos.length,
+      activeAmount: round2(activos.reduce((s, p) => s + (Number(p.loan_amount) || 0), 0)),
+      todayCount: hoy.length,
+      todayAmount: round2(hoy.reduce((s, p) => s + (Number(p.loan_amount) || 0), 0)),
+      total: pawns.length,
+    };
+  }, [pawns, todayIso]);
+
   /** Actividad reciente combinada (pagos, préstamos, clientes, gestiones). */
   const activity = useMemo<ActivityItem[]>(() => {
     const items: ActivityItem[] = [];
@@ -701,6 +750,60 @@ export const usePortfolioData = () => {
     for (const c of clients) {
       if (!c.created_at) continue;
       items.push({ id: `c-${c.id}`, kind: 'client', at: String(c.created_at), title: `Cliente registrado: ${c.full_name}`, clientId: c.id });
+    }
+
+    // ---- Penalidades ------------------------------------------------------
+    // PEDIDO (2026-11-20): "que también salga lo de penalidad en movimientos recientes". Es
+    // dinero que entra, igual que un pago, y hasta ahora solo se veía sumado en un total.
+    //
+    // La penalidad de un abono a capital NO se repite: el abono ya sale arriba, así que la
+    // penalidad se le añade a su subtítulo en vez de ocupar una fila propia.
+    const abonoPorId = new Map(capitalPayments.map(cp => [cp.id, cp]));
+    for (const pen of penalties) {
+      const at = String(pen.created_at || '');
+      if (!at) continue;
+      const deAbono = pen.capital_payment_id ? abonoPorId.get(pen.capital_payment_id) : undefined;
+      if (deAbono) {
+        const fila = items.find(i => i.id === `cp-${deAbono.id}`);
+        if (fila) {
+          fila.subtitle = [fila.subtitle, `penalidad ${formatCurrencyNumber(Number(pen.amount) || 0)}`]
+            .filter(Boolean).join(' · ');
+          continue;
+        }
+      }
+      items.push({
+        id: `pen-${pen.id}`, kind: 'penalty', at,
+        title: `Penalidad · ${nameOfLoan(pen.loan_id)}`,
+        subtitle: PENALTY_SOURCE_LABEL[pen.source as keyof typeof PENALTY_SOURCE_LABEL] || undefined,
+        amount: round2(Number(pen.amount) || 0), loanId: pen.loan_id,
+      });
+    }
+
+    // ---- Ventas del punto de venta ---------------------------------------
+    for (const v of saleTickets) {
+      items.push({
+        id: `s-${v.key}`, kind: 'sale', at: v.at,
+        title: `Venta · ${v.cliente}`,
+        subtitle: v.lineas > 1 ? `${v.lineas} productos` : undefined,
+        amount: v.total,
+      });
+    }
+
+    // ---- Empeños ----------------------------------------------------------
+    for (const e of pawns) {
+      const at = String(e.created_at || e.start_date || '');
+      if (!at) continue;
+      const cliente = clientById.get(String(e.client_id || ''))?.full_name || 'Cliente';
+      items.push({
+        id: `pw-${e.id}`, kind: 'pawn', at,
+        title: `Empeño · ${cliente}`,
+        subtitle: [
+          e.product_name || null,
+          Number(e.estimated_value) ? `tasado en ${formatCurrencyNumber(Number(e.estimated_value))}` : null,
+        ].filter(Boolean).join(' · ') || undefined,
+        amount: round2(Number(e.loan_amount) || 0),
+        clientId: e.client_id || undefined,
+      });
     }
     for (const t of tracking) {
       if (!t.contact_date) continue;
@@ -807,7 +910,8 @@ export const usePortfolioData = () => {
     // mismo día. Comparar instantes trata a las dos formas por igual (una fecha suelta se sitúa
     // al mediodía, que es lo único razonable cuando no se guardó la hora).
     return items.sort((a, b) => activityInstant(b.at) - activityInstant(a.at)).slice(0, 20);
-  }, [payments, capitalPayments, loans, clients, tracking, loanHistory, deletedLoans, loanById, clientById]);
+  }, [payments, capitalPayments, loans, clients, tracking, loanHistory, deletedLoans, loanById,
+      clientById, penalties, saleTickets, pawns]);
 
   const onboarding = useMemo(() => ({
     companyConfigured,
@@ -830,6 +934,8 @@ export const usePortfolioData = () => {
     portfolio, cashflow, recovery, agenda, riskLoans, series6, series12,
     pending, activity, onboarding, clientStats, lateFeeByLoan,
     capitalPayments, capitalToday, capitalMonth, penalties, penaltySummary, penaltyItems,
+    /** Ventas del punto de venta agrupadas por ticket, y empeños: el inicio también los enseña. */
+    saleTickets, salesSummary, pawns, pawnSummary,
     // ------------------------------------------------------------------
     // Material en crudo para REPORTES Y ANÁLISIS (2026-10-09)
     // ------------------------------------------------------------------

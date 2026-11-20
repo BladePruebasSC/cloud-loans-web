@@ -24,6 +24,7 @@ import { inPeriod, previousPeriod } from '../reportPeriods';
 import { applyCommonFilters, groupRows } from '../reportFilters';
 import type { ReportDefinition, ReportRow } from '../reportTypes';
 import { breakdownOf } from './paymentReports';
+import { saleBreakdown } from './operationReports';
 
 interface FinancialTotals {
   capitalCobrado: number;
@@ -34,6 +35,14 @@ interface FinancialTotals {
   abonos: number;
   penalidades: number;
   ventas: number;
+  /** ITBIS cobrado en las ventas: se cobra para la DGII, no es ingreso. */
+  itbisVentas: number;
+  /** Lo que costó la mercancía vendida, SIN ITBIS. */
+  costoVentas: number;
+  /** Ventas sin ITBIS menos lo que costó la mercancía: lo que de verdad deja el punto de venta. */
+  gananciaVentas: number;
+  /** Líneas de venta sin precio de compra: su costo NO está restado. */
+  ventasSinCosto: number;
   gastos: number;
   desembolsos: number;
   /** Entradas de caja */
@@ -78,6 +87,30 @@ export const financialTotals = (
     .filter(s => inPeriod(dateOnly((s as any).sale_date || (s as any).created_at), period))
     .reduce((s, v) => s + getSaleAmount(v), 0);
 
+  // LO QUE DEJA EL PUNTO DE VENTA (2026-11-20). Una venta no es ganancia: hay que quitarle el
+  // ITBIS —que se cobra para la DGII— y lo que costó la mercancía. Vender una motora de 123,900
+  // que costó 102,070 deja 1,730, no 123,900.
+  //
+  // Hace falta el DETALLE de las ventas (qué se vendió y a qué costo), que es un conjunto
+  // aparte. Mientras no esté cargado, se mantiene el comportamiento de siempre —la venta entera
+  // cuenta como ingreso— y el reporte lo advierte en vez de enseñar una ganancia inventada.
+  const hayDetalle = !!data.salesDetail;
+  let itbisVentas = 0;
+  let costoVentas = 0;
+  let ventasSinCosto = 0;
+  let ventasNetas = 0;
+  if (hayDetalle) {
+    for (const v of data.salesDetail?.sales || []) {
+      if (!inPeriod(dateOnly(v.sale_date || v.created_at), period)) continue;
+      const d = saleBreakdown(v);
+      itbisVentas += d.tax;
+      costoVentas += d.cost;
+      ventasNetas += d.base;
+      ventasSinCosto += d.linesWithoutCost;
+    }
+  }
+  const gananciaVentas = hayDetalle ? round2(ventasNetas - costoVentas) : round2(ventas);
+
   const gastos = (data.expenses?.rows || [])
     .filter(e => inPeriod(dateOnly(e.expense_date), period))
     .reduce((s, e) => s + (Number(e.amount) || 0), 0);
@@ -95,7 +128,8 @@ export const financialTotals = (
     capitalCobrado + interes + cargos + mora + abonos + penalidades + ventas - descuentos,
   );
   const salidas = round2(gastos + desembolsos);
-  const ingresoOperativo = round2(interes + cargos + mora + penalidades + ventas - descuentos);
+  // El punto de venta entra por su GANANCIA, no por lo facturado.
+  const ingresoOperativo = round2(interes + cargos + mora + penalidades + gananciaVentas - descuentos);
 
   return {
     capitalCobrado: round2(capitalCobrado),
@@ -106,6 +140,10 @@ export const financialTotals = (
     abonos: round2(abonos),
     penalidades: round2(penalidades),
     ventas: round2(ventas),
+    itbisVentas: round2(itbisVentas),
+    costoVentas: round2(costoVentas),
+    gananciaVentas,
+    ventasSinCosto,
     gastos: round2(gastos),
     desembolsos: round2(desembolsos),
     entradas,
@@ -123,7 +161,8 @@ export const financialReports: ReportDefinition<ReportData>[] = [
     category: 'financiero',
     description: 'Entradas, salidas, ingreso real y resultado del período, con el período anterior al lado.',
     permission: 'reports.financial',
-    dataset: ['expenses'],
+    // El detalle de ventas hace falta para restarle a las ventas el ITBIS y el costo (2026-11-20).
+    dataset: ['expenses', 'sales'],
     columns: [
       { key: 'concepto', label: 'Concepto', align: 'left' },
       { key: 'monto', label: 'Período', format: 'money', total: false },
@@ -153,14 +192,17 @@ export const financialReports: ReportDefinition<ReportData>[] = [
         fila('Mora cobrada', 'mora', 'INGRESO: penalidad por atraso ya cobrada.'),
         fila('Cargos cobrados', 'cargos', 'INGRESO: cargos y comisiones cobrados con las cuotas.'),
         fila('Penalidades cobradas', 'penalidades', 'INGRESO: lo que paga el cliente por abonar a capital. Entra en caja como el interés.'),
-        fila('Ventas (punto de venta)', 'ventas', 'INGRESO bruto del punto de venta, con ITBIS incluido.'),
+        fila('Ventas (punto de venta)', 'ventas', 'Lo facturado en el punto de venta, con ITBIS incluido.'),
+        fila('− ITBIS de las ventas', 'itbisVentas', 'Se cobra para la DGII: entra en caja, pero no es del negocio.'),
+        fila('− Costo de la mercancía', 'costoVentas', 'Lo que costó lo que se vendió, sin ITBIS.'),
+        fila('= Ganancia de ventas', 'gananciaVentas', 'INGRESO: lo que de verdad deja el punto de venta.'),
         fila('Descuentos otorgados', 'descuentos', 'Dinero perdonado en los cobros: nunca entró en la caja.'),
         fila('Gastos', 'gastos', 'EGRESO: gastos registrados en el período.'),
         fila('Préstamos desembolsados', 'desembolsos', 'Salida de caja, no es un gasto: es capital colocado.'),
         fila('= Entradas de caja', 'entradas', 'Todo lo que entró, descontando lo perdonado.'),
         fila('= Salidas de caja', 'salidas', 'Gastos + capital desembolsado.'),
         fila('= Flujo neto de caja', 'flujoNeto', 'Entradas − salidas: cuánto dinero quedó.'),
-        fila('= Ingreso operativo', 'ingresoOperativo', 'Interés + mora + cargos + penalidades + ventas.'),
+        fila('= Ingreso operativo', 'ingresoOperativo', 'Interés + mora + cargos + penalidades + ganancia de ventas.'),
         fila('= RESULTADO', 'resultado', 'Ingreso operativo − gastos. Esta es la ganancia del período.'),
       ];
 
@@ -170,9 +212,22 @@ export const financialReports: ReportDefinition<ReportData>[] = [
       ];
       if (!data.expenses) notes.push('Los gastos todavía se están cargando.');
       else if (!data.expenses.rows.length) notes.push('No hay gastos registrados en el período.');
+      // CAMBIO (2026-11-20): antes aquí se decía que el margen del punto de venta "no se puede
+      // calcular". Ya se puede: la venta guarda lo que costó la mercancía.
       if (actual.ventas > 0) {
-        notes.push('Las ventas entran por su importe bruto: el sistema no guarda el costo de la '
-          + 'mercancía en cada venta, así que el margen del punto de venta no se puede calcular aquí.');
+        if (!data.salesDetail) {
+          notes.push('El detalle de las ventas todavía se está cargando: mientras tanto el punto de '
+            + 'venta cuenta por su importe bruto, sin quitarle el ITBIS ni el costo de la mercancía.');
+        } else {
+          notes.push('El punto de venta entra por su GANANCIA, no por lo facturado: a lo vendido se '
+            + 'le quita el ITBIS —que se cobra para la DGII— y lo que costó la mercancía. El detalle '
+            + 'producto por producto está en "Ganancia de las ventas".');
+        }
+        if (actual.ventasSinCosto > 0) {
+          notes.push(`${actual.ventasSinCosto} línea${actual.ventasSinCosto === 1 ? '' : 's'} de venta `
+            + 'no tiene precio de compra en su producto, así que su costo no está restado y la '
+            + 'ganancia de ventas sale más alta de lo real.');
+        }
       }
 
       return {

@@ -75,7 +75,7 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
   if (ids.length > 0) {
     const { data: details } = await supabase
       .from('sale_details')
-      .select('*, products(id, name, itbis_rate, selling_price)')
+      .select('*, products(id, name, itbis_rate, selling_price, purchase_price)')
       .in('sale_id', ids);
     for (const d of details || []) {
       const list = detailsBySale.get((d as any).sale_id) || [];
@@ -92,20 +92,23 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
   const filasSinDetalle = (sales || []).filter((s: any) => !detailsBySale.has(s.id) && s.product_id);
   const productosDeVentas = new Map<string, {
     name: string | null; itbis_rate: number | null; selling_price: number | null;
+    purchase_price: number | null;
   }>();
   if (filasSinDetalle.length > 0) {
     const ids = [...new Set(filasSinDetalle.map((s: any) => String(s.product_id)))];
     const { data: productos } = await supabase
       .from('products')
-      .select('id, name, itbis_rate, selling_price')
+      .select('id, name, itbis_rate, selling_price, purchase_price')
       .in('id', ids);
     for (const p of productos || []) {
       productosDeVentas.set(String((p as any).id), {
         name: (p as any).name ?? null,
         itbis_rate: (p as any).itbis_rate ?? null,
         // El precio de venta de hoy, para deducir el descuento de una venta que no guardó el
-        // precio de lista (2026-11-18).
+        // precio de lista (2026-11-18); y el de compra, para deducir el costo y con él la
+        // ganancia de una venta que no guardó el costo (2026-11-20).
         selling_price: (p as any).selling_price ?? null,
+        purchase_price: (p as any).purchase_price ?? null,
       });
     }
   }
@@ -138,7 +141,9 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
         total_price: d.total_price ?? null,
         itbis_rate: d.itbis_rate ?? d.products?.itbis_rate ?? null,
         list_unit_price: d.list_unit_price ?? null,
+        unit_cost: d.unit_cost ?? null,
         product_selling_price: d.products?.selling_price ?? null,
+        product_purchase_price: d.products?.purchase_price ?? null,
       }))
       // Esquema simple: la propia fila es la línea de venta.
       //
@@ -160,7 +165,9 @@ const fetchSales = async (userIds: string[]): Promise<SalesDataset> => {
         }, true),
         itbis_rate: productosDeVentas.get(String(s.product_id))?.itbis_rate ?? null,
         list_unit_price: s.list_unit_price ?? null,
+        unit_cost: s.unit_cost ?? null,
         product_selling_price: productosDeVentas.get(String(s.product_id))?.selling_price ?? null,
+        product_purchase_price: productosDeVentas.get(String(s.product_id))?.purchase_price ?? null,
       }] : []),
   }));
   return { sales: rows };

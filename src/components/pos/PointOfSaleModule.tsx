@@ -987,6 +987,10 @@ export const PointOfSaleModule = () => {
               discount_amount: linea.discount,
               discount_percent: linea.discountPercent,
               itbis_rate: itbisRateOf(ci.product),
+              // Y lo que COSTÓ la unidad, sin ITBIS (2026-11-20): sin el costo del día no hay
+              // forma de saber la ganancia de esta venta, porque el precio de compra del
+              // producto cambia cada vez que se repone mercancía.
+              unit_cost: round2(Number(ci.product.purchase_price) || 0),
             };
           });
 
@@ -1050,6 +1054,8 @@ export const PointOfSaleModule = () => {
               subtotal: linea.base,
               tax_amount: linea.tax,
               payment_details: paymentDetails,
+              // Lo que COSTÓ la unidad, sin ITBIS: de ahí sale la ganancia (2026-11-20).
+              unit_cost: round2(Number(ci.product.purchase_price) || 0),
             };
 
             // Campos opcionales - solo agregar si tienen valor
@@ -1072,7 +1078,7 @@ export const PointOfSaleModule = () => {
             const sinExtras = rows.map((row: any) => {
               const {
                 list_unit_price, discount_amount, discount_percent, subtotal, tax_amount,
-                payment_details, ...resto
+                payment_details, unit_cost, ...resto
               } = row;
               return { ...resto, payment_method: paymentMethodSeguro };
             });

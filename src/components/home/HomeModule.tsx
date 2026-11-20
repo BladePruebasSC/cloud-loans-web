@@ -41,6 +41,8 @@ const SEVERITY_STYLE: Record<PendingItem['severity'], { dot: string; badge: stri
 const ACTIVITY_ICON: Record<ActivityItem['kind'], any> = {
   payment: DollarSign, capital_payment: PiggyBank, loan: CreditCard, client: UserPlus, contact: MessageSquare,
   loan_update: PencilLine, deletion: Trash2,
+  // El negocio no es solo prestar: también se vende y se empeña (2026-11-20).
+  sale: ShoppingCart, pawn: Scale, penalty: AlertTriangle,
 };
 const ACTIVITY_STYLE: Record<ActivityItem['kind'], string> = {
   payment: 'bg-green-100 text-green-700', loan: 'bg-blue-100 text-blue-700',
@@ -49,13 +51,17 @@ const ACTIVITY_STYLE: Record<ActivityItem['kind'], string> = {
   loan_update: 'bg-amber-100 text-amber-700',
   // Lo eliminado va en rojo a propósito: es lo que más importa poder repasar después.
   deletion: 'bg-red-100 text-red-700',
+  sale: 'bg-emerald-100 text-emerald-700',
+  pawn: 'bg-cyan-100 text-cyan-700',
+  // La penalidad en naranja, el mismo color con el que ya se enseña en los totales de arriba.
+  penalty: 'bg-orange-100 text-orange-700',
 };
 
 export const HomeModule: React.FC = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const P = usePortfolioData();
-  const { portfolio, cashflow, agenda, pending, activity, onboarding, clientStats, todayIso, capitalToday, capitalMonth, penaltySummary } = P;
+  const { portfolio, cashflow, agenda, pending, activity, onboarding, clientStats, todayIso, capitalToday, capitalMonth, penaltySummary, salesSummary, pawnSummary } = P;
   /** Pagos de cuotas de hoy (los abonos a capital se cuentan en el cobrado, pero se nombran aparte). */
   const paymentsTodayCount = Math.max(0, cashflow.today.count - capitalToday.count);
   const [trackingFor, setTrackingFor] = useState<{ loanId: string; clientName: string } | null>(null);
@@ -222,6 +228,43 @@ export const HomeModule: React.FC = () => {
             onClick={() => navigate('/dashboard')}
           />
         </div>
+
+        {/* ---------- Ventas y empeños ----------
+            PEDIDO (2026-11-20): "al dashboard inicial agrégale que salgan las ventas o empeños".
+            El inicio solo hablaba de préstamos. Estas casillas aparecen únicamente si el negocio
+            vende o empeña: a quien solo presta no le ocupan sitio. */}
+        {(salesSummary.allTime.count > 0 || pawnSummary.total > 0) && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <DayTile
+              icon={ShoppingCart} label="Vendido hoy" tone="bg-emerald-100 text-emerald-700"
+              value={formatCurrency(salesSummary.today.total)}
+              sub={`${salesSummary.today.count} venta${salesSummary.today.count === 1 ? '' : 's'}`}
+              onClick={P.can('pos.view') ? () => navigate('/punto-venta') : undefined}
+            />
+            <DayTile
+              icon={Package} label="Vendido este mes" tone="bg-sky-100 text-sky-700"
+              value={formatCurrency(salesSummary.month.total)}
+              sub={`${salesSummary.month.count} venta${salesSummary.month.count === 1 ? '' : 's'} · con ITBIS`}
+              onClick={P.can('reports.view') ? () => navigate('/reportes?reporte=sales-profit') : undefined}
+            />
+            {pawnSummary.total > 0 && (
+              <>
+                <DayTile
+                  icon={Scale} label="Empeños activos" tone="bg-cyan-100 text-cyan-700"
+                  value={String(pawnSummary.activeCount)}
+                  sub={`${formatCurrency(pawnSummary.activeAmount)} prestado`}
+                  onClick={P.can('pawnshop.view') ? () => navigate('/compra-venta') : undefined}
+                />
+                <DayTile
+                  icon={HandHeart} label="Empeños de hoy" tone="bg-indigo-100 text-indigo-700"
+                  value={String(pawnSummary.todayCount)}
+                  sub={pawnSummary.todayCount > 0 ? `${formatCurrency(pawnSummary.todayAmount)} entregado` : 'Ninguno todavía'}
+                  onClick={P.can('pawnshop.view') ? () => navigate('/compra-venta') : undefined}
+                />
+              </>
+            )}
+          </div>
+        )}
 
         {/* ---------- Onboarding (solo si falta configurar) ---------- */}
         {!onboarding.complete && (

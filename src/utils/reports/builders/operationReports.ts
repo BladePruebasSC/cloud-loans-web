@@ -184,6 +184,10 @@ interface SaleLineLike {
   list_unit_price?: number | null;
   /** Precio de venta de hoy del producto, para deducirlo en las ventas que no lo guardaron. */
   product_selling_price?: number | null;
+  /** Lo que costó una unidad, SIN ITBIS, el día de la venta. */
+  unit_cost?: number | null;
+  /** Precio de compra de hoy del producto, para deducir el costo de una venta vieja. */
+  product_purchase_price?: number | null;
 }
 interface SaleLike {
   total_amount?: number | null;
@@ -200,8 +204,13 @@ const comoLinea = (d: SaleLineLike) => ({
   total_price: d?.total_price,
   itbis_rate: d?.itbis_rate,
   list_unit_price: d?.list_unit_price,
-  product: (Number(d?.product_selling_price) || 0) > 0
-    ? { selling_price: d?.product_selling_price, itbis_rate: d?.itbis_rate }
+  unit_cost: d?.unit_cost,
+  product: (Number(d?.product_selling_price) || 0) > 0 || (Number(d?.product_purchase_price) || 0) > 0
+    ? {
+      selling_price: d?.product_selling_price,
+      purchase_price: d?.product_purchase_price,
+      itbis_rate: d?.itbis_rate,
+    }
     : null,
 });
 
@@ -244,6 +253,8 @@ export const saleBreakdown = (sale: SaleLike): SaleAmounts => {
     discountWithTax: round2(Math.max(0, listTotal - total)),
     discountPercent: listTotal > 0.005 ? round2(((listTotal - total) / listTotal) * 100) : 0,
     discountSource: discount > 0.005 ? 'guardado' : 'ninguno',
+    // Sin líneas no se sabe qué se vendió, así que tampoco lo que costó.
+    cost: 0, profit: 0, margin: 0, costSource: 'ninguno', linesWithoutCost: 0,
     lines: [],
   };
 };
@@ -286,6 +297,12 @@ const formasDePago = (sale: {
  * Aviso para el pie del reporte cuando el descuento no se guardó y hubo que deducirlo del precio
  * de venta de hoy: si al producto le cambiaron el precio después, la cifra es aproximada.
  */
+const notaDeCostos = (deducido: boolean): string[] => deducido
+  ? ['Las ventas anteriores al 20/11/2026 no guardaban lo que costó la mercancía: su costo se '
+    + 'toma del precio de compra que el producto tiene HOY, así que si se repuso a otro precio, '
+    + 'esa ganancia es aproximada. Las ventas nuevas guardan el costo del día.']
+  : [];
+
 const notaDeDescuentos = (deducido: boolean): string[] => deducido
   ? ['Las ventas anteriores al 18/11/2026 no guardaban el precio de lista: su descuento se deduce '
     + 'del precio de venta actual del producto, así que si a alguno le cambiaron el precio después, '
@@ -551,6 +568,174 @@ export const salesReports: ReportDefinition<ReportData>[] = [
         charts: [{
           kind: 'pie', title: 'Reparto por forma de pago', xKey: 'metodo',
           series: [{ key: 'total', label: 'Total' }], money: true,
+        }],
+      };
+    },
+  },
+
+  {
+    id: 'sales-profit',
+    name: 'Ganancia de las ventas',
+    category: 'ventas',
+    description: 'Lo que costó la mercancía y a cuánto se vendió: la ganancia y el margen de cada producto.',
+    permission: 'reports.inventory',
+    dataset: 'sales',
+    columns: [
+      { key: 'producto', label: 'Producto', align: 'left' },
+      { key: 'unidades', label: 'Unidades', format: 'number', total: true },
+      { key: 'costoUnitario', label: 'Costo por unidad', format: 'money', help: 'Lo que costó la mercancía, sin ITBIS' },
+      { key: 'precioUnitario', label: 'Venta por unidad', format: 'money', help: 'Lo cobrado, sin ITBIS' },
+      { key: 'venta', label: 'Vendido', format: 'money', total: true, help: 'Sin ITBIS: el impuesto no es ingreso' },
+      { key: 'costo', label: 'Costo', format: 'money', total: true },
+      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true },
+      { key: 'margen', label: 'Margen', format: 'percent', help: 'Ganancia sobre lo vendido' },
+      { key: 'sinCosto', label: 'Sin costo', format: 'number', hiddenByDefault: true, help: 'Unidades de las que no se sabe el costo' },
+    ],
+    filters: ['search', 'userId', 'minAmount'],
+    defaultSort: { key: 'ganancia', dir: 'desc' },
+    keywords: ['ganancia', 'utilidad', 'margen', 'costo', 'rentabilidad', 'beneficio', 'lo que se gana'],
+    build: ctx => {
+      const { data, filters } = ctx;
+      const detalles = salesInPeriod(data, filters).flatMap(s => (s.details || []).map(d => ({
+        sale: s, detail: d, linea: saleAmounts([comoLinea(d)]).lines[0],
+      })));
+      const grupos = groupRows(detalles, d => String(d.detail.product_name || d.detail.product_id || 'Producto'));
+      let deducido = false;
+      let sinCostoTotal = 0;
+      const rows: ReportRow[] = [...grupos.entries()].map(([producto, lista]) => {
+        const conCosto = lista.filter(d => d.linea.costSource !== 'ninguno');
+        if (conCosto.some(d => d.linea.costSource === 'deducido')) deducido = true;
+        const unidades = lista.reduce((n, d) => n + d.linea.quantity, 0);
+        const unidadesSinCosto = lista.reduce((n, d) => n + (d.linea.costSource === 'ninguno' ? d.linea.quantity : 0), 0);
+        sinCostoTotal += unidadesSinCosto;
+        // La ganancia solo cuenta lo que tiene costo conocido: una línea sin costo no es una
+        // línea que se ganó entera.
+        const venta = round2(conCosto.reduce((s, d) => s + d.linea.base, 0));
+        const costo = round2(conCosto.reduce((s, d) => s + d.linea.cost, 0));
+        const ganancia = round2(venta - costo);
+        const unidadesConCosto = conCosto.reduce((n, d) => n + d.linea.quantity, 0);
+        return {
+          _id: producto,
+          producto,
+          unidades,
+          costoUnitario: unidadesConCosto > 0 ? round2(costo / unidadesConCosto) : 0,
+          precioUnitario: unidadesConCosto > 0 ? round2(venta / unidadesConCosto) : 0,
+          venta,
+          costo,
+          ganancia,
+          margen: venta > 0.005 ? round2((ganancia / venta) * 100) : 0,
+          sinCosto: unidadesSinCosto,
+        };
+      });
+      const filtradas = applyCommonFilters(rows, filters, 'ganancia');
+      const venta = round2(filtradas.reduce((s, r) => s + (Number(r.venta) || 0), 0));
+      const costo = round2(filtradas.reduce((s, r) => s + (Number(r.costo) || 0), 0));
+      const ganancia = round2(venta - costo);
+      const notes = [
+        'Todo va SIN ITBIS: el impuesto se cobra para la DGII, no es ingreso del negocio. La '
+        + 'ganancia es lo vendido menos lo que costó la mercancía (ganancia bruta): los gastos '
+        + 'del negocio no se descuentan aquí, van en el resumen financiero.',
+      ];
+      if (sinCostoTotal > 0) {
+        notes.push(`${sinCostoTotal} unidad${sinCostoTotal === 1 ? '' : 'es'} no tiene${sinCostoTotal === 1 ? '' : 'n'} `
+          + 'precio de compra en su producto, así que su ganancia no se puede saber y NO se cuenta '
+          + 'en estos totales. Ponles el costo en Inventario y saldrán aquí.');
+      }
+      notes.push(...notaDeCostos(deducido));
+      return {
+        rows: filtradas,
+        notes,
+        kpis: [
+          { key: 'venta', label: 'Vendido (sin ITBIS)', value: venta, format: 'money' },
+          { key: 'costo', label: 'Costo de la mercancía', value: costo, format: 'money' },
+          { key: 'ganancia', label: 'Ganancia', value: ganancia, format: 'money' },
+          {
+            key: 'margen', label: 'Margen', format: 'percent',
+            value: venta > 0.005 ? round2((ganancia / venta) * 100) : 0,
+            hint: 'Ganancia sobre lo vendido',
+          },
+        ],
+        charts: [{
+          kind: 'bar', title: 'Ganancia por producto', xKey: 'producto',
+          series: [{ key: 'costo', label: 'Costo' }, { key: 'ganancia', label: 'Ganancia' }], money: true,
+        }],
+      };
+    },
+  },
+
+  {
+    id: 'sales-profit-by-sale',
+    name: 'Ganancia por venta',
+    category: 'ventas',
+    description: 'Venta por venta: a cuánto se vendió, cuánto costó la mercancía y cuánto se ganó.',
+    permission: 'reports.inventory',
+    dataset: 'sales',
+    columns: [
+      { key: 'fecha', label: 'Fecha', format: 'date' },
+      { key: 'numero', label: 'Venta', align: 'left' },
+      { key: 'cliente', label: 'Cliente', align: 'left' },
+      { key: 'articulos', label: 'Artículos', format: 'number', total: true },
+      { key: 'venta', label: 'Vendido', format: 'money', total: true, help: 'Sin ITBIS' },
+      { key: 'costo', label: 'Costo', format: 'money', total: true },
+      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true },
+      { key: 'margen', label: 'Margen', format: 'percent' },
+      { key: 'descuento', label: 'Descuento', format: 'money', total: true, hiddenByDefault: true },
+      { key: 'metodo', label: 'Método', align: 'left', hiddenByDefault: true },
+      { key: 'usuario', label: 'Vendió', align: 'left' },
+    ],
+    filters: ['search', 'userId', 'paymentMethod', 'minAmount', 'maxAmount'],
+    defaultSort: { key: 'fecha', dir: 'desc' },
+    keywords: ['ganancia', 'utilidad', 'margen', 'costo', 'rentabilidad por venta'],
+    build: ctx => {
+      const { data, filters } = ctx;
+      let deducido = false;
+      let sinCosto = 0;
+      const rows = salesInPeriod(data, filters).map(s => {
+        const v = saleBreakdown(s);
+        if (v.costSource === 'deducido') deducido = true;
+        sinCosto += v.linesWithoutCost;
+        return {
+          _id: s.id,
+          _clientId: s.client_id || undefined,
+          fecha: dateOnly(s.sale_date || s.created_at),
+          numero: String(s.sale_number || s.id.slice(0, 8)),
+          cliente: String(s.customer_name || 'Consumidor final'),
+          articulos: (s.details || []).reduce((n, d) => n + (Number(d.quantity) || 0), 0),
+          venta: v.base,
+          costo: v.cost,
+          ganancia: v.profit,
+          margen: v.margin,
+          descuento: v.discount,
+          metodo: labelFor(PAYMENT_METHOD_LABEL, s.payment_method || 'cash'),
+          usuario: userNameOf(data, s.user_id),
+        } as ReportRow;
+      });
+      const filtradas = applyCommonFilters(rows, filters, 'ganancia');
+      const venta = round2(filtradas.reduce((s, r) => s + (Number(r.venta) || 0), 0));
+      const ganancia = round2(filtradas.reduce((s, r) => s + (Number(r.ganancia) || 0), 0));
+      const notes = [
+        'Lo vendido va SIN ITBIS, para poder restarle el costo: el impuesto no es ingreso.',
+      ];
+      if (sinCosto > 0) {
+        notes.push(`${sinCosto} línea${sinCosto === 1 ? '' : 's'} de venta sin precio de compra en su `
+          + 'producto: su ganancia no se cuenta.');
+      }
+      notes.push(...notaDeCostos(deducido));
+      return {
+        rows: filtradas,
+        notes,
+        kpis: [
+          { key: 'cantidad', label: 'Ventas', value: filtradas.length, format: 'number' },
+          { key: 'venta', label: 'Vendido (sin ITBIS)', value: venta, format: 'money' },
+          { key: 'ganancia', label: 'Ganancia', value: ganancia, format: 'money', linkTo: 'sales-profit' },
+          {
+            key: 'promedio', label: 'Ganancia por venta', format: 'money',
+            value: filtradas.length ? round2(ganancia / filtradas.length) : 0,
+          },
+        ],
+        charts: [{
+          kind: 'bar', title: 'Ganancia por día', xKey: 'fecha',
+          series: [{ key: 'ganancia', label: 'Ganancia' }], money: true,
         }],
       };
     },

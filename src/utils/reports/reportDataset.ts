@@ -81,6 +81,14 @@ export interface SaleDetailRow {
   list_unit_price: number | null;
   /** El precio de venta actual del producto, para deducir el descuento de una venta vieja. */
   product_selling_price: number | null;
+  /**
+   * Lo que COSTÓ una unidad, SIN ITBIS, el día de la venta. Guardado desde la migración
+   * `20261120000000`; en las anteriores se toma el precio de compra de hoy del producto. De
+   * restarlo a la base sale la GANANCIA de la venta (2026-11-20).
+   */
+  unit_cost: number | null;
+  /** El precio de compra actual del producto, para deducir el costo de una venta vieja. */
+  product_purchase_price: number | null;
 }
 
 export interface SaleRow {

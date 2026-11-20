@@ -107,6 +107,12 @@ export const buildDashboard = (
           key: 'ventas', label: 'Ventas', value: act.ventas, format: 'money',
           previous: ant.ventas, linkTo: 'sales-detail', permission: 'reports.inventory',
         },
+        // Lo que DEJA vender, que no es lo mismo que lo vendido (2026-11-20).
+        {
+          key: 'gananciaVentas', label: 'Ganancia de ventas', value: act.gananciaVentas, format: 'money',
+          previous: ant.gananciaVentas, linkTo: 'sales-profit', permission: 'reports.inventory',
+          hint: 'Lo vendido sin ITBIS, menos lo que costó la mercancía',
+        },
         {
           key: 'gastos', label: 'Gastos', value: act.gastos, format: 'money',
           previous: ant.gastos, linkTo: 'expenses-detail', permission: 'expenses.view',

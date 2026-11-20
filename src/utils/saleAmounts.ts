@@ -22,6 +22,11 @@
 // `discountSource` dice cuál de los tres fue, para que un reporte pueda avisar cuando la cifra
 // es deducida y no un dato guardado.
 //
+// EL COSTO (2026-11-20) sigue exactamente el mismo camino: `unit_cost` si la venta lo guardó, el
+// precio de compra de hoy del producto si no, y nada si el producto no tiene precio de compra.
+// Con el costo al lado de la base sale la GANANCIA de la venta, que es lo que no había forma de
+// mirar en ningún reporte.
+//
 // LÍMITE CONOCIDO del caso 2: el precio de hoy no es el de aquel día. Si al producto le SUBIERON
 // el precio después de venderlo, la venta vieja parece rebajada sin haberlo estado; por eso esas
 // cifras salen marcadas como "deducidas" y el reporte lo advierte al pie. En cuanto la venta
@@ -36,6 +41,8 @@ const UMBRAL_DESCUENTO = 0.5;
 
 export interface SaleLineProductLike {
   selling_price?: number | null;
+  /** Lo que costó la mercancía, SIN ITBIS (así lo guarda el producto). */
+  purchase_price?: number | null;
   itbis_rate?: number | null;
 }
 
@@ -47,10 +54,19 @@ export interface SaleLineLike {
   itbis_rate?: number | null;
   /** Precio de LISTA por unidad, con ITBIS, tal como estaba el día de la venta. */
   list_unit_price?: number | null;
+  /** Lo que COSTÓ una unidad, SIN ITBIS, el día de la venta. */
+  unit_cost?: number | null;
   product?: SaleLineProductLike | null;
 }
 
 export type DiscountSource = 'guardado' | 'deducido' | 'ninguno';
+
+/**
+ * De dónde sale el COSTO de la mercancía: guardado con la venta, tomado del precio de compra de
+ * hoy del producto, o ninguno —y entonces la ganancia de esa línea NO se sabe, que no es lo
+ * mismo que ser cero—.
+ */
+export type CostSource = 'guardado' | 'deducido' | 'ninguno';
 
 export interface SaleLineAmounts {
   quantity: number;
@@ -76,6 +92,15 @@ export interface SaleLineAmounts {
   /** El descuento en % (es el mismo con impuesto o sin él). */
   discountPercent: number;
   discountSource: DiscountSource;
+  /** Lo que costó una unidad, SIN ITBIS. */
+  unitCost: number;
+  /** Lo que costó lo vendido en esta línea, SIN ITBIS. */
+  cost: number;
+  /** Ganancia bruta: lo cobrado sin ITBIS menos lo que costó. 0 si no se sabe el costo. */
+  profit: number;
+  /** Margen sobre la venta, en %. */
+  margin: number;
+  costSource: CostSource;
 }
 
 export interface SaleLineOptions {
@@ -122,6 +147,26 @@ export const saleLineAmounts = (
   const discountWithTax = round2(Math.max(0, listTotal - total));
   const discount = round2(Math.max(0, listBase - base));
 
+  // --- El COSTO, por el mismo orden de confianza que el precio de lista ---
+  // Va SIN ITBIS, como lo guarda el producto y como la base de la venta: así la resta es entre
+  // dos cifras comparables y la ganancia es la de verdad.
+  const costoGuardado = Number(line?.unit_cost) || 0;
+  const costoDelProducto = Number(line?.product?.purchase_price) || 0;
+  let unitCost = 0;
+  let costSource: CostSource = 'ninguno';
+  if (costoGuardado > 0.005) {
+    unitCost = round2(costoGuardado);
+    costSource = 'guardado';
+  } else if (costoDelProducto > 0.005) {
+    unitCost = round2(costoDelProducto);
+    costSource = 'deducido';
+  }
+  const cost = round2(unitCost * quantity);
+  // Sin costo no se sabe la ganancia, que NO es lo mismo que ganarlo todo.
+  const profit = costSource === 'ninguno' ? 0 : round2(base - cost);
+  const margin = costSource !== 'ninguno' && base > 0.005 ? round2((profit / base) * 100) : 0;
+  const costo = { unitCost, cost, profit, margin, costSource };
+
   if (discountWithTax < UMBRAL_DESCUENTO) {
     return {
       quantity, itbisRate,
@@ -130,6 +175,7 @@ export const saleLineAmounts = (
       base, tax: round2(total - base), total,
       discount: 0, discountWithTax: 0, discountPercent: 0,
       discountSource: discountSource === 'guardado' ? 'guardado' : 'ninguno',
+      ...costo,
     };
   }
 
@@ -141,6 +187,7 @@ export const saleLineAmounts = (
     discount, discountWithTax,
     discountPercent: listTotal > 0.005 ? round2((discountWithTax / listTotal) * 100) : 0,
     discountSource,
+    ...costo,
   };
 };
 
@@ -162,6 +209,14 @@ export interface SaleAmounts {
   discountPercent: number;
   /** `guardado` si alguna línea lo trae guardado; `deducido` si alguna hubo que deducirla. */
   discountSource: DiscountSource;
+  /** Lo que costó la mercancía vendida, SIN ITBIS. */
+  cost: number;
+  /** Ganancia bruta de la venta: base − costo. */
+  profit: number;
+  margin: number;
+  costSource: CostSource;
+  /** Líneas de las que NO se sabe el costo: su ganancia no está contada. */
+  linesWithoutCost: number;
   lines: SaleLineAmounts[];
 }
 
@@ -181,6 +236,16 @@ export const saleAmounts = (
     ? 'deducido'
     : conDescuento.length > 0 ? 'guardado' : 'ninguno';
 
+  // La ganancia solo cuenta las líneas de las que SÍ se sabe el costo: una línea sin costo no
+  // es una línea que se ganó entera.
+  const conCosto = detalle.filter(l => l.costSource !== 'ninguno');
+  const cost = round2(conCosto.reduce((s, l) => s + l.cost, 0));
+  const baseConCosto = round2(conCosto.reduce((s, l) => s + l.base, 0));
+  const profit = round2(baseConCosto - cost);
+  const costSource: CostSource = conCosto.length === 0
+    ? 'ninguno'
+    : conCosto.some(l => l.costSource === 'deducido') ? 'deducido' : 'guardado';
+
   return {
     items: detalle.reduce((n, l) => n + l.quantity, 0),
     listBase: suma(l => l.listBase),
@@ -192,6 +257,11 @@ export const saleAmounts = (
     discountWithTax,
     discountPercent: listTotal > 0.005 ? round2((discountWithTax / listTotal) * 100) : 0,
     discountSource,
+    cost,
+    profit,
+    margin: baseConCosto > 0.005 ? round2((profit / baseConCosto) * 100) : 0,
+    costSource,
+    linesWithoutCost: detalle.length - conCosto.length,
     lines: detalle,
   };
 };

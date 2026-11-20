@@ -10,6 +10,7 @@
 // deja en el repositorio, sin enrutar, hasta que esta versión lleve un tiempo en la calle.
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -43,6 +44,9 @@ type Vista = 'home' | 'report' | 'import';
 export const ReportsModule: React.FC = () => {
   const { user, profile } = useAuth();
   const hoy = todayInSantoDomingo();
+  // `/reportes?reporte=<id>` abre ese reporte directamente: así una casilla del inicio o un
+  // enlace guardado llevan a donde dicen y no a la portada (2026-11-20).
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [vista, setVista] = useState<Vista>('home');
   const [reportId, setReportId] = useState<string | null>(null);
@@ -94,6 +98,21 @@ export const ReportsModule: React.FC = () => {
       setSoloLocal(fav.localOnly || sav.localOnly);
     })();
   }, [user?.id]);
+
+  // Abre el reporte que venga en la URL, una sola vez y solo si existe y hay permiso.
+  useEffect(() => {
+    const pedido = searchParams.get('reporte');
+    if (!pedido) return;
+    const def = reportById(pedido);
+    if (def && (!def.permission || can(def.permission))) {
+      setReportId(def.id);
+      setVista('report');
+    }
+    // Se limpia el parámetro para que volver a la portada no reabra el reporte.
+    const resto = new URLSearchParams(searchParams);
+    resto.delete('reporte');
+    setSearchParams(resto, { replace: true });
+  }, [searchParams, profile]);
 
   const abrirReporte = (id: string) => {
     const def = reportById(id);
