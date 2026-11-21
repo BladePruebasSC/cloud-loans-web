@@ -156,3 +156,64 @@ describe('El resumen financiero cuenta la venta por lo que deja', () => {
     expect(fila('resultado')?.monto).toBe(37000);
   });
 });
+
+// ============================================================================
+// CÓMO SE LEE UN REPORTE DE GANANCIAS
+// ============================================================================
+// PEDIDO (2026-11-21): "los reportes de ganancias siguen mal, porque está dando todos los datos
+// y luego dice vendido cuando no es necesario debido a que los datos ya han sido expresados,
+// analiza cómo funcionan bien esos reportes de ganancia y aplícalos".
+//
+// Un estado de ganancias se lee en un solo sentido —cuánto entró, cuánto costó, cuánto quedó— y
+// toda columna que se vea tiene que poder SUMARSE, porque abajo hay una fila de totales. Los
+// promedios por unidad no se suman, así que su sitio es el botón "Columnas".
+describe('Cómo se lee la tabla de ganancias', () => {
+  const columnas = (id: string) => reportById(id)!.columns || [];
+  const visibles = (id: string) => columnas(id).filter(c => !c.hiddenByDefault).map(c => c.key);
+
+  it('Por producto: entró, costó, quedó, y en ese orden', () => {
+    expect(visibles('sales-profit')).toEqual([
+      'producto', 'unidades', 'venta', 'costo', 'ganancia', 'margen',
+    ]);
+  });
+
+  it('Por venta: el mismo orden', () => {
+    expect(visibles('sales-profit-by-sale')).toEqual([
+      'fecha', 'numero', 'cliente', 'articulos', 'venta', 'costo', 'ganancia', 'margen', 'usuario',
+    ]);
+  });
+
+  it('Toda columna de dinero que se ve se puede sumar', () => {
+    // Si una columna visible no se suma, la fila de totales de abajo miente.
+    for (const id of ['sales-profit', 'sales-profit-by-sale']) {
+      const dinero = columnas(id).filter(c => !c.hiddenByDefault && c.format === 'money');
+      expect(dinero.length, id).toBeGreaterThan(0);
+      for (const c of dinero) expect(c.total, `${id}.${c.key}`).toBe(true);
+    }
+  });
+
+  it('Los promedios por unidad no estorban en la tabla, pero siguen estando', () => {
+    for (const key of ['precioUnitario', 'precioUnitarioConItbis', 'costoUnitario', 'costoUnitarioConItbis']) {
+      const col = columnas('sales-profit').find(c => c.key === key);
+      expect(col, key).toBeTruthy();
+      expect(col!.hiddenByDefault, key).toBe(true);
+      expect(col!.total, key).toBeFalsy();   // un promedio no se suma
+    }
+  });
+
+  it('La fila cuadra sola: vendido − costo = ganancia', () => {
+    const fila = run('sales-profit').rows[0];
+    expect(Number(fila.venta) - Number(fila.costo)).toBe(fila.ganancia);
+    expect(fila.unidadesConCosto).toBe(2);
+    // Y los promedios salen de las unidades que de verdad se contaron.
+    expect(Number(fila.precioUnitario) * Number(fila.unidadesConCosto)).toBe(fila.venta);
+    expect(Number(fila.costoUnitario) * Number(fila.unidadesConCosto)).toBe(fila.costo);
+  });
+
+  it('El pie no explica lo mismo dos veces', () => {
+    for (const id of ['sales-profit', 'sales-profit-by-sale']) {
+      const notes = run(id).notes || [];
+      expect(notes.filter(n => n.includes('DGII')).length, id).toBe(1);
+    }
+  });
+});

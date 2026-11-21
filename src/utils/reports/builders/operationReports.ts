@@ -613,18 +613,31 @@ export const salesReports: ReportDefinition<ReportData>[] = [
     permission: 'reports.inventory',
     dataset: 'sales',
     columns: [
+      // CÓMO SE LEE UN REPORTE DE GANANCIAS (2026-11-21).
+      //
+      // Un estado de ganancias se lee en un solo sentido: cuánto entró, cuánto costó, cuánto
+      // quedó. Y toda columna que se vea tiene que poder SUMARSE, porque abajo hay una fila de
+      // totales: lo vendido, el costo y la ganancia se suman; un "por unidad" no se suma —es un
+      // promedio— y un margen tampoco, se vuelve a sacar del total.
+      //
+      // Por eso la tabla enseña las cuatro cifras del estado y manda el detalle por unidad al
+      // botón "Columnas": antes salían primero los cuatro promedios y "Vendido" aparecía después,
+      // repitiendo lo que ya estaba dicho.
       { key: 'producto', label: 'Producto', align: 'left' },
-      { key: 'unidades', label: 'Unidades', format: 'number', total: true },
-      { key: 'costoUnitario', label: 'Costo por unidad (sin ITBIS)', format: 'money', help: 'Lo que costó la mercancía' },
-      { key: 'costoUnitarioConItbis', label: 'Costo por unidad (con ITBIS)', format: 'money', help: 'Lo que se le pagó al suplidor' },
-      { key: 'precioUnitario', label: 'Venta por unidad (sin ITBIS)', format: 'money', help: 'Lo cobrado, sin el impuesto' },
-      { key: 'precioUnitarioConItbis', label: 'Venta por unidad (con ITBIS)', format: 'money', help: 'Lo que pagó el cliente' },
-      { key: 'venta', label: 'Vendido', format: 'money', total: true, help: 'Sin ITBIS: el impuesto no es ingreso' },
-      { key: 'costo', label: 'Costo (sin ITBIS)', format: 'money', total: true },
-      { key: 'costoConItbis', label: 'Costo (con ITBIS)', format: 'money', total: true },
-      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true, help: 'Vendido menos costo, los dos sin ITBIS' },
-      { key: 'margen', label: 'Margen', format: 'percent', help: 'Ganancia sobre lo vendido sin ITBIS' },
-      { key: 'sinCosto', label: 'Sin costo', format: 'number', hiddenByDefault: true, help: 'Unidades de las que no se sabe el costo' },
+      { key: 'unidades', label: 'Unidades', format: 'number', total: true, help: 'Vendidas; las que no tienen costo conocido no cuentan en las cifras de al lado' },
+      { key: 'venta', label: 'Vendido', format: 'money', total: true, help: 'Lo cobrado sin ITBIS: el impuesto no es ingreso del negocio' },
+      { key: 'costo', label: 'Costo', format: 'money', total: true, help: 'Lo que costó la mercancía que se vendió, sin ITBIS' },
+      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true, help: 'Vendido menos costo' },
+      { key: 'margen', label: 'Margen', format: 'percent', help: 'Ganancia sobre lo vendido' },
+      // El detalle: no se suma, así que no estorba en la tabla. Aquí sí van el precio y el costo
+      // de las dos formas, que es donde de verdad son un precio y un costo.
+      { key: 'precioUnitario', label: 'Venta por unidad (sin ITBIS)', format: 'money', hiddenByDefault: true, help: 'Promedio de lo que se cobró por unidad' },
+      { key: 'precioUnitarioConItbis', label: 'Venta por unidad (con ITBIS)', format: 'money', hiddenByDefault: true, help: 'Lo que pagó el cliente por unidad' },
+      { key: 'costoUnitario', label: 'Costo por unidad (sin ITBIS)', format: 'money', hiddenByDefault: true, help: 'Promedio de lo que costó cada unidad' },
+      { key: 'costoUnitarioConItbis', label: 'Costo por unidad (con ITBIS)', format: 'money', hiddenByDefault: true, help: 'Lo que se le pagó al suplidor por unidad' },
+      { key: 'costoConItbis', label: 'Costo (con ITBIS)', format: 'money', total: true, hiddenByDefault: true, help: 'Lo que se le pagó al suplidor por toda la mercancía' },
+      { key: 'unidadesConCosto', label: 'Unidades con costo', format: 'number', total: true, hiddenByDefault: true, help: 'Las que cuentan en la ganancia: de estas salen los promedios' },
+      { key: 'sinCosto', label: 'Sin costo', format: 'number', total: true, hiddenByDefault: true, help: 'Unidades de las que no se sabe el costo' },
     ],
     filters: ['search', 'userId', 'minAmount'],
     defaultSort: { key: 'ganancia', dir: 'desc' },
@@ -665,6 +678,7 @@ export const salesReports: ReportDefinition<ReportData>[] = [
           costoConItbis,
           ganancia,
           margen: venta > 0.005 ? round2((ganancia / venta) * 100) : 0,
+          unidadesConCosto,
           sinCosto: unidadesSinCosto,
         };
       });
@@ -674,10 +688,13 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const costoConItbis = round2(filtradas.reduce((s, r) => s + (Number(r.costoConItbis) || 0), 0));
       const ganancia = round2(venta - costo);
       const notes = [
-        'Lo vendido y la ganancia van SIN ITBIS: el impuesto se cobra para la DGII, no es ingreso '
-        + 'del negocio. La ganancia es lo vendido menos lo que costó la mercancía (ganancia '
-        + 'bruta): los gastos del negocio no se descuentan aquí, van en el resumen financiero.',
-        NOTA_DOS_FORMAS,
+        'La ganancia es lo vendido menos lo que costó la mercancía: la ganancia bruta. Los gastos '
+        + 'del negocio —luz, sueldos, alquiler— no se descuentan aquí; eso es el resumen '
+        + 'financiero.',
+        'La tabla va toda SIN ITBIS, que es la única forma en que la resta cuadra: el impuesto '
+        + 'que se le cobra al cliente es de la DGII, y el que se le paga al suplidor se descuenta '
+        + 'de él. El precio y el costo por unidad, de las DOS formas, están en el botón '
+        + '"Columnas", junto con el costo con ITBIS.',
       ];
       if (sinCostoTotal > 0) {
         notes.push(`${sinCostoTotal} unidad${sinCostoTotal === 1 ? '' : 'es'} no tiene${sinCostoTotal === 1 ? '' : 'n'} `
@@ -694,7 +711,10 @@ export const salesReports: ReportDefinition<ReportData>[] = [
             key: 'costo', label: 'Costo de la mercancía (sin ITBIS)', value: costo, format: 'money',
             hint: `Con ITBIS: ${moneyLabel(costoConItbis)}`,
           },
-          { key: 'ganancia', label: 'Ganancia', value: ganancia, format: 'money', hint: 'Sobre la base, sin ITBIS' },
+          {
+            key: 'ganancia', label: 'Ganancia', value: ganancia, format: 'money',
+            hint: 'Lo vendido menos el costo de la mercancía',
+          },
           {
             key: 'margen', label: 'Margen', format: 'percent',
             value: venta > 0.005 ? round2((ganancia / venta) * 100) : 0,
@@ -721,14 +741,15 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       { key: 'numero', label: 'Venta', align: 'left' },
       { key: 'cliente', label: 'Cliente', align: 'left' },
       { key: 'articulos', label: 'Artículos', format: 'number', total: true },
-      { key: 'venta', label: 'Vendido', format: 'money', total: true, help: 'Sin ITBIS' },
-      { key: 'costo', label: 'Costo (sin ITBIS)', format: 'money', total: true },
-      { key: 'costoConItbis', label: 'Costo (con ITBIS)', format: 'money', total: true },
-      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true, help: 'Vendido menos costo, los dos sin ITBIS' },
-      { key: 'margen', label: 'Margen', format: 'percent' },
+      // El mismo orden que el de por producto: entró, costó, quedó.
+      { key: 'venta', label: 'Vendido', format: 'money', total: true, help: 'Lo cobrado sin ITBIS: el impuesto no es ingreso del negocio' },
+      { key: 'costo', label: 'Costo', format: 'money', total: true, help: 'Lo que costó la mercancía de esta venta, sin ITBIS' },
+      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true, help: 'Vendido menos costo' },
+      { key: 'margen', label: 'Margen', format: 'percent', help: 'Ganancia sobre lo vendido' },
+      { key: 'usuario', label: 'Vendió', align: 'left' },
+      { key: 'costoConItbis', label: 'Costo (con ITBIS)', format: 'money', total: true, hiddenByDefault: true, help: 'Lo que se le pagó al suplidor' },
       { key: 'descuento', label: 'Descuento', format: 'money', total: true, hiddenByDefault: true },
       { key: 'metodo', label: 'Método', align: 'left', hiddenByDefault: true },
-      { key: 'usuario', label: 'Vendió', align: 'left' },
     ],
     filters: ['search', 'userId', 'paymentMethod', 'minAmount', 'maxAmount'],
     defaultSort: { key: 'fecha', dir: 'desc' },
@@ -762,8 +783,10 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const venta = round2(filtradas.reduce((s, r) => s + (Number(r.venta) || 0), 0));
       const ganancia = round2(filtradas.reduce((s, r) => s + (Number(r.ganancia) || 0), 0));
       const notes = [
-        'Lo vendido va SIN ITBIS, para poder restarle el costo: el impuesto no es ingreso.',
-        NOTA_DOS_FORMAS,
+        'Lo vendido y el costo van SIN ITBIS: es la única forma en que la resta cuadra, porque el '
+        + 'impuesto que se le cobra al cliente es de la DGII. En el botón "Columnas" está el '
+        + 'costo con ITBIS —lo que se le pagó al suplidor—, así que el costo también sale de las '
+        + 'DOS formas, con el descuento y la forma de pago.',
       ];
       if (sinCosto > 0) {
         notes.push(`${sinCosto} línea${sinCosto === 1 ? '' : 's'} de venta sin precio de compra en su `
