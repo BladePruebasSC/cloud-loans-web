@@ -254,7 +254,7 @@ export const saleBreakdown = (sale: SaleLike): SaleAmounts => {
     discountPercent: listTotal > 0.005 ? round2(((listTotal - total) / listTotal) * 100) : 0,
     discountSource: discount > 0.005 ? 'guardado' : 'ninguno',
     // Sin líneas no se sabe qué se vendió, así que tampoco lo que costó.
-    cost: 0, profit: 0, margin: 0, costSource: 'ninguno', linesWithoutCost: 0,
+    cost: 0, costWithTax: 0, profit: 0, margin: 0, costSource: 'ninguno', linesWithoutCost: 0,
     lines: [],
   };
 };
@@ -297,6 +297,22 @@ const formasDePago = (sale: {
  * Aviso para el pie del reporte cuando el descuento no se guardó y hubo que deducirlo del precio
  * de venta de hoy: si al producto le cambiaron el precio después, la cifra es aproximada.
  */
+/**
+ * TODO IMPORTE, DE LAS DOS FORMAS (2026-11-21).
+ *
+ * PEDIDO: "en los reportes necesito que aparezcan siempre tanto con impuestos como sin
+ * impuestos, o sea de las dos formas". Antes cada reporte elegía una —el de ganancias todo sin
+ * ITBIS, el de productos todo con ITBIS— y había que hacer la cuenta a mano para compararlos.
+ */
+const NOTA_DOS_FORMAS =
+  'Cada importe va de las DOS formas: sin ITBIS (la base, lo que de verdad es del negocio) y con '
+  + 'ITBIS (lo que se cobra o se paga). El impuesto se cobra para la DGII, así que la ganancia y '
+  + 'el margen se miden siempre sobre la base, sin él.';
+
+/** Un importe escrito en pesos, para las pistas de los indicadores. */
+const moneyLabel = (n: number): string =>
+  `RD$${(Number(n) || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 const notaDeCostos = (deducido: boolean): string[] => deducido
   ? ['Las ventas anteriores al 20/11/2026 no guardaban lo que costó la mercancía: su costo se '
     + 'toma del precio de compra que el producto tiene HOY, así que si se repuso a otro precio, '
@@ -323,12 +339,14 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       { key: 'numero', label: 'Venta', align: 'left' },
       { key: 'cliente', label: 'Cliente', align: 'left' },
       { key: 'articulos', label: 'Artículos', format: 'number', total: true },
-      { key: 'precioLista', label: 'Precio de lista', format: 'money', total: true, help: 'Lo que valía sin descuento, sin ITBIS' },
-      { key: 'descuento', label: 'Descuento', format: 'money', total: true, help: 'Lo rebajado, sin ITBIS' },
+      { key: 'precioLista', label: 'Precio de lista (sin ITBIS)', format: 'money', total: true, help: 'Lo que valía sin descuento' },
+      { key: 'precioListaConItbis', label: 'Precio de lista (con ITBIS)', format: 'money', total: true },
+      { key: 'descuento', label: 'Descuento (sin ITBIS)', format: 'money', total: true, help: 'Lo rebajado de la base' },
+      { key: 'descuentoConItbis', label: 'Descuento (con ITBIS)', format: 'money', total: true, help: 'Lo que el cliente se ahorró' },
       { key: 'descuentoPct', label: '% Desc.', format: 'percent' },
-      { key: 'subtotal', label: 'Subtotal', format: 'money', total: true, help: 'Precio de lista menos el descuento' },
+      { key: 'subtotal', label: 'Subtotal (sin ITBIS)', format: 'money', total: true, help: 'Precio de lista menos el descuento' },
       { key: 'itbis', label: 'ITBIS', format: 'money', total: true },
-      { key: 'total', label: 'Total', format: 'money', total: true },
+      { key: 'total', label: 'Total (con ITBIS)', format: 'money', total: true },
       { key: 'metodo', label: 'Método', align: 'left' },
       { key: 'tipo', label: 'Tipo', format: 'badge', hiddenByDefault: true, help: 'Contado, financiada o a crédito' },
       { key: 'reparto', label: 'Reparto del pago', align: 'left', width: 40, hiddenByDefault: true },
@@ -353,7 +371,9 @@ export const salesReports: ReportDefinition<ReportData>[] = [
           cliente: String(s.customer_name || 'Consumidor final'),
           articulos: (s.details || []).reduce((n, d) => n + (Number(d.quantity) || 0), 0),
           precioLista: v.listBase,
+          precioListaConItbis: v.listTotal,
           descuento: v.discount,
+          descuentoConItbis: v.discountWithTax,
           descuentoPct: v.discountPercent,
           subtotal: v.base,
           itbis: v.tax,
@@ -367,24 +387,28 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const filtradas = applyCommonFilters(rows, filters, 'total');
       const total = round2(filtradas.reduce((s, r) => s + (Number(r.total) || 0), 0));
       const descuento = round2(filtradas.reduce((s, r) => s + (Number(r.descuento) || 0), 0));
+      const descuentoConItbis = round2(filtradas.reduce((s, r) => s + (Number(r.descuentoConItbis) || 0), 0));
+      const subtotal = round2(filtradas.reduce((s, r) => s + (Number(r.subtotal) || 0), 0));
       const lista = round2(filtradas.reduce((s, r) => s + (Number(r.precioLista) || 0), 0));
       return {
         rows: filtradas,
-        notes: [
-          'Los importes van con ITBIS incluido, igual que en el punto de venta y en la factura. '
-          + 'El "Precio de lista" y el "Descuento" van sin ITBIS, para que cuadren con el subtotal.',
-          ...notaDeDescuentos(deducido),
-        ],
+        notes: [NOTA_DOS_FORMAS, ...notaDeDescuentos(deducido)],
         kpis: [
           { key: 'cantidad', label: 'Ventas', value: filtradas.length, format: 'number' },
-          { key: 'total', label: 'Total vendido', value: total, format: 'money' },
+          {
+            key: 'total', label: 'Total vendido (con ITBIS)', value: total, format: 'money',
+            hint: `Sin ITBIS: ${moneyLabel(subtotal)}`,
+          },
           {
             key: 'ticket', label: 'Ticket promedio', format: 'money',
             value: filtradas.length ? round2(total / filtradas.length) : 0,
+            hint: `Sin ITBIS: ${moneyLabel(filtradas.length ? round2(subtotal / filtradas.length) : 0)}`,
           },
           {
-            key: 'descuento', label: 'Descontado', value: descuento, format: 'money',
-            hint: lista > 0 ? `${round2((descuento / lista) * 100)}% del precio de lista` : undefined,
+            key: 'descuento', label: 'Descontado (sin ITBIS)', value: descuento, format: 'money',
+            hint: lista > 0
+              ? `${round2((descuento / lista) * 100)}% del precio de lista · con ITBIS: ${moneyLabel(descuentoConItbis)}`
+              : undefined,
             linkTo: 'sales-discounts',
           },
         ],
@@ -403,11 +427,16 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       { key: 'producto', label: 'Producto', align: 'left' },
       { key: 'ventas', label: 'Ventas', format: 'number', total: true },
       { key: 'unidades', label: 'Unidades', format: 'number', total: true },
-      { key: 'precioLista', label: 'Precio de lista', format: 'money', help: 'Por unidad, con ITBIS' },
-      { key: 'precioPromedio', label: 'Precio real', format: 'money', help: 'Lo que se cobró por unidad, con ITBIS' },
-      { key: 'descuento', label: 'Descontado', format: 'money', total: true },
+      { key: 'precioListaSinItbis', label: 'Precio de lista (sin ITBIS)', format: 'money', help: 'Por unidad' },
+      { key: 'precioLista', label: 'Precio de lista (con ITBIS)', format: 'money', help: 'Por unidad' },
+      { key: 'precioPromedioSinItbis', label: 'Precio real (sin ITBIS)', format: 'money', help: 'Lo que se cobró por unidad' },
+      { key: 'precioPromedio', label: 'Precio real (con ITBIS)', format: 'money', help: 'Lo que se cobró por unidad' },
+      { key: 'descuentoSinItbis', label: 'Descontado (sin ITBIS)', format: 'money', total: true },
+      { key: 'descuento', label: 'Descontado (con ITBIS)', format: 'money', total: true },
       { key: 'descuentoPct', label: '% Desc.', format: 'percent' },
-      { key: 'importe', label: 'Importe con ITBIS', format: 'money', total: true },
+      { key: 'importeSinItbis', label: 'Importe (sin ITBIS)', format: 'money', total: true },
+      { key: 'itbis', label: 'ITBIS', format: 'money', total: true },
+      { key: 'importe', label: 'Importe (con ITBIS)', format: 'money', total: true },
     ],
     filters: ['search', 'userId'],
     defaultSort: { key: 'importe', dir: 'desc' },
@@ -422,18 +451,26 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const rows: ReportRow[] = [...grupos.entries()].map(([producto, lista]) => {
         const unidades = lista.reduce((n, d) => n + d.linea.quantity, 0);
         const importe = round2(lista.reduce((s, d) => s + d.linea.total, 0));
+        const importeSinItbis = round2(lista.reduce((s, d) => s + d.linea.base, 0));
         const porLista = round2(lista.reduce((s, d) => s + d.linea.listTotal, 0));
+        const porListaSinItbis = round2(lista.reduce((s, d) => s + d.linea.listBase, 0));
         const descuento = round2(lista.reduce((s, d) => s + d.linea.discountWithTax, 0));
+        const descuentoSinItbis = round2(lista.reduce((s, d) => s + d.linea.discount, 0));
         if (lista.some(d => d.linea.discountSource === 'deducido')) deducido = true;
         return {
           _id: producto,
           producto,
           ventas: new Set(lista.map(d => d.sale.id)).size,
           unidades,
+          precioListaSinItbis: unidades > 0 ? round2(porListaSinItbis / unidades) : 0,
           precioLista: unidades > 0 ? round2(porLista / unidades) : 0,
+          precioPromedioSinItbis: unidades > 0 ? round2(importeSinItbis / unidades) : 0,
           precioPromedio: unidades > 0 ? round2(importe / unidades) : 0,
+          descuentoSinItbis,
           descuento,
           descuentoPct: porLista > 0.005 ? round2((descuento / porLista) * 100) : 0,
+          importeSinItbis,
+          itbis: round2(importe - importeSinItbis),
           importe,
         };
       });
@@ -442,6 +479,7 @@ export const salesReports: ReportDefinition<ReportData>[] = [
         notes: [
           'El "Precio real" es lo que de verdad se cobró por unidad: si un producto se vendió con '
           + 'descuento, no coincide con el de lista.',
+          NOTA_DOS_FORMAS,
           ...notaDeDescuentos(deducido),
         ],
         charts: [{
@@ -465,11 +503,15 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       { key: 'cliente', label: 'Cliente', align: 'left' },
       { key: 'producto', label: 'Producto', align: 'left' },
       { key: 'cantidad', label: 'Cant.', format: 'number', total: true },
-      { key: 'precioLista', label: 'Precio de lista', format: 'money' },
-      { key: 'precioCobrado', label: 'Se cobró', format: 'money' },
+      { key: 'precioListaSinItbis', label: 'Precio de lista (sin ITBIS)', format: 'money' },
+      { key: 'precioLista', label: 'Precio de lista (con ITBIS)', format: 'money' },
+      { key: 'precioCobradoSinItbis', label: 'Se cobró (sin ITBIS)', format: 'money' },
+      { key: 'precioCobrado', label: 'Se cobró (con ITBIS)', format: 'money' },
       { key: 'descuentoPct', label: '% Desc.', format: 'percent' },
-      { key: 'descuento', label: 'Descontado', format: 'money', total: true },
-      { key: 'importe', label: 'Importe', format: 'money', total: true },
+      { key: 'descuentoSinItbis', label: 'Descontado (sin ITBIS)', format: 'money', total: true },
+      { key: 'descuento', label: 'Descontado (con ITBIS)', format: 'money', total: true },
+      { key: 'importeSinItbis', label: 'Importe (sin ITBIS)', format: 'money', total: true },
+      { key: 'importe', label: 'Importe (con ITBIS)', format: 'money', total: true },
       { key: 'origen', label: 'Origen del dato', format: 'badge', hiddenByDefault: true },
       { key: 'usuario', label: 'Vendió', align: 'left' },
     ],
@@ -496,10 +538,14 @@ export const salesReports: ReportDefinition<ReportData>[] = [
             cliente: String(s.customer_name || 'Consumidor final'),
             producto: String(d.product_name || d.product_id || 'Producto'),
             cantidad: linea.quantity,
+            precioListaSinItbis: linea.quantity > 0 ? round2(linea.listBase / linea.quantity) : linea.listBase,
             precioLista: linea.unitList,
+            precioCobradoSinItbis: linea.quantity > 0 ? round2(linea.base / linea.quantity) : linea.base,
             precioCobrado: linea.unitCharged,
             descuentoPct: linea.discountPercent,
+            descuentoSinItbis: linea.discount,
             descuento: linea.discountWithTax,
+            importeSinItbis: linea.base,
             importe: linea.total,
             origen: linea.discountSource === 'guardado' ? 'Guardado' : 'Deducido',
             usuario: userNameOf(data, s.user_id),
@@ -511,13 +557,17 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       return {
         rows: filtradas,
         notes: [
-          'Solo salen las líneas que se vendieron por debajo del precio de lista. Los importes van '
-          + 'con ITBIS: un descuento también rebaja el impuesto.',
+          'Solo salen las líneas que se vendieron por debajo del precio de lista. Un descuento '
+          + 'también rebaja el impuesto, por eso el descontado es distinto con ITBIS y sin él.',
+          NOTA_DOS_FORMAS,
           ...notaDeDescuentos(deducido),
         ],
         kpis: [
           { key: 'lineas', label: 'Líneas con descuento', value: filtradas.length, format: 'number' },
-          { key: 'descontado', label: 'Dejado de cobrar', value: descontado, format: 'money' },
+          {
+            key: 'descontado', label: 'Dejado de cobrar (con ITBIS)', value: descontado, format: 'money',
+            hint: `Sin ITBIS: ${moneyLabel(round2(filtradas.reduce((s, r) => s + (Number(r.descuentoSinItbis) || 0), 0)))}`,
+          },
           {
             key: 'peso', label: '% sobre el precio de lista', format: 'percent',
             value: listaTotal > 0.005 ? round2((descontado / round2(listaTotal)) * 100) : 0,
@@ -537,10 +587,12 @@ export const salesReports: ReportDefinition<ReportData>[] = [
     columns: [
       { key: 'metodo', label: 'Forma de pago', align: 'left' },
       { key: 'ventas', label: 'Ventas', format: 'number', total: true },
-      { key: 'total', label: 'Total', format: 'money', total: true },
+      { key: 'totalSinItbis', label: 'Total (sin ITBIS)', format: 'money', total: true },
+      { key: 'itbis', label: 'ITBIS', format: 'money', total: true },
+      { key: 'total', label: 'Total (con ITBIS)', format: 'money', total: true },
       { key: 'participacion', label: '% del total', format: 'percent' },
-      { key: 'ticket', label: 'Ticket promedio', format: 'money' },
-      { key: 'descuento', label: 'Descontado', format: 'money', total: true },
+      { key: 'ticket', label: 'Ticket promedio', format: 'money', help: 'Con ITBIS' },
+      { key: 'descuento', label: 'Descontado (con ITBIS)', format: 'money', total: true },
     ],
     filters: ['userId'],
     defaultSort: { key: 'total', dir: 'desc' },
@@ -550,21 +602,28 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const total = round2(lista.reduce((s, v) => s + saleTotalWithTax(v), 0));
       const grupos = groupRows(lista, s => labelFor(PAYMENT_METHOD_LABEL, s.payment_method || 'cash'));
       const rows: ReportRow[] = [...grupos.entries()].map(([metodo, items]) => {
-        const suma = round2(items.reduce((s, v) => s + saleTotalWithTax(v), 0));
+        const desglose = items.map(saleBreakdown);
+        const suma = round2(desglose.reduce((s, v) => s + v.total, 0));
+        const sinItbis = round2(desglose.reduce((s, v) => s + v.base, 0));
         return {
           _id: metodo,
           metodo,
           ventas: items.length,
+          totalSinItbis: sinItbis,
+          itbis: round2(suma - sinItbis),
           total: suma,
           participacion: total > 0 ? round2((suma / total) * 100) : 0,
           ticket: items.length ? round2(suma / items.length) : 0,
-          descuento: round2(items.reduce((s, v) => s + saleBreakdown(v).discountWithTax, 0)),
+          descuento: round2(desglose.reduce((s, v) => s + v.discountWithTax, 0)),
         };
       });
       return {
         rows,
-        notes: ['Una venta financiada aparece aquí como "Financiamiento": lo que se cobra después '
-          + 'son las cuotas del préstamo, que van en los reportes de pagos.'],
+        notes: [
+          'Una venta financiada aparece aquí como "Financiamiento": lo que se cobra después '
+          + 'son las cuotas del préstamo, que van en los reportes de pagos.',
+          NOTA_DOS_FORMAS,
+        ],
         charts: [{
           kind: 'pie', title: 'Reparto por forma de pago', xKey: 'metodo',
           series: [{ key: 'total', label: 'Total' }], money: true,
@@ -583,12 +642,16 @@ export const salesReports: ReportDefinition<ReportData>[] = [
     columns: [
       { key: 'producto', label: 'Producto', align: 'left' },
       { key: 'unidades', label: 'Unidades', format: 'number', total: true },
-      { key: 'costoUnitario', label: 'Costo por unidad', format: 'money', help: 'Lo que costó la mercancía, sin ITBIS' },
-      { key: 'precioUnitario', label: 'Venta por unidad', format: 'money', help: 'Lo cobrado, sin ITBIS' },
-      { key: 'venta', label: 'Vendido', format: 'money', total: true, help: 'Sin ITBIS: el impuesto no es ingreso' },
-      { key: 'costo', label: 'Costo', format: 'money', total: true },
-      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true },
-      { key: 'margen', label: 'Margen', format: 'percent', help: 'Ganancia sobre lo vendido' },
+      { key: 'costoUnitario', label: 'Costo por unidad (sin ITBIS)', format: 'money', help: 'Lo que costó la mercancía' },
+      { key: 'costoUnitarioConItbis', label: 'Costo por unidad (con ITBIS)', format: 'money', help: 'Lo que se le pagó al suplidor' },
+      { key: 'precioUnitario', label: 'Venta por unidad (sin ITBIS)', format: 'money', help: 'Lo cobrado, sin el impuesto' },
+      { key: 'precioUnitarioConItbis', label: 'Venta por unidad (con ITBIS)', format: 'money', help: 'Lo que pagó el cliente' },
+      { key: 'venta', label: 'Vendido (sin ITBIS)', format: 'money', total: true, help: 'La base: el impuesto no es ingreso' },
+      { key: 'ventaConItbis', label: 'Vendido (con ITBIS)', format: 'money', total: true, help: 'Lo facturado' },
+      { key: 'costo', label: 'Costo (sin ITBIS)', format: 'money', total: true },
+      { key: 'costoConItbis', label: 'Costo (con ITBIS)', format: 'money', total: true },
+      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true, help: 'Vendido menos costo, los dos sin ITBIS' },
+      { key: 'margen', label: 'Margen', format: 'percent', help: 'Ganancia sobre lo vendido sin ITBIS' },
       { key: 'sinCosto', label: 'Sin costo', format: 'number', hiddenByDefault: true, help: 'Unidades de las que no se sabe el costo' },
     ],
     filters: ['search', 'userId', 'minAmount'],
@@ -611,17 +674,24 @@ export const salesReports: ReportDefinition<ReportData>[] = [
         // La ganancia solo cuenta lo que tiene costo conocido: una línea sin costo no es una
         // línea que se ganó entera.
         const venta = round2(conCosto.reduce((s, d) => s + d.linea.base, 0));
+        const ventaConItbis = round2(conCosto.reduce((s, d) => s + d.linea.total, 0));
         const costo = round2(conCosto.reduce((s, d) => s + d.linea.cost, 0));
+        const costoConItbis = round2(conCosto.reduce((s, d) => s + d.linea.costWithTax, 0));
         const ganancia = round2(venta - costo);
         const unidadesConCosto = conCosto.reduce((n, d) => n + d.linea.quantity, 0);
+        const porUnidad = (v: number) => (unidadesConCosto > 0 ? round2(v / unidadesConCosto) : 0);
         return {
           _id: producto,
           producto,
           unidades,
-          costoUnitario: unidadesConCosto > 0 ? round2(costo / unidadesConCosto) : 0,
-          precioUnitario: unidadesConCosto > 0 ? round2(venta / unidadesConCosto) : 0,
+          costoUnitario: porUnidad(costo),
+          costoUnitarioConItbis: porUnidad(costoConItbis),
+          precioUnitario: porUnidad(venta),
+          precioUnitarioConItbis: porUnidad(ventaConItbis),
           venta,
+          ventaConItbis,
           costo,
+          costoConItbis,
           ganancia,
           margen: venta > 0.005 ? round2((ganancia / venta) * 100) : 0,
           sinCosto: unidadesSinCosto,
@@ -629,11 +699,13 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       });
       const filtradas = applyCommonFilters(rows, filters, 'ganancia');
       const venta = round2(filtradas.reduce((s, r) => s + (Number(r.venta) || 0), 0));
+      const ventaConItbis = round2(filtradas.reduce((s, r) => s + (Number(r.ventaConItbis) || 0), 0));
       const costo = round2(filtradas.reduce((s, r) => s + (Number(r.costo) || 0), 0));
+      const costoConItbis = round2(filtradas.reduce((s, r) => s + (Number(r.costoConItbis) || 0), 0));
       const ganancia = round2(venta - costo);
       const notes = [
-        'Todo va SIN ITBIS: el impuesto se cobra para la DGII, no es ingreso del negocio. La '
-        + 'ganancia es lo vendido menos lo que costó la mercancía (ganancia bruta): los gastos '
+        NOTA_DOS_FORMAS,
+        'La ganancia es lo vendido menos lo que costó la mercancía (ganancia bruta): los gastos '
         + 'del negocio no se descuentan aquí, van en el resumen financiero.',
       ];
       if (sinCostoTotal > 0) {
@@ -646,9 +718,15 @@ export const salesReports: ReportDefinition<ReportData>[] = [
         rows: filtradas,
         notes,
         kpis: [
-          { key: 'venta', label: 'Vendido (sin ITBIS)', value: venta, format: 'money' },
-          { key: 'costo', label: 'Costo de la mercancía', value: costo, format: 'money' },
-          { key: 'ganancia', label: 'Ganancia', value: ganancia, format: 'money' },
+          {
+            key: 'venta', label: 'Vendido (sin ITBIS)', value: venta, format: 'money',
+            hint: `Con ITBIS: ${moneyLabel(ventaConItbis)}`,
+          },
+          {
+            key: 'costo', label: 'Costo de la mercancía', value: costo, format: 'money',
+            hint: `Con ITBIS: ${moneyLabel(costoConItbis)}`,
+          },
+          { key: 'ganancia', label: 'Ganancia', value: ganancia, format: 'money', hint: 'Sobre la base, sin ITBIS' },
           {
             key: 'margen', label: 'Margen', format: 'percent',
             value: venta > 0.005 ? round2((ganancia / venta) * 100) : 0,
@@ -675,11 +753,14 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       { key: 'numero', label: 'Venta', align: 'left' },
       { key: 'cliente', label: 'Cliente', align: 'left' },
       { key: 'articulos', label: 'Artículos', format: 'number', total: true },
-      { key: 'venta', label: 'Vendido', format: 'money', total: true, help: 'Sin ITBIS' },
-      { key: 'costo', label: 'Costo', format: 'money', total: true },
-      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true },
+      { key: 'venta', label: 'Vendido (sin ITBIS)', format: 'money', total: true },
+      { key: 'itbis', label: 'ITBIS', format: 'money', total: true },
+      { key: 'ventaConItbis', label: 'Vendido (con ITBIS)', format: 'money', total: true, help: 'Lo que pagó el cliente' },
+      { key: 'costo', label: 'Costo (sin ITBIS)', format: 'money', total: true },
+      { key: 'costoConItbis', label: 'Costo (con ITBIS)', format: 'money', total: true },
+      { key: 'ganancia', label: 'Ganancia', format: 'money', total: true, help: 'Vendido menos costo, los dos sin ITBIS' },
       { key: 'margen', label: 'Margen', format: 'percent' },
-      { key: 'descuento', label: 'Descuento', format: 'money', total: true, hiddenByDefault: true },
+      { key: 'descuento', label: 'Descuento (sin ITBIS)', format: 'money', total: true, hiddenByDefault: true },
       { key: 'metodo', label: 'Método', align: 'left', hiddenByDefault: true },
       { key: 'usuario', label: 'Vendió', align: 'left' },
     ],
@@ -702,7 +783,10 @@ export const salesReports: ReportDefinition<ReportData>[] = [
           cliente: String(s.customer_name || 'Consumidor final'),
           articulos: (s.details || []).reduce((n, d) => n + (Number(d.quantity) || 0), 0),
           venta: v.base,
+          itbis: v.tax,
+          ventaConItbis: v.total,
           costo: v.cost,
+          costoConItbis: v.costWithTax,
           ganancia: v.profit,
           margen: v.margin,
           descuento: v.discount,
@@ -713,9 +797,7 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const filtradas = applyCommonFilters(rows, filters, 'ganancia');
       const venta = round2(filtradas.reduce((s, r) => s + (Number(r.venta) || 0), 0));
       const ganancia = round2(filtradas.reduce((s, r) => s + (Number(r.ganancia) || 0), 0));
-      const notes = [
-        'Lo vendido va SIN ITBIS, para poder restarle el costo: el impuesto no es ingreso.',
-      ];
+      const notes = [NOTA_DOS_FORMAS];
       if (sinCosto > 0) {
         notes.push(`${sinCosto} línea${sinCosto === 1 ? '' : 's'} de venta sin precio de compra en su `
           + 'producto: su ganancia no se cuenta.');
@@ -726,7 +808,10 @@ export const salesReports: ReportDefinition<ReportData>[] = [
         notes,
         kpis: [
           { key: 'cantidad', label: 'Ventas', value: filtradas.length, format: 'number' },
-          { key: 'venta', label: 'Vendido (sin ITBIS)', value: venta, format: 'money' },
+          {
+            key: 'venta', label: 'Vendido (sin ITBIS)', value: venta, format: 'money',
+            hint: `Con ITBIS: ${moneyLabel(round2(filtradas.reduce((s, r) => s + (Number(r.ventaConItbis) || 0), 0)))}`,
+          },
           { key: 'ganancia', label: 'Ganancia', value: ganancia, format: 'money', linkTo: 'sales-profit' },
           {
             key: 'promedio', label: 'Ganancia por venta', format: 'money',
@@ -751,8 +836,10 @@ export const salesReports: ReportDefinition<ReportData>[] = [
     columns: [
       { key: 'fecha', label: 'Día', format: 'date' },
       { key: 'ventas', label: 'Ventas', format: 'number', total: true },
-      { key: 'total', label: 'Total', format: 'money', total: true },
-      { key: 'ticket', label: 'Ticket promedio', format: 'money' },
+      { key: 'totalSinItbis', label: 'Total (sin ITBIS)', format: 'money', total: true },
+      { key: 'itbis', label: 'ITBIS', format: 'money', total: true },
+      { key: 'total', label: 'Total (con ITBIS)', format: 'money', total: true },
+      { key: 'ticket', label: 'Ticket promedio', format: 'money', help: 'Con ITBIS' },
     ],
     filters: ['userId', 'paymentMethod'],
     defaultSort: { key: 'fecha', dir: 'asc' },
@@ -761,12 +848,25 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const lista = salesInPeriod(ctx.data, ctx.filters);
       const grupos = groupRows(lista, s => dateOnly(s.sale_date || s.created_at));
       const rows: ReportRow[] = [...grupos.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([fecha, items]) => {
-        const total = round2(items.reduce((s, v) => s + saleTotalWithTax(v), 0));
-        return { _id: fecha, fecha, ventas: items.length, total, ticket: items.length ? round2(total / items.length) : 0 };
+        const desglose = items.map(saleBreakdown);
+        const total = round2(desglose.reduce((s, v) => s + v.total, 0));
+        const sinItbis = round2(desglose.reduce((s, v) => s + v.base, 0));
+        return {
+          _id: fecha, fecha, ventas: items.length,
+          totalSinItbis: sinItbis,
+          itbis: round2(total - sinItbis),
+          total,
+          ticket: items.length ? round2(total / items.length) : 0,
+        };
       });
       return {
         rows,
-        charts: [{ kind: 'bar', title: 'Ventas por día', xKey: 'fecha', series: [{ key: 'total', label: 'Total' }], money: true }],
+        notes: [NOTA_DOS_FORMAS],
+        charts: [{
+          kind: 'bar', title: 'Ventas por día', xKey: 'fecha',
+          series: [{ key: 'totalSinItbis', label: 'Sin ITBIS' }, { key: 'itbis', label: 'ITBIS' }],
+          money: true,
+        }],
       };
     },
   },
@@ -782,8 +882,10 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       { key: 'cliente', label: 'Cliente', align: 'left' },
       { key: 'ventas', label: 'Ventas', format: 'number', total: true },
       { key: 'articulos', label: 'Artículos', format: 'number', total: true },
-      { key: 'total', label: 'Total', format: 'money', total: true },
-      { key: 'ticket', label: 'Ticket promedio', format: 'money' },
+      { key: 'totalSinItbis', label: 'Total (sin ITBIS)', format: 'money', total: true },
+      { key: 'itbis', label: 'ITBIS', format: 'money', total: true },
+      { key: 'total', label: 'Total (con ITBIS)', format: 'money', total: true },
+      { key: 'ticket', label: 'Ticket promedio', format: 'money', help: 'Con ITBIS' },
       { key: 'ultima', label: 'Última compra', format: 'date' },
     ],
     filters: ['search', 'userId', 'minAmount'],
@@ -793,19 +895,23 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const lista = salesInPeriod(ctx.data, ctx.filters);
       const grupos = groupRows(lista, s => String(s.customer_name || '').trim() || 'Consumidor final');
       const rows: ReportRow[] = [...grupos.entries()].map(([cliente, items]) => {
-        const total = round2(items.reduce((s, v) => s + saleTotalWithTax(v), 0));
+        const desglose = items.map(saleBreakdown);
+        const total = round2(desglose.reduce((s, v) => s + v.total, 0));
+        const sinItbis = round2(desglose.reduce((s, v) => s + v.base, 0));
         return {
           _id: cliente,
           _clientId: items.find(i => i.client_id)?.client_id || undefined,
           cliente,
           ventas: items.length,
           articulos: items.reduce((n, v) => n + (v.details || []).reduce((q, d) => q + (Number(d.quantity) || 0), 0), 0),
+          totalSinItbis: sinItbis,
+          itbis: round2(total - sinItbis),
           total,
           ticket: items.length ? round2(total / items.length) : 0,
           ultima: items.map(v => dateOnly(v.sale_date || v.created_at)).sort().slice(-1)[0] || '',
         };
       });
-      return { rows: applyCommonFilters(rows, ctx.filters, 'total') };
+      return { rows: applyCommonFilters(rows, ctx.filters, 'total'), notes: [NOTA_DOS_FORMAS] };
     },
   },
 
@@ -819,8 +925,10 @@ export const salesReports: ReportDefinition<ReportData>[] = [
     columns: [
       { key: 'usuario', label: 'Usuario', align: 'left' },
       { key: 'ventas', label: 'Ventas', format: 'number', total: true },
-      { key: 'total', label: 'Total', format: 'money', total: true },
-      { key: 'ticket', label: 'Ticket promedio', format: 'money' },
+      { key: 'totalSinItbis', label: 'Total (sin ITBIS)', format: 'money', total: true },
+      { key: 'itbis', label: 'ITBIS', format: 'money', total: true },
+      { key: 'total', label: 'Total (con ITBIS)', format: 'money', total: true },
+      { key: 'ticket', label: 'Ticket promedio', format: 'money', help: 'Con ITBIS' },
     ],
     filters: [],
     defaultSort: { key: 'total', dir: 'desc' },
@@ -829,16 +937,20 @@ export const salesReports: ReportDefinition<ReportData>[] = [
       const lista = salesInPeriod(ctx.data, ctx.filters);
       const grupos = groupRows(lista, s => String(s.user_id || ''));
       const rows: ReportRow[] = [...grupos.entries()].map(([userId, items]) => {
-        const total = round2(items.reduce((s, v) => s + saleTotalWithTax(v), 0));
+        const desglose = items.map(saleBreakdown);
+        const total = round2(desglose.reduce((s, v) => s + v.total, 0));
+        const sinItbis = round2(desglose.reduce((s, v) => s + v.base, 0));
         return {
           _id: userId || 'sin-usuario',
           usuario: userNameOf(ctx.data, userId),
           ventas: items.length,
+          totalSinItbis: sinItbis,
+          itbis: round2(total - sinItbis),
           total,
           ticket: items.length ? round2(total / items.length) : 0,
         };
       });
-      return { rows };
+      return { rows, notes: [NOTA_DOS_FORMAS] };
     },
   },
 
@@ -929,7 +1041,7 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
     asOfToday: true,
     name: 'Inventario actual',
     category: 'inventario',
-    description: 'Existencias y valor del inventario, con los precios con ITBIS.',
+    description: 'Existencias y valor del inventario, con los precios de las dos formas: con ITBIS y sin él.',
     permission: 'reports.inventory',
     dataset: 'inventory',
     columns: [
@@ -938,12 +1050,17 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
       { key: 'categoria', label: 'Categoría', align: 'left' },
       { key: 'existencia', label: 'Existencia', format: 'number', total: true },
       { key: 'minimo', label: 'Mínimo', format: 'number', hiddenByDefault: true },
-      { key: 'costo', label: 'Costo unitario con ITBIS', format: 'money' },
-      { key: 'precio', label: 'Precio de venta con ITBIS', format: 'money' },
+      { key: 'costoSinItbis', label: 'Costo unitario (sin ITBIS)', format: 'money' },
+      { key: 'costo', label: 'Costo unitario (con ITBIS)', format: 'money' },
+      { key: 'precioSinItbis', label: 'Precio de venta (sin ITBIS)', format: 'money' },
+      { key: 'precio', label: 'Precio de venta (con ITBIS)', format: 'money' },
       // Las DOS cifras del stock, cada una con su nombre (2026-11-17): lo que costó y lo que se
-      // espera cobrar. Con una sola no se sabía cuál era.
-      { key: 'valorCosto', label: 'Valor al costo', format: 'money', total: true },
-      { key: 'valor', label: 'Valor a precio de venta', format: 'money', total: true },
+      // espera cobrar. Con una sola no se sabía cuál era. Y cada una de las dos formas, con
+      // ITBIS y sin él (2026-11-21).
+      { key: 'valorCostoSinItbis', label: 'Valor al costo (sin ITBIS)', format: 'money', total: true },
+      { key: 'valorCosto', label: 'Valor al costo (con ITBIS)', format: 'money', total: true },
+      { key: 'valorSinItbis', label: 'Valor a precio de venta (sin ITBIS)', format: 'money', total: true },
+      { key: 'valor', label: 'Valor a precio de venta (con ITBIS)', format: 'money', total: true },
       { key: 'estado', label: 'Estado', format: 'badge' },
     ],
     filters: ['search', 'category'],
@@ -963,9 +1080,13 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
           categoria: String(p.category || 'Sin categoría'),
           existencia,
           minimo,
+          costoSinItbis: round2(p.purchase_price),
           costo: purchasePriceWithItbis(p as any),
+          precioSinItbis: round2(p.selling_price),
           precio: sellingPriceWithItbis(p as any),
+          valorCostoSinItbis: round2((Number(p.purchase_price) || 0) * existencia),
           valorCosto: stockCostWithItbis(p as any),
+          valorSinItbis: round2((Number(p.selling_price) || 0) * existencia),
           valor: stockValueWithItbis(p as any),
           estado: existencia <= 0 ? 'Agotado' : (minimo > 0 && existencia <= minimo) ? 'Stock bajo' : 'Disponible',
         } as ReportRow;
@@ -974,7 +1095,7 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
       return {
         rows: filtradas,
         notes: [
-          'Los precios se enseñan con ITBIS incluido (se guardan sin él).',
+          NOTA_DOS_FORMAS,
           'El sistema no tiene una tabla de movimientos de inventario: no se pueden listar entradas, '
           + 'salidas ni ajustes. Las salidas por venta están en el reporte "Productos vendidos".',
         ],
@@ -985,14 +1106,14 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
             value: filtradas.reduce((s, r) => s + (Number(r.existencia) || 0), 0),
           },
           {
-            key: 'valorCosto', label: 'Valor al costo', format: 'money',
+            key: 'valorCosto', label: 'Valor al costo (con ITBIS)', format: 'money',
             value: round2(filtradas.reduce((s, r) => s + (Number(r.valorCosto) || 0), 0)),
-            hint: 'Lo que costó la mercancía que hay en existencia',
+            hint: `Lo que costó lo que hay · sin ITBIS: ${moneyLabel(round2(filtradas.reduce((s, r) => s + (Number(r.valorCostoSinItbis) || 0), 0)))}`,
           },
           {
-            key: 'valor', label: 'Valor a precio de venta', format: 'money',
+            key: 'valor', label: 'Valor a precio de venta (con ITBIS)', format: 'money',
             value: round2(filtradas.reduce((s, r) => s + (Number(r.valor) || 0), 0)),
-            hint: 'Lo que se cobraría si se vendiera todo',
+            hint: `Lo que se cobraría si se vendiera todo · sin ITBIS: ${moneyLabel(round2(filtradas.reduce((s, r) => s + (Number(r.valorSinItbis) || 0), 0)))}`,
           },
           {
             key: 'agotados', label: 'Agotados', format: 'number',
@@ -1017,8 +1138,10 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
       { key: 'existencia', label: 'Existencia', format: 'number', total: true },
       { key: 'minimo', label: 'Mínimo', format: 'number' },
       { key: 'faltante', label: 'Faltan', format: 'number', total: true },
-      { key: 'costo', label: 'Costo con ITBIS', format: 'money' },
-      { key: 'reposicion', label: 'Costo de reposición', format: 'money', total: true },
+      { key: 'costoSinItbis', label: 'Costo (sin ITBIS)', format: 'money' },
+      { key: 'costo', label: 'Costo (con ITBIS)', format: 'money' },
+      { key: 'reposicionSinItbis', label: 'Costo de reposición (sin ITBIS)', format: 'money', total: true },
+      { key: 'reposicion', label: 'Costo de reposición (con ITBIS)', format: 'money', total: true },
       { key: 'estado', label: 'Estado', format: 'badge' },
     ],
     filters: ['search', 'category'],
@@ -1037,7 +1160,9 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
             producto: String(p.name || ''),
             categoria: String(p.category || 'Sin categoría'),
             existencia, minimo, faltante,
+            costoSinItbis: round2(p.purchase_price),
             costo: purchasePriceWithItbis(p as any),
+            reposicionSinItbis: round2((Number(p.purchase_price) || 0) * faltante),
             reposicion: round2(purchasePriceWithItbis(p as any) * faltante),
             estado: existencia <= 0 ? 'Agotado' : 'Stock bajo',
           } as ReportRow;
@@ -1045,7 +1170,10 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
         .filter(r => Number(r.existencia) <= 0 || Number(r.faltante) > 0);
       return {
         rows: applyCommonFilters(rows, filters),
-        notes: ['Un producto sin mínimo configurado solo aparece si está agotado.'],
+        notes: [
+          'Un producto sin mínimo configurado solo aparece si está agotado.',
+          NOTA_DOS_FORMAS,
+        ],
       };
     },
   },
@@ -1062,7 +1190,8 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
       { key: 'categoria', label: 'Categoría', align: 'left' },
       { key: 'productos', label: 'Productos', format: 'number', total: true },
       { key: 'unidades', label: 'Unidades', format: 'number', total: true },
-      { key: 'valor', label: 'Valor con ITBIS', format: 'money', total: true },
+      { key: 'valorSinItbis', label: 'Valor (sin ITBIS)', format: 'money', total: true },
+      { key: 'valor', label: 'Valor (con ITBIS)', format: 'money', total: true },
       { key: 'participacion', label: '% del valor', format: 'percent' },
     ],
     filters: ['search'],
@@ -1079,12 +1208,16 @@ export const inventoryReports: ReportDefinition<ReportData>[] = [
           categoria,
           productos: lista.length,
           unidades: lista.reduce((n, p) => n + (Number(p.current_stock) || 0), 0),
+          valorSinItbis: round2(lista.reduce(
+            (s, p) => s + (Number(p.selling_price) || 0) * (Number(p.current_stock) || 0), 0,
+          )),
           valor,
           participacion: total > 0 ? Math.round((valor / total) * 1000) / 10 : 0,
         };
       });
       return {
         rows: applyCommonFilters(rows, ctx.filters, 'valor'),
+        notes: [NOTA_DOS_FORMAS],
         charts: [{ kind: 'pie', title: 'Valor por categoría', xKey: 'categoria', series: [{ key: 'valor', label: 'Valor' }], money: true }],
       };
     },

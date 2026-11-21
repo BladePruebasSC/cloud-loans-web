@@ -32,7 +32,9 @@
 // cifras salen marcadas como "deducidas" y el reporte lo advierte al pie. En cuanto la venta
 // guarda su propio precio de lista (punto de venta, desde el 18/11/2026) deja de deducirse nada.
 
-import { itbisRateOf, saleLineTotalWithItbis, sellingPriceWithItbis, withoutItbis } from './itbis';
+import {
+  itbisRateOf, saleLineTotalWithItbis, sellingPriceWithItbis, withItbis, withoutItbis,
+} from './itbis';
 
 const round2 = (v: number) => Math.round((Number.isFinite(v) ? v : 0) * 100) / 100;
 
@@ -94,8 +96,12 @@ export interface SaleLineAmounts {
   discountSource: DiscountSource;
   /** Lo que costó una unidad, SIN ITBIS. */
   unitCost: number;
+  /** Lo que costó una unidad, CON ITBIS (lo que se le pagó al suplidor). */
+  unitCostWithTax: number;
   /** Lo que costó lo vendido en esta línea, SIN ITBIS. */
   cost: number;
+  /** Lo mismo, CON ITBIS. */
+  costWithTax: number;
   /** Ganancia bruta: lo cobrado sin ITBIS menos lo que costó. 0 si no se sabe el costo. */
   profit: number;
   /** Margen sobre la venta, en %. */
@@ -165,7 +171,13 @@ export const saleLineAmounts = (
   // Sin costo no se sabe la ganancia, que NO es lo mismo que ganarlo todo.
   const profit = costSource === 'ninguno' ? 0 : round2(base - cost);
   const margin = costSource !== 'ninguno' && base > 0.005 ? round2((profit / base) * 100) : 0;
-  const costo = { unitCost, cost, profit, margin, costSource };
+  // El costo también CON ITBIS: es lo que se le pagó al suplidor, y los reportes enseñan las
+  // dos formas de cada importe (2026-11-21).
+  const costo = {
+    unitCost, cost, profit, margin, costSource,
+    unitCostWithTax: withItbis(unitCost, itbisRate),
+    costWithTax: withItbis(cost, itbisRate),
+  };
 
   if (discountWithTax < UMBRAL_DESCUENTO) {
     return {
@@ -211,6 +223,8 @@ export interface SaleAmounts {
   discountSource: DiscountSource;
   /** Lo que costó la mercancía vendida, SIN ITBIS. */
   cost: number;
+  /** Lo mismo, CON ITBIS. */
+  costWithTax: number;
   /** Ganancia bruta de la venta: base − costo. */
   profit: number;
   margin: number;
@@ -240,6 +254,7 @@ export const saleAmounts = (
   // es una línea que se ganó entera.
   const conCosto = detalle.filter(l => l.costSource !== 'ninguno');
   const cost = round2(conCosto.reduce((s, l) => s + l.cost, 0));
+  const costWithTax = round2(conCosto.reduce((s, l) => s + l.costWithTax, 0));
   const baseConCosto = round2(conCosto.reduce((s, l) => s + l.base, 0));
   const profit = round2(baseConCosto - cost);
   const costSource: CostSource = conCosto.length === 0
@@ -258,6 +273,7 @@ export const saleAmounts = (
     discountPercent: listTotal > 0.005 ? round2((discountWithTax / listTotal) * 100) : 0,
     discountSource,
     cost,
+    costWithTax,
     profit,
     margin: baseConCosto > 0.005 ? round2((profit / baseConCosto) * 100) : 0,
     costSource,
