@@ -40,7 +40,7 @@ import { describeSupabaseError } from '@/utils/supabaseErrors';
 import { computeExtendedSchedule } from '@/utils/loanRescheduling';
 import { computeInstallmentDues, type RawPayment } from '@/utils/installmentDues';
 import {
-  computeCapitalPaymentPreview, countOverdueDues, periodInterestFor,
+  computeCapitalPaymentPreview, countOverdueDues, pendingCapitalForPayment, periodInterestFor,
 } from '@/utils/capitalPaymentPreview';
 import { formatCurrency } from '@/lib/utils';
 import { generateLoanPaymentReceipt, generateCapitalPaymentReceipt, openWhatsApp, formatPhoneForWhatsApp } from '@/utils/whatsappReceipt';
@@ -700,7 +700,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
     if (isOpen && loan.id) {
       const calculatePendingCapital = async () => {
         try {
-          // ✅ Para ABONO A CAPITAL: el capital pendiente debe EXCLUIR cargos.
+          // ✅ Para ABONO A CAPITAL: el capital pendiente es SOLO principal del préstamo, así que
+          // un cargo pendiente no lo toca ni para arriba ni para abajo.
           // Lo cobrado ya está repartido en `dueRows` (interés primero, el resto a capital), así
           // que aquí solo hacen falta los abonos a capital anteriores.
           const { data: capitalPayments, error: capitalPaymentsError } = await supabase
@@ -710,8 +711,6 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
 
           if (capitalPaymentsError) throw capitalPaymentsError;
 
-          const round2 = (v: number) => Math.round((Number(v || 0) * 100)) / 100;
-
           // Total de abonos a capital anteriores
           const totalCapitalPayments = (capitalPayments || []).reduce((sum, cp) => sum + (cp.amount || 0), 0);
 
@@ -720,7 +719,8 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
           const principalPaidRegular = principalPaidFromDues;
           
           // ✅ Capital pendiente (para ABONO A CAPITAL) = SOLO principal del préstamo.
-          // Los cargos NO deben influir en capital pendiente (los cargos no cambian con abonos a capital).
+          // Un cargo no cambia con un abono a capital, así que no influye en este número: suma
+          // al BALANCE del préstamo, que es otra cuenta.
           let calculatedPendingCapital: number;
           if ((loan.amortization_type || '').toLowerCase() === 'indefinite') {
             // Capital pendiente de un indefinido = lo prestado MENOS los abonos a capital.
@@ -730,19 +730,18 @@ export const LoanUpdateForm: React.FC<LoanUpdateFormProps> = ({
               loan.amount, (capitalPayments || []) as CapitalPaymentLike[],
             ).currentCapital;
           } else {
-            // Cargos pendientes (no entran en el capital disponible para abonar), del mismo
-            // reparto: antes, lo cobrado a la CUOTA de ese día se daba por cobrado al cargo.
-            const unpaidChargesAmount = unpaidChargesAmountReal;
-
-            // Para préstamos con plazo fijo:
-            // NO usar la suma de capital por cuotas, porque por redondeos de la cuota mensual puede dar
-            // discrepancias (ej. 10,000 → 10,002). El capital pendiente debe partir de loan.amount.
-            const capitalPendingFromRegular = Math.round(
-              Math.max(0, (loan.amount || 0) - (principalPaidRegular || 0) - (totalCapitalPayments || 0)) * 100
-            ) / 100;
-            
-            // ✅ SOLO EN ABONO A CAPITAL: excluir cargos pendientes del capital disponible
-            calculatedPendingCapital = round2(Math.max(0, round2(capitalPendingFromRegular) - unpaidChargesAmount));
+            // PLAZO FIJO: lo prestado, menos el capital ya cobrado en cuotas, menos los abonos
+            // anteriores. Los CARGOS PENDIENTES NO se restan —hasta el 24/11/2026 sí, y por eso
+            // agregar un cargo rebajaba el capital, el máximo a abonar, la penalidad y el
+            // `capital_before` que queda guardado—. El porqué está en `pendingCapitalForPayment`.
+            //
+            // NO se suma el capital cuota por cuota: por el redondeo de la cuota puede dar 10,002
+            // en un préstamo de 10,000. Se parte siempre de `loan.amount`.
+            calculatedPendingCapital = pendingCapitalForPayment({
+              loanAmount: loan.amount || 0,
+              principalPaidFromInstallments: principalPaidRegular || 0,
+              previousCapitalPayments: totalCapitalPayments || 0,
+            });
           }
           
           console.log('[abono] capital pendiente:', {

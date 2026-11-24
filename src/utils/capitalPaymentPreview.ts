@@ -33,6 +33,47 @@ export const periodInterestFor = (
   capital: number, monthlyRatePercent: number, frequency?: string | null,
 ): number => round2((Number(capital) || 0) * getPeriodRate(Number(monthlyRatePercent) || 0, frequency));
 
+export interface PendingCapitalForPaymentInput {
+  /** `loans.amount`: lo PRESTADO. Principal puro: sin interés, sin cargos y sin mora. */
+  loanAmount: number;
+  /** Capital ya cobrado en las cuotas REGULARES (del reparto de `computeInstallmentDues`). */
+  principalPaidFromInstallments: number;
+  /** Abonos a capital anteriores (`capital_payments.amount`). */
+  previousCapitalPayments: number;
+}
+
+/**
+ * CAPITAL QUE SE PUEDE ABONAR, en un préstamo de plazo fijo.
+ *
+ * FALLO REPORTADO (2026-11-24): "cuando le agregas un cargo a un préstamo y vas abono a capital
+ * el monto del cargo se ve reducido".
+ *
+ * CAUSA: el formulario lo calculaba como `lo prestado − capital cobrado − abonos anteriores −
+ * CARGOS PENDIENTES`. Los dos primeros descuentos son correctos; el tercero no tiene sentido.
+ * `loans.amount` es el principal del préstamo y un cargo NUNCA estuvo dentro de él, así que
+ * restarlo rebaja un capital que nadie ha pagado. Un cargo de 5,000 bajaba 5,000:
+ *
+ *   · el "Capital Pendiente Actual" que enseña el formulario;
+ *   · el máximo que se dejaba abonar —con un cargo pendiente ya no se podía saldar el capital—;
+ *   · la base de la penalidad del abono;
+ *   · el `capital_before` y el `capital_after` que quedan GUARDADOS en `capital_payments`, que
+ *     son los que deciden el capital vigente de ahí en adelante.
+ *
+ * Y lo peor pasaba al GUARDAR: las cuotas pendientes se reescriben con ese capital, así que el
+ * préstamo perdía de su capital exactamente el monto del cargo. El cliente quedaba debiendo el
+ * cargo, sí, pero 5,000 menos de capital: el cargo no se cobraba, se descontaba.
+ *
+ * Un cargo es OTRA obligación: se cobra aparte ("Pagar Cargos"), un abono a capital no lo toca y
+ * suma al BALANCE, no al capital. Por eso aquí no entra.
+ */
+export const pendingCapitalForPayment = (input: PendingCapitalForPaymentInput): number => round2(
+  Math.max(0, round2(
+    round2(input.loanAmount)
+    - round2(input.principalPaidFromInstallments)
+    - round2(input.previousCapitalPayments),
+  )),
+);
+
 export interface CapitalPaymentPreviewInput {
   /** Tipo de amortización del préstamo ('indefinite' u otro) */
   amortizationType?: string | null;
