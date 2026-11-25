@@ -20,6 +20,7 @@ import {
 import { computePosFinancing } from '@/utils/posFinancing';
 import { cartLineAmounts } from '@/utils/posCartLine';
 import { downloadInvoicePdf, type InvoiceFormat } from '@/utils/posInvoicePdf';
+import { cardPaymentIssue, paymentDetailsForSale } from '@/utils/posPaymentSplits';
 import { findMissingColumn } from '@/utils/supabaseErrors';
 import {
   addPeriodsToDate, formatDateLocalIso, getFrequencyLabel, getFrequencyName,
@@ -810,19 +811,17 @@ export const PointOfSaleModule = () => {
       }
     }
 
-    // Validar datos de tarjeta si se selecciona método de pago con tarjeta
+    // Validar datos de tarjeta si se selecciona método de pago con tarjeta.
+    //
+    // Se piden las dos casillas que el formulario de verdad tiene: el tipo y los últimos 4. El
+    // NOMBRE DEL TITULAR ya no se exige (2026-11-25): no hay dónde escribirlo —la única casilla
+    // está en el bloque del método único, que no se dibuja nunca— así que la venta con tarjeta
+    // se quedaba trancada. El porqué, en `posPaymentSplits.ts`.
     const cardSplits = saleData.paymentSplits.filter(split => split.method.type === 'card');
     for (const cardSplit of cardSplits) {
-      if (!cardSplit.details?.cardType) {
-        toast.error('Debe especificar el tipo de tarjeta para el pago con tarjeta');
-        return;
-      }
-      if (!cardSplit.details?.cardLast4 || cardSplit.details.cardLast4.length !== 4) {
-        toast.error('Debe especificar los últimos 4 dígitos de la tarjeta');
-        return;
-      }
-      if (!cardSplit.details?.cardHolderName) {
-        toast.error('Debe especificar el nombre del titular de la tarjeta');
+      const leFalta = cardPaymentIssue(cardSplit.details);
+      if (leFalta) {
+        toast.error(leFalta);
         return;
       }
     }
@@ -892,13 +891,11 @@ export const PointOfSaleModule = () => {
           const paymentMethod = hayFinanciamiento
             ? 'financing'
             : cobros.length > 1 ? 'mixed' : (cobros[0]?.method?.id || paymentMethodSeguro);
-          const paymentDetails = cobros.length > 0
-            ? cobros.map(s => ({
-              method: s.method?.type || s.method?.id || 'cash',
-              label: s.method?.name || '',
-              amount: round2(s.amount),
-            }))
-            : null;
+          // Con los datos de cada cobro dentro (2026-11-25): el tipo de tarjeta y los últimos 4
+          // que el formulario exige, el banco y la referencia de una transferencia, el número de
+          // un cheque. Antes se guardaba solo `{method, label, amount}` y todo eso se perdía al
+          // cobrar, así que se exigía un dato para después tirarlo.
+          const paymentDetails = paymentDetailsForSale(cobros);
         // Verificar stock en servidor antes de persistir
         const productIds = cart.map(ci => ci.product.id);
         const { data: latestProducts } = await supabase
